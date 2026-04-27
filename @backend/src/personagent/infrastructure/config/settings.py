@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     llama_max_tokens: int = Field(default=16384, alias="LLAMA_MAX_TOKENS")
     nvidia_max_tokens: int = Field(default=65536, alias="NVIDIA_MAX_TOKENS")
     vertex_max_tokens: int = Field(default=65536, alias="VERTEX_MAX_TOKENS")
+    kimi_max_tokens: int = Field(default=32768, alias="KIMI_MAX_TOKENS")
+    kimi_context_window: int = Field(default=262144, alias="KIMI_CONTEXT_WINDOW")
     llama_cache_type_k: str = Field(default="turbo4", alias="LLAMA_CACHE_TYPE_K")
     llama_cache_type_v: str = Field(default="turbo4", alias="LLAMA_CACHE_TYPE_V")
     llama_threads: int = Field(default=6, alias="LLAMA_THREADS")
@@ -102,6 +104,23 @@ class Settings(BaseSettings):
     vertex_models_cache_ttl_seconds: int = Field(
         default=300,
         alias="VERTEX_MODELS_CACHE_TTL_SECONDS",
+    )
+
+    # --- Kimi Code ---
+    kimi_api_key: str = Field(default="", alias="KIMI_API_KEY")
+    kimi_base_url: str = Field(
+        default="https://api.kimi.com/coding/v1",
+        alias="KIMI_BASE_URL",
+    )
+    kimi_default_model: str = Field(default="kimi-for-coding", alias="KIMI_DEFAULT_MODEL")
+    kimi_timeout_seconds: float = Field(default=240.0, alias="KIMI_TIMEOUT_SECONDS")
+    kimi_stream_read_timeout_seconds: float = Field(
+        default=0.0,
+        alias="KIMI_STREAM_READ_TIMEOUT_SECONDS",
+    )
+    kimi_anthropic_version: str = Field(
+        default="2023-06-01",
+        alias="KIMI_ANTHROPIC_VERSION",
     )
 
     # --- Ferramentas ---

@@ -1,9 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { AgentMessage, compactToolKindFor } from "./agent-message";
 import { ReasoningBlock } from "./reasoning-block";
 import { ToolBlock } from "./tool-block";
-import type { ChatMessageUi, ToolBlockUi } from "../../types/chat";
+import type { ChatMessageUi, TeamRunUi, ToolBlockUi } from "../../types/chat";
 
 describe("chat rendering", () => {
   beforeEach(() => {
@@ -266,6 +266,81 @@ describe("chat rendering", () => {
     expect(screen.getByText("Coordinator")).toBeInTheDocument();
   });
 
+  it("renders compact Team Mode cards with event previews and scrollable blackboard", () => {
+    const message = baseAgentMessage({
+      isStreaming: true,
+      teamRun: compactTeamRun(),
+    });
+
+    render(<AgentMessage message={message} />);
+
+    expect(screen.getByText("Analyst")).toBeInTheDocument();
+    expect(screen.getByText("Blackboard compact snapshot")).toBeInTheDocument();
+    expect(screen.getByText("actual phase")).toBeInTheDocument();
+    expect(screen.queryByText("private agent reasoning")).not.toBeInTheDocument();
+    expect(screen.queryByText("Accepted claim from Analyst")).not.toBeInTheDocument();
+    expect(screen.getByText("response")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Analyst"));
+    expect(screen.getAllByText("thinking").length).toBeGreaterThan(0);
+    expect(screen.getByText("private agent reasoning")).toBeInTheDocument();
+    expect(screen.getAllByText("Agent response").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByText("Blackboard compact snapshot"));
+    expect(screen.getAllByText("Accepted claim from Analyst").length).toBeGreaterThan(0);
+    expect(screen.getByText("Next action")).toBeInTheDocument();
+  });
+
+  it("renders compact Team Mode tool output behind a click target", () => {
+    const message = baseAgentMessage({
+      teamRun: compactTeamRun({
+        agents: [
+          {
+            agentId: "builder",
+            agentName: "Builder",
+            agentRole: "tools",
+            status: "running",
+            phase: "read_tools",
+            thinking: "",
+            output: "",
+            logs: [
+              {
+                id: "builder-tool-log",
+                kind: "tool",
+                title: "read tools",
+                content: "1 result published",
+                status: "completed",
+                phase: "read_tools",
+              },
+            ],
+            claims: [],
+            tools: [
+              {
+                id: "tool-1",
+                title: "read tools",
+                phase: "read_tools",
+                status: "completed",
+                summary: "1 result published",
+                calls: [{ name: "Read" }],
+                results: [{ output: "file content" }],
+                proposals: [],
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    render(<AgentMessage message={message} />);
+
+    fireEvent.click(screen.getByText("Builder"));
+    expect(screen.getAllByText("1 result published").length).toBeGreaterThan(0);
+    expect(screen.queryByText("file content")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("output"));
+    expect(screen.getByText(/file content/)).toBeInTheDocument();
+  });
+
   it("hides the agent execution status when not streaming", () => {
     const message = baseAgentMessage({ isStreaming: false });
     render(<AgentMessage message={message} />);
@@ -366,6 +441,7 @@ describe("chat rendering", () => {
     expect(compactToolKindFor(toolBlock({ name: "shell", data: { command: "grep -R foo src" } }))).toBe("search");
     expect(compactToolKindFor(toolBlock({ name: "shell", data: { command: "find src -name '*.ts'" } }))).toBe("search");
     expect(compactToolKindFor(toolBlock({ name: "shell", data: { command: "pwd" } }))).toBe("shell");
+    expect(compactToolKindFor(toolBlock({ name: "TodoUpdate" }))).toBe("todo");
   });
 
   it("shows structured grep output when expanded", () => {
@@ -570,6 +646,102 @@ describe("chat rendering", () => {
     expect(screen.getByText("second page")).toBeInTheDocument();
   });
 
+  it("renders TodoWrite as an exposed checklist with item status dots", () => {
+    render(
+      <ToolBlock
+        block={toolBlock({
+          name: "TodoWrite",
+          title: "TodoWrite",
+          status: "completed",
+          content: "Updated 3 todos.",
+          data: {
+            type: "todos",
+            todos: [
+              { id: "inspect", content: "Inspect current renderer", status: "completed" },
+              { id: "build", content: "Build todo panel", status: "in_progress" },
+              { id: "verify", content: "Verify chat rendering", status: "pending" },
+            ],
+          },
+          isCollapsed: true,
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("todo-tracker")).toBeInTheDocument();
+    expect(screen.getByText("Todos")).toBeInTheDocument();
+    expect(screen.getByText("1/3 done")).toBeInTheDocument();
+
+    const completedRow = screen.getByText("Inspect current renderer").closest("li");
+    const activeRow = screen.getByText("Build todo panel").closest("li");
+    const pendingRow = screen.getByText("Verify chat rendering").closest("li");
+
+    expect(completedRow).not.toBeNull();
+    expect(activeRow).not.toBeNull();
+    expect(pendingRow).not.toBeNull();
+    expect(within(completedRow!).getByLabelText("completed")).toHaveClass("bg-success");
+    expect(within(activeRow!).getByLabelText("in progress")).toHaveClass("bg-warning");
+    expect(within(pendingRow!).getByLabelText("pending")).toHaveClass("bg-warning");
+    expect(screen.getByText("active")).toBeInTheDocument();
+  });
+
+  it("keeps completed todos visible when rendered as a static tool block", () => {
+    render(
+      <ToolBlock
+        block={toolBlock({
+          name: "TodoWrite",
+          title: "TodoWrite",
+          status: "completed",
+          data: {
+            type: "todos",
+            todos: [
+              { id: "inspect", content: "Inspect current renderer", status: "completed" },
+              { id: "build", content: "Build todo panel", status: "completed" },
+            ],
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("todo-tracker")).toBeInTheDocument();
+    expect(screen.getByText("2/2 done")).toBeInTheDocument();
+  });
+
+  it("does not render todo tool blocks inside the agent message flow", () => {
+    const message = baseAgentMessage({
+      toolBlocks: [
+        toolBlock({
+          id: "todo_1",
+          name: "TodoWrite",
+          data: {
+            todos: [
+              { id: "inspect", content: "Inspect current renderer", status: "in_progress" },
+              { id: "build", content: "Build todo panel", status: "pending" },
+            ],
+          },
+        }),
+        toolBlock({
+          id: "todo_2",
+          name: "TodoWrite",
+          data: {
+            todos: [
+              { id: "inspect", content: "Inspect current renderer", status: "completed" },
+              { id: "build", content: "Build todo panel", status: "in_progress" },
+            ],
+          },
+        }),
+      ],
+      parts: [
+        { kind: "tool", id: "part_todo_1", toolBlockId: "todo_1" },
+        { kind: "tool", id: "part_todo_2", toolBlockId: "todo_2" },
+      ],
+    });
+
+    render(<AgentMessage message={message} />);
+
+    expect(screen.queryByTestId("todo-tracker")).not.toBeInTheDocument();
+    expect(screen.queryByText("Inspect current renderer")).not.toBeInTheDocument();
+  });
+
   it("renders generated images inline without markdown conversion", () => {
     const message = baseAgentMessage({
       parts: [
@@ -622,6 +794,80 @@ function toolBlock(overrides: Partial<ToolBlockUi> = {}): ToolBlockUi {
     path: "README.md",
     data: undefined,
     isCollapsed: true,
+    ...overrides,
+  };
+}
+
+function compactTeamRun(overrides: Partial<TeamRunUi> = {}): TeamRunUi {
+  return {
+    runId: "run-1",
+    title: "Team Mode",
+    status: "running",
+    round: 1,
+    actualPhase: "independent",
+    agents: [
+      {
+        agentId: "analyst",
+        agentName: "Analyst",
+        agentRole: "requirements",
+        status: "running",
+        phase: "independent",
+        thinking: "private agent reasoning",
+        output: "Agent response",
+        digest: "Agent digest",
+        logs: [
+          {
+            id: "analyst-thinking-1",
+            kind: "thinking",
+            title: "Thinking",
+            content: "private agent reasoning",
+            status: "running",
+            phase: "independent",
+          },
+          {
+            id: "analyst-response-1",
+            kind: "response",
+            title: "Response",
+            content: "Agent response",
+            status: "running",
+            phase: "independent",
+          },
+        ],
+        claims: [
+          {
+            id: "claim-1",
+            type: "claim",
+            text: "Accepted claim from Analyst",
+            agentId: "analyst",
+            agentName: "Analyst",
+          },
+        ],
+        tools: [],
+      },
+    ],
+    blackboard: {
+      status: "running",
+      actualPhase: "independent",
+      nextAction: "Debate",
+      claims: [
+        {
+          id: "claim-1",
+          type: "claim",
+          text: "Accepted claim from Analyst",
+          agentId: "analyst",
+          agentName: "Analyst",
+        },
+      ],
+      evidence: [],
+      decisions: [],
+      blockers: [],
+      coverage: [],
+      coverageComplete: 1,
+      coverageTotal: 2,
+      coherencyScore: 0.84,
+      tools: [],
+    },
+    votes: [],
     ...overrides,
   };
 }

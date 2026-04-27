@@ -55,3 +55,13 @@ vertex:
   timeout_seconds: 240
   stream_read_timeout_seconds: 0
   models_cache_ttl_seconds: 300
+
+kimi:
+  api_key: ""
+  base_url: "https://api.kimi.com/coding/v1"
+  default_model: "kimi-for-coding"
+  max_tokens: 32768
+  context_window: 262144
+  timeout_seconds: 240
+  stream_read_timeout_seconds: 0
+  anthropic_version: "2023-06-01"

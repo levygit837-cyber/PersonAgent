@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listChatCommands, listModels } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
+import type { ChatMessageUi, ToolBlockUi } from "../../types/chat";
 import { InputDock } from "./input-dock";
 
 vi.mock("../../api/client", () => ({
@@ -134,6 +135,17 @@ describe("InputDock", () => {
           },
         ];
       }
+      if (provider === "kimi") {
+        return [
+          {
+            id: "kimi-for-coding",
+            name: "Kimi K2.6",
+            provider: "kimi",
+            capabilities: ["chat", "reasoning_chat", "tools"],
+            context_length: 262144,
+          },
+        ];
+      }
       return [];
     });
 
@@ -148,6 +160,7 @@ describe("InputDock", () => {
     expect(await screen.findByText("gemma 3 4B it")).toBeInTheDocument();
     expect(await screen.findByText("Llama Nemotron embed 1B v2")).toBeInTheDocument();
     expect(await screen.findByText(/Gemini 3\.1 custom preview/i)).toBeInTheDocument();
+    expect(await screen.findByText("Kimi K2.6")).toBeInTheDocument();
   });
 
   it("shows the curated Vertex Gemini 3 models in the model selector", async () => {
@@ -163,6 +176,23 @@ describe("InputDock", () => {
     expect(screen.getByText("Gemini 3.1 Flash-Lite")).toBeInTheDocument();
     expect(screen.getByText("Gemini 3 Pro Image")).toBeInTheDocument();
     expect(screen.queryByText("gemini-3-pro-preview")).not.toBeInTheDocument();
+  });
+
+  it("shows Kimi K2.6 and selects the kimi provider", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: /model and reasoning/i }));
+
+    expect(await screen.findByText("Kimi Code")).toBeInTheDocument();
+    const kimiItem = screen.getByText("Kimi K2.6");
+    fireEvent.click(kimiItem);
+
+    expect(useAppStore.getState().provider).toBe("kimi");
+    expect(useAppStore.getState().selectedModelId).toBe("kimi-for-coding");
   });
 
   it("shows slash command autocomplete from the backend", async () => {
@@ -217,4 +247,128 @@ describe("InputDock", () => {
     fireEvent.change(input, { target: { value: "next message" } });
     expect(screen.getByRole("button", { name: /send/i })).not.toBeDisabled();
   });
+
+  it("renders active todos attached above the input dock while the agent is running", () => {
+    useChatStore.setState({
+      isStreaming: true,
+      activeAgentId: "agent",
+      messages: [
+        agentMessage({
+          id: "agent",
+          isStreaming: true,
+          toolBlocks: [
+            todoBlock({
+              id: "todo-1",
+              data: {
+                todos: [
+                  { id: "inspect", content: "Inspect current renderer", status: "completed" },
+                  { id: "build", content: "Build todo panel", status: "in_progress" },
+                ],
+              },
+            }),
+            todoBlock({
+              id: "todo-2",
+              data: {
+                todos: [
+                  { id: "inspect", content: "Inspect current renderer", status: "completed" },
+                  { id: "build", content: "Build todo panel", status: "in_progress" },
+                  { id: "verify", content: "Verify dock behavior", status: "pending" },
+                ],
+              },
+            }),
+          ],
+        }),
+      ],
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("input-todo-tracker")).toHaveAttribute("data-state", "visible");
+    expect(screen.getByText("TodoWrite - 2 updates")).toBeInTheDocument();
+    expect(screen.getByText("1/3 done")).toBeInTheDocument();
+    expect(screen.getByText("Verify dock behavior")).toBeInTheDocument();
+    expect(screen.getByText("active")).toBeInTheDocument();
+  });
+
+  it("keeps completed todos visible until agent execution ends, then exits into the input dock", () => {
+    vi.useFakeTimers();
+    useChatStore.setState({
+      isStreaming: true,
+      activeAgentId: "agent",
+      messages: [
+        agentMessage({
+          id: "agent",
+          isStreaming: true,
+          toolBlocks: [
+            todoBlock({
+              id: "todo-1",
+              data: {
+                todos: [
+                  { id: "inspect", content: "Inspect current renderer", status: "completed" },
+                  { id: "build", content: "Build todo panel", status: "completed" },
+                ],
+              },
+            }),
+          ],
+        }),
+      ],
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("input-todo-tracker")).toHaveAttribute("data-state", "visible");
+    expect(screen.getByText("2/2 done")).toBeInTheDocument();
+
+    act(() => {
+      useChatStore.setState({ isStreaming: false, isFinalizing: false, activeAgentId: undefined });
+    });
+
+    const tracker = screen.getByTestId("input-todo-tracker");
+    expect(tracker).toHaveAttribute("data-state", "exiting");
+
+    act(() => {
+      vi.advanceTimersByTime(280);
+    });
+
+    expect(screen.queryByTestId("input-todo-tracker")).not.toBeInTheDocument();
+  });
 });
+
+function agentMessage(overrides: Partial<ChatMessageUi> = {}): ChatMessageUi {
+  return {
+    id: "agent",
+    role: "agent",
+    label: "PersonAgent",
+    content: "",
+    reasoning: "",
+    reasoningBlocks: [],
+    toolBlocks: [],
+    teamEvents: [],
+    parts: [],
+    isStreaming: false,
+    isReasoningStreaming: false,
+    ...overrides,
+  };
+}
+
+function todoBlock(overrides: Partial<ToolBlockUi> = {}): ToolBlockUi {
+  return {
+    id: "todo",
+    name: "TodoWrite",
+    status: "completed",
+    title: "TodoWrite",
+    message: "",
+    content: "",
+    data: { todos: [] },
+    isCollapsed: false,
+    ...overrides,
+  };
+}

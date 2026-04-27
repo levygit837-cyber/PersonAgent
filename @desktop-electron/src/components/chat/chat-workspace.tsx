@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronRight, FolderOpen, LayoutGrid, PanelRight } from "lucide-react";
 import { InputDock } from "./input-dock";
 import { MessageFeed } from "./message-feed";
@@ -17,6 +17,15 @@ export function ChatWorkspace() {
   const conversationTitle = useChatStore((state) => state.conversationTitle);
   const folderLabel = selectedWorkspace ? workspaceName(selectedWorkspace) : "Folder";
   const sessionLabel = conversationTitle || "Session Name";
+
+  useEffect(() => {
+    const chatStore = useChatStore.getState();
+    const appStore = useAppStore.getState();
+    const currentConvId = chatStore.conversationId;
+    if (currentConvId && !appStore.conversationBelongsToWorkspace(currentConvId)) {
+      chatStore.startNewConversation();
+    }
+  }, [selectedWorkspace]);
 
   return (
     <section className="relative flex h-full min-w-0 flex-col overflow-hidden bg-background">
@@ -83,7 +92,7 @@ export function ChatWorkspace() {
               : "pointer-events-none h-full w-0 shrink-0 translate-x-6 overflow-hidden border-l-0 border-glass-border/25 opacity-0 transition-[width,opacity,transform] duration-300 ease-out"
           }
         >
-          <SessionPanel visible={sessionPanelOpen} onClose={() => setSessionPanelOpen(false)} />
+          <SessionPanel key={selectedWorkspace || "no-workspace"} visible={sessionPanelOpen} onClose={() => setSessionPanelOpen(false)} />
         </div>
       </div>
     </section>

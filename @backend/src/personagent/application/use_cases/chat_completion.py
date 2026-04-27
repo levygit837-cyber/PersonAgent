@@ -240,19 +240,61 @@ class ChatCompletionUseCase:
             }
         )
 
+        async for chunk in self._stream_completion_turn(
+            request,
+            conversation,
+            append_user_message=True,
+            was_empty=was_empty,
+            status="building_prompt",
+        ):
+            yield chunk
+
+    async def resume_after_tool_result_stream(
+        self,
+        request: ChatRequestDTO,
+    ) -> AsyncIterator[StreamChunk]:
+        """Retoma o loop do modelo depois que um tool_result foi persistido."""
+        if request.conversation_id is None:
+            raise ConversationNotFoundError("conversation_id é obrigatório para retomar ferramenta")
+        conversation = await self._get_or_create_conversation(request)
+        yield StreamChunk(
+            metadata={
+                "event": "conversation",
+                "conversation_id": str(conversation.id),
+                "title": conversation.title,
+            }
+        )
+
+        async for chunk in self._stream_completion_turn(
+            request,
+            conversation,
+            append_user_message=False,
+            was_empty=False,
+            status="resuming_after_tool_approval",
+        ):
+            yield chunk
+
+    async def _stream_completion_turn(
+        self,
+        request: ChatRequestDTO,
+        conversation: Conversation,
+        *,
+        append_user_message: bool,
+        was_empty: bool,
+        status: str,
+    ) -> AsyncIterator[StreamChunk]:
+        """Executa um turno de streaming, opcionalmente sem nova mensagem de usuário."""
         context_result = await self._build_context_result(request, conversation)
         preparation = self._prepare_prompt_surfaces(request, context_result)
         request = preparation.request
         tools = self._resolve_tool_schemas(request)
 
-        # Adiciona mensagem do usuário
-        user_msg = Message(role=Role.USER, content=request.message)
-        conversation.add_message(user_msg)
+        if append_user_message:
+            user_msg = Message(role=Role.USER, content=request.message)
+            conversation.add_message(user_msg)
 
         # Emite status para o frontend saber que está montando o prompt
-        yield StreamChunk(
-            metadata={"event": "status", "status": "building_prompt"}
-        )
+        yield StreamChunk(metadata={"event": "status", "status": status})
 
         # Recall memórias relevantes
         relevant_memories = await self._recall_relevant_memories(
@@ -338,7 +380,7 @@ class ChatCompletionUseCase:
                         {
                             key: value
                             for key, value in chunk_metadata.items()
-                            if key.startswith("vertex_")
+                            if key.startswith(("vertex_", "kimi_"))
                         }
                     )
                     if chunk.finish_reason:
@@ -631,6 +673,21 @@ class ChatCompletionUseCase:
             "arguments": call.arguments,
             "message": result.content,
             "tool_context": request.tool_context,
+            "resume_request": {
+                "message": request.message,
+                "system_prompt": request.system_prompt,
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+                "provider": request.provider,
+                "model": request.model,
+                "prompt_mode": request.prompt_mode,
+                "reasoning_level": request.reasoning_level,
+                "reasoning_budget_tokens": request.reasoning_budget_tokens,
+                "tools_enabled": request.tools_enabled,
+                "allowed_tools": request.allowed_tools,
+                "tool_context": request.tool_context,
+                "max_tool_iterations": request.max_tool_iterations,
+            },
             "created_at": now_iso(),
         }
         conversation.metadata[PENDING_TOOL_APPROVAL_KEY] = pending

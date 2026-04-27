@@ -1,4 +1,4 @@
-export type ModelProvider = "llama" | "nvidia" | "vertex";
+export type ModelProvider = "llama" | "nvidia" | "vertex" | "kimi";
 
 export type ReasoningPreset = "low" | "medium" | "high" | "xhigh" | "max";
 export type PromptMode = "auto" | "writing" | "exploring" | "research";
@@ -242,6 +242,108 @@ export interface TeamTraceEventUi {
   content?: string;
 }
 
+export type TeamCompactStatus = "idle" | "running" | "completed" | "failed" | "cancelled" | "blocked";
+
+export interface TeamClaimTraceUi {
+  id: string;
+  type: string;
+  text: string;
+  agentId?: string;
+  agentName?: string;
+  status?: string;
+  confidence?: number;
+  coherencyScore?: number;
+  noveltyScore?: number;
+}
+
+export interface TeamCoverageTraceUi {
+  id: string;
+  title: string;
+  detail?: string;
+  ownerAgentId?: string;
+  status?: string;
+}
+
+export interface TeamToolTraceUi {
+  id: string;
+  phase?: string;
+  title: string;
+  status: TeamCompactStatus;
+  summary?: string;
+  calls: Array<Record<string, unknown>>;
+  results: Array<Record<string, unknown>>;
+  proposals: Array<Record<string, unknown>>;
+  createdAt?: string;
+}
+
+export type TeamAgentLogKind = "status" | "thinking" | "response" | "tool" | "claim" | "error";
+
+export interface TeamAgentLogUi {
+  id: string;
+  kind: TeamAgentLogKind;
+  title: string;
+  content?: string;
+  status?: TeamCompactStatus;
+  round?: number;
+  phase?: string;
+  createdAt?: string;
+  toolId?: string;
+}
+
+export interface TeamAgentTraceUi {
+  agentId: string;
+  agentName: string;
+  agentRole?: string;
+  status: TeamCompactStatus;
+  phase?: string;
+  round?: number;
+  focus?: string;
+  thinking: string;
+  output: string;
+  digest?: string;
+  logs: TeamAgentLogUi[];
+  claims: TeamClaimTraceUi[];
+  tools: TeamToolTraceUi[];
+  durationMs?: number;
+  firstTokenMs?: number;
+  coherencyScore?: number;
+  error?: string;
+  isCoordinator?: boolean;
+}
+
+export interface TeamBlackboardTraceUi {
+  status: TeamCompactStatus;
+  actualPhase?: string;
+  nextAction?: string;
+  entryCount?: number;
+  latestSequence?: number;
+  claims: TeamClaimTraceUi[];
+  evidence: string[];
+  decisions: string[];
+  blockers: string[];
+  coverage: TeamCoverageTraceUi[];
+  coverageComplete?: number;
+  coverageTotal?: number;
+  coherencyScore?: number;
+  lowCoherencyCount?: number;
+  tools: TeamToolTraceUi[];
+  snapshot?: Record<string, unknown>;
+  updatedAt?: string;
+}
+
+export interface TeamRunUi {
+  runId?: string;
+  title: string;
+  status: TeamCompactStatus;
+  round?: number;
+  actualPhase?: string;
+  agents: TeamAgentTraceUi[];
+  blackboard: TeamBlackboardTraceUi;
+  votes: TeamTraceEventUi[];
+  startedAt?: string;
+  completedAt?: string;
+}
+
 export interface StreamChunk {
   event?: string;
   conversation_id?: string;
@@ -444,6 +546,7 @@ export interface ChatMessageUi {
   reasoningBlocks: ReasoningBlockUi[];
   toolBlocks: ToolBlockUi[];
   teamEvents: TeamTraceEventUi[];
+  teamRun?: TeamRunUi;
   parts: ChatMessagePartUi[];
   isStreaming: boolean;
   isReasoningStreaming: boolean;

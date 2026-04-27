@@ -110,4 +110,5 @@ pythonpath = ["src"]
 markers = [
     "nvidia_live: real NVIDIA NIM API tests gated by NVIDIA_LIVE_TESTS",
     "vertex_live: real Vertex AI API tests gated by VERTEX_LIVE_TESTS",
+    "kimi_live: real Kimi Code API tests gated by KIMI_LIVE_TESTS",
 ]

@@ -182,6 +182,23 @@ export function approveTool(baseUrl: string, input: { conversationId: string; ap
   });
 }
 
+export async function* streamApproveTool(baseUrl: string, input: { conversationId: string; approvalId: string }, signal?: AbortSignal) {
+  const response = await fetch(`${baseUrl}/chat/tools/approve/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      "Cache-Control": "no-cache",
+    },
+    body: JSON.stringify({
+      conversation_id: input.conversationId,
+      approval_id: input.approvalId,
+    }),
+    signal,
+  });
+  yield* readSseStream<StreamChunk>(response, signal);
+}
+
 export function rejectTool(baseUrl: string, input: { conversationId: string; approvalId: string }) {
   return requestJson<Record<string, unknown>>(baseUrl, "/chat/tools/reject", {
     method: "POST",

@@ -1,12 +1,13 @@
-import { ArrowUp, ChevronDown, ChevronRight, Command, Plus, Sparkles, Square, UsersRound } from "lucide-react";
+import { ArrowUp, Brain, ChevronDown, ChevronRight, Command, Plus, Sparkles, Square, UsersRound } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listChatCommands, listModels } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
-import { localModel, reasoningPresets, type ChatCommandInfo, type LlmModel, type ModelProvider, type ReasoningPreset } from "../../types/chat";
+import { localModel, reasoningPresets, type ChatCommandInfo, type ChatMessageUi, type LlmModel, type ModelProvider, type ReasoningPreset, type ToolBlockStatus, type ToolBlockUi } from "../../types/chat";
 import { Button } from "../ui/button";
+import { isTodoTool, todoItems, type TodoItem } from "./tool-block";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +28,7 @@ type ModelOption = {
 };
 
 const curatedHostedModels: ModelOption[] = [
+  { id: "kimi-for-coding", provider: "kimi", label: "Kimi K2.6", group: "Kimi Code", contextLength: 262144 },
   { id: "qwen/qwen3.5-397b-a17b", provider: "nvidia", label: "Qwen3.5-397B", group: "Qwen" },
   { id: "qwen/qwen3-coder-480b-a35b-instruct", provider: "nvidia", label: "Qwen3 Coder 480B", group: "Qwen" },
   { id: "minimaxai/minimax-m2.5", provider: "nvidia", label: "Minimax M2.5", group: "Minimax" },
@@ -43,6 +45,7 @@ const curatedHostedModels: ModelOption[] = [
 
 const modelGroupOrder = [
   "Local",
+  "Kimi Code",
   "OpenAI",
   "Qwen",
   "Minimax",
@@ -58,6 +61,54 @@ const modelGroupOrder = [
   "Writer",
   "Other",
 ];
+
+const ICONIFY_BASE = "https://api.iconify.design/simple-icons";
+
+const GROUP_ICON_SLUG: Record<string, string> = {
+  Local: "ollama",
+  "Kimi Code": "moonshotai",
+  OpenAI: "openai",
+  Qwen: "qwen",
+  Minimax: "minimax",
+  Moonshot: "moonshotai",
+  DeepSeek: "deepseek",
+  "Google Vertex": "google",
+  NVIDIA: "nvidia",
+  Mistral: "mistralai",
+  Meta: "meta",
+  Google: "google",
+  Microsoft: "microsoft",
+  IBM: "ibm",
+};
+const TODO_DOCK_EXIT_MS = 280;
+
+function providerIconUrl(group: string): string | null {
+  const slug = GROUP_ICON_SLUG[group];
+  if (!slug) return null;
+  return `${ICONIFY_BASE}/${slug}.svg?color=white`;
+}
+
+function ProviderIcon({ group, className }: { group: string; className?: string }) {
+  const [failed, setFailed] = useState(false);
+  const url = providerIconUrl(group);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [url]);
+
+  if (!url || failed) {
+    return <Brain className={className || "h-3.5 w-3.5 shrink-0 text-muted-foreground/70"} />;
+  }
+  return (
+    <img
+      key={url}
+      src={url}
+      alt=""
+      className={className || "h-3.5 w-3.5 shrink-0 object-contain"}
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 export function InputDock() {
   const [text, setText] = useState("");
@@ -100,54 +151,218 @@ export function InputDock() {
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-5 pb-5">
-      <div className="pointer-events-auto w-full max-w-[780px] overflow-hidden rounded-2xl border border-glass-border/35 bg-card/90 shadow-dock ring-1 ring-primary/10 backdrop-blur-2xl">
-        <ComposerAssist
-          disabled={disabled}
-          nextStepSuggestion={!text.trim() ? nextStepSuggestion : undefined}
-          slashToken={slashToken}
-          commands={commandMatches}
-          onPickSuggestion={(value) => {
-            if (!value.trim()) return;
-            void sendMessage(value);
-          }}
-          onPickCommand={(command) => {
-            setText(`${command.slash_name} `);
-            requestAnimationFrame(() => textareaRef.current?.focus());
-          }}
-        />
-        <div className="flex items-end gap-2 px-2.5 py-2.5 sm:gap-2.5 sm:px-3">
-          <FeatureMenu enabled={!disabled} />
-          <textarea
-            ref={textareaRef}
-            value={text}
+      <div className="flex w-full max-w-[780px] flex-col gap-2">
+        <InputTodoDock />
+        <div className="pointer-events-auto w-full overflow-hidden rounded-2xl border border-glass-border/35 bg-card/90 shadow-dock ring-1 ring-primary/10 backdrop-blur-2xl">
+          <ComposerAssist
             disabled={disabled}
-            rows={1}
-            placeholder="Ask the local agent..."
-            onChange={(event) => setText(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                submit();
-              }
+            nextStepSuggestion={!text.trim() ? nextStepSuggestion : undefined}
+            slashToken={slashToken}
+            commands={commandMatches}
+            onPickSuggestion={(value) => {
+              if (!value.trim()) return;
+              void sendMessage(value);
             }}
-            className="min-h-10 min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/80 disabled:opacity-60"
+            onPickCommand={(command) => {
+              setText(`${command.slash_name} `);
+              requestAnimationFrame(() => textareaRef.current?.focus());
+            }}
           />
-          <ModelReasoningSelector enabled={!disabled} />
-          <ContextWindowIndicator />
-          <Button
-            size="icon"
-            variant={isStreaming ? "destructive" : text.trim() ? "default" : "secondary"}
-            disabled={!isStreaming && !text.trim()}
-            onClick={submit}
-            aria-label={isStreaming ? "Stop" : "Send"}
-            className="h-10 w-10 rounded-xl"
-          >
-            {isStreaming ? <Square className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
-          </Button>
+          <div className="flex items-end gap-2 px-2.5 py-2.5 sm:gap-2.5 sm:px-3">
+            <FeatureMenu enabled={!disabled} />
+            <textarea
+              ref={textareaRef}
+              value={text}
+              disabled={disabled}
+              rows={1}
+              placeholder="Ask the local agent..."
+              onChange={(event) => setText(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  submit();
+                }
+              }}
+              className="min-h-10 min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/80 disabled:opacity-60"
+            />
+            <ModelReasoningSelector enabled={!disabled} />
+            <ContextWindowIndicator />
+            <Button
+              size="icon"
+              variant={isStreaming ? "destructive" : text.trim() ? "default" : "secondary"}
+              disabled={!isStreaming && !text.trim()}
+              onClick={submit}
+              aria-label={isStreaming ? "Stop" : "Send"}
+              className="h-10 w-10 rounded-xl"
+            >
+              {isStreaming ? <Square className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
+            </Button>
+          </div>
         </div>
       </div>
     </div>
   );
+}
+
+type TodoDockSnapshot = {
+  key: string;
+  toolName: string;
+  updateCount: number;
+  status: ToolBlockStatus;
+  todos: TodoItem[];
+};
+
+function InputTodoDock() {
+  const messages = useChatStore((state) => state.messages);
+  const activeAgentId = useChatStore((state) => state.activeAgentId);
+  const isExecuting = useChatStore((state) => state.isStreaming || state.isFinalizing);
+  const liveSnapshot = useMemo(() => latestTodoSnapshot(messages, activeAgentId), [messages, activeAgentId]);
+  const [displaySnapshot, setDisplaySnapshot] = useState<TodoDockSnapshot | undefined>();
+  const [exiting, setExiting] = useState(false);
+
+  useEffect(() => {
+    if (isExecuting && liveSnapshot) {
+      setDisplaySnapshot(liveSnapshot);
+      setExiting(false);
+    }
+  }, [isExecuting, liveSnapshot]);
+
+  useEffect(() => {
+    if (isExecuting || !displaySnapshot || exiting) return;
+    setExiting(true);
+  }, [displaySnapshot, exiting, isExecuting]);
+
+  useEffect(() => {
+    if (!exiting) return undefined;
+    const timer = window.setTimeout(() => {
+      setDisplaySnapshot(undefined);
+      setExiting(false);
+    }, TODO_DOCK_EXIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [exiting]);
+
+  if (!displaySnapshot) return null;
+
+  return (
+    <TodoDockPanel
+      snapshot={displaySnapshot}
+      exiting={exiting}
+      onExitComplete={() => {
+        if (!exiting) return;
+        setDisplaySnapshot(undefined);
+        setExiting(false);
+      }}
+    />
+  );
+}
+
+function TodoDockPanel({
+  snapshot,
+  exiting,
+  onExitComplete,
+}: {
+  snapshot: TodoDockSnapshot;
+  exiting: boolean;
+  onExitComplete: () => void;
+}) {
+  const completed = snapshot.todos.filter((todo) => todo.status === "completed").length;
+  const active = snapshot.todos.find((todo) => todo.status === "in_progress");
+  return (
+    <section
+      className={`${exiting ? "personagent-todo-exit" : "personagent-todo-rise"} pointer-events-auto overflow-hidden rounded-xl border border-glass-border/40 bg-card/85 shadow-dock ring-1 ring-primary/10 backdrop-blur-2xl`}
+      aria-label="Todo tracker"
+      data-testid="input-todo-tracker"
+      data-state={exiting ? "exiting" : "visible"}
+      onAnimationEnd={() => {
+        if (exiting) onExitComplete();
+      }}
+    >
+      <div className="flex min-w-0 items-center justify-between gap-3 border-b border-glass-border/25 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <TodoDockStatusDot status={snapshot.status} />
+          <div className="min-w-0">
+            <div className="truncate font-mono text-[11px] font-semibold uppercase text-foreground">Todos</div>
+            <div className="truncate font-mono text-[10px] text-muted-foreground">
+              {snapshot.toolName}
+              {snapshot.updateCount > 1 ? ` - ${snapshot.updateCount} updates` : ""}
+            </div>
+          </div>
+        </div>
+        <div className="shrink-0 rounded-full border border-glass-border/35 bg-background/45 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+          {snapshot.status === "running" || snapshot.status === "queued" ? "updating" : `${completed}/${snapshot.todos.length} done`}
+        </div>
+      </div>
+      <ul className="max-h-52 overflow-y-auto py-1">
+        {snapshot.todos.map((todo, index) => (
+          <li
+            key={todo.id || `${todo.content}-${index}`}
+            className="personagent-todo-item grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 border-b border-glass-border/20 px-3 py-1.5 last:border-0"
+            style={{ animationDelay: `${Math.min(index * 24, 144)}ms` }}
+          >
+            <span className="pt-[7px]">
+              <span
+                className={`personagent-todo-dot inline-flex h-2.5 w-2.5 shrink-0 rounded-full ${todo.status === "completed" ? "bg-success" : "bg-warning"}`}
+                data-status={todo.status}
+                aria-label={todoStatusLabel(todo.status)}
+              />
+            </span>
+            <span
+              className={
+                todo.status === "completed"
+                  ? "min-w-0 break-words text-[12px] leading-5 text-muted-foreground/70 line-through decoration-success/50"
+                  : "min-w-0 break-words text-[12px] leading-5 text-foreground/90"
+              }
+            >
+              {todo.content}
+            </span>
+            {active?.id === todo.id ? (
+              <span className="mt-0.5 rounded-full border border-warning/25 px-1.5 py-[1px] font-mono text-[10px] text-warning">active</span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function TodoDockStatusDot({ status }: { status: ToolBlockStatus }) {
+  if (status === "running" || status === "queued") {
+    return <span className="personagent-spinner h-[7px] w-[7px] shrink-0 text-primary/80" aria-hidden="true" />;
+  }
+  const color = status === "error" || status === "permission_required" ? "bg-destructive" : "bg-success";
+  return <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${color}`} aria-hidden="true" />;
+}
+
+function latestTodoSnapshot(messages: ChatMessageUi[], activeAgentId?: string): TodoDockSnapshot | undefined {
+  const preferred = activeAgentId ? messages.find((message) => message.id === activeAgentId) : undefined;
+  const message = preferred ?? [...messages].reverse().find((item) => item.role === "agent" && item.toolBlocks.some(isTodoTool));
+  if (!message) return undefined;
+  const blocks = message.toolBlocks.filter(isTodoTool);
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    const todos = todoItems(block);
+    if (todos.length === 0) continue;
+    return {
+      key: `${block.id}:${todos.map((todo) => `${todo.id}:${todo.status}:${todo.content}`).join("|")}`,
+      toolName: block.name,
+      updateCount: blocks.length,
+      status: todoSnapshotStatus(blocks),
+      todos,
+    };
+  }
+  return undefined;
+}
+
+function todoSnapshotStatus(blocks: ToolBlockUi[]): ToolBlockStatus {
+  if (blocks.some((block) => block.status === "error" || block.status === "permission_required")) return "error";
+  if (blocks.some((block) => block.status === "running" || block.status === "queued")) return "running";
+  return "completed";
+}
+
+function todoStatusLabel(status: TodoItem["status"]) {
+  if (status === "completed") return "completed";
+  if (status === "in_progress") return "in progress";
+  return "pending";
 }
 
 function ComposerAssist({
@@ -372,7 +587,13 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
     enabled: enabled && Boolean(baseUrl),
     staleTime: 60_000,
   });
-  const modelOptions = buildModelOptions(localModels.data, hostedModels.data, vertexModels.data);
+  const kimiModels = useQuery({
+    queryKey: ["models", baseUrl, "kimi"],
+    queryFn: () => listModels(baseUrl, "kimi"),
+    enabled: enabled && Boolean(baseUrl),
+    staleTime: 60_000,
+  });
+  const modelOptions = buildModelOptions(localModels.data, hostedModels.data, vertexModels.data, kimiModels.data);
   const selectedOption =
     modelOptions.find((item) => item.provider === provider && item.id === selectedModelId) ??
     modelOptions.find((item) => item.id === selectedModelId) ??
@@ -394,6 +615,7 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
           aria-label="Model and reasoning"
           className="h-10 min-w-[112px] max-w-[180px] shrink-0 justify-between gap-2 rounded-xl border-glass-border/35 bg-background/[0.45] px-3 text-xs shadow-soft hover:border-glass-border/50 hover:bg-glass/80 sm:max-w-[220px]"
         >
+          <ProviderIcon key={selectedOption.group} group={selectedOption.group} className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{selectedOption.label}</span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         </Button>
@@ -419,7 +641,9 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
                     key={`${model.provider}:${model.id}`}
                     value={`${model.provider}:${model.id}`}
                     onSelect={() => selectModel(model)}
+                    className="gap-2"
                   >
+                    <ProviderIcon group={model.group} />
                     <span className="truncate">{model.label}</span>
                   </DropdownMenuRadioItem>
                 ))}
@@ -432,7 +656,12 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
   );
 }
 
-function buildModelOptions(localModels?: LlmModel[], hostedModels?: LlmModel[], vertexModels?: LlmModel[]) {
+function buildModelOptions(
+  localModels?: LlmModel[],
+  hostedModels?: LlmModel[],
+  vertexModels?: LlmModel[],
+  kimiModels?: LlmModel[],
+) {
   const byKey = new Map<string, ModelOption>();
   const add = (option: ModelOption) => {
     byKey.set(`${option.provider}:${option.id}`, option);
@@ -449,6 +678,9 @@ function buildModelOptions(localModels?: LlmModel[], hostedModels?: LlmModel[], 
   }
   for (const model of vertexModels ?? []) {
     add(toModelOption(model, "vertex"));
+  }
+  for (const model of kimiModels ?? []) {
+    add(toModelOption(model, "kimi"));
   }
 
   return [...byKey.values()];
@@ -487,6 +719,7 @@ function toModelOption(model: LlmModel, fallbackProvider: ModelProvider): ModelO
 function modelGroup(id: string, provider: ModelProvider) {
   const normalized = id.toLowerCase();
   if (provider === "llama") return "Local";
+  if (provider === "kimi") return "Kimi Code";
   if (provider === "vertex") return "Google Vertex";
   if (normalized.startsWith("openai/") || normalized.startsWith("gpt-")) return "OpenAI";
   if (normalized.startsWith("qwen/")) return "Qwen";
@@ -508,6 +741,7 @@ function formatModelLabel(value: string) {
   const normalized = value.trim();
   if (!normalized || normalized === "local-model" || normalized.toLowerCase() === "local model") return "Local";
   const exact: Record<string, string> = {
+    "kimi-for-coding": "Kimi K2.6",
     "qwen/qwen3.5-397b-a17b": "Qwen3.5-397B",
     "qwen/qwen3-coder-480b-a35b-instruct": "Qwen3 Coder 480B",
     "minimaxai/minimax-m2.5": "Minimax M2.5",
@@ -573,8 +807,14 @@ function ContextWindowIndicator() {
     enabled: Boolean(baseUrl),
     staleTime: 60_000,
   });
+  const kimiModels = useQuery({
+    queryKey: ["models", baseUrl, "kimi"],
+    queryFn: () => listModels(baseUrl, "kimi"),
+    enabled: Boolean(baseUrl),
+    staleTime: 60_000,
+  });
 
-  const modelOptions = buildModelOptions(localModels.data, hostedModels.data, vertexModels.data);
+  const modelOptions = buildModelOptions(localModels.data, hostedModels.data, vertexModels.data, kimiModels.data);
   const selectedOption =
     modelOptions.find((item) => item.provider === provider && item.id === selectedModelId) ??
     modelOptions.find((item) => item.id === selectedModelId);

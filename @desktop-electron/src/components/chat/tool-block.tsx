@@ -16,6 +16,12 @@ type WriteOutputRow = {
   text: string;
 };
 
+export type TodoItem = {
+  id: string;
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+};
+
 export function ToolBlock({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
   if (block.name === "Read" || block.name === "read_file") {
     return <ReadToolEvent block={block} nested={nested} />;
@@ -23,6 +29,10 @@ export function ToolBlock({ block, nested = false }: { block: ToolBlockUi; neste
 
   if (block.name === "Write") {
     return <WriteToolEvent block={block} nested={nested} />;
+  }
+
+  if (isTodoTool(block)) {
+    return <TodoToolEvent block={block} nested={nested} />;
   }
 
   if (isSearchTool(block)) {
@@ -38,6 +48,10 @@ export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: 
   const hasRunning = blocks.some(isRunning);
   const status: ToolBlockStatus = hasError ? "error" : hasRunning ? "running" : "completed";
   const hasDetails = blocks.some(toolBlockHasDetails);
+
+  if (kind === "todo") {
+    return <TodoToolGroupBlock blocks={blocks} />;
+  }
 
   return (
     <div className="mb-2">
@@ -57,6 +71,7 @@ export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: 
             if (kind === "read") return <ReadToolEvent key={block.id} block={block} nested />;
             if (kind === "search") return <SearchToolEvent key={block.id} block={block} nested />;
             if (kind === "shell") return <ShellToolEvent key={block.id} block={block} nested />;
+            if (kind === "todo") return <TodoToolEvent key={block.id} block={block} nested />;
             return <GenericToolEvent key={block.id} block={block} nested />;
           })}
         </div>
@@ -73,6 +88,97 @@ function ReadToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?:
         {readEventText(block)}
       </span>
     </div>
+  );
+}
+
+function TodoToolGroupBlock({ blocks }: { blocks: ToolBlockUi[] }) {
+  return <TodoPanel blocks={blocks} />;
+}
+
+function TodoToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
+  return <TodoPanel blocks={[block]} nested={nested} />;
+}
+
+function TodoPanel({ blocks, nested = false }: { blocks: ToolBlockUi[]; nested?: boolean }) {
+  const latest = latestTodoBlock(blocks);
+  const todos = todoItems(latest);
+  const completed = todos.filter((todo) => todo.status === "completed").length;
+  const active = todos.find((todo) => todo.status === "in_progress");
+  const status = todoPanelStatus(blocks);
+  const updateCount = blocks.length;
+
+  if (todos.length === 0) {
+    return <GenericToolEvent block={latest} nested={nested} />;
+  }
+
+  return (
+    <section
+      className={
+        nested
+          ? "personagent-todo-rise mb-2 overflow-hidden rounded-lg border border-glass-border/35 bg-card/45 shadow-soft"
+          : "personagent-todo-rise mb-3 overflow-hidden rounded-lg border border-glass-border/40 bg-card/55 shadow-soft"
+      }
+      aria-label="Todo tracker"
+      data-testid="todo-tracker"
+    >
+      <div className="flex min-w-0 items-center justify-between gap-3 border-b border-glass-border/25 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <StatusDot status={status} size={7} />
+          <div className="min-w-0">
+            <div className="truncate font-mono text-[11px] font-semibold uppercase text-foreground">Todos</div>
+            <div className="truncate font-mono text-[10px] text-muted-foreground">
+              {latest.name}
+              {updateCount > 1 ? ` - ${updateCount} updates` : ""}
+            </div>
+          </div>
+        </div>
+        <div className="shrink-0 rounded-full border border-glass-border/35 bg-background/45 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+          {todoProgressLabel(status, completed, todos.length)}
+        </div>
+      </div>
+      <ul className="max-h-56 overflow-y-auto py-1">
+        {todos.map((todo, index) => (
+          <TodoRow key={todo.id || `${todo.content}-${index}`} todo={todo} index={index} active={active?.id === todo.id} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function TodoRow({ todo, index, active }: { todo: TodoItem; index: number; active: boolean }) {
+  const completed = todo.status === "completed";
+  return (
+    <li
+      className="personagent-todo-item grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 border-b border-glass-border/20 px-3 py-1.5 last:border-0"
+      style={{ animationDelay: `${Math.min(index * 24, 144)}ms` }}
+    >
+      <span className="pt-[7px]">
+        <TodoStatusDot status={todo.status} />
+      </span>
+      <span
+        className={
+          completed
+            ? "min-w-0 break-words text-[12px] leading-5 text-muted-foreground/70 line-through decoration-success/50"
+            : "min-w-0 break-words text-[12px] leading-5 text-foreground/90"
+        }
+      >
+        {todo.content}
+      </span>
+      {active ? (
+        <span className="mt-0.5 rounded-full border border-warning/25 px-1.5 py-[1px] font-mono text-[10px] text-warning">active</span>
+      ) : null}
+    </li>
+  );
+}
+
+function TodoStatusDot({ status }: { status: TodoItem["status"] }) {
+  const completed = status === "completed";
+  return (
+    <span
+      className={`personagent-todo-dot inline-flex h-2.5 w-2.5 shrink-0 rounded-full ${completed ? "bg-success" : "bg-warning"}`}
+      data-status={status}
+      aria-label={todoStatusLabel(status)}
+    />
   );
 }
 
@@ -336,6 +442,7 @@ function SearchOutputLine({ row }: { row: SearchOutputRow }) {
 
 function toolBlockHasDetails(block: ToolBlockUi) {
   if (block.name === "Write") return writeHasOutput(block);
+  if (isTodoTool(block)) return todoItems(block).length > 0 || block.content.trim().length > 0;
   if (isSearchTool(block)) return searchHasOutput(block);
   return block.content.trim().length > 0;
 }
@@ -515,7 +622,7 @@ function inlineToolText(block: ToolBlockUi) {
           ? webFetchLabel(block)
           : block.name === "LSP"
             ? lspLabel(block)
-            : block.name === "TodoWrite"
+            : isTodoTool(block)
               ? todoLabel(block)
               : block.name === "shell"
                 ? shellLabel(block)
@@ -536,9 +643,13 @@ function groupLabel(kind: string, blocks: ToolBlockUi[], collapsed: boolean) {
   if (kind === "search") return blocks.some(isRunning) ? searchRunningLabel() : collapsed ? searchCollapsedLabel(count) : `Search ${count} ${count === 1 ? "time" : "times"} Hide`;
   if (kind === "web") return `Fetched ${count} URLs`;
   if (kind === "task") return `Updated ${count} tasks`;
-  if (kind === "todo") return `Wrote ${count} todo lists`;
+  if (kind === "todo") return `Updated ${count} todo ${count === 1 ? "list" : "lists"}`;
   if (kind === "lsp") return `Ran ${count} LSP queries`;
   return `${count} tool calls`;
+}
+
+export function isTodoTool(block: Pick<ToolBlockUi, "name">) {
+  return block.name.toLowerCase().startsWith("todo");
 }
 
 function isSearchTool(block: ToolBlockUi) {
@@ -582,8 +693,8 @@ function lspLabel(block: ToolBlockUi) {
 }
 
 function todoLabel(block: ToolBlockUi) {
-  const todos = block.data?.todos;
-  return Array.isArray(todos) ? `TodoWrite ${todos.length} items` : "TodoWrite";
+  const todos = todoItems(block);
+  return todos.length > 0 ? `${block.name} ${todos.length} items` : block.name;
 }
 
 function taskLabel(block: ToolBlockUi) {
@@ -700,6 +811,93 @@ function firstNonEmptyLine(output: string) {
   return undefined;
 }
 
+function latestTodoBlock(blocks: ToolBlockUi[]) {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    if (todoItems(blocks[index]).length > 0) return blocks[index];
+  }
+  return blocks[blocks.length - 1];
+}
+
+function todoPanelStatus(blocks: ToolBlockUi[]): ToolBlockStatus {
+  if (blocks.some(isError)) return "error";
+  if (blocks.some(isRunning)) return "running";
+  return "completed";
+}
+
+function todoProgressLabel(status: ToolBlockStatus, completed: number, total: number) {
+  if (status === "running" || status === "queued") return "updating";
+  if (status === "error" || status === "permission_required") return "failed";
+  return `${completed}/${total} done`;
+}
+
+export function todoItems(block: ToolBlockUi): TodoItem[] {
+  const rawTodos =
+    arrayValue(block.data?.todos) ??
+    arrayValue(block.data?.items) ??
+    arrayValue(block.data?.todo_list) ??
+    singleTodoValue(block.data?.todo) ??
+    todoArrayFromContent(block.content);
+
+  return rawTodos
+    .map((item, index) => normalizeTodoItem(item, index))
+    .filter((item): item is TodoItem => Boolean(item));
+}
+
+function normalizeTodoItem(value: unknown, index: number): TodoItem | undefined {
+  if (!isRecord(value)) return undefined;
+  const content =
+    stringValue(value.content) ??
+    stringValue(value.title) ??
+    stringValue(value.text) ??
+    stringValue(value.description);
+  if (!content) return undefined;
+  const id = stringValue(value.id) ?? `${content}-${index}`;
+  return {
+    id,
+    content,
+    status: todoStatusValue(value.status),
+  };
+}
+
+function todoStatusValue(value: unknown): TodoItem["status"] {
+  if (typeof value !== "string") return "pending";
+  const normalized = value.trim().toLowerCase().replace(/-/g, "_");
+  if (normalized === "completed" || normalized === "complete" || normalized === "done") return "completed";
+  if (normalized === "in_progress" || normalized === "running" || normalized === "active") return "in_progress";
+  return "pending";
+}
+
+function todoStatusLabel(status: TodoItem["status"]) {
+  if (status === "completed") return "completed";
+  if (status === "in_progress") return "in progress";
+  return "pending";
+}
+
+function todoArrayFromContent(content: string): unknown[] {
+  if (!content.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(content);
+    if (!isRecord(parsed)) return [];
+    return (
+      arrayValue(parsed.todos) ??
+      arrayValue(parsed.items) ??
+      arrayValue(parsed.todo_list) ??
+      singleTodoValue(parsed.todo) ??
+      []
+    );
+  } catch {
+    return [];
+  }
+}
+
+function arrayValue(value: unknown): unknown[] | undefined {
+  return Array.isArray(value) ? value : undefined;
+}
+
+function singleTodoValue(value: unknown): unknown[] | undefined {
+  return isRecord(value) ? [value] : undefined;
+}
+
 function lineDetail(block: ToolBlockUi) {
   const start = block.data?.start_line;
   const end = block.data?.end_line;
@@ -734,6 +932,10 @@ function shellOutputPreview(output: string) {
 
 function hasNonWhitespace(value: string) {
   return /\S/.test(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function shellCommandBase(command: string) {
