@@ -27,6 +27,7 @@ from personagent.application.team_chat.contracts import (
 )
 from personagent.application.tools import ToolOrchestrator, ToolRegistry, ToolRuntimeConfig
 from personagent.domain.models.conversation import Conversation, Message, Role
+from personagent.domain.prompts.prompt import shared_runtime_policy_overlay
 from personagent.domain.repositories.conversation_repository import ConversationRepository
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.domain.tools import ToolCall, ToolExecutionStatus, ToolResult, ToolUseContext
@@ -1902,6 +1903,7 @@ class TeamChatOrchestrator:
                     f"{request.system_prompt or 'You coordinate a multi-agent team.'}\n\n"
                     f"Team mode is active. You are {team.coordinator.name}, role: {team.coordinator.role}.\n"
                     f"{team.coordinator.system_prompt}\n"
+                    f"{_team_policy_overlay()}\n"
                     "You are authoritative for flow control. Before any agent answers, create "
                     "distinct work lanes so agents do not solve the same subproblem."
                 ),
@@ -1943,6 +1945,7 @@ class TeamChatOrchestrator:
                     f"{request.system_prompt or 'You coordinate a multi-agent team.'}\n\n"
                     f"Team mode is active. You are {team.coordinator.name}, role: {team.coordinator.role}.\n"
                     f"{team.coordinator.system_prompt}\n"
+                    f"{_team_policy_overlay()}\n"
                     "Act as a real coordinator before debate. Detect overlap, assign distinct "
                     "focus areas, and steer agents away from duplicated reasoning."
                 ),
@@ -2019,7 +2022,8 @@ class TeamChatOrchestrator:
                 "content": (
                     f"{request.system_prompt or 'You synthesize the final answer for the user from a multi-agent team.'}\n\n"
                     f"Team mode is active. You are {team.coordinator.name}, role: {team.coordinator.role}.\n"
-                    f"{team.coordinator.system_prompt}"
+                    f"{team.coordinator.system_prompt}\n"
+                    f"{_team_policy_overlay()}"
                 ),
             },
             {
@@ -2054,9 +2058,17 @@ def _agent_system_prompt(
         f"{base}\n\n"
         f"Team mode is active. Team: {team.name}. You are {agent.name}, role: {agent.role}.\n"
         f"{agent.system_prompt}\n"
+        f"{_team_policy_overlay()}\n"
         "Tool policy: guarded autonomy. Read-only investigation can be autonomous; destructive "
         "or mutating actions must be proposed on the blackboard and require team coordination.\n"
         "Never claim to be the final answer. Your output is one blackboard contribution."
+    )
+
+
+def _team_policy_overlay() -> str:
+    return shared_runtime_policy_overlay(
+        todo_available=True,
+        parallel_tools_available=True,
     )
 
 

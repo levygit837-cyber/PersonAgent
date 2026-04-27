@@ -33,6 +33,7 @@ from personagent.infrastructure.tools import (
     create_read_file_tool,
     create_shell_tool,
     create_skill_tool,
+    create_todo_write_tool,
 )
 from personagent.infrastructure.tools.shell_tool import validate_shell_path_scope
 
@@ -86,10 +87,19 @@ async def test_shell_blocks_mutating_commands(tmp_path):
     context = _tool_context(tmp_path)
 
     assert classify_read_only_shell("ls -la")[0] is True
+    assert (
+        classify_read_only_shell(
+            "pwd && find . -maxdepth 1 -type f | sed 's#^\\./##' | sort | head -200"
+        )[0]
+        is True
+    )
     assert classify_read_only_shell("rm -rf .")[0] is False
+    assert classify_read_only_shell("pwd && rm -rf .")[0] is False
+    assert classify_read_only_shell("cat $HOME/.ssh/id_rsa")[0] is False
     assert classify_read_only_shell("find . -delete")[0] is False
     assert classify_read_only_shell("sed -i.bak s/a/b/ notes.txt")[0] is False
     assert validate_shell_path_scope("cat /etc/passwd", context)[0] is False
+    assert validate_shell_path_scope("pwd && cat /etc/passwd", context)[0] is False
 
     permission = await tool.check_permissions({"command": "rm -rf ."}, context)
     assert permission.allowed is False
@@ -98,6 +108,29 @@ async def test_shell_blocks_mutating_commands(tmp_path):
     permission = await tool.check_permissions({"command": "cat /etc/passwd"}, context)
     assert permission.allowed is False
     assert permission.behavior.value == "ask"
+
+
+@pytest.mark.asyncio
+async def test_shell_executes_read_only_chains_with_shell_semantics(tmp_path):
+    (tmp_path / "a.txt").write_text("alpha\n", encoding="utf-8")
+    tool = create_shell_tool()
+    context = _tool_context(tmp_path)
+    command = "pwd && find . -maxdepth 1 -type f | sed 's#^\\./##' | sort | head -200"
+
+    permission = await tool.check_permissions({"command": command}, context)
+    assert permission.allowed is True
+
+    result = await tool.call(
+        {"command": command},
+        context,
+        ToolCall(id="call_shell", name="shell", arguments={"command": command}),
+    )
+
+    assert result.status == ToolExecutionStatus.COMPLETED
+    assert result.data["return_code"] == 0
+    assert str(tmp_path) in result.data["stdout"]
+    assert "a.txt" in result.data["stdout"]
+    assert "unexpected argument" not in result.data["stderr"]
 
 
 @pytest.mark.asyncio
@@ -563,7 +596,7 @@ async def test_chat_uses_dynamic_prompt_and_user_context_reminder(tmp_path):
 
     messages = llm.calls[0]["messages"]
     assert messages[0]["role"] == "system"
-    assert "# Exploring Mode" in messages[0]["content"]
+    assert "# Mode Overlay: Exploring" in messages[0]["content"]
     assert "# System Context" in messages[0]["content"]
     assert messages[1]["role"] == "user"
     assert "<system-reminder>" in messages[1]["content"]
@@ -594,7 +627,7 @@ async def test_local_llama_auto_prompt_mode_skips_llm_prompt_analysis(tmp_path):
     )
 
     assert len(llm.calls) == 1
-    assert "# Exploring Mode" in llm.calls[0]["messages"][0]["content"]
+    assert "# Mode Overlay: Exploring" in llm.calls[0]["messages"][0]["content"]
 
 
 @pytest.mark.asyncio
@@ -621,10 +654,51 @@ async def test_chat_custom_system_prompt_is_appended_to_dynamic_prompt(tmp_path)
 
     messages = llm.calls[0]["messages"]
     assert messages[0]["role"] == "system"
-    assert "# Writing Mode" in messages[0]["content"]
+    assert "# Mode Overlay: Writing" in messages[0]["content"]
     assert "# Custom System Instructions" in messages[0]["content"]
     assert "CUSTOM SYSTEM" in messages[0]["content"]
     assert "Keep user context." in messages[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_preview_returns_final_prompt_metrics_without_completion(tmp_path):
+    llm = CapturingLLM()
+    use_case = ChatCompletionUseCase(
+        conversation_repo=MemoryConversationRepository(),
+        llm_backend=llm,
+        tool_registry=ToolRegistry([create_read_file_tool(), create_todo_write_tool()]),
+        tool_runtime_config=ToolRuntimeConfig.from_values(workspace_root=tmp_path),
+        build_context_use_case=BuildContextUseCase(
+            workspace_root=tmp_path,
+            context_repository=InMemoryContextRepository(),
+        ),
+    )
+
+    preview = await use_case.preview_prompt(
+        ChatRequestDTO(
+            message="Implemente e valide a mudança",
+            provider="nvidia",
+            model="hosted-model",
+            prompt_mode="writing",
+            tools_enabled=True,
+            allowed_tools=["Read", "TodoWrite"],
+            tool_context={"workspace_root": str(tmp_path)},
+        )
+    )
+
+    assert llm.calls == []
+    assert preview["system_prompt"]
+    assert preview["line_count"] == len(preview["system_prompt"].splitlines())
+    assert preview["char_count"] == len(preview["system_prompt"])
+    assert preview["estimated_tokens"] > 0
+    assert preview["provider_data_boundary"] == "hosted_model_external_provider_local_tools"
+    assert preview["mode"] == "writing"
+    assert "todo_write_policy" in preview["sections"]
+    assert "parallel_tool_use" in preview["sections"]
+    assert "todo" in preview["surfaces"]
+    assert "parallel_tool_use" in preview["surfaces"]
+    assert "# TodoWrite Policy" in preview["system_prompt"]
+    assert "# Parallel Tool Use" in preview["system_prompt"]
 
 
 @pytest.mark.asyncio

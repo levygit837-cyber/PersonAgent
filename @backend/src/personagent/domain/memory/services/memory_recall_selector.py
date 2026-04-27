@@ -34,7 +34,7 @@ _SELECTOR_SYSTEM_PROMPT = (
     "- If no memories would clearly be useful, return an empty list.\n"
     "- If recently used tools are provided, do not select API docs for those tools.\n"
     "  DO select memories with warnings/gotchas about those tools.\n\n"
-    'Respond in JSON: {{"selected_memories": ["filename1.md", "filename2.md"]}}'
+    'Return only compact JSON: {{"selected_memories": ["filename1.md", "filename2.md"]}}'
 )
 
 

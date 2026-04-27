@@ -36,6 +36,7 @@ _READ_ONLY_COMMANDS = {
     "pwd",
     "rg",
     "sed",
+    "sort",
     "stat",
     "tail",
     "tree",
@@ -111,13 +112,12 @@ def create_shell_tool() -> Tool:
         call: ToolCall,
     ) -> ToolResult:
         command = str(arguments["command"])
-        argv = shlex.split(command)
-        executable = shutil.which(argv[0])
-        if executable is None:
+        shell = shutil.which("bash") or shutil.which("sh")
+        if shell is None:
             return ToolResult(
                 tool_call_id=call.id,
                 tool_name="shell",
-                content=f"Command not found: {argv[0]}",
+                content="Command not found: bash or sh",
                 status=ToolExecutionStatus.ERROR,
                 is_error=True,
             )
@@ -142,9 +142,13 @@ def create_shell_tool() -> Tool:
             )
         )
 
+        shell_args = (
+            [shell, "-o", "pipefail", "-c", command]
+            if shell.endswith("bash")
+            else [shell, "-c", command]
+        )
         process = await asyncio.create_subprocess_exec(
-            executable,
-            *argv[1:],
+            *shell_args,
             cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -201,7 +205,8 @@ def create_shell_tool() -> Tool:
         definition=ToolDefinition(
             name="shell",
             description=(
-                "Run a simple read-only shell command in the workspace. "
+                "Run a read-only shell command in the workspace, including safe pipes and "
+                "read-only command chains. "
                 "Commands that may mutate state require permission and are blocked in V1."
             ),
             input_schema={
@@ -209,7 +214,7 @@ def create_shell_tool() -> Tool:
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "Simple read-only command to execute.",
+                        "description": "Read-only shell command to execute.",
                     },
                     "cwd": {
                         "type": "string",
@@ -251,13 +256,16 @@ def classify_read_only_shell(command: str) -> tuple[bool, str]:
     if not stripped:
         return False, "Empty command."
 
-    # Check for dangerous shell meta tokens (excluding | which we handle specially)
-    dangerous_tokens = (">", "<", ";", "&&", "||", "$(", "`", "\n")
-    if any(token in stripped for token in dangerous_tokens):
+    # Check for dangerous shell meta tokens (excluding |, && and || which we handle specially)
+    dangerous_tokens = (">", "<", ";", "$(", "`", "\n")
+    if any(token in stripped for token in dangerous_tokens) or _has_shell_expansion(stripped):
         return False, "Shell operators, redirects and substitutions are not allowed."
 
+    if _has_unquoted_control_operator(stripped):
+        return _classify_shell_chain(stripped)
+
     # Handle pipes specially - allow safe read-only pipe chains
-    if "|" in stripped:
+    if _has_unquoted_pipe(stripped):
         return _classify_pipe_command(stripped)
 
     try:
@@ -270,25 +278,39 @@ def classify_read_only_shell(command: str) -> tuple[bool, str]:
     return _classify_single_command(argv)
 
 
+def _classify_shell_chain(command: str) -> tuple[bool, str]:
+    """Classifica cadeias read-only separadas por && ou ||."""
+    parts = _split_shell_chain(command)
+    if len(parts) < 2:
+        return False, "Invalid shell chain syntax."
+
+    for part in parts:
+        if part in {"&&", "||"}:
+            continue
+        if not part:
+            return False, "Empty command in shell chain."
+        allowed, reason = (
+            _classify_pipe_command(part) if _has_unquoted_pipe(part) else _classify_simple_part(part)
+        )
+        if not allowed:
+            return False, f"Shell chain segment blocked: {reason}"
+
+    return True, "Command chain classified as read-only."
+
+
+def _classify_simple_part(command: str) -> tuple[bool, str]:
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        return False, f"Cannot parse command: {exc}"
+    if not argv:
+        return False, "Empty command."
+    return _classify_single_command(argv)
+
+
 def _classify_pipe_command(command: str) -> tuple[bool, str]:
     """Classifica comandos com pipes permitindo apenas chains read-only seguras."""
-    # Split by pipe, preserving quoted strings
-    parts = []
-    current = ""
-    in_quotes = None
-    for char in command:
-        if char in "\"'":
-            if in_quotes is None:
-                in_quotes = char
-            elif in_quotes == char:
-                in_quotes = None
-            current += char
-        elif char == "|" and in_quotes is None:
-            parts.append(current.strip())
-            current = ""
-        else:
-            current += char
-    parts.append(current.strip())
+    parts = _split_unquoted(command, "|")
 
     if len(parts) < 2:
         return False, "Invalid pipe syntax."
@@ -309,6 +331,121 @@ def _classify_pipe_command(command: str) -> tuple[bool, str]:
             return False, f"Pipe segment blocked: {reason}"
 
     return True, "Command chain classified as read-only."
+
+
+def _split_shell_chain(command: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escaped = False
+    index = 0
+    length = len(command)
+
+    while index < length:
+        char = command[index]
+        if escaped:
+            current.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            index += 1
+            continue
+        if char in "\"'":
+            if quote is None:
+                quote = char
+            elif quote == char:
+                quote = None
+            current.append(char)
+            index += 1
+            continue
+        if quote is None and command[index : index + 2] in {"&&", "||"}:
+            parts.append("".join(current).strip())
+            parts.append(command[index : index + 2])
+            current = []
+            index += 2
+            continue
+        current.append(char)
+        index += 1
+
+    parts.append("".join(current).strip())
+    return parts
+
+
+def _split_unquoted(command: str, separator: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escaped = False
+
+    for char in command:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            continue
+        if char in "\"'":
+            if quote is None:
+                quote = char
+            elif quote == char:
+                quote = None
+            current.append(char)
+            continue
+        if quote is None and char == separator:
+            parts.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+
+    parts.append("".join(current).strip())
+    return parts
+
+
+def _has_unquoted_control_operator(command: str) -> bool:
+    return any(part in {"&&", "||"} for part in _split_shell_chain(command))
+
+
+def _has_unquoted_pipe(command: str) -> bool:
+    return len(_split_unquoted(command, "|")) > 1
+
+
+def _has_shell_expansion(command: str) -> bool:
+    """Detecta expansões que podem contornar a validação estática de paths."""
+    quote: str | None = None
+    escaped = False
+    index = 0
+    length = len(command)
+    while index < length:
+        char = command[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            escaped = True
+            index += 1
+            continue
+        if char in "\"'":
+            if quote is None:
+                quote = char
+            elif quote == char:
+                quote = None
+            index += 1
+            continue
+        if quote != "'" and char == "$":
+            return True
+        if quote is None and command[index : index + 2] == "&&":
+            index += 2
+            continue
+        if quote is None and char in {"&", "{", "}"}:
+            return True
+        index += 1
+    return False
 
 
 def _classify_single_command(argv: list[str], allow_pipe_output: bool = False) -> tuple[bool, str]:
@@ -358,22 +495,7 @@ def _classify_single_command(argv: list[str], allow_pipe_output: bool = False) -
 
 def _validate_pipe_path_scope(command: str, context: ToolUseContext) -> tuple[bool, str]:
     """Valida paths em comandos com pipes - verifica todos os segmentos."""
-    parts = []
-    current = ""
-    in_quotes = None
-    for char in command:
-        if char in "\"'":
-            if in_quotes is None:
-                in_quotes = char
-            elif in_quotes == char:
-                in_quotes = None
-            current += char
-        elif char == "|" and in_quotes is None:
-            parts.append(current.strip())
-            current = ""
-        else:
-            current += char
-    parts.append(current.strip())
+    parts = _split_unquoted(command, "|")
 
     for part in parts:
         try:
@@ -394,12 +516,38 @@ def _validate_pipe_path_scope(command: str, context: ToolUseContext) -> tuple[bo
     return True, "Path arguments are inside allowed roots."
 
 
+def _validate_shell_chain_path_scope(
+    command: str, context: ToolUseContext
+) -> tuple[bool, str]:
+    """Valida paths em cadeias com &&/|| e pipes."""
+    for part in _split_shell_chain(command):
+        if part in {"&&", "||"}:
+            continue
+        if not part:
+            return False, "Empty command in shell chain."
+        allowed, reason = (
+            _validate_pipe_path_scope(part, context)
+            if _has_unquoted_pipe(part)
+            else _validate_single_path_scope(part, context)
+        )
+        if not allowed:
+            return False, reason
+    return True, "Path arguments are inside allowed roots."
+
+
 def validate_shell_path_scope(command: str, context: ToolUseContext) -> tuple[bool, str]:
     """Garante que argumentos de path do shell fiquem dentro dos roots permitidos."""
+    if _has_unquoted_control_operator(command):
+        return _validate_shell_chain_path_scope(command, context)
+
     # Handle pipe commands specially
-    if "|" in command:
+    if _has_unquoted_pipe(command):
         return _validate_pipe_path_scope(command, context)
 
+    return _validate_single_path_scope(command, context)
+
+
+def _validate_single_path_scope(command: str, context: ToolUseContext) -> tuple[bool, str]:
     try:
         argv = shlex.split(command.strip())
     except ValueError as exc:

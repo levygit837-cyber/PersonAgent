@@ -146,6 +146,26 @@ class ChatResponse(BaseModel):
     images: list[dict[str, str]] = Field(default_factory=list)
 
 
+class PromptPreviewResponse(BaseModel):
+    """Prompt package preview for debugging prompt construction."""
+
+    system_prompt: str
+    user_context_message: str | None = None
+    sections: list[str] = Field(default_factory=list)
+    surfaces: list[str] = Field(default_factory=list)
+    dynamic_sections: list[str] = Field(default_factory=list)
+    mode: str | None = None
+    requested_mode: str | None = None
+    analysis_source: str | None = None
+    analysis_confidence: float | None = None
+    line_count: int
+    char_count: int
+    estimated_tokens: int | None = None
+    provider_data_boundary: str | None = None
+    provider: str
+    model: str
+
+
 class ChatCommandInfo(BaseModel):
     name: str
     slash_name: str
@@ -595,6 +615,58 @@ async def list_chat_commands(
     for item in [*commands, *skills]:
         by_name.setdefault(item.slash_name, item)
     return sorted(by_name.values(), key=lambda item: item.slash_name)
+
+
+@router.post("/prompt/preview", response_model=PromptPreviewResponse)
+async def prompt_preview(
+    request: ChatRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> PromptPreviewResponse:
+    """Build and return the prompt package without running a completion."""
+
+    container = get_container()
+    provider = resolve_provider(request.provider)
+    model = resolve_model(provider, request.model)
+    prompt_mode = resolve_prompt_mode(request.prompt_mode)
+    llm_backend = container.get_llm_backend(provider)
+    conv_repo = await container.get_conversation_repo(session)
+    context_workspace_root = resolve_context_workspace_root(request)
+    use_case = _create_chat_use_case(
+        container=container,
+        conv_repo=conv_repo,
+        llm_backend=llm_backend,
+        provider=provider,
+        context_workspace_root=context_workspace_root,
+    )
+
+    try:
+        conversation_id = UUID(request.conversation_id) if request.conversation_id else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="conversation_id inválido.") from exc
+    dto = ChatRequestDTO(
+        conversation_id=conversation_id,
+        message=request.message,
+        system_prompt=request.system_prompt,
+        stream=False,
+        temperature=request.temperature,
+        max_tokens=request.max_tokens,
+        provider=provider,
+        model=model,
+        prompt_mode=prompt_mode,
+        reasoning_level=request.reasoning_level,
+        reasoning_budget_tokens=resolve_reasoning_budget(request),
+        tools_enabled=request.tools_enabled and container.settings.tools_enabled,
+        allowed_tools=request.allowed_tools,
+        tool_context=resolve_tool_context(request),
+        max_tool_iterations=request.max_tool_iterations,
+    )
+
+    try:
+        return PromptPreviewResponse(**await use_case.preview_prompt(dto))
+    except ConversationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/completions", response_model=ChatResponse)

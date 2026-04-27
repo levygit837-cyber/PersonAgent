@@ -121,8 +121,8 @@ async def test_prompt_builder_composes_surfaces_tool_prompts_memory_and_reminder
         runtime_reminders=["# Slash Command Context\n\nExpanded command."],
     )
 
-    assert "# Writing Mode" in result.content
-    assert "# Research Mode" in result.content
+    assert "# Mode Overlay: Writing" in result.content
+    assert "# Mode Overlay: Research" in result.content
     assert "# Tool Prompts" in result.content
     assert "Read before editing." in result.content
     assert "# Skill Inventory" in result.content

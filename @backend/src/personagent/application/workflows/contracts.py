@@ -318,7 +318,15 @@ def node_config_schema(node_type: WorkflowNodeType) -> dict[str, Any]:
             "properties": {
                 "system_prompt": {
                     "type": "string",
-                    "default": "You are an agent node inside a sequential PersonAgent workflow.",
+                    "default": (
+                        "You are an agent node inside a sequential PersonAgent workflow. "
+                        "Follow the node instruction, ground output in previous node data, "
+                        "use tools pragmatically when enabled, and return only the node result.\n\n"
+                        "# Shared PersonAgent Policy\n\n"
+                        "- Gather evidence before conclusions.\n"
+                        "- When TodoWrite is available, use it for multi-step node work.\n"
+                        "- Use parallel tools only for independent reads/searches/checks."
+                    ),
                 },
                 "instructions": {
                     "type": "string",

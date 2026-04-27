@@ -19,36 +19,36 @@ def get_tool_sections(tools: list[str] | None = None) -> tuple[SystemPromptSecti
         Tupla de SystemPromptSection com instruções de ferramentas.
     """
 
+    tool_set = {tool for tool in tools or [] if tool}
+    if not tool_set:
+        return ()
+
     def tool_usage_section() -> str:
-        if tools:
-            available = ", ".join(tools)
-            return f"""# Using Your Tools
+        available = ", ".join(sorted(tool_set))
+        return f"""# Available Tools
 
-You have access to the following tools: {available}.
-
-When using tools:
-- Always provide the required parameters in the correct format
-- Read tool results carefully before proceeding
-- If a tool fails, analyze the error and adjust your approach
-- Prefer using dedicated tools over shell commands when available"""
-        return """# Using Your Tools
-
-You have access to various tools to help you complete tasks.
+Callable tools exposed in this request: {available}.
 
 When using tools:
-- Always provide the required parameters in the correct format
-- Read tool results carefully before proceeding
-- If a tool fails, analyze the error and adjust your approach
-- Prefer using dedicated tools over shell commands when available"""
+- Provide required parameters in the exact schema.
+- Read tool results before deciding the next step.
+- If a tool fails, use the error to change approach.
+- Prefer the most specific available tool for the job."""
 
     def file_operations_section() -> str:
-        return """# File Operations
-
-- Use Read to examine file contents before making changes
-- Use Edit or Write to modify files
-- Use Glob and Grep for file discovery and text search
-- When editing files, provide the exact old_string to match
-- Be precise with file paths - use absolute paths or resolve relative paths correctly"""
+        lines = ["# File Operations", ""]
+        if "Read" in tool_set:
+            lines.append("- Use Read to examine file contents before making claims or edits.")
+        if "Edit" in tool_set:
+            lines.append("- Use Edit for targeted modifications with exact old_string matches.")
+        if "Write" in tool_set:
+            lines.append("- Use Write only when creating a new file or replacing a whole file intentionally.")
+        if "Glob" in tool_set:
+            lines.append("- Use Glob for file discovery when the path is unknown.")
+        if "Grep" in tool_set:
+            lines.append("- Use Grep for focused text or symbol search before reading many files.")
+        lines.append("- Be precise with file paths: use absolute paths or resolve relative paths correctly.")
+        return "\n".join(lines)
 
     def shell_section() -> str:
         return """# Shell Commands
@@ -58,8 +58,9 @@ When using tools:
 - For potentially destructive commands, user approval will be required
 - Always prefer using dedicated tools over shell commands when available"""
 
-    return (
-        SystemPromptSection("tool_usage", tool_usage_section),
-        SystemPromptSection("file_operations", file_operations_section),
-        SystemPromptSection("shell", shell_section),
-    )
+    sections: list[SystemPromptSection] = [SystemPromptSection("tool_usage", tool_usage_section)]
+    if tool_set.intersection({"Read", "Write", "Edit", "Glob", "Grep"}):
+        sections.append(SystemPromptSection("file_operations", file_operations_section))
+    if "shell" in tool_set:
+        sections.append(SystemPromptSection("shell", shell_section))
+    return tuple(sections)

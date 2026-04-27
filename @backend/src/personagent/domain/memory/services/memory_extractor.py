@@ -6,6 +6,7 @@ seguindo as regras do Claude Code sobre o que salvar e o que não salvar.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -29,12 +30,11 @@ _EXTRACT_SYSTEM_PROMPT = (
     "- Focus on user preferences, project decisions, feedback, and references\n"
     "- Do NOT extract: git history, code patterns, debugging steps, ephemeral details\n"
     "- Do NOT extract: passwords, API keys, tokens, secrets, personal identifiers\n"
-    "- Format each memory as: TYPE | NAME | DESCRIPTION | CONTENT\n"
     "- Types: user, feedback, project, reference\n"
     "- Name must be snake_case, unique, without spaces or special chars\n"
-    "- If no durable memories found, respond with 'NONE'\n\n"
-    "Output format (one per line):\n"
-    "TYPE | name | description | content"
+    "- If no durable memories found, return an empty array\n\n"
+    "Return only compact JSON:\n"
+    '{"memories":[{"type":"user","name":"snake_case","description":"short label","content":"durable fact"}]}'
 )
 
 
@@ -214,9 +214,8 @@ class MemoryExtractor:
     def _parse_extraction(self, raw: str) -> list[dict[str, Any]]:
         """Parseia a resposta do LLM em memórias estruturadas.
 
-        Usa parsing robusto que lida com pipes no conteúdo.
-        Espera formato: TYPE | name | description | content
-        onde content pode conter pipes adicionais.
+        Prefers JSON and keeps the previous pipe format as a compatibility
+        fallback.
 
         Args:
             raw: Resposta bruta do LLM.
@@ -224,6 +223,10 @@ class MemoryExtractor:
         Returns:
             Lista de dicts parseados.
         """
+        parsed_json = self._parse_extraction_json(raw)
+        if parsed_json is not None:
+            return parsed_json
+
         memories: list[dict[str, Any]] = []
         for line in raw.split("\n"):
             line = line.strip()
@@ -254,4 +257,44 @@ class MemoryExtractor:
                 "description": description,
                 "content": content,
             })
+        return memories
+
+    def _parse_extraction_json(self, raw: str) -> list[dict[str, Any]] | None:
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start < 0 or end <= start:
+                return None
+            try:
+                payload = json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                return None
+        items = payload.get("memories") if isinstance(payload, dict) else payload
+        if not isinstance(items, list):
+            return None
+        memories: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            content = str(item.get("content") or "").strip()
+            if not name or not content:
+                continue
+            try:
+                mtype = MemoryType(str(item.get("type") or "").lower())
+            except ValueError:
+                mtype = MemoryType.PROJECT
+            memories.append(
+                {
+                    "type": mtype,
+                    "name": name,
+                    "description": str(item.get("description") or "").strip(),
+                    "content": content,
+                }
+            )
         return memories

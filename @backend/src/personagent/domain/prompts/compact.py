@@ -1,10 +1,10 @@
 """Formal prompts for compaction, memory, and next-step suggestion."""
 
-BASE_COMPACT_PROMPT = """You are compacting a conversation for continued agent work.
+BASE_COMPACT_PROMPT = """You compact a conversation so agent work can continue safely.
 
-Text only. Do not call tools. Do not invent details.
+Text only. Do not call tools. Do not invent details, decisions, files, test results, or user intent. Preserve the latest known state and mark uncertainty explicitly.
 
-Return concise Markdown with these sections:
+Return concise Markdown with exactly these sections:
 
 ## Primary Request
 Summarize the user's durable goal and the active task.
@@ -22,10 +22,10 @@ Preserve errors, failed hypotheses, and corrections.
 List unresolved work and blockers.
 
 ## Current State
-Describe the latest known state from the conversation.
+Describe what is currently true at the end of the provided messages.
 
 ## Next Step
-State the most likely next action if it is evident."""
+State the most likely next action if it is evident; otherwise write "Unknown"."""
 
 PARTIAL_COMPACT_PROMPT = BASE_COMPACT_PROMPT + """
 
@@ -77,7 +77,8 @@ SESSION_MEMORY_UPDATE_PROMPT = f"""You update a controlled session memory file.
 
 Text only. Do not call tools. Preserve the exact Markdown headers and intent of the
 template. Keep details dense, factual, and useful for future turns. Remove stale or
-duplicated notes when the current transcript supersedes them. Avoid sensitive data.
+duplicated notes when the current transcript supersedes them. Mark contradicted or
+obsolete notes as replaced by the newer fact instead of keeping both. Avoid sensitive data.
 
 Template:
 
@@ -89,8 +90,12 @@ MEMORY_EXTRACTION_PROMPT = """Extract durable memories from the recent conversat
 Text only. Do not call tools. Identify only reusable preferences, project decisions,
 corrections, stable file paths, or operational patterns that are likely to matter in
 future sessions. Avoid secrets, credentials, personal sensitive data, and one-off
-transient facts. Return Markdown bullets grouped by preference, project fact, and
-correction. Return an empty string if nothing durable should be saved."""
+transient facts.
+
+Return only compact JSON:
+{"memories":[{"type":"user|feedback|project|reference","name":"snake_case","description":"short label","content":"durable fact"}]}
+
+Return {"memories":[]} when nothing durable should be saved."""
 
 NEXT_STEP_SUGGESTION_PROMPT = """Suggest what the user might naturally type next.
 

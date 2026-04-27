@@ -183,6 +183,47 @@ class MemoryConversationRepository(ConversationRepository):
         ][:limit]
 
 
+class FakePromptPreviewContainer(FakeContainer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.settings.tools_enabled = True
+        self.settings.tool_workspace_root_path = "/tmp"
+        self.repo = MemoryConversationRepository()
+
+    async def get_conversation_repo(self, _session):
+        return self.repo
+
+
+class FakePromptPreviewUseCase:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def preview_prompt(self, request):
+        self.requests.append(request)
+        prompt = "# Identity and Objective\n\n# Mode Overlay: Writing"
+        return {
+            "system_prompt": prompt,
+            "user_context_message": "<system-reminder>context</system-reminder>",
+            "sections": ["identity_and_objective", "mode_writing"],
+            "surfaces": ["system", "mode:writing"],
+            "dynamic_sections": ["system_context"],
+            "mode": "writing",
+            "requested_mode": "writing",
+            "analysis_source": "override",
+            "analysis_confidence": 1.0,
+            "line_count": len(prompt.splitlines()),
+            "char_count": len(prompt),
+            "estimated_tokens": 32,
+            "provider_data_boundary": "hosted_model_external_provider_local_tools",
+            "provider": request.provider,
+            "model": request.model,
+        }
+
+
+async def _fake_db():
+    yield None
+
+
 @pytest.mark.asyncio
 async def test_chat_models_routes_to_nvidia_catalog(monkeypatch):
     container = FakeContainer()
@@ -210,6 +251,44 @@ async def test_chat_models_routes_to_nvidia_catalog(monkeypatch):
     ]
     assert body["provider"] == "nvidia"
     assert body["data"][0]["supports_reasoning"] is True
+
+
+@pytest.mark.asyncio
+async def test_prompt_preview_endpoint_returns_prompt_package_without_completion(monkeypatch):
+    container = FakePromptPreviewContainer()
+    use_case = FakePromptPreviewUseCase()
+    monkeypatch.setattr(chat, "get_container", lambda: container)
+    monkeypatch.setattr(chat, "_create_chat_use_case", lambda **_: use_case)
+
+    app = FastAPI()
+    app.dependency_overrides[chat.get_db] = _fake_db
+    app.include_router(chat.router)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/chat/prompt/preview",
+            json={
+                "message": "Implemente a melhoria",
+                "provider": "nvidia",
+                "model": "local-model",
+                "prompt_mode": "writing",
+                "tools_enabled": True,
+                "allowed_tools": ["Read", "TodoWrite"],
+                "workspace_root": "/tmp",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert use_case.requests
+    assert use_case.requests[0].tools_enabled is True
+    assert use_case.requests[0].allowed_tools == ["Read", "TodoWrite"]
+    assert body["system_prompt"].startswith("# Identity and Objective")
+    assert body["line_count"] == len(body["system_prompt"].splitlines())
+    assert body["char_count"] == len(body["system_prompt"])
+    assert body["model"] == "deepseek-ai/deepseek-v4-flash"
+    assert body["provider_data_boundary"] == "hosted_model_external_provider_local_tools"
 
 
 @pytest.mark.asyncio

@@ -126,8 +126,9 @@ TOOL_PROMPTS: dict[str, str] = {
         "or page controls not present in extracted content."
     ),
     "TodoWrite": (
-        "Use TodoWrite for non-trivial writing, exploration, and research plans. Keep exactly one "
-        "active item when work is underway and update todos as facts change."
+        "Use TodoWrite for non-trivial writing, exploration, debugging, research, and validation. "
+        "Create concrete todos, keep exactly one item in progress, mark items complete as soon "
+        "as they are done, and revise the list when facts or scope change."
     ),
     "Task": (
         "Use Task for autonomous subtasks when available and appropriate. Give bounded instructions, "

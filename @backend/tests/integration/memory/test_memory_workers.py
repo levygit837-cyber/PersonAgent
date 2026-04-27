@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -27,10 +28,13 @@ class MockConversationRepo:
     """Mock de ConversationRepository."""
 
     def __init__(self, conversations: dict[str, Conversation] | None = None) -> None:
-        self._conversations = conversations or {}
+        self._conversations = {
+            str(conversation_id): conversation
+            for conversation_id, conversation in (conversations or {}).items()
+        }
 
     async def get_by_id(self, conversation_id: str) -> Conversation | None:
-        return self._conversations.get(conversation_id)
+        return self._conversations.get(str(conversation_id))
 
     async def create(self, conversation: Conversation) -> None:
         self._conversations[str(conversation.id)] = conversation
@@ -170,7 +174,7 @@ class TestExtractMemoryWorker:
         job = MemoryJob(
             id="test-4",
             type=JobType.EXTRACT_MEMORIES,
-            conversation_id="nonexistent",
+            conversation_id=str(uuid4()),
             project_slug="test-project",
         )
         result = await worker(job)

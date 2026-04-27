@@ -862,6 +862,8 @@ Rules:
 - Keep each title under 9 words and under 72 characters.
 - Avoid generic titles such as "Nova Conversa", "Teste", "Chat", "Sessao", or titles based only on the first user message.
 - Titles must be distinct from each other and from existing_titles. If two sessions discuss similar topics, include a concrete differentiator from the history.
+- Prefer concrete nouns from the actual task, repo, tool, provider, or bug discussed.
+- Do not invent projects, files, providers, or outcomes that are not present in the history.
 - Do not mention that you are generating titles.
 
 Return only compact JSON:
