@@ -56,20 +56,46 @@ class FakeVertexBackend:
         }
 
 
+class FakeKimiBackend:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def list_models(self, *, capability=None, refresh=False):
+        self.calls.append({"capability": capability, "refresh": refresh})
+        return {
+            "object": "list",
+            "provider": "kimi",
+            "data": [
+                {
+                    "id": "kimi-for-coding",
+                    "provider": "kimi",
+                    "label": "Kimi K2.6",
+                    "capabilities": ["chat", "reasoning_chat", "tools", "streaming"],
+                    "supports_streaming": True,
+                    "supports_reasoning": True,
+                }
+            ],
+        }
+
+
 class FakeContainer:
     def __init__(self) -> None:
         self.settings = SimpleNamespace(
             nvidia_default_model="deepseek-ai/deepseek-v4-flash",
             vertex_default_model="gemini-3.1-flash-lite-preview",
+            kimi_default_model="kimi-for-coding",
         )
         self.nvidia = FakeNvidiaBackend()
         self.vertex = FakeVertexBackend()
+        self.kimi = FakeKimiBackend()
         self.requested_provider = None
 
     def get_llm_backend(self, provider="llama"):
         self.requested_provider = provider
         if provider == "vertex":
             return self.vertex
+        if provider == "kimi":
+            return self.kimi
         return self.nvidia
 
 
@@ -166,6 +192,33 @@ async def test_chat_models_routes_to_vertex_catalog(monkeypatch):
     assert body["data"][0]["id"] == "gemini-3.1-flash-lite-preview"
 
 
+@pytest.mark.asyncio
+async def test_chat_models_routes_to_kimi_catalog(monkeypatch):
+    container = FakeContainer()
+    monkeypatch.setattr(chat, "get_container", lambda: container)
+
+    app = FastAPI()
+    app.include_router(chat.router)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/chat/models",
+            params={
+                "provider": "kimi",
+                "capability": "reasoning_chat",
+                "refresh": "true",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert container.requested_provider == "kimi"
+    assert container.kimi.calls == [{"capability": "reasoning_chat", "refresh": True}]
+    assert body["provider"] == "kimi"
+    assert body["data"][0]["id"] == "kimi-for-coding"
+
+
 def test_resolve_model_uses_nvidia_default_for_legacy_local_model(monkeypatch):
     container = FakeContainer()
     monkeypatch.setattr(chat, "get_container", lambda: container)
@@ -182,6 +235,15 @@ def test_resolve_model_uses_vertex_default_for_legacy_local_model(monkeypatch):
     model = chat.resolve_model("vertex", "local-model")
 
     assert model == "gemini-3.1-flash-lite-preview"
+
+
+def test_resolve_model_uses_kimi_default_for_legacy_local_model(monkeypatch):
+    container = FakeContainer()
+    monkeypatch.setattr(chat, "get_container", lambda: container)
+
+    model = chat.resolve_model("kimi", "local-model")
+
+    assert model == "kimi-for-coding"
 
 
 @pytest.mark.asyncio

@@ -237,38 +237,6 @@
       padding-left: 13px;
     }
 
-    .team-head {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 14px;
-      margin-bottom: 13px;
-    }
-
-    .team-title {
-      min-width: 0;
-    }
-
-    .team-title h2 {
-      margin: 0;
-      font-size: 14px;
-      font-weight: 650;
-    }
-
-    .team-title p {
-      margin: 3px 0 0;
-      color: hsl(var(--muted-foreground));
-      font-size: 12px;
-      line-height: 1.55;
-    }
-
-    .run-meta {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-      gap: 6px;
-    }
-
     .pill {
       display: inline-flex;
       align-items: center;
@@ -288,47 +256,11 @@
       font-weight: 600;
     }
 
-    .phase-strip {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 6px;
-      margin: 0 0 12px;
-    }
-
-    .phase {
-      min-width: 0;
-      border: 1px solid hsl(var(--glass-border) / 0.55);
-      border-radius: var(--radius-md);
-      background: hsl(var(--card) / 0.42);
-      padding: 8px 9px;
-    }
-
-    .phase .label {
-      color: hsl(var(--muted-foreground));
-      font-size: 10px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    .phase .value {
-      margin-top: 3px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 12px;
-      font-weight: 560;
-    }
-
-    .phase.active {
-      border-color: hsl(var(--primary) / 0.42);
-      background: hsl(var(--primary) / 0.09);
-    }
-
     .agent-grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 8px;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
     }
 
     .agent-lane {
@@ -575,34 +507,6 @@
       line-height: 1.55;
     }
 
-    .coordinator-row {
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-      border: 1px solid hsl(var(--primary) / 0.25);
-      border-radius: var(--radius-md);
-      background: hsl(var(--primary) / 0.07);
-      padding: 10px 11px;
-      margin-bottom: 16px;
-    }
-
-    .coordinator-row .copy {
-      min-width: 0;
-    }
-
-    .coordinator-row strong {
-      display: block;
-      margin-bottom: 3px;
-      font-size: 13px;
-    }
-
-    .coordinator-row p {
-      margin: 0;
-      color: hsl(var(--muted-foreground));
-      font-size: 12px;
-      line-height: 1.55;
-    }
-
     .answer {
       max-width: 760px;
       font-size: 15px;
@@ -707,13 +611,8 @@
       display: inline;
     }
 
-    body[data-density="expanded"] .agent-lane .lane-body,
-    body[data-density="expanded"] .blackboard .board-body {
+    body[data-density="expanded"] .agent-lane .lane-body {
       display: block;
-    }
-
-    body[data-density="expanded"] .board-body {
-      display: grid;
     }
 
     body[data-density="expanded"] .agent-grid {
@@ -750,13 +649,8 @@
         grid-template-columns: 1fr;
       }
 
-      .phase-strip {
-        grid-template-columns: 1fr 1fr;
-      }
-
       .board-body,
-      .blackboard.expanded .board-body,
-      body[data-density="expanded"] .board-body {
+      .blackboard.expanded .board-body {
         grid-template-columns: 1fr;
       }
 
@@ -774,13 +668,8 @@
       }
 
       .topbar-actions,
-      .run-meta,
       .board-metrics {
         justify-content: flex-start;
-      }
-
-      .phase-strip {
-        grid-template-columns: 1fr;
       }
 
       .segmented {
@@ -833,43 +722,6 @@
           <div class="agent-label mono">PersonAgent</div>
 
           <section class="team-trace" aria-label="Team Mode execution trace">
-            <div class="team-head">
-              <div class="team-title">
-                <div class="eyebrow mono">Team Mode</div>
-                <h2>4 agents thinking independently, one Coordinator synthesizing</h2>
-                <p>Default view shows state, focus, tools, and deltas. Raw thinking stays available per agent without flooding the final answer.</p>
-              </div>
-              <div class="run-meta mono" aria-label="Run metrics">
-                <span class="pill"><span class="status-dot thinking"></span><strong>Live</strong></span>
-                <span class="pill">round <strong>1/2</strong></span>
-                <span class="pill">coverage <strong>82%</strong></span>
-                <span class="pill">votes <strong>deferred</strong></span>
-              </div>
-            </div>
-
-            <div class="phase-strip" aria-label="Execution phases">
-              <div class="phase active">
-                <div class="label mono">Phase</div>
-                <div class="value">Independent</div>
-              </div>
-              <div class="phase">
-                <div class="label mono">Next</div>
-                <div class="value">Blackboard</div>
-              </div>
-              <div class="phase">
-                <div class="label mono">Debate</div>
-                <div class="value">On gaps only</div>
-              </div>
-              <div class="phase">
-                <div class="label mono">Vote</div>
-                <div class="value">If blocker</div>
-              </div>
-              <div class="phase">
-                <div class="label mono">Final</div>
-                <div class="value">Coordinator</div>
-              </div>
-            </div>
-
             <div class="agent-grid" aria-label="Agent lanes">
               <section class="agent-lane expanded" data-state="thinking">
                 <button class="lane-button" type="button" data-toggle-lane>
@@ -964,7 +816,7 @@
               </section>
             </div>
 
-            <section class="blackboard expanded" aria-label="Blackboard compact snapshot">
+            <section class="blackboard" aria-label="Blackboard compact snapshot">
               <button class="blackboard-button" type="button" data-toggle-board>
                 <span class="blackboard-title">
                   <span class="status-dot running"></span>
@@ -974,10 +826,10 @@
                   </span>
                 </span>
                 <span class="board-metrics mono">
+                  <span class="pill">actual phase <strong>independent</strong></span>
                   <span class="pill">claims <strong>12</strong></span>
-                  <span class="pill">duplicates <strong>1</strong></span>
-                  <span class="pill">conflicts <strong>2</strong></span>
                   <span class="pill">coherency <strong>0.84</strong></span>
+                  <span class="pill" data-board-state>show</span>
                 </span>
               </button>
               <div class="board-body">
@@ -997,6 +849,10 @@
                 </ul>
                 <ul class="coverage-list">
                   <li class="coverage-item">
+                    <div class="coverage-top mono"><span>Actual phase</span><span>Independent</span></div>
+                    <p>Agents are producing isolated first-pass findings before seeing other opinions.</p>
+                  </li>
+                  <li class="coverage-item">
                     <div class="coverage-top mono"><span>Coverage</span><span>4/5</span></div>
                     <p>Architecture, risks, tools and final answer are covered. Latency budget remains open.</p>
                   </li>
@@ -1007,14 +863,6 @@
                 </ul>
               </div>
             </section>
-
-            <div class="coordinator-row">
-              <span class="avatar mono">CO</span>
-              <div class="copy">
-                <strong>Coordinator is synthesizing</strong>
-                <p>Using accepted claims, compact tool audit and coverage matrix. Raw agent thinking remains accessible above, but the final answer stays clean.</p>
-              </div>
-            </div>
           </section>
 
           <section class="answer" aria-label="Final answer preview">
@@ -1046,6 +894,7 @@
     const body = document.body;
     const densityButtons = document.querySelectorAll("[data-density-button]");
     const board = document.querySelector(".blackboard");
+    const boardState = document.querySelector("[data-board-state]");
 
     densityButtons.forEach((button) => {
       button.addEventListener("click", () => {
@@ -1067,6 +916,7 @@
       button.addEventListener("click", () => {
         if (!board) return;
         board.classList.toggle("expanded");
+        if (boardState) boardState.textContent = board.classList.contains("expanded") ? "hide" : "show";
       });
     });
   </script>

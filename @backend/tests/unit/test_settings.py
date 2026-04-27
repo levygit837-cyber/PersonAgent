@@ -79,6 +79,53 @@ vertex:
     assert settings.vertex_models_cache_ttl_seconds == 123
 
 
+def test_project_env_overrides_kimi_api_key_and_defaults(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+kimi:
+  api_key: "yaml-key"
+  base_url: "https://yaml.example/coding/v1"
+  default_model: "yaml-kimi"
+  max_tokens: 8192
+  context_window: 131072
+  timeout_seconds: 45
+  stream_read_timeout_seconds: 10
+  anthropic_version: "2023-01-01"
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "KIMI_API_KEY=project-kimi-key",
+                "KIMI_BASE_URL=https://api.kimi.com/coding/v1",
+                "KIMI_DEFAULT_MODEL=kimi-for-coding",
+                "KIMI_MAX_TOKENS=32768",
+                "KIMI_CONTEXT_WINDOW=262144",
+                "KIMI_TIMEOUT_SECONDS=240",
+                "KIMI_STREAM_READ_TIMEOUT_SECONDS=0",
+                "KIMI_ANTHROPIC_VERSION=2023-06-01",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("KIMI_API_KEY", "stale-global-kimi-key")
+    monkeypatch.setenv("KIMI_DEFAULT_MODEL", "stale/global-kimi")
+
+    settings = Settings.from_yaml(config_path)
+
+    assert settings.kimi_api_key == "project-kimi-key"
+    assert settings.kimi_base_url == "https://api.kimi.com/coding/v1"
+    assert settings.kimi_default_model == "kimi-for-coding"
+    assert settings.kimi_max_tokens == 32768
+    assert settings.kimi_context_window == 262144
+    assert settings.kimi_timeout_seconds == 240
+    assert settings.kimi_stream_read_timeout_seconds == 0
+    assert settings.kimi_anthropic_version == "2023-06-01"
+
+
 def test_lightpanda_settings_defaults():
     settings = Settings()
 

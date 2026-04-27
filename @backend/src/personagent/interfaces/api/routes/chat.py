@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from personagent.application.dto.chat_dto import ChatRequestDTO
@@ -60,6 +61,7 @@ REASONING_BUDGETS = {
     "xhigh": 16382,
     "max": 32768,
 }
+MAX_TEAM_WS_ERROR_LENGTH = 600
 
 
 def resolve_session_memory_service(
@@ -90,7 +92,7 @@ class ChatRequest(BaseModel):
     max_tokens: int = Field(default=-1, ge=-1)
     provider: str = Field(
         default="llama",
-        description="Provider de inferência: llama, nvidia ou vertex",
+        description="Provider de inferência: llama, nvidia, vertex ou kimi",
     )
     model: str = Field(default="local-model", description="Modelo a ser usado para inferência")
     prompt_mode: str = Field(
@@ -214,10 +216,10 @@ def resolve_reasoning_budget(request: ChatRequest) -> int | None:
 def resolve_provider(provider: str) -> str:
     """Normaliza e valida o provider de inferência."""
     normalized = provider.strip().lower()
-    if normalized not in {"llama", "nvidia", "vertex"}:
+    if normalized not in {"llama", "nvidia", "vertex", "kimi"}:
         raise HTTPException(
             status_code=400,
-            detail="provider inválido. Use llama, nvidia ou vertex.",
+            detail="provider inválido. Use llama, nvidia, vertex ou kimi.",
         )
     return normalized
 
@@ -228,7 +230,27 @@ def resolve_model(provider: str, model: str) -> str:
         return get_container().settings.nvidia_default_model
     if provider == "vertex" and (not model or model == "local-model"):
         return get_container().settings.vertex_default_model
+    if provider == "kimi" and (not model or model == "local-model"):
+        return get_container().settings.kimi_default_model
     return model
+
+
+def resolve_context_window_tokens(container: DIContainer, provider: str) -> int:
+    """Resolve janela de contexto usada para orçamento/compactação por provider."""
+    if provider == "kimi":
+        return container.settings.kimi_context_window
+    return container.settings.llama_ctx_size
+
+
+def resolve_default_output_tokens(container: DIContainer, provider: str) -> int:
+    """Resolve saída default por provider."""
+    if provider == "nvidia":
+        return container.settings.nvidia_max_tokens
+    if provider == "vertex":
+        return container.settings.vertex_max_tokens
+    if provider == "kimi":
+        return container.settings.kimi_max_tokens
+    return container.settings.llama_max_tokens
 
 
 def resolve_prompt_mode(prompt_mode: str | None) -> str:
@@ -255,6 +277,11 @@ def resolve_tool_context(request: ChatRequest) -> dict:
 def resolve_context_workspace_root(request: ChatRequest) -> str:
     """Resolve o workspace que deve alimentar contexto e prompt."""
     tool_context = resolve_tool_context(request)
+    return resolve_context_workspace_root_from_tool_context(tool_context)
+
+
+def resolve_context_workspace_root_from_tool_context(tool_context: dict[str, Any]) -> str:
+    """Resolve o workspace para fluxos que já têm tool_context persistido."""
     workspace_root = tool_context.get("workspace_root")
     if isinstance(workspace_root, str) and workspace_root.strip():
         return workspace_root
@@ -316,6 +343,157 @@ def _require_tool_approval(metadata: dict[str, Any], approval_id: str) -> dict[s
     return dict(pending)
 
 
+def _last_user_message(conversation: Any) -> str:
+    for message in reversed(conversation.messages):
+        if message.role == Role.USER and message.content.strip():
+            return message.content
+    return ""
+
+
+def _resume_request_from_tool_approval(
+    conversation: Any,
+    pending: dict[str, Any],
+) -> ChatRequestDTO:
+    resume = pending.get("resume_request")
+    if not isinstance(resume, dict):
+        resume = {}
+    provider = resolve_provider(str(resume.get("provider") or "llama"))
+    model = resolve_model(provider, str(resume.get("model") or "local-model"))
+    tool_context = dict(resume.get("tool_context") or pending.get("tool_context") or {})
+    return ChatRequestDTO(
+        conversation_id=conversation.id,
+        message=str(resume.get("message") or _last_user_message(conversation)),
+        system_prompt=resume.get("system_prompt")
+        if isinstance(resume.get("system_prompt"), str)
+        else None,
+        stream=True,
+        temperature=float(resume.get("temperature", 0.7)),
+        max_tokens=int(resume.get("max_tokens", -1)),
+        provider=provider,
+        model=model,
+        prompt_mode=resolve_prompt_mode(str(resume.get("prompt_mode") or "auto")),
+        reasoning_level=(
+            str(resume["reasoning_level"]) if resume.get("reasoning_level") is not None else None
+        ),
+        reasoning_budget_tokens=(
+            int(resume["reasoning_budget_tokens"])
+            if resume.get("reasoning_budget_tokens") is not None
+            else None
+        ),
+        tools_enabled=bool(resume.get("tools_enabled", True)),
+        allowed_tools=(
+            [str(item) for item in resume["allowed_tools"]]
+            if isinstance(resume.get("allowed_tools"), list)
+            else None
+        ),
+        tool_context=tool_context,
+        max_tool_iterations=(
+            int(resume["max_tool_iterations"])
+            if resume.get("max_tool_iterations") is not None
+            else None
+        ),
+    )
+
+
+def _create_chat_use_case(
+    *,
+    container: DIContainer,
+    conv_repo: Any,
+    llm_backend: LLMBackendRepository,
+    provider: str,
+    context_workspace_root: str,
+) -> ChatCompletionUseCase:
+    return ChatCompletionUseCase(
+        conversation_repo=conv_repo,
+        llm_backend=llm_backend,
+        tool_registry=container.get_tool_registry(),
+        tool_runtime_config=container.get_tool_runtime_config(),
+        build_context_use_case=container.create_build_context_use_case(context_workspace_root),
+        prompt_builder=container.get_prompt_builder(),
+        prompt_context_analyzer=container.create_prompt_context_analyzer(llm_backend),
+        command_registry=container.create_command_registry(),
+        session_memory_service=resolve_session_memory_service(container, llm_backend),
+        next_step_suggestion_service=resolve_next_step_suggestion_service(container, llm_backend),
+        recall_memory_use_case=(
+            container.create_recall_memory_use_case(llm_backend)
+            if container.settings.memory_recall_enabled
+            else None
+        ),
+        memory_job_scheduler=(
+            container.get_memory_job_scheduler()
+            if container.settings.auto_memory_enabled
+            else None
+        ),
+        memory_repository=container.get_memory_repository(),
+        context_window_tokens=resolve_context_window_tokens(container, provider),
+        default_output_tokens=resolve_default_output_tokens(container, provider),
+    )
+
+
+async def _approve_pending_tool_call(
+    *,
+    request: ToolApprovalDecisionRequest,
+    conversation: Any,
+    conv_repo: Any,
+    container: DIContainer,
+) -> tuple[ChatCompletionUseCase, ChatRequestDTO, dict[str, Any], Any]:
+    pending = _require_tool_approval(conversation.metadata, request.approval_id)
+    resume_request = _resume_request_from_tool_approval(conversation, pending)
+    llm_backend = container.get_llm_backend(resume_request.provider)
+    use_case = _create_chat_use_case(
+        container=container,
+        conv_repo=conv_repo,
+        llm_backend=llm_backend,
+        provider=resume_request.provider,
+        context_workspace_root=resolve_context_workspace_root_from_tool_context(
+            resume_request.tool_context
+        ),
+    )
+    tool = container.get_tool_registry().get(str(pending["tool_name"]))
+    if tool is None:
+        raise HTTPException(
+            status_code=404, detail=f"Ferramenta não encontrada: {pending['tool_name']}"
+        )
+
+    context = use_case._build_tool_context(resume_request, conversation)
+    arguments = dict(pending.get("arguments") or {})
+    validation = await tool.validate_input(arguments, context)
+    if validation is not None and not validation.allowed:
+        raise HTTPException(
+            status_code=400, detail=validation.message or "Entrada da ferramenta inválida."
+        )
+
+    call = ToolCall(
+        id=str(pending["tool_call_id"]),
+        name=str(pending["tool_name"]),
+        arguments=arguments,
+    )
+    result = await tool.call(arguments, context, call)
+    use_case._apply_tool_state_result(result, conversation)
+    conversation.add_message(
+        Message(
+            role=Role.TOOL,
+            content=result.content,
+            tool_call_id=result.tool_call_id,
+            metadata={
+                "tool_name": result.tool_name,
+                "status": result.status.value,
+                "is_error": result.is_error,
+                "approved": True,
+                "data": result.data,
+                **result.metadata,
+            },
+        )
+    )
+    conversation.metadata[PENDING_TOOL_APPROVAL_KEY] = {
+        **pending,
+        "status": "approved",
+        "result_status": result.status.value,
+    }
+    await conv_repo.update(conversation)
+    return use_case, resume_request, pending, result
+
+
 @router.get("/teams")
 async def list_teams() -> dict[str, Any]:
     """List built-in Team Mode presets."""
@@ -328,7 +506,7 @@ async def list_teams() -> dict[str, Any]:
 
 @router.get("/models")
 async def list_models(
-    provider: str = Query(default="llama", description="Provider: llama, nvidia ou vertex"),
+    provider: str = Query(default="llama", description="Provider: llama, nvidia, vertex ou kimi"),
     capability: str | None = Query(default=None, description="Filtro de capability"),
     refresh: bool = Query(default=False, description="Ignora cache do catálogo"),
 ) -> dict:
@@ -336,15 +514,10 @@ async def list_models(
     container = get_container()
     resolved_provider = resolve_provider(provider)
     llm_backend = container.get_llm_backend(resolved_provider)
-    if resolved_provider == "nvidia":
+    if resolved_provider in {"nvidia", "vertex", "kimi"}:
         list_provider_models = getattr(llm_backend, "list_models", None)
         if list_provider_models is None:
-            raise HTTPException(status_code=500, detail="NVIDIA provider sem catálogo")
-        return await list_provider_models(capability=capability, refresh=refresh)
-    if resolved_provider == "vertex":
-        list_provider_models = getattr(llm_backend, "list_models", None)
-        if list_provider_models is None:
-            raise HTTPException(status_code=500, detail="Vertex provider sem catálogo")
+            raise HTTPException(status_code=500, detail=f"{resolved_provider} provider sem catálogo")
         return await list_provider_models(capability=capability, refresh=refresh)
 
     models_info = await llm_backend.get_model_info()
@@ -426,8 +599,8 @@ async def chat_completion(
             else None
         ),
         memory_repository=container.get_memory_repository(),
-        context_window_tokens=container.settings.llama_ctx_size,
-        default_output_tokens=container.settings.llama_max_tokens,
+        context_window_tokens=resolve_context_window_tokens(container, provider),
+        default_output_tokens=resolve_default_output_tokens(container, provider),
     )
 
     conversation_id = None
@@ -512,8 +685,8 @@ async def chat_completion_stream(
             else None
         ),
         memory_repository=container.get_memory_repository(),
-        context_window_tokens=container.settings.llama_ctx_size,
-        default_output_tokens=container.settings.llama_max_tokens,
+        context_window_tokens=resolve_context_window_tokens(container, provider),
+        default_output_tokens=resolve_default_output_tokens(container, provider),
     )
 
     conversation_id = None
@@ -710,70 +883,116 @@ async def approve_tool(
     conversation, conv_repo = await _load_conversation_for_decision(
         request.conversation_id, session
     )
-    pending = _require_tool_approval(conversation.metadata, request.approval_id)
     container = get_container()
-    tool = container.get_tool_registry().get(str(pending["tool_name"]))
-    if tool is None:
-        raise HTTPException(
-            status_code=404, detail=f"Ferramenta não encontrada: {pending['tool_name']}"
-        )
-
-    use_case = ChatCompletionUseCase(
-        conversation_repo=conv_repo,
-        llm_backend=container.get_llm_backend("llama"),
-        tool_registry=container.get_tool_registry(),
-        tool_runtime_config=container.get_tool_runtime_config(),
+    _use_case, _resume_request, _pending, result = await _approve_pending_tool_call(
+        request=request,
+        conversation=conversation,
+        conv_repo=conv_repo,
+        container=container,
     )
-    context = use_case._build_tool_context(
-        ChatRequestDTO(
-            conversation_id=conversation.id,
-            message="",
-            tool_context=dict(pending.get("tool_context") or {}),
-        ),
-        conversation,
-    )
-    arguments = dict(pending.get("arguments") or {})
-    validation = await tool.validate_input(arguments, context)
-    if validation is not None and not validation.allowed:
-        raise HTTPException(
-            status_code=400, detail=validation.message or "Entrada da ferramenta inválida."
-        )
-
-    call = ToolCall(
-        id=str(pending["tool_call_id"]),
-        name=str(pending["tool_name"]),
-        arguments=arguments,
-    )
-    result = await tool.call(arguments, context, call)
-    conversation.add_message(
-        Message(
-            role=Role.TOOL,
-            content=result.content,
-            tool_call_id=result.tool_call_id,
-            metadata={
-                "tool_name": result.tool_name,
-                "status": result.status.value,
-                "is_error": result.is_error,
-                "approved": True,
-                "data": result.data,
-                **result.metadata,
-            },
-        )
-    )
-    conversation.metadata[PENDING_TOOL_APPROVAL_KEY] = {
-        **pending,
-        "status": "approved",
-        "result_status": result.status.value,
-    }
-    await conv_repo.update(conversation)
     return {
         "event": "tool_approval_changed",
         "conversation_id": str(conversation.id),
         "approval_id": request.approval_id,
         "status": "approved",
         "tool_result": result.to_stream_dict(),
-        "injected_message": "Continue after the approved tool result.",
+        "resume_available": True,
     }
+
+
+@router.post("/tools/approve/stream")
+async def approve_tool_stream(
+    request: ToolApprovalDecisionRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> StreamingResponse:
+    """Aprova uma ferramenta, persiste o tool_result e retoma o modelo via SSE."""
+
+    async def event_generator() -> AsyncIterator[str]:
+        try:
+            conversation, conv_repo = await _load_conversation_for_decision(
+                request.conversation_id, session
+            )
+            container = get_container()
+            use_case, resume_request, pending, result = await _approve_pending_tool_call(
+                request=request,
+                conversation=conversation,
+                conv_repo=conv_repo,
+                container=container,
+            )
+            pending_arguments = dict(pending.get("arguments") or {})
+            yield encode_sse(
+                {
+                    "event": "tool_approval_changed",
+                    "conversation_id": str(conversation.id),
+                    "approval_id": request.approval_id,
+                    "status": "approved",
+                    "tool_result": result.to_stream_dict(),
+                }
+            )
+            yield encode_sse(
+                {
+                    "event": "tool_result",
+                    "conversation_id": str(conversation.id),
+                    "tool_call_id": result.tool_call_id,
+                    "tool_name": result.tool_name,
+                    "tool_status": result.status.value,
+                    "tool_input": pending_arguments,
+                    "tool_result": result.content,
+                    "tool_error": result.content if result.is_error else None,
+                    "tool_data": result.data,
+                    "metadata": {**result.metadata, "approved": True},
+                }
+            )
+
+            async for chunk in use_case.resume_after_tool_result_stream(resume_request):
+                data: dict = dict(chunk.metadata)
+                if chunk.content:
+                    data["content"] = chunk.content
+                if chunk.reasoning_content:
+                    data["reasoning_content"] = chunk.reasoning_content
+                if chunk.is_thinking:
+                    data["is_thinking"] = True
+                if chunk.finish_reason:
+                    data["finish_reason"] = chunk.finish_reason
+                if chunk.usage:
+                    data["usage"] = chunk.usage
+                if chunk.tool_calls:
+                    data["tool_calls"] = chunk.tool_calls
+                if chunk.images:
+                    data["images"] = [image.to_dict() for image in chunk.images]
+                if data:
+                    yield encode_sse(data)
+        except ConversationNotFoundError as exc:
+            yield encode_sse({"event": "error", "error": str(exc), "status": 404})
+        except ValueError as exc:
+            yield encode_sse({"event": "error", "error": str(exc), "status": 400})
+        except LLMBackendConnectionError as exc:
+            yield encode_sse({"event": "error", "error": str(exc), "status": 503})
+        except LLMBackendError as exc:
+            yield encode_sse({"event": "error", "error": str(exc), "status": 500})
+        except HTTPException as exc:
+            yield encode_sse({"event": "error", "error": exc.detail, "status": exc.status_code})
+        except Exception as exc:
+            logger.exception("tool_approval_stream_unhandled_error")
+            yield encode_sse(
+                {
+                    "event": "error",
+                    "error": f"Erro inesperado ao aprovar ferramenta: {exc}",
+                    "status": 500,
+                }
+            )
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/tools/reject")
@@ -810,7 +1029,7 @@ async def reject_tool(
         "conversation_id": str(conversation.id),
         "approval_id": request.approval_id,
         "status": "rejected",
-        "injected_message": "The requested tool call was rejected. Continue without it.",
+        "resume_available": False,
     }
 
 
@@ -980,10 +1199,17 @@ async def team_chat_websocket(websocket: WebSocket) -> None:
         event = {"event": "error", "error": error_message, "status": 500}
         trace_events.append(event)
         await _send_ws_json_safely(websocket, event)
+    except SQLAlchemyError as exc:
+        logger.exception("team_chat_websocket_database_error")
+        status = "failed"
+        error_message = _compact_team_error_message("Team Mode database error", exc)
+        event = {"event": "error", "error": error_message, "status": 500}
+        trace_events.append(event)
+        await _send_ws_json_safely(websocket, event)
     except Exception as exc:
         logger.exception("team_chat_websocket_unhandled_error")
         status = "failed"
-        error_message = f"Unexpected Team Mode error: {exc}"
+        error_message = _compact_team_error_message("Unexpected Team Mode error", exc)
         event = {"event": "error", "error": error_message, "status": 500}
         trace_events.append(event)
         await _send_ws_json_safely(websocket, event)
@@ -1033,6 +1259,18 @@ async def _send_ws_json_safely(websocket: WebSocket, payload: dict[str, Any]) ->
         await websocket.send_json(payload)
     except RuntimeError:
         return
+
+
+def _compact_team_error_message(prefix: str, exc: Exception) -> str:
+    text = " ".join(str(exc).split())
+    if "team_runs.run_id" in text and "UndefinedColumnError" in text:
+        return (
+            f"{prefix}: local database schema is missing Team Mode columns. "
+            "Restart the backend or run database initialization to apply the Team Mode schema."
+        )
+    if len(text) > MAX_TEAM_WS_ERROR_LENGTH:
+        text = f"{text[:MAX_TEAM_WS_ERROR_LENGTH].rstrip()}..."
+    return f"{prefix}: {text}"
 
 
 async def _close_ws_safely(websocket: WebSocket) -> None:

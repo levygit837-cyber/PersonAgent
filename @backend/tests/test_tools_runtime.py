@@ -409,6 +409,74 @@ async def test_stream_permission_block_does_not_emit_internal_tool_error(tmp_pat
     assert pending["status"] == "awaiting_approval"
     assert pending["tool_name"] == "shell"
     assert pending["approval_id"]
+    assert pending["resume_request"]["message"] == "Execute cat /etc/passwd"
+    assert pending["resume_request"]["provider"] == "llama"
+
+
+@pytest.mark.asyncio
+async def test_resume_after_tool_result_stream_does_not_add_synthetic_user(tmp_path):
+    repo = MemoryConversationRepository()
+    conversation = Conversation()
+    conversation.add_message(Message(role=Role.USER, content="Execute echo ok"))
+    conversation.add_message(
+        Message(
+            role=Role.ASSISTANT,
+            content="",
+            tool_calls=[
+                {
+                    "id": "call_shell",
+                    "type": "function",
+                    "function": {
+                        "name": "shell",
+                        "arguments": '{"command":"echo ok"}',
+                    },
+                }
+            ],
+        )
+    )
+    conversation.add_message(
+        Message(
+            role=Role.TOOL,
+            content="ok\n",
+            tool_call_id="call_shell",
+            metadata={"tool_name": "shell", "status": "completed"},
+        )
+    )
+    await repo.create(conversation)
+    llm = ApprovalResumeLLM()
+    use_case = ChatCompletionUseCase(
+        conversation_repo=repo,
+        llm_backend=llm,
+        tool_registry=ToolRegistry([create_shell_tool()]),
+        tool_runtime_config=ToolRuntimeConfig.from_values(workspace_root=tmp_path),
+    )
+
+    chunks = [
+        chunk
+        async for chunk in use_case.resume_after_tool_result_stream(
+            ChatRequestDTO(
+                conversation_id=conversation.id,
+                message="Execute echo ok",
+                tools_enabled=True,
+                tool_context={
+                    "workspace_root": str(tmp_path),
+                    "cwd": str(tmp_path),
+                    "allowed_roots": [str(tmp_path)],
+                },
+            )
+        )
+    ]
+
+    assert any(chunk.content == "final after tool" for chunk in chunks)
+    assert "Continue after the approved tool result." not in json.dumps(
+        llm.calls[0]["messages"]
+    )
+    stored = await repo.get_by_id(conversation.id)
+    assert stored is not None
+    user_messages = [message.content for message in stored.messages if message.role == Role.USER]
+    assert user_messages == ["Execute echo ok"]
+    assert stored.messages[-1].role == Role.ASSISTANT
+    assert stored.messages[-1].content == "final after tool"
 
 
 @pytest.mark.asyncio
@@ -774,6 +842,13 @@ class CapturingLLM(LLMBackendRepository):
 
     async def get_model_info(self) -> dict:
         return {}
+
+
+class ApprovalResumeLLM(CapturingLLM):
+    async def chat_completion_stream(self, messages, *args, **kwargs):
+        self.calls.append({"messages": messages, "kwargs": kwargs})
+        yield StreamChunk(content="final after tool")
+        yield StreamChunk(finish_reason="stop")
 
 
 class CompactingLLM(CapturingLLM):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import subprocess
@@ -23,16 +24,28 @@ class SessionPanelService:
 
     workspace_root: str | Path | None = None
 
-    def panel_snapshot(self, conversation: Conversation) -> dict[str, Any]:
+    async def panel_snapshot(self, conversation: Conversation) -> dict[str, Any]:
         workspace = self._workspace()
-        project = self._project_snapshot(workspace)
+        # Compute conversation-derived data concurrently with project snapshot.
+        changed_files_task = asyncio.create_task(self._changed_files_async(conversation, workspace))
+        sources_task = asyncio.create_task(self._sources_async(conversation))
+        usage_task = asyncio.create_task(self._usage_async(conversation))
+        project_task = asyncio.create_task(self._project_snapshot_async(workspace))
+
+        changed_files, sources, usage, project = await asyncio.gather(
+            changed_files_task,
+            sources_task,
+            usage_task,
+            project_task,
+        )
+
         return {
             "conversation_id": str(conversation.id),
             "title": conversation.title,
             "updated_at": conversation.updated_at.isoformat(),
-            "changed_files": self._changed_files(conversation, workspace),
-            "sources": self._sources(conversation),
-            "usage": self._usage(conversation),
+            "changed_files": changed_files,
+            "sources": sources,
+            "usage": usage,
             "project": project,
         }
 
@@ -58,6 +71,177 @@ class SessionPanelService:
         raw = self.workspace_root or Path.cwd()
         path = Path(raw).expanduser().resolve()
         return path if path.exists() else Path.cwd().resolve()
+
+    async def _usage_async(self, conversation: Conversation) -> dict[str, Any]:
+        return self._usage(conversation)
+
+    async def _sources_async(self, conversation: Conversation) -> list[dict[str, Any]]:
+        return self._sources(conversation)
+
+    async def _changed_files_async(self, conversation: Conversation, workspace: Path) -> list[dict[str, Any]]:
+        return self._changed_files(conversation, workspace)
+
+    async def _project_snapshot_async(self, workspace: Path) -> dict[str, Any]:
+        errors: list[str] = []
+        # Run independent git/gh queries concurrently.
+        repo_task = _run_async(["gh", "repo", "view", "--json", "nameWithOwner,url,defaultBranchRef,pushedAt"], workspace, timeout=5)
+        prs_task = _run_async(["gh", "pr", "list", "--limit", "5", "--state", "all", "--json", "number,title,state,author,createdAt,updatedAt,mergedAt,url,headRefName,baseRefName"], workspace, timeout=5)
+        branch_task = _run_async(["git", "branch", "--format=%(refname:short)%x1f%(objectname:short)%x1f%(committerdate:iso8601)%x1f%(subject)"], workspace, timeout=5)
+        log_task = _run_async(["git", "log", "-10", "--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s"], workspace, timeout=5)
+        remote_task = _run_async(["git", "remote", "get-url", "origin"], workspace, timeout=3)
+        current_branch_task = _run_async(["git", "branch", "--show-current"], workspace, timeout=3)
+
+        repo_result, prs_result, branch_result, log_result, remote_result, current_branch_result = await asyncio.gather(
+            repo_task, prs_task, branch_task, log_task, remote_task, current_branch_task
+        )
+
+        repo = self._repo_info_from_results(repo_result, remote_result, current_branch_result, errors)
+        return {
+            "repo": repo,
+            "prs": self._prs_from_result(prs_result, errors),
+            "branches": self._branches_from_result(branch_result, current_branch_result, errors),
+            "pushes": await self._last_pushes_async(workspace, repo, errors),
+            "commits": self._commits_from_result(log_result, errors),
+            "errors": errors,
+        }
+
+    def _repo_info_from_results(
+        self,
+        repo_result: _RunResult,
+        remote_result: _RunResult,
+        current_branch_result: _RunResult,
+        errors: list[str],
+    ) -> dict[str, Any] | None:
+        workspace = self._workspace()
+        if repo_result.ok:
+            data = _json_object(repo_result.stdout)
+            default_branch = data.get("defaultBranchRef")
+            return {
+                "name_with_owner": data.get("nameWithOwner"),
+                "url": data.get("url"),
+                "default_branch": default_branch.get("name") if isinstance(default_branch, dict) else None,
+                "pushed_at": data.get("pushedAt"),
+                "source": "gh",
+            }
+        errors.append(_command_error("gh repo view", repo_result))
+        if not remote_result.ok:
+            return None
+        name_with_owner = _owner_repo_from_remote(remote_result.stdout.strip())
+        return {
+            "name_with_owner": name_with_owner,
+            "url": f"https://github.com/{name_with_owner}" if name_with_owner else remote_result.stdout.strip(),
+            "default_branch": current_branch_result.stdout.strip() if current_branch_result.ok else None,
+            "pushed_at": None,
+            "source": "git",
+        }
+
+    def _prs_from_result(self, result: _RunResult, errors: list[str]) -> list[dict[str, Any]]:
+        if not result.ok:
+            errors.append(_command_error("gh pr list", result))
+            return []
+        values = _json_list(result.stdout)
+        return [
+            {
+                "id": str(item.get("number")),
+                "type": "pr",
+                "title": f"#{item.get('number')} {item.get('title')}",
+                "subtitle": f"{item.get('state')} · {item.get('headRefName')} → {item.get('baseRefName')}",
+                "url": item.get("url"),
+                "timestamp": item.get("updatedAt") or item.get("createdAt"),
+                "metadata": item,
+            }
+            for item in values
+        ]
+
+    def _branches_from_result(
+        self,
+        result: _RunResult,
+        current_branch_result: _RunResult,
+        errors: list[str],
+    ) -> list[dict[str, Any]]:
+        workspace = self._workspace()
+        if not _is_git_repo(workspace):
+            return []
+        if not result.ok:
+            errors.append(_command_error("git branch", result))
+            return []
+        current = current_branch_result.stdout.strip() if current_branch_result.ok else ""
+        branches = []
+        for line in result.stdout.splitlines()[:20]:
+            name, sha, date, subject = _split_record(line, 4)
+            branches.append(
+                {
+                    "id": name,
+                    "type": "branch",
+                    "title": name,
+                    "subtitle": f"{sha} · {subject}",
+                    "timestamp": date,
+                    "active": name == current,
+                    "metadata": {"sha": sha, "subject": subject},
+                }
+            )
+        return branches
+
+    def _commits_from_result(self, result: _RunResult, errors: list[str]) -> list[dict[str, Any]]:
+        workspace = self._workspace()
+        if not _is_git_repo(workspace):
+            return []
+        if not result.ok:
+            errors.append(_command_error("git log", result))
+            return []
+        commits = []
+        for line in result.stdout.splitlines():
+            sha, short, author, date, subject = _split_record(line, 5)
+            commits.append(
+                {
+                    "id": sha,
+                    "type": "commit",
+                    "title": subject,
+                    "subtitle": f"{short} · {author}",
+                    "timestamp": date,
+                    "metadata": {"sha": sha, "short_sha": short, "author": author},
+                }
+            )
+        return commits
+
+    async def _last_pushes_async(
+        self,
+        workspace: Path,
+        repo: dict[str, Any] | None,
+        errors: list[str],
+    ) -> list[dict[str, Any]]:
+        name_with_owner = (repo or {}).get("name_with_owner")
+        if not name_with_owner:
+            return []
+        result = await _run_async(["gh", "api", f"repos/{name_with_owner}/events"], workspace, timeout=5)
+        if not result.ok:
+            errors.append(_command_error("gh api events", result))
+            return []
+        events = [item for item in _json_list(result.stdout) if item.get("type") == "PushEvent"]
+        pushes = []
+        for item in events[:5]:
+            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+            commits = payload.get("commits") if isinstance(payload.get("commits"), list) else []
+            actor = item.get("actor") if isinstance(item.get("actor"), dict) else {}
+            ref = str(payload.get("ref") or "")
+            branch = ref.removeprefix("refs/heads/")
+            pushes.append(
+                {
+                    "id": str(item.get("id")),
+                    "type": "push",
+                    "title": f"Push to {branch or ref or 'repository'}",
+                    "subtitle": f"{len(commits)} commits · {actor.get('login', 'unknown')}",
+                    "timestamp": item.get("created_at"),
+                    "url": None,
+                    "metadata": {
+                        "ref": ref,
+                        "branch": branch,
+                        "commits": commits,
+                        "actor": actor,
+                    },
+                }
+            )
+        return pushes
 
     def _usage(self, conversation: Conversation) -> dict[str, Any]:
         usage = {
@@ -269,170 +453,6 @@ class SessionPanelService:
                 by_url.setdefault(source["url"], source)
         return list(by_url.values())
 
-    def _project_snapshot(self, workspace: Path) -> dict[str, Any]:
-        errors: list[str] = []
-        repo = self._repo_info(workspace, errors)
-        return {
-            "repo": repo,
-            "prs": self._last_prs(workspace, errors),
-            "branches": self._branches(workspace, errors),
-            "pushes": self._last_pushes(workspace, repo, errors),
-            "commits": self._last_commits(workspace, errors),
-            "errors": errors,
-        }
-
-    def _repo_info(self, workspace: Path, errors: list[str]) -> dict[str, Any] | None:
-        result = _run(
-            ["gh", "repo", "view", "--json", "nameWithOwner,url,defaultBranchRef,pushedAt"],
-            workspace,
-        )
-        if result.ok:
-            data = _json_object(result.stdout)
-            default_branch = data.get("defaultBranchRef")
-            return {
-                "name_with_owner": data.get("nameWithOwner"),
-                "url": data.get("url"),
-                "default_branch": default_branch.get("name") if isinstance(default_branch, dict) else None,
-                "pushed_at": data.get("pushedAt"),
-                "source": "gh",
-            }
-        errors.append(_command_error("gh repo view", result))
-        remote = _run(["git", "remote", "get-url", "origin"], workspace)
-        if not remote.ok:
-            return None
-        name_with_owner = _owner_repo_from_remote(remote.stdout.strip())
-        return {
-            "name_with_owner": name_with_owner,
-            "url": f"https://github.com/{name_with_owner}" if name_with_owner else remote.stdout.strip(),
-            "default_branch": _git_default_branch(workspace),
-            "pushed_at": None,
-            "source": "git",
-        }
-
-    def _last_prs(self, workspace: Path, errors: list[str]) -> list[dict[str, Any]]:
-        result = _run(
-            [
-                "gh",
-                "pr",
-                "list",
-                "--limit",
-                "5",
-                "--state",
-                "all",
-                "--json",
-                "number,title,state,author,createdAt,updatedAt,mergedAt,url,headRefName,baseRefName",
-            ],
-            workspace,
-        )
-        if not result.ok:
-            errors.append(_command_error("gh pr list", result))
-            return []
-        values = _json_list(result.stdout)
-        return [
-            {
-                "id": str(item.get("number")),
-                "type": "pr",
-                "title": f"#{item.get('number')} {item.get('title')}",
-                "subtitle": f"{item.get('state')} · {item.get('headRefName')} → {item.get('baseRefName')}",
-                "url": item.get("url"),
-                "timestamp": item.get("updatedAt") or item.get("createdAt"),
-                "metadata": item,
-            }
-            for item in values
-        ]
-
-    def _branches(self, workspace: Path, errors: list[str]) -> list[dict[str, Any]]:
-        if not _is_git_repo(workspace):
-            return []
-        current = _run(["git", "branch", "--show-current"], workspace).stdout.strip()
-        result = _run(
-            [
-                "git",
-                "branch",
-                "--format=%(refname:short)%x1f%(objectname:short)%x1f%(committerdate:iso8601)%x1f%(subject)",
-            ],
-            workspace,
-        )
-        if not result.ok:
-            errors.append(_command_error("git branch", result))
-            return []
-        branches = []
-        for line in result.stdout.splitlines()[:20]:
-            name, sha, date, subject = _split_record(line, 4)
-            branches.append(
-                {
-                    "id": name,
-                    "type": "branch",
-                    "title": name,
-                    "subtitle": f"{sha} · {subject}",
-                    "timestamp": date,
-                    "active": name == current,
-                    "metadata": {"sha": sha, "subject": subject},
-                }
-            )
-        return branches
-
-    def _last_pushes(
-        self,
-        workspace: Path,
-        repo: dict[str, Any] | None,
-        errors: list[str],
-    ) -> list[dict[str, Any]]:
-        name_with_owner = (repo or {}).get("name_with_owner")
-        if not name_with_owner:
-            return []
-        result = _run(["gh", "api", f"repos/{name_with_owner}/events"], workspace)
-        if not result.ok:
-            errors.append(_command_error("gh api events", result))
-            return []
-        events = [item for item in _json_list(result.stdout) if item.get("type") == "PushEvent"]
-        pushes = []
-        for item in events[:5]:
-            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-            commits = payload.get("commits") if isinstance(payload.get("commits"), list) else []
-            actor = item.get("actor") if isinstance(item.get("actor"), dict) else {}
-            ref = str(payload.get("ref") or "")
-            branch = ref.removeprefix("refs/heads/")
-            pushes.append(
-                {
-                    "id": str(item.get("id")),
-                    "type": "push",
-                    "title": f"Push to {branch or ref or 'repository'}",
-                    "subtitle": f"{len(commits)} commits · {actor.get('login', 'unknown')}",
-                    "timestamp": item.get("created_at"),
-                    "url": None,
-                    "metadata": {
-                        "ref": ref,
-                        "branch": branch,
-                        "commits": commits,
-                        "actor": actor,
-                    },
-                }
-            )
-        return pushes
-
-    def _last_commits(self, workspace: Path, errors: list[str]) -> list[dict[str, Any]]:
-        if not _is_git_repo(workspace):
-            return []
-        result = _run(["git", "log", "-10", "--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s"], workspace)
-        if not result.ok:
-            errors.append(_command_error("git log", result))
-            return []
-        commits = []
-        for line in result.stdout.splitlines():
-            sha, short, author, date, subject = _split_record(line, 5)
-            commits.append(
-                {
-                    "id": sha,
-                    "type": "commit",
-                    "title": subject,
-                    "subtitle": f"{short} · {author}",
-                    "timestamp": date,
-                    "metadata": {"sha": sha, "short_sha": short, "author": author},
-                }
-            )
-        return commits
-
     def _commit_detail(self, workspace: Path, sha: str) -> dict[str, Any]:
         repo_name = _owner_repo_from_workspace(workspace)
         if repo_name:
@@ -576,6 +596,34 @@ def _run(command: list[str], cwd: Path, timeout: int = 5) -> _RunResult:
         )
         return _RunResult(result.returncode, result.stdout, result.stderr)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return _RunResult(1, "", str(exc))
+
+
+async def _run_async(command: list[str], cwd: Path, timeout: int = 5) -> _RunResult:
+    try:
+        proc = await asyncio.wait_for(
+            asyncio.create_subprocess_exec(
+                *command,
+                cwd=cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            ),
+            timeout=timeout,
+        )
+        stdout_data, stderr_data = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return _RunResult(
+            proc.returncode or 0,
+            stdout_data.decode("utf-8", errors="replace"),
+            stderr_data.decode("utf-8", errors="replace"),
+        )
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+            await proc.wait()
+        except Exception:
+            pass
+        return _RunResult(1, "", f"timed out after {timeout}s")
+    except (FileNotFoundError, OSError) as exc:
         return _RunResult(1, "", str(exc))
 
 

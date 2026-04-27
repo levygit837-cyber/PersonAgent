@@ -330,10 +330,8 @@ function TreeNodeItem({
           ) : (
             <Folder className="h-3.5 w-3.5 shrink-0 text-amber-400" />
           )
-        ) : iconUrl ? (
-          <img src={iconUrl} alt="" className="h-3.5 w-3.5 shrink-0 object-contain" loading="lazy" />
         ) : (
-          <File className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+          <FileIcon url={iconUrl} />
         )}
 
         <span className="min-w-0 flex-1 truncate text-foreground">{node.entry.name}</span>
@@ -347,6 +345,21 @@ function TreeNodeItem({
         </ul>
       ) : null}
     </li>
+  );
+}
+
+function FileIcon({ url }: { url: string | null }) {
+  const [failed, setFailed] = useState(false);
+  if (!url || failed) {
+    return <File className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />;
+  }
+  return (
+    <img
+      src={url}
+      alt=""
+      className="h-3.5 w-3.5 shrink-0 object-contain"
+      onError={() => setFailed(true)}
+    />
   );
 }
 

@@ -45,7 +45,8 @@ class FakeContainer:
         return self.repo
 
 
-def test_session_panel_aggregates_usage_files_sources_and_todos(tmp_path):
+@pytest.mark.asyncio
+async def test_session_panel_aggregates_usage_files_sources_and_todos(tmp_path):
     conversation = Conversation(title="Painel")
     conversation.add_message(
         Message(
@@ -109,7 +110,7 @@ def test_session_panel_aggregates_usage_files_sources_and_todos(tmp_path):
         )
     )
 
-    snapshot = SessionPanelService(tmp_path).panel_snapshot(conversation)
+    snapshot = await SessionPanelService(tmp_path).panel_snapshot(conversation)
 
     assert snapshot["usage"]["agent_output_tokens"] == {"value": 8, "estimated": False}
     assert snapshot["usage"]["thinking_output_tokens"] == {"value": 4, "estimated": False}
@@ -222,7 +223,8 @@ def test_project_commit_detail_uses_gh_when_available(monkeypatch, tmp_path):
     assert detail["files"][0]["filename"] == "panel.tsx"
 
 
-def test_project_snapshot_uses_git_repo_fallback_when_gh_fails(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_project_snapshot_uses_git_repo_fallback_when_gh_fails(monkeypatch, tmp_path):
     conversation = Conversation(title="Fallback")
 
     def fake_run(command, cwd, timeout=5):
@@ -238,9 +240,13 @@ def test_project_snapshot_uses_git_repo_fallback_when_gh_fails(monkeypatch, tmp_
             return session_panel._RunResult(1, "", "not a git repo")
         return session_panel._RunResult(1, "", "unexpected command")
 
-    monkeypatch.setattr(session_panel, "_run", fake_run)
+    async def fake_run_async(command, cwd, timeout=5):
+        return fake_run(command, cwd, timeout)
 
-    snapshot = SessionPanelService(tmp_path).panel_snapshot(conversation)
+    monkeypatch.setattr(session_panel, "_run", fake_run)
+    monkeypatch.setattr(session_panel, "_run_async", fake_run_async)
+
+    snapshot = await SessionPanelService(tmp_path).panel_snapshot(conversation)
 
     assert snapshot["project"]["repo"]["source"] == "git"
     assert snapshot["project"]["repo"]["name_with_owner"] == "acme/repo"

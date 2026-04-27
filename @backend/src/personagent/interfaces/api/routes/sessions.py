@@ -23,7 +23,7 @@ async def get_session_panel(
     """Return the aggregated session panel snapshot for one conversation."""
 
     conversation = await _load_conversation(conversation_id, session)
-    return SessionPanelService(workspace_root).panel_snapshot(conversation)
+    return await SessionPanelService(workspace_root).panel_snapshot(conversation)
 
 
 @router.get("/{conversation_id}/project/details")
@@ -51,4 +51,3 @@ async def _load_conversation(conversation_id: str, session: AsyncSession):
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversa não encontrada.")
     return conversation
-

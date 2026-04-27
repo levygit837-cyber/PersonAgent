@@ -1,11 +1,11 @@
 import { create } from "zustand";
 import {
   approvePlan,
-  approveTool,
   cancelPlan,
   continuePlan,
   getConversation,
   rejectTool,
+  streamApproveTool,
   streamTeamChat,
   streamChatCompletion,
 } from "../api/client";
@@ -22,8 +22,16 @@ import {
   type PlanApprovalUi,
   type SessionUsage,
   type StreamChunk,
+  type TeamAgentTraceUi,
+  type TeamAgentLogUi,
+  type TeamBlackboardTraceUi,
+  type TeamClaimTraceUi,
+  type TeamCompactStatus,
+  type TeamCoverageTraceUi,
+  type TeamRunUi,
   type TeamRunEvent,
   type TeamTraceEventUi,
+  type TeamToolTraceUi,
   type ToolApprovalUi,
   type ToolBlockStatus,
   type ToolBlockUi,
@@ -34,8 +42,9 @@ import {
 
 const thinkingStates = new Map<string, ThinkingTagState>();
 const textFlushBuffers = new Map<string, TextFlushBuffer>();
-const teamDeltaFlushBuffers = new Map<string, TeamDeltaFlushBuffer>();
 const STREAM_TEXT_FLUSH_MS = 50;
+const MAX_TEAM_AGENT_LOGS = 80;
+let teamAgentLogSequence = 0;
 const liveTokenTotals = {
   exactAgent: 0,
   exactThinking: 0,
@@ -47,14 +56,6 @@ type TextFlushBuffer = {
   content: string;
   reasoning: string;
   finishReason?: string;
-  timer?: ReturnType<typeof setTimeout>;
-};
-
-type TeamDeltaFlushBuffer = {
-  agentId: string;
-  event: TeamRunEvent;
-  content: string;
-  reasoning: string;
   timer?: ReturnType<typeof setTimeout>;
 };
 
@@ -204,7 +205,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         set({ error: error instanceof Error ? error.message : String(error) });
       }
     } finally {
-      flushTeamDeltaBuffers(agentId, set);
       flushTextBuffer(agentId, set);
       thinkingStates.delete(agentId);
       set((state) => ({
@@ -271,16 +271,67 @@ export const useChatStore = create<ChatState>((set, get) => ({
   approvePendingTool: async () => {
     const pending = get().pendingToolApproval;
     if (!pending || get().isStreaming) return;
+    const appState = useAppStore.getState();
+    const agentId = findAgentMessageIdForTool(get().messages, pending.toolCallId) ?? `${Date.now()}_agent`;
+    const controller = new AbortController();
+    resetLiveTokenTotals();
+    set((state) => {
+      const hasAgentMessage = state.messages.some((message) => message.id === agentId);
+      const agentMessage: ChatMessageUi = {
+        id: agentId,
+        role: "agent",
+        label: "PersonAgent",
+        content: "",
+        reasoning: "",
+        reasoningBlocks: [],
+        toolBlocks: [],
+        teamEvents: [],
+        parts: [],
+        isStreaming: true,
+        isReasoningStreaming: false,
+      };
+      return {
+        messages: hasAgentMessage
+          ? state.messages.map((message) => (message.id === agentId ? { ...message, isStreaming: true } : message))
+          : [...state.messages, agentMessage],
+        isStreaming: true,
+        isFinalizing: false,
+        activeController: controller,
+        activeAgentId: agentId,
+        pendingToolApproval: undefined,
+        nextStepSuggestion: undefined,
+        liveSessionUsage: emptySessionUsage(),
+        liveSubAgentIds: [],
+        error: undefined,
+      };
+    });
     try {
-      const response = await approveTool(useAppStore.getState().baseUrl, {
-        conversationId: pending.conversationId,
-        approvalId: pending.approvalId,
-      });
-      set({ pendingToolApproval: undefined, error: undefined });
-      const injected = typeof response.injected_message === "string" ? response.injected_message.trim() : "";
-      if (injected) await get().sendMessage(injected);
+      for await (const chunk of streamApproveTool(
+        appState.baseUrl,
+        {
+          conversationId: pending.conversationId,
+          approvalId: pending.approvalId,
+        },
+        controller.signal,
+      )) {
+        handleChunk(chunk, agentId, set, get, appState.selectedWorkspace);
+      }
     } catch (error) {
-      set({ error: error instanceof Error ? error.message : String(error) });
+      if (!controller.signal.aborted && isActiveGenerationState(get(), controller, agentId)) {
+        set({ error: error instanceof Error ? error.message : String(error) });
+      }
+    } finally {
+      flushTextBuffer(agentId, set);
+      thinkingStates.delete(agentId);
+      set((state) => ({
+        isStreaming: isActiveGenerationState(state, controller, agentId) ? false : state.isStreaming,
+        isFinalizing: state.activeAgentId === agentId || !state.activeAgentId ? false : state.isFinalizing,
+        activeController: state.activeController === controller ? undefined : state.activeController,
+        activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
+        messages: state.messages.map((item) =>
+          item.id === agentId ? closeActiveReasoning(item, false) : item,
+        ),
+      }));
     }
   },
 
@@ -305,7 +356,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     controller?.abort();
     const agentId = get().activeAgentId;
     if (agentId) {
-      flushTeamDeltaBuffers(agentId, set);
       flushTextBuffer(agentId, set);
       thinkingStates.delete(agentId);
     }
@@ -325,6 +375,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 function isActiveGenerationState(state: ChatState, controller: AbortController, agentId: string) {
   return state.activeController === controller || state.activeAgentId === agentId;
+}
+
+function findAgentMessageIdForTool(messages: ChatMessageUi[], toolCallId: string) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "agent" && message.toolBlocks.some((block) => block.id === toolCallId)) {
+      return message.id;
+    }
+  }
+  return undefined;
 }
 
 function resetLiveTokenTotals() {
@@ -364,7 +424,7 @@ function applyLiveToolUsage(
       incrementLiveUsage(set, "mcp_calls_count", 1);
     }
   }
-  if (chunk.event === "tool_result" && chunk.tool_name === "TodoWrite") {
+  if (chunk.event === "tool_result" && isTodoToolName(chunk.tool_name)) {
     const todos = chunk.tool_data?.todos;
     incrementLiveUsage(set, "todos_created", Array.isArray(todos) ? todos.length : 1);
   }
@@ -671,8 +731,7 @@ function handleTeamEvent(
   set: (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
   get: () => ChatState,
 ) {
-  if (event.error) {
-    flushTeamDeltaBuffers(agentId, set);
+  if (event.error && event.event !== "error") {
     flushTextBuffer(agentId, set);
     set({
       error: event.error,
@@ -723,7 +782,6 @@ function handleTeamEvent(
     return;
   }
 
-  flushTeamDeltaBuffers(agentId, set);
   flushTextBuffer(agentId, set);
 
   if (event.event === "team_run_completed") {
@@ -738,6 +796,7 @@ function handleTeamEvent(
       return applyTeamEventToMessage(item, event);
     }),
     isStreaming: !isTerminalTeamEvent(event),
+    error: event.event === "error" && !event.agent_id ? event.error : state.error,
   }));
 }
 
@@ -746,64 +805,20 @@ function queueTeamDeltaEvent(
   event: TeamRunEvent,
   set: (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
 ) {
-  const key = teamDeltaBufferKey(agentId, event);
-  const buffer = teamDeltaFlushBuffers.get(key) ?? {
-    agentId,
-    event: { ...event, content: undefined, reasoning_content: undefined },
-    content: "",
-    reasoning: "",
-  };
-  buffer.content += event.content ?? "";
-  buffer.reasoning += event.reasoning_content ?? "";
-  teamDeltaFlushBuffers.set(key, buffer);
-  if (!buffer.timer) {
-    buffer.timer = setTimeout(() => flushTeamDeltaBuffer(key, set), STREAM_TEXT_FLUSH_MS);
-  }
-}
-
-function flushTeamDeltaBuffers(
-  agentId: string,
-  set: (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
-) {
-  for (const [key, buffer] of teamDeltaFlushBuffers) {
-    if (buffer.agentId === agentId) flushTeamDeltaBuffer(key, set);
-  }
-}
-
-function flushTeamDeltaBuffer(
-  key: string,
-  set: (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
-) {
-  const buffer = teamDeltaFlushBuffers.get(key);
-  if (!buffer) return;
-  if (buffer.timer) clearTimeout(buffer.timer);
-  teamDeltaFlushBuffers.delete(key);
-  if (!buffer.content && !buffer.reasoning) return;
-  const event: TeamRunEvent = {
-    ...buffer.event,
-    content: buffer.content || undefined,
-    reasoning_content: buffer.reasoning || undefined,
-  };
   set((state) => ({
     messages: state.messages.map((item) => {
-      if (item.id !== buffer.agentId) return item;
+      if (item.id !== agentId) return item;
       return applyTeamEventToMessage(item, event);
     }),
   }));
 }
 
-function teamDeltaBufferKey(agentId: string, event: TeamRunEvent) {
-  return `${agentId}:${event.run_id ?? ""}:${event.round ?? ""}:${event.agent_id ?? ""}`;
-}
-
 function applyTeamEventToMessage(message: ChatMessageUi, event: TeamRunEvent): ChatMessageUi {
   let next = message;
-  if (event.reasoning_content && event.event !== "agent_turn_completed") {
-    next = appendReasoningChunk(next, event.reasoning_content);
-  }
   if (event.content || event.event !== "agent_delta") {
     next = closeActiveReasoning(next, true);
   }
+  next = applyTeamRunEvent(next, event);
   next = applyTeamTraceEvent(next, event);
   const isTerminal = isTerminalTeamEvent(event);
   return {
@@ -818,8 +833,704 @@ function isTerminalTeamEvent(event: TeamRunEvent) {
   return (
     event.event === "team_run_completed" ||
     event.event === "team_consensus_failed" ||
-    event.event === "team_run_cancelled"
+    event.event === "team_run_cancelled" ||
+    (event.event === "error" && !event.agent_id)
   );
+}
+
+function applyTeamRunEvent(message: ChatMessageUi, event: TeamRunEvent): ChatMessageUi {
+  let run = message.teamRun ? cloneTeamRun(message.teamRun) : createTeamRun(event);
+  run = seedTeamAgents(run, event);
+
+  run.runId = event.run_id ?? run.runId;
+  run.title = event.team?.name ?? run.title;
+  run.status = runStatusForEvent(event, run.status);
+  run.round = event.round ?? run.round;
+  run.actualPhase = phaseLabel(event.phase) ?? phaseForEvent(event) ?? run.actualPhase;
+  run.startedAt = event.started_at ?? run.startedAt;
+  run.completedAt = event.completed_at ?? run.completedAt;
+  run.blackboard = {
+    ...run.blackboard,
+    status: blackboardStatusForEvent(event, run.status, run.blackboard.status),
+    actualPhase: run.actualPhase ?? run.blackboard.actualPhase,
+    nextAction: nextActionForEvent(event) ?? run.blackboard.nextAction,
+    updatedAt: event.created_at ?? new Date().toISOString(),
+  };
+
+  if (event.event === "agent_turn_started") {
+    run = upsertTeamAgent(run, event, {
+      status: "running",
+      phase: event.phase,
+      round: event.round,
+      error: undefined,
+      log: teamAgentLogFromEvent(event, "status", `Started ${phaseLabel(event.phase) ?? "turn"}`, undefined, "running"),
+    });
+  }
+
+  if (event.event === "agent_delta") {
+    const logs = [
+      event.reasoning_content !== undefined
+        ? teamAgentLogFromEvent(event, "thinking", "Thinking", event.reasoning_content, "running")
+        : undefined,
+      event.content !== undefined ? teamAgentLogFromEvent(event, "response", "Output", event.content, "running") : undefined,
+    ].filter((log): log is TeamAgentLogUi => Boolean(log));
+    run = upsertTeamAgent(run, event, {
+      status: "running",
+      phase: event.phase,
+      round: event.round,
+      thinkingAppend: event.reasoning_content,
+      outputAppend: event.content,
+      logs,
+    });
+  }
+
+  if (event.event === "agent_turn_completed") {
+    run = upsertTeamAgent(run, event, {
+      status: event.status === "failed" || event.blocker ? "failed" : "completed",
+      phase: event.phase,
+      round: event.round,
+      thinking: event.reasoning_content,
+      output: event.content,
+      digest: event.digest,
+      durationMs: event.duration_ms,
+      firstTokenMs: event.first_token_ms,
+      coherencyScore: event.coherency_score,
+      error: event.blocker,
+      log: teamAgentLogFromEvent(
+        event,
+        event.status === "failed" || event.blocker ? "error" : "status",
+        event.status === "failed" || event.blocker ? "Failed" : "Completed",
+        event.digest || event.blocker || durationSummary(event),
+        event.status === "failed" || event.blocker ? "failed" : "completed",
+      ),
+    });
+  }
+
+  if (event.event === "error" && event.agent_id) {
+    run = upsertTeamAgent(run, event, {
+      status: "failed",
+      phase: event.phase,
+      round: event.round,
+      error: event.error ?? "Agent failed",
+      log: teamAgentLogFromEvent(event, "error", "Error", event.error ?? "Agent failed", "failed"),
+    });
+  }
+
+  if (event.event === "coordinator_started" || event.event === "coordinator_planning_started") {
+    run = upsertTeamAgent(run, event, {
+      status: "running",
+      phase: event.phase ?? "coordinator",
+      round: event.round,
+      isCoordinator: true,
+      log: teamAgentLogFromEvent(event, "status", "Coordinator started", undefined, "running"),
+    });
+  }
+
+  if (event.event === "coordinator_completed" || event.event === "coordinator_planning_completed") {
+    const guidance = isRecord(event.guidance) ? event.guidance : {};
+    run = upsertTeamAgent(run, event, {
+      status: "completed",
+      phase: event.phase ?? "coordinator",
+      round: event.round,
+      output: stringValue(guidance.summary) ?? "",
+      durationMs: event.duration_ms,
+      isCoordinator: true,
+      log: teamAgentLogFromEvent(
+        event,
+        "status",
+        "Coordinator completed",
+        stringValue(guidance.summary) ?? durationSummary(event),
+        "completed",
+      ),
+    });
+  }
+
+  if (event.event === "coherency_score") {
+    run = upsertTeamAgent(run, event, {
+      phase: event.phase,
+      round: event.round,
+      coherencyScore: event.coherency_score,
+    });
+    run.blackboard = updateBlackboardFromCoherency(run.blackboard, event);
+  }
+
+  if (event.event === "tool_phase") {
+    const tool = toolTraceFromEvent(event);
+    if (event.agent_id) {
+      run = upsertTeamAgent(run, event, {
+        phase: event.phase,
+        round: event.round,
+        tool,
+        log: teamAgentLogFromEvent(event, "tool", tool.title, tool.summary, tool.status, tool.id),
+      });
+    } else {
+      run.blackboard = { ...run.blackboard, tools: upsertTeamTool(run.blackboard.tools, tool) };
+    }
+  }
+
+  if (event.event === "execution_contract") {
+    run.blackboard = updateBlackboardFromContract(run.blackboard, event);
+  }
+
+  if (event.event === "blackboard_event") {
+    const claim = blackboardClaimFromEvent(event);
+    run.blackboard = {
+      ...run.blackboard,
+      claims: claim ? mergeClaims(run.blackboard.claims, [claim]) : run.blackboard.claims,
+      blockers: mergeTextItems(run.blackboard.blockers, blockerTextFromEvent(event)),
+      decisions: mergeTextItems(run.blackboard.decisions, decisionTextFromEvent(event)),
+    };
+    if (claim && event.agent_id) {
+      run = upsertTeamAgent(run, event, {
+        claim,
+        log: teamAgentLogFromEvent(event, "claim", claim.type, claim.text, "completed"),
+      });
+    }
+  }
+
+  if (event.event === "claim_graph_delta") {
+    const claims = claimsFromDelta(event.delta);
+    run.blackboard = {
+      ...run.blackboard,
+      claims: mergeClaims(run.blackboard.claims, claims),
+      coverage: coverageFromValue(isRecord(event.delta) ? event.delta.coverage_matrix : undefined) ?? run.blackboard.coverage,
+    };
+    if (event.agent_id && claims.length > 0) {
+      const ownClaims = claims.filter((claim) => !claim.agentId || claim.agentId === event.agent_id);
+      run = upsertTeamAgent(run, event, {
+        claims: ownClaims,
+        log: ownClaims[0]
+          ? teamAgentLogFromEvent(event, "claim", ownClaims[0].type, ownClaims[0].text, "completed")
+          : undefined,
+      });
+    }
+    run.blackboard = updateBlackboardFromCoherencyObject(
+      run.blackboard,
+      isRecord(event.delta) ? event.delta.coherency : undefined,
+    );
+  }
+
+  if (event.event === "blackboard_snapshot") {
+    run.blackboard = updateBlackboardFromSnapshot(run.blackboard, event);
+  }
+
+  if (event.event === "coverage_matrix") {
+    run.blackboard = {
+      ...run.blackboard,
+      coverage: coverageFromValue(event.coverage_matrix) ?? run.blackboard.coverage,
+      coverageComplete: event.coverage_complete,
+      coverageTotal: event.coverage_total ?? event.coverage_matrix?.length,
+    };
+  }
+
+  if (event.event === "agent_vote") {
+    run.votes = upsertTeamVote(run.votes, event);
+  }
+
+  return { ...message, teamRun: run };
+}
+
+function createTeamRun(event: TeamRunEvent): TeamRunUi {
+  const status = runStatusForEvent(event, "running");
+  return {
+    runId: event.run_id,
+    title: event.team?.name ?? "Team Mode",
+    status,
+    round: event.round,
+    actualPhase: phaseLabel(event.phase) ?? phaseForEvent(event) ?? "starting",
+    agents: [],
+    blackboard: createBlackboardTrace(event, status),
+    votes: [],
+    startedAt: event.started_at,
+    completedAt: event.completed_at,
+  };
+}
+
+function createBlackboardTrace(event: TeamRunEvent, status: TeamCompactStatus): TeamBlackboardTraceUi {
+  return {
+    status,
+    actualPhase: phaseLabel(event.phase) ?? phaseForEvent(event) ?? "starting",
+    nextAction: nextActionForEvent(event),
+    claims: [],
+    evidence: [],
+    decisions: [],
+    blockers: [],
+    coverage: [],
+    tools: [],
+    updatedAt: event.created_at,
+  };
+}
+
+function cloneTeamRun(run: TeamRunUi): TeamRunUi {
+  return {
+    ...run,
+    agents: run.agents.map((agent) => ({
+      ...agent,
+      logs: [...(agent.logs ?? [])],
+      claims: [...agent.claims],
+      tools: agent.tools.map((tool) => cloneToolTrace(tool)),
+    })),
+    blackboard: {
+      ...run.blackboard,
+      claims: [...run.blackboard.claims],
+      evidence: [...run.blackboard.evidence],
+      decisions: [...run.blackboard.decisions],
+      blockers: [...run.blackboard.blockers],
+      coverage: [...run.blackboard.coverage],
+      tools: run.blackboard.tools.map((tool) => cloneToolTrace(tool)),
+    },
+    votes: [...run.votes],
+  };
+}
+
+function cloneToolTrace(tool: TeamToolTraceUi): TeamToolTraceUi {
+  return {
+    ...tool,
+    calls: [...tool.calls],
+    results: [...tool.results],
+    proposals: [...tool.proposals],
+  };
+}
+
+function seedTeamAgents(run: TeamRunUi, event: TeamRunEvent): TeamRunUi {
+  const configs = event.team?.agents ?? [];
+  let next = run;
+  for (const agent of configs) {
+    if (next.agents.some((item) => item.agentId === agent.id)) continue;
+    next = {
+      ...next,
+      agents: [
+        ...next.agents,
+        {
+          agentId: agent.id,
+          agentName: agent.name,
+          agentRole: agent.role,
+          status: "idle",
+          thinking: "",
+          output: "",
+          logs: [],
+          claims: [],
+          tools: [],
+        },
+      ],
+    };
+  }
+  return next;
+}
+
+type TeamAgentPatch = Partial<Omit<TeamAgentTraceUi, "claims" | "tools">> & {
+  thinkingAppend?: string;
+  outputAppend?: string;
+  log?: TeamAgentLogUi;
+  logs?: TeamAgentLogUi[];
+  claim?: TeamClaimTraceUi;
+  claims?: TeamClaimTraceUi[];
+  tool?: TeamToolTraceUi;
+};
+
+function upsertTeamAgent(run: TeamRunUi, event: TeamRunEvent, patch: TeamAgentPatch): TeamRunUi {
+  const agentId = event.agent_id ?? patch.agentId;
+  if (!agentId) return run;
+  const existingIndex = run.agents.findIndex((item) => item.agentId === agentId);
+  const existing =
+    existingIndex >= 0
+      ? run.agents[existingIndex]
+      : {
+          agentId,
+          agentName: event.agent_name ?? (patch.isCoordinator ? "Coordinator" : agentId),
+          agentRole: event.agent_role,
+          status: "idle" as TeamCompactStatus,
+          thinking: "",
+          output: "",
+          logs: [],
+          claims: [],
+          tools: [],
+        };
+
+  const claims = patch.claims ? mergeClaims(existing.claims, patch.claims) : patch.claim ? mergeClaims(existing.claims, [patch.claim]) : existing.claims;
+  const tools = patch.tool ? upsertTeamTool(existing.tools, patch.tool) : existing.tools;
+  const logs = mergeAgentLogs(existing.logs ?? [], patch.logs ?? (patch.log ? [patch.log] : []));
+  const nextAgent: TeamAgentTraceUi = {
+    ...existing,
+    ...patch,
+    agentId,
+    agentName: event.agent_name ?? patch.agentName ?? existing.agentName,
+    agentRole: event.agent_role ?? patch.agentRole ?? existing.agentRole,
+    phase: patch.phase ?? event.phase ?? existing.phase,
+    round: patch.round ?? event.round ?? existing.round,
+    thinking: patch.thinking ?? `${existing.thinking}${patch.thinkingAppend ?? ""}`,
+    output: patch.output ?? `${existing.output}${patch.outputAppend ?? ""}`,
+    logs,
+    claims,
+    tools,
+  };
+  delete (nextAgent as TeamAgentPatch).thinkingAppend;
+  delete (nextAgent as TeamAgentPatch).outputAppend;
+  delete (nextAgent as TeamAgentPatch).log;
+  delete (nextAgent as TeamAgentPatch).claim;
+  delete (nextAgent as TeamAgentPatch).tool;
+
+  const agents = [...run.agents];
+  if (existingIndex >= 0) agents[existingIndex] = nextAgent;
+  else agents.push(nextAgent);
+  return { ...run, agents };
+}
+
+function mergeAgentLogs(existing: TeamAgentLogUi[], incoming: TeamAgentLogUi[]): TeamAgentLogUi[] {
+  if (incoming.length === 0) return existing;
+  const logs = [...existing];
+  for (const log of incoming) {
+    if (isEmptyStreamingAgentLog(log) && !hasOpenStreamingAgentLog(logs, log)) {
+      continue;
+    }
+    const mergeIndex = findMergeableAgentLogIndex(logs, log);
+    if (mergeIndex >= 0) {
+      const previous = logs[mergeIndex];
+      logs[mergeIndex] = {
+        ...previous,
+        content: `${previous.content ?? ""}${log.content ?? ""}`,
+        status: log.status ?? previous.status,
+        createdAt: log.createdAt ?? previous.createdAt,
+      };
+      continue;
+    }
+    const previous = logs[logs.length - 1];
+    if (previous && previous.kind === log.kind && previous.title === log.title && previous.content === log.content && previous.status === log.status) continue;
+    logs.push(log);
+  }
+  return logs.slice(-MAX_TEAM_AGENT_LOGS);
+}
+
+function isStreamingAgentTextLog(log: TeamAgentLogUi) {
+  return (log.kind === "thinking" || log.kind === "response") && log.status === "running";
+}
+
+function isEmptyStreamingAgentLog(log: TeamAgentLogUi) {
+  return isStreamingAgentTextLog(log) && (log.content ?? "").trim().length === 0;
+}
+
+function hasOpenStreamingAgentLog(logs: TeamAgentLogUi[], incoming: TeamAgentLogUi) {
+  return findMergeableAgentLogIndex(logs, incoming) >= 0;
+}
+
+function findMergeableAgentLogIndex(logs: TeamAgentLogUi[], incoming: TeamAgentLogUi) {
+  if (!isStreamingAgentTextLog(incoming)) return -1;
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const previous = logs[index];
+    if (!isSameTeamTurnLog(previous, incoming)) break;
+    if (previous.kind !== "thinking" && previous.kind !== "response" && previous.kind !== "status") break;
+    if (previous.kind === incoming.kind && previous.status === "running") return index;
+  }
+  return -1;
+}
+
+function isSameTeamTurnLog(previous: TeamAgentLogUi, incoming: TeamAgentLogUi) {
+  return previous.round === incoming.round && previous.phase === incoming.phase;
+}
+
+function teamAgentLogFromEvent(
+  event: TeamRunEvent,
+  kind: TeamAgentLogUi["kind"],
+  title: string,
+  content?: string,
+  status?: TeamCompactStatus,
+  toolId?: string,
+): TeamAgentLogUi {
+  teamAgentLogSequence += 1;
+  return {
+    id: `${event.run_id ?? "team"}-${event.agent_id ?? "agent"}-${event.event}-${teamAgentLogSequence}`,
+    kind,
+    title,
+    content,
+    status,
+    round: event.round,
+    phase: event.phase,
+    createdAt: event.created_at,
+    toolId,
+  };
+}
+
+function durationSummary(event: TeamRunEvent) {
+  if (event.duration_ms == null && event.first_token_ms == null) return undefined;
+  const parts = [];
+  if (event.duration_ms != null) parts.push(`${event.duration_ms} ms total`);
+  if (event.first_token_ms != null) parts.push(`${event.first_token_ms} ms first token`);
+  return parts.join(" | ");
+}
+
+function upsertTeamTool(tools: TeamToolTraceUi[], tool: TeamToolTraceUi): TeamToolTraceUi[] {
+  const index = tools.findIndex((item) => item.id === tool.id);
+  if (index < 0) return [...tools, tool];
+  const next = [...tools];
+  next[index] = {
+    ...next[index],
+    ...tool,
+    calls: tool.calls.length > 0 ? tool.calls : next[index].calls,
+    results: tool.results.length > 0 ? tool.results : next[index].results,
+    proposals: tool.proposals.length > 0 ? tool.proposals : next[index].proposals,
+  };
+  return next;
+}
+
+function toolTraceFromEvent(event: TeamRunEvent): TeamToolTraceUi {
+  const proposalCount = event.proposals?.length ?? 0;
+  const resultCount = event.results?.length ?? 0;
+  const callCount = event.calls?.length ?? 0;
+  const phase = event.tool_phase ?? event.phase ?? "tools";
+  return {
+    id: `${event.run_id ?? "team"}-tool-${event.round ?? "x"}-${event.agent_id ?? "blackboard"}-${phase}`,
+    phase,
+    title: toolPhaseLabel(phase),
+    status: proposalCount > 0 ? "blocked" : resultCount > 0 ? "completed" : callCount > 0 ? "running" : "completed",
+    summary:
+      proposalCount > 0
+        ? `${proposalCount} proposal${proposalCount === 1 ? "" : "s"} waiting for coordination`
+        : resultCount > 0
+          ? `${resultCount} result${resultCount === 1 ? "" : "s"} published`
+          : callCount > 0
+            ? `${callCount} call${callCount === 1 ? "" : "s"} running`
+            : undefined,
+    calls: event.calls ?? [],
+    results: event.results ?? [],
+    proposals: event.proposals ?? [],
+    createdAt: event.created_at,
+  };
+}
+
+function updateBlackboardFromSnapshot(blackboard: TeamBlackboardTraceUi, event: TeamRunEvent): TeamBlackboardTraceUi {
+  const snapshot = isRecord(event.snapshot) ? event.snapshot : {};
+  const claimGraph = isRecord(snapshot.claim_graph) ? snapshot.claim_graph : {};
+  const coherency = isRecord(snapshot.coherency) ? snapshot.coherency : undefined;
+  return updateBlackboardFromCoherencyObject(
+    {
+      ...blackboard,
+      snapshot,
+      entryCount: numberValue(snapshot.entry_count) ?? blackboard.entryCount,
+      latestSequence: numberValue(snapshot.latest_sequence) ?? blackboard.latestSequence,
+      claims: mergeClaims(blackboard.claims, claimsFromValue(claimGraph.nodes)),
+      evidence: mergeTextItems(blackboard.evidence, textListFromValue(snapshot.evidence)),
+      decisions: mergeTextItems(blackboard.decisions, textListFromValue(snapshot.decisions)),
+      blockers: mergeTextItems(blackboard.blockers, blockerListFromValue(snapshot.blockers)),
+      coverage: coverageFromValue(snapshot.coverage_matrix) ?? blackboard.coverage,
+    },
+    coherency,
+  );
+}
+
+function updateBlackboardFromContract(blackboard: TeamBlackboardTraceUi, event: TeamRunEvent): TeamBlackboardTraceUi {
+  const contract = isRecord(event.contract) ? event.contract : {};
+  const coverage = coverageFromValue(contract.coverage_matrix);
+  const objective = stringValue(contract.objective);
+  return {
+    ...blackboard,
+    claims: objective
+      ? mergeClaims(blackboard.claims, [
+          {
+            id: `${event.run_id ?? "team"}-execution-contract`,
+            type: "objective",
+            text: objective,
+            agentId: event.agent_id,
+            agentName: event.agent_name ?? "Coordinator",
+            status: "active",
+          },
+        ])
+      : blackboard.claims,
+    coverage: coverage ?? blackboard.coverage,
+    nextAction: "Independent round",
+  };
+}
+
+function updateBlackboardFromCoherency(blackboard: TeamBlackboardTraceUi, event: TeamRunEvent): TeamBlackboardTraceUi {
+  return updateBlackboardFromCoherencyObject(blackboard, event.coherency ?? { average: event.coherency_score });
+}
+
+function updateBlackboardFromCoherencyObject(
+  blackboard: TeamBlackboardTraceUi,
+  coherency: unknown,
+): TeamBlackboardTraceUi {
+  if (!isRecord(coherency)) return blackboard;
+  return {
+    ...blackboard,
+    coherencyScore: numberValue(coherency.average) ?? blackboard.coherencyScore,
+    lowCoherencyCount: numberValue(coherency.low_count) ?? blackboard.lowCoherencyCount,
+  };
+}
+
+function blackboardClaimFromEvent(event: TeamRunEvent): TeamClaimTraceUi | undefined {
+  const payload = isRecord(event.payload) ? event.payload : {};
+  const text =
+    stringValue(payload.summary) ??
+    stringValue(payload.blocker) ??
+    stringValue(payload.objective) ??
+    stringValue(payload.decision);
+  if (!text) return undefined;
+  return {
+    id: `${event.run_id ?? "team"}-blackboard-${event.sequence ?? event.created_at ?? text}`,
+    type: event.event_type ?? (payload.blocker ? "blocker" : "claim"),
+    text,
+    agentId: event.agent_id,
+    agentName: event.agent_name,
+    status: "active",
+  };
+}
+
+function claimsFromDelta(delta: unknown): TeamClaimTraceUi[] {
+  if (!isRecord(delta)) return [];
+  return claimsFromValue(delta.nodes);
+}
+
+function claimsFromValue(value: unknown): TeamClaimTraceUi[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).map((node, index) => ({
+    id: stringValue(node.id) ?? `claim-${index}`,
+    type: stringValue(node.type) ?? "claim",
+    text: stringValue(node.text) ?? stringValue(node.summary) ?? "",
+    agentId: stringValue(node.agent_id),
+    agentName: stringValue(node.agent_name),
+    status: stringValue(node.status),
+    confidence: numberValue(node.confidence),
+    coherencyScore: numberValue(node.coherency_score),
+    noveltyScore: numberValue(node.novelty_score),
+  })).filter((claim) => claim.text.trim().length > 0);
+}
+
+function mergeClaims(existing: TeamClaimTraceUi[], incoming: TeamClaimTraceUi[]): TeamClaimTraceUi[] {
+  if (incoming.length === 0) return existing;
+  const claims = [...existing];
+  for (const claim of incoming) {
+    const index = claims.findIndex((item) => item.id === claim.id);
+    if (index >= 0) claims[index] = { ...claims[index], ...claim };
+    else claims.push(claim);
+  }
+  return claims.slice(-24);
+}
+
+function coverageFromValue(value: unknown): TeamCoverageTraceUi[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter(isRecord).map((item, index) => ({
+    id: stringValue(item.id) ?? `coverage-${index}`,
+    title: stringValue(item.question) ?? stringValue(item.expected_output) ?? stringValue(item.id) ?? `Coverage ${index + 1}`,
+    detail: stringValue(item.status) ?? stringValue(item.owner_agent_id) ?? stringValue(item.owner),
+    ownerAgentId: stringValue(item.owner_agent_id) ?? stringValue(item.owner),
+    status: stringValue(item.status),
+  }));
+}
+
+function upsertTeamVote(votes: TeamTraceEventUi[], event: TeamRunEvent): TeamTraceEventUi[] {
+  const vote: TeamTraceEventUi = {
+    id: `${event.run_id}-vote-${event.round}-${event.agent_id}`,
+    kind: "vote",
+    title: `${event.agent_name ?? "Agent"} ${event.approve ? "approved" : "blocked"}`,
+    detail: event.blocker || event.final_points || `${Math.round((event.confidence ?? 0) * 100)}% confidence`,
+    round: event.round,
+    agentId: event.agent_id,
+    agentName: event.agent_name,
+    status: event.approve ? "approved" : "rejected",
+  };
+  const index = votes.findIndex((item) => item.id === vote.id);
+  if (index < 0) return [...votes, vote];
+  const next = [...votes];
+  next[index] = vote;
+  return next;
+}
+
+function runStatusForEvent(event: TeamRunEvent, current: TeamCompactStatus): TeamCompactStatus {
+  if (event.event === "team_run_completed") return "completed";
+  if (event.event === "team_consensus_failed") return "failed";
+  if (event.event === "team_run_cancelled") return "cancelled";
+  if (event.event === "error" && !event.agent_id) return "failed";
+  if (event.event === "team_run_started") return "running";
+  return current === "idle" ? "running" : current;
+}
+
+function blackboardStatusForEvent(
+  event: TeamRunEvent,
+  runStatus: TeamCompactStatus,
+  current: TeamCompactStatus,
+): TeamCompactStatus {
+  if (runStatus === "completed" || runStatus === "failed" || runStatus === "cancelled") return runStatus;
+  if (
+    event.event === "blackboard_event" ||
+    event.event === "blackboard_snapshot" ||
+    event.event === "claim_graph_delta" ||
+    event.event === "coverage_matrix" ||
+    event.event === "coherency_score" ||
+    event.event === "tool_phase"
+  ) {
+    return "running";
+  }
+  return current === "idle" ? "running" : current;
+}
+
+function phaseForEvent(event: TeamRunEvent) {
+  if (event.event === "coordinator_started" || event.event === "coordinator_completed") return "coordinator";
+  if (event.event === "coordinator_planning_started" || event.event === "coordinator_planning_completed") return "coordinator planning";
+  if (event.event === "debate_started" || event.event === "debate_skipped") return "debate";
+  if (event.event === "adaptive_vote" || event.event === "vote_started" || event.event === "agent_vote") return "vote";
+  if (event.event === "blackboard_event" || event.event === "blackboard_snapshot" || event.event === "claim_graph_delta") return "blackboard";
+  return undefined;
+}
+
+function nextActionForEvent(event: TeamRunEvent) {
+  if (event.event === "execution_contract") return "Independent round";
+  if (event.event === "round_started") return phaseLabel(event.phase) ?? "Agent round";
+  if (event.event === "debate_started") return "Debate";
+  if (event.event === "debate_skipped") return "Vote or coordinator";
+  if (event.event === "adaptive_vote" || event.event === "vote_started") return "Vote";
+  if (event.event === "coordinator_started") return "Coordinator";
+  if (event.event === "team_run_completed") return "Completed";
+  if (event.event === "team_consensus_failed") return "Review blockers";
+  if (event.event === "team_run_cancelled") return "Cancelled";
+  return undefined;
+}
+
+function phaseLabel(phase?: string) {
+  if (!phase) return undefined;
+  return phase.replace(/_/g, " ");
+}
+
+function toolPhaseLabel(phase: string) {
+  return phase.replace(/_/g, " ");
+}
+
+function blockerTextFromEvent(event: TeamRunEvent): string[] {
+  const payload = isRecord(event.payload) ? event.payload : {};
+  const blocker = stringValue(payload.blocker) ?? stringValue(event.blocker);
+  return blocker ? [blocker] : [];
+}
+
+function decisionTextFromEvent(event: TeamRunEvent): string[] {
+  const payload = isRecord(event.payload) ? event.payload : {};
+  const decision = stringValue(payload.decision);
+  return decision ? [decision] : [];
+}
+
+function blockerListFromValue(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === "string") return item;
+      if (!isRecord(item)) return "";
+      const payload = isRecord(item.payload) ? item.payload : {};
+      return stringValue(payload.blocker) ?? stringValue(payload.summary) ?? stringValue(item.title) ?? "";
+    })
+    .filter((item) => item.trim().length > 0);
+}
+
+function textListFromValue(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === "string") return item;
+      if (!isRecord(item)) return "";
+      return stringValue(item.text) ?? stringValue(item.summary) ?? "";
+    })
+    .filter((item) => item.trim().length > 0);
+}
+
+function mergeTextItems(existing: string[], incoming: string[]): string[] {
+  if (incoming.length === 0) return existing;
+  return Array.from(new Set([...existing, ...incoming])).slice(-16);
 }
 
 function applyTeamTraceEvent(message: ChatMessageUi, event: TeamRunEvent): ChatMessageUi {
@@ -1359,6 +2070,7 @@ function toolMessage(chunk: StreamChunk, existing: ToolBlockUi | undefined, stat
 
 function shouldCollapseToolBlock(name: string, status: ToolBlockStatus) {
   if (status !== "completed") return false;
+  if (isTodoToolName(name)) return false;
   return new Set([
     "Read",
     "read_file",
@@ -1375,7 +2087,6 @@ function shouldCollapseToolBlock(name: string, status: ToolBlockStatus) {
     "TaskList",
     "TaskOutput",
     "TaskStop",
-    "TodoWrite",
     "Write",
   ]).has(name);
 }
@@ -1387,9 +2098,13 @@ function toolTitle(name: string, path?: string) {
   if (name === "shell") return "Shell command";
   if (name === "WebFetch") return path ? `Fetch ${path}` : "WebFetch";
   if (name === "LSP") return "LSP";
-  if (name === "TodoWrite") return "TodoWrite";
+  if (isTodoToolName(name)) return name;
   if (name.startsWith("Task")) return name;
   return name;
+}
+
+function isTodoToolName(name?: string) {
+  return Boolean(name?.toLowerCase().startsWith("todo"));
 }
 
 function messageFromPersisted(message: PersistedMessage): ChatMessageUi {
