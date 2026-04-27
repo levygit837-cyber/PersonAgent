@@ -21,6 +21,7 @@ from personagent.application.plan_mode import (
     plan_mode_event,
     write_plan_state,
 )
+from personagent.application.services import NextStepSuggestionService, SessionMemoryService
 from personagent.application.team_chat import (
     DEFAULT_TEAM_ID,
     TeamChatOrchestrator,
@@ -38,10 +39,11 @@ from personagent.domain.exceptions import (
 )
 from personagent.domain.models.conversation import Message, Role
 from personagent.domain.prompts.skills import discover_skills
+from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.domain.tools import ToolCall, ToolExecutionStatus
 from personagent.infrastructure.persistence.database import AsyncSessionLocal
 from personagent.infrastructure.persistence.models import TeamRunORM
-from personagent.interfaces.config.di_container import get_container
+from personagent.interfaces.config.di_container import DIContainer, get_container
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = structlog.get_logger(__name__)
@@ -53,6 +55,23 @@ REASONING_BUDGETS = {
     "xhigh": 16382,
     "max": 32768,
 }
+
+
+def resolve_session_memory_service(
+    container: DIContainer,
+    llm_backend: LLMBackendRepository,
+) -> SessionMemoryService:
+    update_backend = llm_backend if container.settings.chat_session_memory_updates_enabled else None
+    return container.create_session_memory_service(update_backend)
+
+
+def resolve_next_step_suggestion_service(
+    container: DIContainer,
+    llm_backend: LLMBackendRepository,
+) -> NextStepSuggestionService | None:
+    if not container.settings.chat_next_step_suggestions_enabled:
+        return None
+    return container.create_next_step_suggestion_service(llm_backend)
 
 
 class ChatRequest(BaseModel):
@@ -261,7 +280,9 @@ def _require_plan_approval(
     if state.get("status") != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Não há plano aguardando aprovação.")
     if request.approval_id and state.get("approval_id") != request.approval_id:
-        raise HTTPException(status_code=409, detail="A aprovação do plano não corresponde ao estado atual.")
+        raise HTTPException(
+            status_code=409, detail="A aprovação do plano não corresponde ao estado atual."
+        )
     if not state.get("approval_id"):
         raise HTTPException(status_code=409, detail="Plano pendente sem approval_id.")
     return state
@@ -272,7 +293,9 @@ def _require_tool_approval(metadata: dict[str, Any], approval_id: str) -> dict[s
     if not isinstance(pending, dict):
         raise HTTPException(status_code=409, detail="Não há ferramenta aguardando aprovação.")
     if pending.get("approval_id") != approval_id:
-        raise HTTPException(status_code=409, detail="A aprovação da ferramenta não corresponde ao estado atual.")
+        raise HTTPException(
+            status_code=409, detail="A aprovação da ferramenta não corresponde ao estado atual."
+        )
     if pending.get("status") != "awaiting_approval":
         raise HTTPException(status_code=409, detail="A ferramenta não está aguardando aprovação.")
     return dict(pending)
@@ -375,8 +398,8 @@ async def chat_completion(
         prompt_builder=container.get_prompt_builder(),
         prompt_context_analyzer=container.create_prompt_context_analyzer(llm_backend),
         command_registry=container.create_command_registry(),
-        session_memory_service=container.create_session_memory_service(llm_backend),
-        next_step_suggestion_service=container.create_next_step_suggestion_service(llm_backend),
+        session_memory_service=resolve_session_memory_service(container, llm_backend),
+        next_step_suggestion_service=resolve_next_step_suggestion_service(container, llm_backend),
         context_window_tokens=container.settings.llama_ctx_size,
         default_output_tokens=container.settings.llama_max_tokens,
     )
@@ -450,8 +473,8 @@ async def chat_completion_stream(
         prompt_builder=container.get_prompt_builder(),
         prompt_context_analyzer=container.create_prompt_context_analyzer(llm_backend),
         command_registry=container.create_command_registry(),
-        session_memory_service=container.create_session_memory_service(llm_backend),
-        next_step_suggestion_service=container.create_next_step_suggestion_service(llm_backend),
+        session_memory_service=resolve_session_memory_service(container, llm_backend),
+        next_step_suggestion_service=resolve_next_step_suggestion_service(container, llm_backend),
         context_window_tokens=container.settings.llama_ctx_size,
         default_output_tokens=container.settings.llama_max_tokens,
     )
@@ -539,8 +562,12 @@ async def approve_plan(
 ) -> dict[str, Any]:
     """Aprova um plano pendente e retorna a mensagem de execução a ser injetada."""
 
-    conversation, conv_repo = await _load_conversation_for_decision(request.conversation_id, session)
-    state = _require_plan_approval(state=normalize_plan_state(conversation.metadata), request=request)
+    conversation, conv_repo = await _load_conversation_for_decision(
+        request.conversation_id, session
+    )
+    state = _require_plan_approval(
+        state=normalize_plan_state(conversation.metadata), request=request
+    )
     plan_content = str(state.get("plan_content") or "").strip()
     if not plan_content:
         raise HTTPException(status_code=400, detail="Plano pendente sem conteúdo renderizável.")
@@ -576,8 +603,12 @@ async def continue_plan(
 ) -> dict[str, Any]:
     """Mantém o PlanMode ativo para revisão do plano."""
 
-    conversation, conv_repo = await _load_conversation_for_decision(request.conversation_id, session)
-    state = _require_plan_approval(state=normalize_plan_state(conversation.metadata), request=request)
+    conversation, conv_repo = await _load_conversation_for_decision(
+        request.conversation_id, session
+    )
+    state = _require_plan_approval(
+        state=normalize_plan_state(conversation.metadata), request=request
+    )
     feedback = (request.feedback or "").strip()
     state.update(
         {
@@ -609,10 +640,14 @@ async def cancel_plan(
 ) -> dict[str, Any]:
     """Cancela o PlanMode sem executar o plano."""
 
-    conversation, conv_repo = await _load_conversation_for_decision(request.conversation_id, session)
+    conversation, conv_repo = await _load_conversation_for_decision(
+        request.conversation_id, session
+    )
     state = normalize_plan_state(conversation.metadata)
     if request.approval_id and state.get("approval_id") != request.approval_id:
-        raise HTTPException(status_code=409, detail="A aprovação do plano não corresponde ao estado atual.")
+        raise HTTPException(
+            status_code=409, detail="A aprovação do plano não corresponde ao estado atual."
+        )
     state.update(
         {
             "active": False,
@@ -635,12 +670,16 @@ async def approve_tool(
 ) -> dict[str, Any]:
     """Aprova e executa uma ferramenta previamente pausada por permissão."""
 
-    conversation, conv_repo = await _load_conversation_for_decision(request.conversation_id, session)
+    conversation, conv_repo = await _load_conversation_for_decision(
+        request.conversation_id, session
+    )
     pending = _require_tool_approval(conversation.metadata, request.approval_id)
     container = get_container()
     tool = container.get_tool_registry().get(str(pending["tool_name"]))
     if tool is None:
-        raise HTTPException(status_code=404, detail=f"Ferramenta não encontrada: {pending['tool_name']}")
+        raise HTTPException(
+            status_code=404, detail=f"Ferramenta não encontrada: {pending['tool_name']}"
+        )
 
     use_case = ChatCompletionUseCase(
         conversation_repo=conv_repo,
@@ -659,7 +698,9 @@ async def approve_tool(
     arguments = dict(pending.get("arguments") or {})
     validation = await tool.validate_input(arguments, context)
     if validation is not None and not validation.allowed:
-        raise HTTPException(status_code=400, detail=validation.message or "Entrada da ferramenta inválida.")
+        raise HTTPException(
+            status_code=400, detail=validation.message or "Entrada da ferramenta inválida."
+        )
 
     call = ToolCall(
         id=str(pending["tool_call_id"]),
@@ -705,7 +746,9 @@ async def reject_tool(
 ) -> dict[str, Any]:
     """Rejeita uma ferramenta pendente."""
 
-    conversation, conv_repo = await _load_conversation_for_decision(request.conversation_id, session)
+    conversation, conv_repo = await _load_conversation_for_decision(
+        request.conversation_id, session
+    )
     pending = _require_tool_approval(conversation.metadata, request.approval_id)
     conversation.metadata[PENDING_TOOL_APPROVAL_KEY] = {
         **pending,

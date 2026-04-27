@@ -332,6 +332,28 @@ class TestPromptBuilder:
         assert profile.source == "fallback"
 
     @pytest.mark.asyncio
+    async def test_prompt_context_analyzer_treats_missing_mode_as_exploring(self):
+        llm = FakeAnalysisLLM(
+            {
+                "primary_mode": None,
+                "secondary_modes": [],
+                "intent": "greeting",
+                "surface_hints": [],
+                "confidence": 0.01,
+            }
+        )
+        analyzer = PromptContextAnalyzer(llm)
+
+        profile = await analyzer.analyze(
+            message="olá, tudo bem?",
+            requested_mode="auto",
+        )
+
+        assert profile.primary_mode == "exploring"
+        assert profile.source == "llm"
+        assert profile.intent == "greeting"
+
+    @pytest.mark.asyncio
     async def test_prompt_mode_override(self, system_context, user_context):
         builder = PromptBuilder(permission_mode="manual")
 

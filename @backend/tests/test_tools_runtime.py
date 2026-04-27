@@ -258,6 +258,49 @@ async def test_stream_uses_default_tool_iteration_limit_for_repeated_calls(tmp_p
     assert not any(chunk.finish_reason == "tool_calls" for chunk in chunks)
 
 
+@pytest.mark.asyncio
+async def test_stream_keeps_vertex_tool_blocks_distinct_and_suppresses_internal_stop(tmp_path):
+    (tmp_path / "a.txt").write_text("alpha\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("beta\n", encoding="utf-8")
+    repo = MemoryConversationRepository()
+    llm = VertexLikeRepeatedToolIdLLM()
+    registry = ToolRegistry([create_read_file_tool()])
+    config = ToolRuntimeConfig.from_values(workspace_root=tmp_path)
+    use_case = ChatCompletionUseCase(
+        conversation_repo=repo,
+        llm_backend=llm,
+        tool_registry=registry,
+        tool_runtime_config=config,
+    )
+
+    chunks = [
+        chunk
+        async for chunk in use_case.execute_stream(
+            ChatRequestDTO(message="Leia a.txt e b.txt", tools_enabled=True)
+        )
+    ]
+
+    tool_started_ids = [
+        str(chunk.metadata["tool_call_id"])
+        for chunk in chunks
+        if chunk.metadata.get("event") == "tool_call_started"
+    ]
+    finish_reasons = [chunk.finish_reason for chunk in chunks if chunk.finish_reason]
+
+    assert tool_started_ids[0] == "vertex-call-0"
+    assert len(tool_started_ids) == 2
+    assert len(set(tool_started_ids)) == 2
+    assert finish_reasons == ["stop"]
+
+    conversation = next(iter(repo.conversations.values()))
+    persisted_tool_ids = [
+        str(message.tool_call_id)
+        for message in conversation.messages
+        if message.role == Role.TOOL
+    ]
+    assert persisted_tool_ids == tool_started_ids
+
+
 def test_chat_completion_tool_context_uses_requested_workspace(tmp_path):
     configured_root = tmp_path / "configured"
     selected_root = tmp_path / "selected"
@@ -753,6 +796,58 @@ class RepeatingStreamingToolCallingLLM(LLMBackendRepository):
             ],
             finish_reason="tool_calls",
         )
+
+    async def health_check(self) -> dict:
+        return {"status": "healthy"}
+
+    async def get_model_info(self) -> dict:
+        return {}
+
+
+class VertexLikeRepeatedToolIdLLM(LLMBackendRepository):
+    def __init__(self):
+        self.calls = 0
+
+    async def chat_completion(self, *args, **kwargs) -> InferenceResult:
+        return InferenceResult(content="unused")
+
+    async def chat_completion_stream(self, *args, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            yield StreamChunk(reasoning_content="think before first tool", is_thinking=True)
+            yield StreamChunk(
+                tool_calls=[
+                    {
+                        "id": "vertex-call-0",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": '{"path":"a.txt"}',
+                        },
+                    }
+                ],
+                finish_reason="tool_calls",
+            )
+            yield StreamChunk(finish_reason="stop", usage={"thoughtsTokenCount": 4})
+            return
+        if self.calls == 2:
+            yield StreamChunk(
+                tool_calls=[
+                    {
+                        "id": "vertex-call-0",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": '{"path":"b.txt"}',
+                        },
+                    }
+                ],
+                finish_reason="tool_calls",
+            )
+            yield StreamChunk(finish_reason="stop", usage={"thoughtsTokenCount": 2})
+            return
+        yield StreamChunk(content="final answer")
+        yield StreamChunk(finish_reason="stop")
 
     async def health_check(self) -> dict:
         return {"status": "healthy"}

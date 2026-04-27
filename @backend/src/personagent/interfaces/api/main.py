@@ -11,7 +11,7 @@ from personagent.application.workflows.scheduler import get_scheduler
 from personagent.application.workflows.store import SqlAlchemyWorkflowStore
 from personagent.infrastructure.config.settings import get_settings
 from personagent.infrastructure.persistence.database import AsyncSessionLocal, init_db
-from personagent.interfaces.api.routes import chat, conversations, lab, workflows
+from personagent.interfaces.api.routes import chat, conversations, lab, sessions, workflows
 from personagent.interfaces.config.di_container import get_container
 
 logger = structlog.get_logger(__name__)
@@ -99,6 +99,8 @@ def create_app() -> FastAPI:
             "http://127.0.0.1:5175",
             "http://localhost:5176",
             "http://127.0.0.1:5176",
+            "http://localhost:4176",
+            "http://127.0.0.1:4176",
             # Packaged Electron desktop/file origins
             "null",
             "file://",
@@ -111,6 +113,7 @@ def create_app() -> FastAPI:
     # Rotas
     app.include_router(chat.router)
     app.include_router(conversations.router)
+    app.include_router(sessions.router)
     app.include_router(lab.router)
     app.include_router(workflows.router)
 

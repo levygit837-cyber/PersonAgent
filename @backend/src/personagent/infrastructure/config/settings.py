@@ -139,6 +139,16 @@ class Settings(BaseSettings):
     tools_lsp_enabled: bool = Field(default=False, alias="TOOLS_LSP_ENABLED")
     prompt_command_roots: str | None = Field(default=None, alias="PROMPT_COMMAND_ROOTS")
 
+    # --- Chat post-turn services ---
+    chat_next_step_suggestions_enabled: bool = Field(
+        default=False,
+        alias="CHAT_NEXT_STEP_SUGGESTIONS_ENABLED",
+    )
+    chat_session_memory_updates_enabled: bool = Field(
+        default=False,
+        alias="CHAT_SESSION_MEMORY_UPDATES_ENABLED",
+    )
+
     # --- LightPanda Browser ---
     lightpanda_enabled: bool = Field(default=True, alias="LIGHTPANDA_ENABLED")
     lightpanda_cdp_url: str = Field(

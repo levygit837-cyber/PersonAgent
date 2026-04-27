@@ -31,6 +31,7 @@ DEFAULT_STREAM_CONNECT_TIMEOUT_SECONDS = 30.0
 DEFAULT_STREAM_POOL_TIMEOUT_SECONDS = 30.0
 DEFAULT_OUTPUT_TOKENS = 65536
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+SKIP_THOUGHT_SIGNATURE_VALIDATOR = "skip_thought_signature_validator"
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,9 @@ class VertexModelSpec:
     output_tokens: int
     image_output: bool = False
     supports_thinking: bool = True
+    thinking_control: str = "level"
+    thinking_budget_min: int | None = None
+    thinking_budget_max: int | None = None
     supports_tools: bool = True
     supports_code_execution: bool = True
     supports_context_cache: bool = True
@@ -48,6 +52,26 @@ class VertexModelSpec:
 
 
 VERTEX_MODELS: tuple[VertexModelSpec, ...] = (
+    VertexModelSpec(
+        id="gemini-2.5-flash-lite",
+        label="Gemini 2.5 Flash-Lite",
+        input_tokens=1_048_576,
+        output_tokens=65_535,
+        thinking_control="budget",
+        thinking_budget_min=512,
+        thinking_budget_max=24_576,
+        launch_stage="ga",
+    ),
+    VertexModelSpec(
+        id="gemini-2.5-flash",
+        label="Gemini 2.5 Flash",
+        input_tokens=1_048_576,
+        output_tokens=65_535,
+        thinking_control="budget",
+        thinking_budget_min=1,
+        thinking_budget_max=24_576,
+        launch_stage="ga",
+    ),
     VertexModelSpec(
         id="gemini-3.1-pro-preview",
         label="Gemini 3.1 Pro",
@@ -245,6 +269,8 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
                 f"({self._stream_timeout_label()}, model={model})"
             ) from exc
         except httpx.HTTPStatusError as exc:
+            with suppress(Exception):
+                await exc.response.aread()
             raise self._http_error(exc) from exc
 
     async def health_check(self) -> dict[str, Any]:
@@ -303,7 +329,7 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
         requested_model = str(extra.get("model") or "").strip()
         model = self.default_model if requested_model in {"", "local-model"} else requested_model
         model_spec = self._model_spec(model)
-        system_instruction, contents = self._convert_messages(messages)
+        system_instruction, contents = self._convert_messages(messages, model_spec)
         effective_max_tokens = self._effective_max_tokens(model_spec, max_tokens)
 
         generation_config: dict[str, Any] = {
@@ -311,10 +337,7 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
             "maxOutputTokens": effective_max_tokens,
         }
         if model_spec.supports_thinking:
-            generation_config["thinkingConfig"] = {
-                "includeThoughts": True,
-                "thinkingLevel": self._thinking_level(extra.get("reasoning_level")),
-            }
+            generation_config["thinkingConfig"] = self._thinking_config(model_spec, extra)
         if model_spec.image_output:
             generation_config["responseModalities"] = ["TEXT", "IMAGE"]
 
@@ -331,7 +354,11 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
 
         return payload, model
 
-    def _convert_messages(self, messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+    def _convert_messages(
+        self,
+        messages: list[dict[str, Any]],
+        model_spec: VertexModelSpec,
+    ) -> tuple[str, list[dict[str, Any]]]:
         system_parts: list[str] = []
         contents: list[dict[str, Any]] = []
         tool_names_by_id: dict[str, str] = {}
@@ -345,16 +372,20 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
                 continue
 
             if role == "assistant":
+                tool_calls = message.get("tool_calls") or []
+                raw_parts = self._content_parts_from_tool_calls(tool_calls)
                 parts: list[dict[str, Any]] = []
                 if content:
                     parts.append({"text": str(content)})
-                for tool_call in message.get("tool_calls") or []:
+                for tool_call in tool_calls:
                     function = tool_call.get("function") or {}
                     name = str(function.get("name") or "")
                     if not name:
                         continue
                     call_id = str(tool_call.get("id") or f"vertex-call-{len(tool_names_by_id)}")
                     tool_names_by_id[call_id] = name
+                    if raw_parts:
+                        continue
                     part = {
                         "functionCall": {
                             "name": name,
@@ -365,6 +396,10 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
                     if signature:
                         part["thoughtSignature"] = signature
                     parts.append(part)
+                if raw_parts:
+                    parts = self._ensure_function_call_signatures(raw_parts, model_spec)
+                else:
+                    parts = self._ensure_function_call_signatures(parts, model_spec)
                 if parts:
                     contents.append({"role": "model", "parts": parts})
                 continue
@@ -374,12 +409,12 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
                 name = tool_names_by_id.get(call_id) or "tool_result"
                 contents.append(
                     {
-                        "role": "function",
+                        "role": "user",
                         "parts": [
                             {
                                 "functionResponse": {
                                     "name": name,
-                                    "response": {"content": str(content)},
+                                    "response": {"output": str(content)},
                                 }
                             }
                         ],
@@ -422,6 +457,7 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
         tool_calls: list[dict[str, Any]] = []
 
         content = candidate.get("content") or {}
+        raw_parts = self._normalized_content_parts(content)
         for index, part in enumerate(content.get("parts") or []):
             signature = _part_thought_signature(part)
             if signature:
@@ -439,7 +475,7 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
             text = _part_text(part)
             if not text:
                 continue
-            if bool(part.get("thought")):
+            if _part_is_thought(part):
                 chunks.append(
                     StreamChunk(
                         reasoning_content=text,
@@ -451,6 +487,7 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
                 chunks.append(StreamChunk(content=text, metadata=metadata))
 
         finish_reason = self._finish_reason(candidate.get("finishReason"), bool(tool_calls))
+        self._attach_content_parts(tool_calls, raw_parts)
         if tool_calls or finish_reason:
             chunks.append(
                 StreamChunk(
@@ -467,6 +504,7 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
         candidate = _first_candidate(data) or {}
         model = str(data.get("modelVersion") or data.get("model") or fallback_model)
         content = candidate.get("content") or {}
+        raw_parts = self._normalized_content_parts(content)
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         thought_signatures: list[str] = []
@@ -487,11 +525,12 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
             text = _part_text(part)
             if not text:
                 continue
-            if bool(part.get("thought")):
+            if _part_is_thought(part):
                 reasoning_parts.append(text)
             else:
                 content_parts.append(text)
 
+        self._attach_content_parts(tool_calls, raw_parts)
         return {
             "content": "".join(content_parts),
             "reasoning": "".join(reasoning_parts),
@@ -561,6 +600,70 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
                 declaration["parameters"] = function["parameters"]
             declarations.append(declaration)
         return declarations
+
+    def _content_parts_from_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+    ) -> list[dict[str, Any]] | None:
+        for tool_call in tool_calls:
+            extra = tool_call.get("extra_content")
+            if not isinstance(extra, dict):
+                continue
+            google = extra.get("google")
+            if not isinstance(google, dict):
+                continue
+            parts = google.get("content_parts")
+            if isinstance(parts, list):
+                normalized = [part for part in parts if isinstance(part, dict)]
+                if normalized:
+                    return normalized
+        return None
+
+    def _attach_content_parts(
+        self,
+        tool_calls: list[dict[str, Any]],
+        parts: list[dict[str, Any]],
+    ) -> None:
+        if not tool_calls or not parts:
+            return
+        extra = tool_calls[0].get("extra_content")
+        next_extra = dict(extra) if isinstance(extra, dict) else {}
+        google = next_extra.get("google")
+        next_google = dict(google) if isinstance(google, dict) else {}
+        if not next_google.get("thought_signature"):
+            signature = next(
+                (signature for part in parts if (signature := _part_thought_signature(part))),
+                "",
+            )
+            if signature:
+                next_google["thought_signature"] = signature
+        next_google["content_parts"] = parts
+        next_extra["google"] = next_google
+        tool_calls[0]["extra_content"] = next_extra
+
+    def _normalized_content_parts(self, content: dict[str, Any]) -> list[dict[str, Any]]:
+        parts = content.get("parts") or []
+        return [part for part in parts if isinstance(part, dict)]
+
+    def _ensure_function_call_signatures(
+        self,
+        parts: list[dict[str, Any]],
+        model: VertexModelSpec,
+    ) -> list[dict[str, Any]]:
+        if not model.id.startswith("gemini-3-"):
+            return parts
+        has_function_call = any(part.get("functionCall") for part in parts)
+        if not has_function_call or any(_part_thought_signature(part) for part in parts):
+            return parts
+        signed_parts: list[dict[str, Any]] = []
+        for part in parts:
+            if part.get("functionCall"):
+                next_part = dict(part)
+                next_part["thoughtSignature"] = SKIP_THOUGHT_SIGNATURE_VALIDATOR
+                signed_parts.append(next_part)
+            else:
+                signed_parts.append(part)
+        return signed_parts
 
     def _tool_call_from_part(self, part: dict[str, Any], index: int) -> dict[str, Any]:
         function_call = part.get("functionCall") or {}
@@ -691,12 +794,18 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
                 label=_model_label(model),
                 input_tokens=1_048_576,
                 output_tokens=DEFAULT_OUTPUT_TOKENS,
+                thinking_control="budget" if model.startswith("gemini-2.5-") else "level",
+                thinking_budget_min=512 if model.startswith("gemini-2.5-flash-lite") else 1,
+                thinking_budget_max=24_576 if model.startswith("gemini-2.5-") else None,
             ),
         )
 
     def _effective_max_tokens(self, model: VertexModelSpec, max_tokens: int) -> int:
         requested = max_tokens if max_tokens > 0 else self.default_max_tokens
-        return min(requested, model.output_tokens)
+        # Vertex reports a 65,536-token output window for several Gemini models,
+        # but maxOutputTokens is validated as an exclusive upper bound.
+        upper_bound = 65_535 if model.output_tokens >= 65_536 else model.output_tokens
+        return min(requested, upper_bound)
 
     def _thinking_level(self, reasoning_level: Any) -> str:
         level = str(reasoning_level or "low").strip().lower()
@@ -705,6 +814,43 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
         if level in {"high", "xhigh", "max"}:
             return "HIGH"
         return "LOW"
+
+    def _thinking_config(
+        self,
+        model: VertexModelSpec,
+        extra: dict[str, Any],
+    ) -> dict[str, Any]:
+        config: dict[str, Any] = {"includeThoughts": True}
+        if model.thinking_control == "budget":
+            config["thinkingBudget"] = self._thinking_budget(
+                model,
+                extra.get("reasoning_budget_tokens"),
+                extra.get("reasoning_level"),
+            )
+        else:
+            config["thinkingLevel"] = self._thinking_level(extra.get("reasoning_level"))
+        return config
+
+    def _thinking_budget(
+        self,
+        model: VertexModelSpec,
+        requested_budget: Any,
+        reasoning_level: Any,
+    ) -> int:
+        budget = _int_or_none(requested_budget)
+        if budget is None or budget <= 0:
+            budget = {
+                "low": 2048,
+                "medium": 4096,
+                "high": 8192,
+                "xhigh": 16_384,
+                "max": 24_576,
+            }.get(str(reasoning_level or "low").strip().lower(), 2048)
+        if model.thinking_budget_min is not None:
+            budget = max(model.thinking_budget_min, budget)
+        if model.thinking_budget_max is not None:
+            budget = min(model.thinking_budget_max, budget)
+        return budget
 
     def _finish_reason(self, raw: Any, has_tool_calls: bool) -> str | None:
         if has_tool_calls:
@@ -815,14 +961,9 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
 
     def _http_error(self, exc: httpx.HTTPStatusError) -> LLMBackendError:
         detail = exc.response.reason_phrase
-        with suppress(ValueError, TypeError):
+        with suppress(ValueError, TypeError, httpx.ResponseNotRead):
             body = exc.response.json()
-            if isinstance(body, dict):
-                error = body.get("error")
-                if isinstance(error, dict):
-                    detail = str(error.get("message") or detail)
-                else:
-                    detail = str(body.get("detail") or detail)
+            detail = _error_message_from_body(body, detail)
         return LLMBackendError(f"Vertex AI HTTP {exc.response.status_code}: {detail}")
 
 
@@ -847,6 +988,51 @@ def _part_text(part: dict[str, Any]) -> str:
 def _part_thought_signature(part: dict[str, Any]) -> str:
     value = part.get("thoughtSignature") or part.get("thought_signature")
     return value if isinstance(value, str) else ""
+
+
+def _int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _error_message_from_body(body: Any, fallback: str) -> str:
+    if isinstance(body, list):
+        for item in body:
+            detail = _error_message_from_body(item, "")
+            if detail:
+                return detail
+        return fallback
+    if not isinstance(body, dict):
+        return fallback
+    error = body.get("error")
+    if isinstance(error, dict):
+        return str(error.get("message") or fallback)
+    detail = body.get("detail")
+    if detail:
+        return str(detail)
+    return fallback
+
+
+def _part_is_thought(part: dict[str, Any]) -> bool:
+    value = part.get("thought")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    snake_value = part.get("is_thought") or part.get("isThought")
+    if isinstance(snake_value, bool):
+        return snake_value
+    if isinstance(snake_value, str):
+        return snake_value.strip().lower() in {"true", "1", "yes"}
+    return False
 
 
 def _tool_call_thought_signature(tool_call: dict[str, Any]) -> str:
