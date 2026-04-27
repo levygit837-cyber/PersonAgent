@@ -66,6 +66,7 @@ interface ChatState {
   error?: string;
   isStreaming: boolean;
   isFinalizing: boolean;
+  loadingConversationId?: string;
   activeController?: AbortController;
   activeAgentId?: string;
   pendingPlanApproval?: PlanApprovalUi;
@@ -93,6 +94,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   liveSubAgentIds: [],
 
   loadConversation: async (id, workspaceRoot) => {
+    if (get().loadingConversationId === id) return;
+    set({ loadingConversationId: id, error: undefined });
     try {
       const appStore = useAppStore.getState();
       const mappedWorkspace = workspaceRoot?.trim() || appStore.convWorkspaceMap[id]?.trim();
@@ -101,6 +104,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const detail = await getConversation(useAppStore.getState().baseUrl, id);
+      if (get().loadingConversationId !== id) return;
       set({
         conversationId: detail.id,
         conversationTitle: detail.title,
@@ -113,11 +117,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         liveSessionUsage: emptySessionUsage(),
         liveSubAgentIds: [],
         isFinalizing: false,
+        loadingConversationId: undefined,
         error: undefined,
       });
       resetLiveTokenTotals();
     } catch (error) {
-      set({ error: error instanceof Error ? error.message : String(error) });
+      if (get().loadingConversationId === id) {
+        set({ error: error instanceof Error ? error.message : String(error) });
+      }
+    } finally {
+      set((state) => ({
+        loadingConversationId: state.loadingConversationId === id ? undefined : state.loadingConversationId,
+      }));
     }
   },
 
@@ -133,6 +144,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       liveSessionUsage: emptySessionUsage(),
       liveSubAgentIds: [],
       isFinalizing: false,
+      loadingConversationId: undefined,
       error: undefined,
     });
     resetLiveTokenTotals();

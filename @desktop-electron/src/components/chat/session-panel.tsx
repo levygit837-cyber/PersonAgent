@@ -204,7 +204,7 @@ export function SessionPanel({
   const panel = useQuery({
     queryKey: ["session-panel", baseUrl, conversationId, workspaceRoot],
     queryFn: () => getSessionPanel(baseUrl, conversationId!, workspaceRoot),
-    enabled: Boolean(baseUrl && conversationId),
+    enabled: Boolean(visible && baseUrl && conversationId),
     initialData: () => cachedPanel?.snapshot,
     initialDataUpdatedAt: () => cachedPanel?.cachedAt,
     refetchInterval: isStreaming

@@ -87,6 +87,37 @@ TOOL_PROMPTS: dict[str, str] = {
         "dedicated tools. Prefer rg/find/git commands for exploration. Avoid destructive commands "
         "unless the user explicitly requested them and permissions allow it."
     ),
+    "AskUserQuestion": (
+        "Use AskUserQuestion only when a concrete user decision blocks progress. Ask short "
+        "questions with clear options where possible, then wait for the answer event before continuing."
+    ),
+    "SendUserMessage": (
+        "Use SendUserMessage only as a visible checkpoint during long-running work. Do not use it "
+        "as a replacement for the normal assistant response."
+    ),
+    "Config": (
+        "Use Config to read or update allowlisted runtime settings. Reads are automatic; set "
+        "operations require approval and should be limited to user-requested policy changes."
+    ),
+    "EnterWorktree": (
+        "Use EnterWorktree when isolated edits are useful. Subsequent workspace-relative tool "
+        "paths resolve inside the active worktree until ExitWorktree is called."
+    ),
+    "ExitWorktree": (
+        "Use ExitWorktree when done with an active worktree. Keep preserves it; remove requires "
+        "approval and refuses dirty worktrees unless discard_changes=true is explicit."
+    ),
+    "Agent": (
+        "Use Agent for bounded background or delegated work that needs a durable id/name. "
+        "AgentTool is an alias, but Agent is the preferred Claude-style name."
+    ),
+    "SendMessage": (
+        "Use SendMessage to communicate with an existing Agent/Task id. It is not the user-facing "
+        "response channel."
+    ),
+    "ListMcpResourcesTool": "List resources from configured MCP servers before reading one.",
+    "ReadMcpResourceTool": "Read a known MCP resource by server and URI.",
+    "McpAuth": "Use McpAuth or mcp__server__authenticate when an MCP server needs authentication.",
     "WebFetch": (
         "Fetch a specific URL when the user provided it or when a source URL is already known. "
         "Use browser tools for broader navigation and page affordances."

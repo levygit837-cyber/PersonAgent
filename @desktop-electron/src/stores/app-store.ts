@@ -135,8 +135,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!normalized) return;
     const recentWorkspaces = normalizeRecent(get().recentWorkspaces, normalized);
     set({ selectedWorkspace: normalized, recentWorkspaces });
-    await settingsSet(settingsKeys.workspace, normalized);
-    await settingsSet(settingsKeys.recentWorkspaces, recentWorkspaces);
+    void (async () => {
+      await settingsSet(settingsKeys.workspace, normalized);
+      await settingsSet(settingsKeys.recentWorkspaces, recentWorkspaces);
+    })().catch((error) => {
+      console.error("Failed to persist selected workspace", error);
+    });
   },
 
   pickWorkspace: async () => {

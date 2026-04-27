@@ -55,7 +55,8 @@ When using tools:
 
 - Shell commands are executed in a read-only mode by default
 - For read-only commands (cat, grep, git, etc.), no approval is needed
-- For potentially destructive commands, user approval will be required
+- For write/exec/network commands, user approval may be required depending on permission mode
+- Critical commands are denied instead of being sent for approval
 - Always prefer using dedicated tools over shell commands when available"""
 
     sections: list[SystemPromptSection] = [SystemPromptSection("tool_usage", tool_usage_section)]

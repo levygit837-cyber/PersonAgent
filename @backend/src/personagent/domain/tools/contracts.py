@@ -42,6 +42,10 @@ class ToolGroup(StrEnum):
     DISCOVERY = "discovery"
     OUTPUT = "output"
     LSP = "lsp"
+    CONFIG = "config"
+    WORKTREE = "worktree"
+    MCP = "mcp"
+    USER_INTERACTION = "user_interaction"
     OTHER = "other"
 
 

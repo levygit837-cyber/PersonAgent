@@ -198,7 +198,6 @@ interface WorkspaceGroup {
 function useGroupedConversations() {
   const baseUrl = useAppStore((state) => state.baseUrl);
   const convWorkspaceMap = useAppStore((state) => state.convWorkspaceMap);
-  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
   const queryClient = useQueryClient();
 
   const conversations = useQuery({
@@ -226,20 +225,15 @@ function useGroupedConversations() {
       }
     }
 
-    const sorted: WorkspaceGroup[] = Array.from(byWorkspace.entries())
-      .map(([ws, convs]) => ({
-        workspace: ws,
-        name: workspaceName(ws) ?? ws,
-        conversations: [...convs].sort(compareConversationsByRecency),
-      }))
-      .sort((a, b) => {
-        if (a.workspace === selectedWorkspace) return -1;
-        if (b.workspace === selectedWorkspace) return 1;
-        return a.name.localeCompare(b.name);
-      });
+    // Preserve API list order. Opening a session changes selectedWorkspace, and sorting by it makes folders jump.
+    const groups: WorkspaceGroup[] = Array.from(byWorkspace.entries()).map(([ws, convs]) => ({
+      workspace: ws,
+      name: workspaceName(ws) ?? ws,
+      conversations: [...convs].sort(compareConversationsByRecency),
+    }));
 
-    return { groups: sorted };
-  }, [conversations.data, convWorkspaceMap, selectedWorkspace]);
+    return { groups };
+  }, [conversations.data, convWorkspaceMap]);
 
   return { groups, isLoading: conversations.isLoading, baseUrl };
 }
@@ -250,6 +244,7 @@ function SessionList() {
   const setSection = useAppStore((state) => state.setSection);
   const loadConversation = useChatStore((state) => state.loadConversation);
   const activeConversationId = useChatStore((state) => state.conversationId);
+  const loadingConversationId = useChatStore((state) => state.loadingConversationId);
   const queryClient = useQueryClient();
 
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set(selectedWorkspace ? [selectedWorkspace] : []));
@@ -286,6 +281,7 @@ function SessionList() {
           <div key={group.workspace} className="mb-1">
             <button
               type="button"
+              aria-label={`${expandedFolders.has(group.workspace) ? "Collapse" : "Expand"} workspace folder ${group.name}`}
               onClick={() => toggleFolder(group.workspace)}
               className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1 text-left hover:bg-glass/80"
             >
@@ -304,7 +300,8 @@ function SessionList() {
                   <ConversationItem
                     key={conversation.id}
                     conversation={conversation}
-                    active={conversation.id === activeConversationId}
+                    active={conversation.id === activeConversationId || conversation.id === loadingConversationId}
+                    loading={conversation.id === loadingConversationId}
                     baseUrl={baseUrl}
                     onLoad={() => { setSection("chat"); void loadConversation(conversation.id, group.workspace); }}
                     queryClient={queryClient}
@@ -315,6 +312,7 @@ function SessionList() {
                     workspaceName={group.name}
                     conversations={group.conversations.slice(MAX_VISIBLE_CONVERSATIONS)}
                     activeConversationId={activeConversationId ?? null}
+                    loadingConversationId={loadingConversationId ?? null}
                     onLoadConversation={(conversationId) => {
                       setSection("chat");
                       void loadConversation(conversationId, group.workspace);
@@ -340,11 +338,13 @@ function MoreSessionsDropdown({
   workspaceName,
   conversations,
   activeConversationId,
+  loadingConversationId,
   onLoadConversation,
 }: {
   workspaceName: string;
   conversations: import("../../types/chat").ConversationSummary[];
   activeConversationId: string | null;
+  loadingConversationId: string | null;
   onLoadConversation: (conversationId: string) => void;
 }) {
   const remainingCount = conversations.length;
@@ -376,13 +376,14 @@ function MoreSessionsDropdown({
             <DropdownMenuItem
               key={conversation.id}
               onClick={() => onLoadConversation(conversation.id)}
+              disabled={conversation.id === loadingConversationId}
               className="gap-2 rounded-lg"
             >
               <MessageSquare className="h-3 w-3 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate">{conversation.title || "Untitled"}</span>
-              {conversation.id === activeConversationId ? (
+              {conversation.id === activeConversationId || conversation.id === loadingConversationId ? (
                 <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-primary">
-                  Atual
+                  {conversation.id === loadingConversationId ? "Abrindo" : "Atual"}
                 </span>
               ) : null}
             </DropdownMenuItem>
@@ -396,12 +397,14 @@ function MoreSessionsDropdown({
 function ConversationItem({
   conversation,
   active,
+  loading,
   baseUrl,
   onLoad,
   queryClient,
 }: {
   conversation: import("../../types/chat").ConversationSummary;
   active: boolean;
+  loading: boolean;
   baseUrl: string;
   onLoad: () => void;
   queryClient: ReturnType<typeof useQueryClient>;
@@ -410,6 +413,8 @@ function ConversationItem({
     <button
       type="button"
       onClick={onLoad}
+      disabled={loading}
+      aria-busy={loading}
       className={
         active
           ? "group flex w-full items-center gap-2 rounded-xl bg-accent/80 px-2 py-1.5 text-left text-[12px] text-foreground shadow-soft"
