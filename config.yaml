@@ -33,7 +33,7 @@ llama:
   reasoning_budget: 2048
   verbose: false
   threads: 6
-  auto_start: true
+  auto_start: false
   bin_path: "./@llama/llama-cpp-turboquant/build/bin/llama-server"
 
 nvidia:
@@ -44,8 +44,32 @@ nvidia:
   # - mistralai/mistral-large-3-675b-instruct-2512 (675B)
   # - qwen/qwen3-coder-480b-a35b-instruct (480B)
   # - meta/llama-3.1-405b-instruct (405B)
-  default_model: "moonshotai/kimi-k2.5"
+  default_model: "openai/gpt-oss-120b"
   models_cache_ttl_seconds: 300
+
+operational_memory:
+  enabled: true
+  capture_tools_enabled: true
+  recall_enabled: true
+  embedding_enabled: true
+  max_capture_chars: 24000
+  chunk_max_chars: 4000
+  recall_top_k: 6
+  hot_cache_size: 100
+
+embedding:
+  server_url: "http://localhost:8081/v1"
+  server_api_key: "local"
+  model: "Qwen3-Embedding-8B-Q4_K_M.gguf"
+  model_path: "/home/levybonito/.lmstudio/models/Qwen/Qwen3-Embedding-8B-GGUF"
+  dimensions: 4096
+  timeout_seconds: 60
+  auto_start: true
+  port: 8081
+  ctx_size: 8192
+  n_gpu_layers: 999
+  threads: 6
+  parallel: 1
 
 vertex:
   auth_mode: "auto"

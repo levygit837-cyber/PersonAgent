@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
@@ -107,7 +107,6 @@ class TeamRunORM(Base):
     workspace_id = Column(Text, nullable=True)
     conversation_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="SET NULL"),
         nullable=True,
     )
     status = Column(String(20), nullable=False, default="running")
@@ -131,7 +130,6 @@ class TeamBlackboardEventORM(Base):
     workspace_id = Column(Text, nullable=True)
     conversation_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="SET NULL"),
         nullable=True,
     )
     sequence = Column(Integer, nullable=False)
@@ -247,3 +245,172 @@ class MemoryConsolidationLockORM(Base):
     locked_at = Column(DateTime(timezone=True), nullable=True)
     locked_by = Column(String(100), nullable=True)
     last_consolidated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class OperationalMemoryEventORM(Base):
+    """Raw operational events captured from agent execution."""
+
+    __tablename__ = "memory_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_slug = Column(Text, nullable=False)
+    workspace_root = Column(Text, nullable=True)
+    session_id = Column(String(100), nullable=True)
+    conversation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    agent_name = Column(String(100), nullable=True)
+    event_type = Column(String(60), nullable=False)
+    task = Column(Text, nullable=True)
+    tool_name = Column(String(100), nullable=True)
+    status = Column(String(40), nullable=True)
+    input = Column(JSONB, nullable=False, default=dict)
+    output = Column(JSONB, nullable=False, default=dict)
+    error = Column(Text, nullable=True)
+    resolution = Column(Text, nullable=True)
+    paths = Column(JSONB, nullable=False, default=list)
+    metadata_ = Column("metadata", JSONB, nullable=False, default=dict)
+    source_hash = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    chunks = relationship(
+        "OperationalMemoryChunkORM",
+        back_populates="event",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("idx_memory_events_project_created", "project_slug", "created_at"),
+        Index("idx_memory_events_project_type", "project_slug", "event_type"),
+        Index("idx_memory_events_conversation", "conversation_id"),
+    )
+
+
+class OperationalMemoryChunkORM(Base):
+    """Indexable memory chunks derived from events and files."""
+
+    __tablename__ = "memory_chunks"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("memory_events.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    project_slug = Column(Text, nullable=False)
+    source_type = Column(String(60), nullable=False)
+    source_id = Column(Text, nullable=False)
+    file_path = Column(Text, nullable=True)
+    chunk_index = Column(Integer, nullable=False, default=0)
+    content = Column(Text, nullable=False)
+    content_hash = Column(String(64), nullable=False)
+    language = Column(String(60), nullable=True)
+    symbols = Column(JSONB, nullable=False, default=list)
+    imports = Column(JSONB, nullable=False, default=list)
+    token_count = Column(Integer, nullable=True)
+    embedding_status = Column(String(20), nullable=False, default="pending")
+    embedding_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    event = relationship("OperationalMemoryEventORM", back_populates="chunks")
+    embeddings = relationship(
+        "MemoryEmbeddingORM",
+        back_populates="chunk",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("idx_memory_chunks_project_created", "project_slug", "created_at"),
+        Index("idx_memory_chunks_project_source", "project_slug", "source_type"),
+        Index("idx_memory_chunks_file_path", "file_path"),
+        Index("idx_memory_chunks_hash", "content_hash"),
+    )
+
+
+class MemoryEmbeddingORM(Base):
+    """Embedding vectors for operational memory chunks.
+
+    The vector is stored as JSONB in v1 so the application does not require the
+    Python pgvector package at import time. Database init still attempts to
+    enable the pgvector extension; a later migration can move this column to a
+    native vector type once the extension is present in every environment.
+    """
+
+    __tablename__ = "memory_embeddings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    chunk_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("memory_chunks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    project_slug = Column(Text, nullable=False)
+    embedding_model = Column(Text, nullable=False)
+    dimensions = Column(Integer, nullable=False)
+    embedding = Column(JSONB, nullable=False)
+    content_hash = Column(String(64), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    chunk = relationship("OperationalMemoryChunkORM", back_populates="embeddings")
+
+    __table_args__ = (
+        Index("idx_memory_embeddings_project", "project_slug"),
+        Index("idx_memory_embeddings_chunk", "chunk_id"),
+        Index("idx_memory_embeddings_hash", "content_hash"),
+    )
+
+
+class MemoryDecisionORM(Base):
+    """Architectural decisions extracted into operational memory."""
+
+    __tablename__ = "memory_decisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_slug = Column(Text, nullable=False)
+    conversation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    decision = Column(Text, nullable=False)
+    context = Column(Text, nullable=False, default="")
+    alternatives_considered = Column(JSONB, nullable=False, default=list)
+    reason = Column(Text, nullable=False, default="")
+    status = Column(String(20), nullable=False, default="active")
+    source_event_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("memory_events.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    embedding_status = Column(String(20), nullable=False, default="pending")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_memory_decisions_project_status", "project_slug", "status"),
+        Index("idx_memory_decisions_conversation", "conversation_id"),
+    )
+
+
+class MemoryRecallLogORM(Base):
+    """Recall audit log for prompt-injected operational memory."""
+
+    __tablename__ = "memory_recall_logs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_slug = Column(Text, nullable=False)
+    query = Column(Text, nullable=False)
+    filters = Column(JSONB, nullable=False, default=dict)
+    result_ids = Column(JSONB, nullable=False, default=list)
+    scores = Column(JSONB, nullable=False, default=dict)
+    latency_ms = Column(Integer, nullable=False, default=0)
+    provider = Column(String(60), nullable=True)
+    model = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_memory_recall_logs_project_created", "project_slug", "created_at"),
+    )

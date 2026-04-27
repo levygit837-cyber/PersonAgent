@@ -23,9 +23,11 @@ from personagent.application.plan_mode import (
 )
 from personagent.application.services import (
     NextStepSuggestionService,
+    OperationalMemoryService,
     SessionMemoryService,
     SessionTitleService,
 )
+from personagent.application.services.operational_memory import project_slug_from_workspace
 from personagent.application.state.services import StateManager
 from personagent.application.tools import (
     ToolOrchestrator,
@@ -98,6 +100,7 @@ class ChatCompletionUseCase:
         recall_memory_use_case: RecallMemoryUseCase | None = None,
         memory_job_scheduler: MemoryJobScheduler | None = None,
         memory_repository: MemoryRepository | None = None,
+        operational_memory_service: OperationalMemoryService | None = None,
         context_window_tokens: int = 262_144,
         default_output_tokens: int = 65_536,
     ):
@@ -115,6 +118,7 @@ class ChatCompletionUseCase:
         self._recall_memory_use_case = recall_memory_use_case
         self._memory_job_scheduler = memory_job_scheduler
         self._memory_repository = memory_repository
+        self._operational_memory_service = operational_memory_service
         self._context_window_tokens = max(4_096, int(context_window_tokens))
         self._default_output_tokens = max(1, int(default_output_tokens))
         self._state_manager = StateManager.get_instance()
@@ -146,6 +150,7 @@ class ChatCompletionUseCase:
             preparation,
             relevant_memories=relevant_memories,
         )
+        await self._capture_operational_user_message(request, context_result, conversation)
 
         tool_context = self._build_tool_context(request, conversation) if tools else None
         result = InferenceResult(content="")
@@ -208,6 +213,12 @@ class ChatCompletionUseCase:
         await self._conversation_repo.update(conversation)
 
         assistant_msg = conversation.messages[-1]
+        await self._capture_operational_assistant_message(
+            request,
+            context_result,
+            conversation,
+            result,
+        )
         await self._after_turn_services(
             conversation,
             request,
@@ -355,6 +366,8 @@ class ChatCompletionUseCase:
             preparation,
             relevant_memories=relevant_memories,
         )
+        if append_user_message:
+            await self._capture_operational_user_message(request, context_result, conversation)
 
         tool_context = self._build_tool_context(request, conversation) if tools else None
         final_finish_reason = None
@@ -501,6 +514,13 @@ class ChatCompletionUseCase:
                 async for event in orchestrator.execute(tool_calls, tool_context):
                     if event.result is not None:
                         results_by_id[event.call.id] = event.result
+                        await self._capture_operational_tool_result(
+                            request,
+                            conversation,
+                            event.call,
+                            event.result,
+                            tool_context,
+                        )
                     metadata = event.to_stream_metadata()
                     if event.result is not None and event.event == "permission_required":
                         if self._is_user_question_result(event.result):
@@ -578,6 +598,21 @@ class ChatCompletionUseCase:
             request,
             finish_reason=final_finish_reason,
         )
+        last_assistant = next(
+            (message for message in reversed(conversation.messages) if message.role == Role.ASSISTANT),
+            None,
+        )
+        if last_assistant is not None:
+            await self._capture_operational_assistant_text(
+                request,
+                conversation,
+                context_result,
+                content=last_assistant.content,
+                reasoning_content=last_assistant.metadata.get("reasoning_content"),
+                finish_reason=final_finish_reason,
+                provider=final_provider,
+                model=final_model,
+            )
         if next_step_suggestion:
             yield StreamChunk(
                 metadata={
@@ -659,7 +694,17 @@ class ChatCompletionUseCase:
     ) -> None:
         orchestrator = self._new_orchestrator()
         results = await orchestrator.execute_collect(tool_calls, tool_context)
+        calls_by_id = {call.id: call for call in tool_calls}
         for result in results:
+            call = calls_by_id.get(result.tool_call_id)
+            if call is not None:
+                await self._capture_operational_tool_result(
+                    None,
+                    conversation,
+                    call,
+                    result,
+                    tool_context,
+                )
             self._apply_tool_state_result(result, conversation)
             if result.status != ToolExecutionStatus.PERMISSION_REQUIRED:
                 conversation.add_message(self._tool_message_from_result(result))
@@ -1091,48 +1136,143 @@ class ChatCompletionUseCase:
         Returns:
             Lista de memórias relevantes formatadas como strings.
         """
-        if self._recall_memory_use_case is None or self._memory_repository is None:
-            return []
-
         workspace_root = context_result.system_context.workspace_root
         project_slug = self._sanitize_project_slug(workspace_root)
+        formatted_memories: list[str] = []
 
-        try:
-            memory_dir = await self._memory_repository.get_memory_dir(project_slug)
+        if self._recall_memory_use_case is not None and self._memory_repository is not None:
+            try:
+                memory_dir = await self._memory_repository.get_memory_dir(project_slug)
 
-            # Recupera memórias já surfacadas nesta conversa
-            already_surfaced = set(
-                conversation.metadata.get("_surfaced_memory_paths", [])
-            )
+                # Recupera memórias já surfacadas nesta conversa
+                already_surfaced = set(
+                    conversation.metadata.get("_surfaced_memory_paths", [])
+                )
 
-            recent_tools = self._extract_recent_tools(context_result)
-            memories = await self._recall_memory_use_case.execute(
-                query=request.message,
-                memory_dir=memory_dir,
-                recent_tools=recent_tools,
-                already_surfaced=already_surfaced,
-            )
+                recent_tools = self._extract_recent_tools(context_result)
+                memories = await self._recall_memory_use_case.execute(
+                    query=request.message,
+                    memory_dir=memory_dir,
+                    recent_tools=recent_tools,
+                    already_surfaced=already_surfaced,
+                )
 
-            # Atualiza already_surfaced na conversa
-            if memories:
-                new_paths = [m.path for m in memories]
-                existing = set(conversation.metadata.get("_surfaced_memory_paths", []))
-                existing.update(new_paths)
-                conversation.metadata["_surfaced_memory_paths"] = list(existing)
+                # Atualiza already_surfaced na conversa
+                if memories:
+                    new_paths = [m.path for m in memories]
+                    existing = set(conversation.metadata.get("_surfaced_memory_paths", []))
+                    existing.update(new_paths)
+                    conversation.metadata["_surfaced_memory_paths"] = list(existing)
 
-            return MemoryFormatter.format_relevant_memories(memories)
-        except Exception:
-            logger.warning("memory_recall_failed", exc_info=True)
-            return []
+                formatted_memories.extend(MemoryFormatter.format_relevant_memories(memories))
+            except Exception:
+                logger.warning("memory_recall_failed", exc_info=True)
+
+        if self._operational_memory_service is not None:
+            try:
+                operational_memory = await self._operational_memory_service.recall_for_prompt(
+                    project_slug=project_slug,
+                    query=request.message,
+                    provider=request.provider,
+                    model=request.model,
+                )
+                if operational_memory:
+                    formatted_memories.append(operational_memory)
+            except Exception:
+                logger.warning("operational_memory_recall_failed", exc_info=True)
+        return formatted_memories
+
+    async def _capture_operational_user_message(
+        self,
+        request: ChatRequestDTO,
+        context_result: ContextBuildResult,
+        conversation: Conversation,
+    ) -> None:
+        if self._operational_memory_service is None:
+            return
+        workspace_root = context_result.system_context.workspace_root
+        await self._operational_memory_service.capture_user_message(
+            project_slug=self._sanitize_project_slug(workspace_root),
+            workspace_root=workspace_root,
+            conversation_id=str(conversation.id),
+            message=request.message,
+            metadata={
+                "provider": request.provider,
+                "model": request.model,
+                "prompt_mode": request.prompt_mode,
+            },
+        )
+
+    async def _capture_operational_assistant_message(
+        self,
+        request: ChatRequestDTO,
+        context_result: ContextBuildResult,
+        conversation: Conversation,
+        result: InferenceResult,
+    ) -> None:
+        await self._capture_operational_assistant_text(
+            request,
+            conversation,
+            context_result,
+            content=result.content,
+            reasoning_content=result.reasoning_content,
+            finish_reason=result.finish_reason,
+            provider=str(result.metadata.get("provider") or request.provider),
+            model=result.model or request.model,
+        )
+
+    async def _capture_operational_assistant_text(
+        self,
+        request: ChatRequestDTO,
+        conversation: Conversation,
+        context_result: ContextBuildResult,
+        *,
+        content: str,
+        reasoning_content: str | None,
+        finish_reason: str | None,
+        provider: str | None,
+        model: str | None,
+    ) -> None:
+        if self._operational_memory_service is None:
+            return
+        if not content and not reasoning_content:
+            return
+        workspace_root = context_result.system_context.workspace_root
+        await self._operational_memory_service.capture_assistant_message(
+            project_slug=self._sanitize_project_slug(workspace_root),
+            workspace_root=workspace_root,
+            conversation_id=str(conversation.id),
+            content=content,
+            reasoning_content=reasoning_content,
+            provider=provider or request.provider,
+            model=model or request.model,
+            finish_reason=finish_reason,
+        )
+
+    async def _capture_operational_tool_result(
+        self,
+        request: ChatRequestDTO | None,
+        conversation: Conversation,
+        call: ToolCall,
+        result: ToolResult,
+        tool_context: ToolUseContext,
+    ) -> None:
+        if self._operational_memory_service is None:
+            return
+        workspace_root = str(tool_context.workspace_root)
+        await self._operational_memory_service.capture_tool_result(
+            project_slug=self._sanitize_project_slug(workspace_root),
+            workspace_root=workspace_root,
+            conversation_id=str(conversation.id),
+            call=call,
+            result=result,
+            context=tool_context,
+            task=request.message if request is not None else None,
+        )
 
     def _sanitize_project_slug(self, workspace_root: str | None) -> str:
         """Sanitiza o nome do diretório para uso como project_slug."""
-        if not workspace_root:
-            return "default"
-        name = Path(workspace_root).name
-        # Remove caracteres problemáticos para filesystem
-        import re
-        return re.sub(r'[^a-zA-Z0-9_-]', '_', name).lower() or "default"
+        return project_slug_from_workspace(workspace_root)
 
     def _extract_recent_tools(
         self,

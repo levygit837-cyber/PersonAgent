@@ -260,3 +260,121 @@ class LlamaServerProcessManager:
         self.stop()
         await asyncio.sleep(1)
         return await self.start()
+
+
+class EmbeddingServerProcessManager(LlamaServerProcessManager):
+    """Gerencia um llama-server dedicado para embeddings."""
+
+    def find_model(self) -> str | None:
+        model_path = Path(self._settings.embedding_model_path).expanduser()
+        if model_path.is_file():
+            return str(model_path)
+        if model_path.is_dir():
+            gguf_files = [f for f in model_path.glob("*.gguf") if "mmproj" not in f.name.lower()]
+            if gguf_files:
+                return str(gguf_files[0])
+        return None
+
+    async def start(self) -> bool:
+        """Inicia o servidor local de embeddings se necessário."""
+        if self.is_running:
+            logger.info("embedding_server_already_running", pid=self._process.pid)
+            return True
+        if await self._external_server_ready():
+            logger.info(
+                "embedding_server_already_available",
+                url=self._settings.embedding_server_url,
+            )
+            return True
+
+        binary = self.find_binary()
+        if not binary:
+            logger.error("embedding_server_binary_not_found")
+            return False
+
+        model = self.find_model()
+        if not model:
+            logger.error("embedding_model_not_found", path=self._settings.embedding_model_path)
+            return False
+
+        cmd = [
+            binary,
+            "-m",
+            model,
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(self._settings.embedding_port),
+            "--ctx-size",
+            str(self._settings.embedding_ctx_size),
+            "--n-gpu-layers",
+            str(self._settings.embedding_n_gpu_layers),
+            "--threads",
+            str(self._settings.embedding_threads),
+            "--parallel",
+            str(self._settings.embedding_parallel),
+            "--embedding",
+            "--pooling",
+            "last",
+        ]
+
+        logger.info(
+            "starting_embedding_server",
+            binary=binary,
+            model=model,
+            port=self._settings.embedding_port,
+            ctx_size=self._settings.embedding_ctx_size,
+            parallel=self._settings.embedding_parallel,
+        )
+        try:
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                preexec_fn=os.setsid,
+            )
+            log_task = asyncio.create_task(self._log_output())
+            started = await self._wait_for_startup(timeout=90.0)
+            if started:
+                logger.info("embedding_server_started", pid=self._process.pid)
+                return True
+            if self.is_running:
+                logger.error("embedding_server_startup_timeout")
+            log_task.cancel()
+            self.stop()
+            return False
+        except Exception as exc:
+            logger.error("embedding_server_start_failed", error=str(exc))
+        return False
+
+    async def _wait_for_startup(self, timeout: float = 90.0) -> bool:
+        import httpx
+
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            if not self.is_running:
+                logger.error("embedding_server_process_died_during_startup")
+                return False
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        f"{self._settings.embedding_server_url}/models",
+                        timeout=2.0,
+                    )
+                    if response.status_code == 200:
+                        return True
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+        return False
+
+    async def _external_server_ready(self) -> bool:
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(f"{self._settings.embedding_server_url}/models")
+                return response.status_code == 200
+        except Exception:
+            return False

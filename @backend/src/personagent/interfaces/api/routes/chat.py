@@ -474,6 +474,7 @@ def _create_chat_use_case(
             else None
         ),
         memory_repository=container.get_memory_repository(),
+        operational_memory_service=container.get_operational_memory_service(),
         context_window_tokens=resolve_context_window_tokens(container, provider),
         default_output_tokens=resolve_default_output_tokens(container, provider),
     )
@@ -518,6 +519,13 @@ async def _approve_pending_tool_call(
         arguments=arguments,
     )
     result = await tool.call(arguments, context, call)
+    await use_case._capture_operational_tool_result(
+        resume_request,
+        conversation,
+        call,
+        result,
+        context,
+    )
     use_case._apply_tool_state_result(result, conversation)
     conversation.add_message(
         Message(
@@ -776,6 +784,7 @@ async def chat_completion(
             else None
         ),
         memory_repository=container.get_memory_repository(),
+        operational_memory_service=container.get_operational_memory_service(),
         context_window_tokens=resolve_context_window_tokens(container, provider),
         default_output_tokens=resolve_default_output_tokens(container, provider),
     )
@@ -863,6 +872,7 @@ async def chat_completion_stream(
             else None
         ),
         memory_repository=container.get_memory_repository(),
+        operational_memory_service=container.get_operational_memory_service(),
         context_window_tokens=resolve_context_window_tokens(container, provider),
         default_output_tokens=resolve_default_output_tokens(container, provider),
     )
