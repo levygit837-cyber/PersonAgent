@@ -111,8 +111,8 @@ function LabWorkspaceInner() {
             onConnect={onConnect}
             className="app-grid"
           >
-            <Background color="rgba(255,255,255,0.05)" gap={32} />
-            <Controls className="rounded-md border border-border bg-card text-foreground" />
+            <Background color="hsl(var(--glass-border) / 0.55)" gap={32} />
+            <Controls className="rounded-xl border border-glass-border/35 bg-card/90 text-foreground shadow-soft" />
             <MiniMap
               pannable
               zoomable
@@ -124,17 +124,17 @@ function LabWorkspaceInner() {
                 if (data.status === "error") return "hsl(0, 72%, 60%)";
                 return "hsl(220, 8%, 46%)";
               }}
-              className="rounded-md border border-border bg-card"
+              className="rounded-xl border border-glass-border/35 bg-card/90 shadow-soft"
             />
           </ReactFlow>
           <ExecutionTrace />
           {error ? (
-            <div className="absolute left-5 right-5 top-5 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <div className="absolute left-5 right-5 top-5 rounded-xl border border-destructive/25 bg-destructive/10 px-3 py-2 text-sm text-destructive shadow-soft">
               {error}
             </div>
           ) : null}
           {isRunning ? (
-            <div className="absolute right-5 top-5 rounded-md border border-primary/30 bg-primary/10 px-3 py-1.5 font-mono text-[10px] uppercase text-primary">
+            <div className="absolute right-5 top-5 rounded-xl border border-primary/25 bg-primary/10 px-3 py-1.5 font-mono text-[10px] uppercase text-primary shadow-soft">
               Engine running
             </div>
           ) : null}
@@ -155,12 +155,12 @@ function LabToolbar() {
   const addNode = useLabStore((state) => state.addNode);
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-5">
+    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-glass-border/25 bg-background px-5">
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-semibold text-foreground">Workflows</div>
         <div className="truncate font-mono text-[10px] uppercase text-primary">{workflow.title}</div>
       </div>
-      <div className="rounded-md border border-border bg-card px-2.5 py-1.5 font-mono text-[10px] uppercase text-muted-foreground">
+      <div className="rounded-xl border border-glass-border/35 bg-card/70 px-2.5 py-1.5 font-mono text-[10px] uppercase text-muted-foreground shadow-soft">
         {isRunning ? "Running" : "Idle"}
       </div>
       <Button variant="outline" size="sm" disabled={isSaving} onClick={() => void saveGraph()}>
@@ -207,8 +207,8 @@ function LabNodeCard({ data, selected }: NodeProps<LabFlowNode>) {
       onClick={() => selectNode(data.id)}
       className={
         selected
-          ? "relative h-full w-full rounded-lg border border-primary/60 bg-card p-3 text-left shadow-[0_0_0_4px_rgba(139,92,246,0.10)]"
-          : "relative h-full w-full rounded-lg border border-border bg-card p-3 text-left hover:border-border/80 hover:bg-accent/60"
+          ? "relative h-full w-full rounded-2xl border border-primary/50 bg-card/90 p-3 text-left shadow-[0_0_0_4px_hsl(var(--primary)_/_0.13),0_18px_36px_rgb(0_0_0_/_0.28)]"
+          : "relative h-full w-full rounded-2xl border border-glass-border/35 bg-card/80 p-3 text-left shadow-soft hover:border-glass-border/50 hover:bg-glass/70"
       }
     >
       <Handle type="target" position={Position.Left} id="in" className="!h-2 !w-2 !border-primary !bg-background" />
@@ -222,12 +222,12 @@ function LabNodeCard({ data, selected }: NodeProps<LabFlowNode>) {
       <div className="mb-2 flex items-center gap-2">
         <span className={`h-1.5 w-1.5 rounded-full ${statusColor}`} />
         <span className="truncate text-xs font-semibold text-foreground">{data.title}</span>
-        <span className="ml-auto rounded border border-border px-1.5 font-mono text-[9px] uppercase text-muted-foreground">
+        <span className="ml-auto rounded-lg border border-glass-border/30 px-1.5 font-mono text-[9px] uppercase text-muted-foreground">
           {data.status}
         </span>
       </div>
       <div className="line-clamp-2 text-[11px] leading-5 text-muted-foreground">{data.description}</div>
-      <div className="mt-2 truncate rounded border border-border bg-background px-2 py-1 font-mono text-[10px] text-muted-foreground">
+      <div className="mt-2 truncate rounded-xl border border-glass-border/30 bg-background/70 px-2 py-1 font-mono text-[10px] text-muted-foreground">
         {data.output_preview || data.output_kind}
       </div>
     </button>
@@ -243,8 +243,8 @@ function NodeInspector() {
   const isRunning = useLabStore((state) => state.isRunning);
 
   return (
-    <aside className="hidden w-[340px] shrink-0 overflow-y-auto border-l border-border bg-[#0d0f13] xl:block">
-      <div className="flex items-center justify-between border-b border-border p-4">
+    <aside className="hidden w-[340px] shrink-0 overflow-y-auto border-l border-glass-border/25 bg-card xl:block">
+      <div className="flex items-center justify-between border-b border-glass-border/25 p-4">
         <div>
           <div className="text-sm font-semibold text-foreground">{selected ? selected.title : "Node Inspector"}</div>
           <div className="font-mono text-[10px] uppercase text-muted-foreground">
@@ -259,7 +259,7 @@ function NodeInspector() {
               e.stopPropagation();
               selectNode("");
             }}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border border-glass-border/35 bg-card/80 text-muted-foreground transition-colors hover:border-glass-border/50 hover:bg-glass/80 hover:text-foreground"
             title="Close inspector"
           >
             <X className="h-4 w-4" />
@@ -273,7 +273,7 @@ function NodeInspector() {
               value={selected.title}
               disabled={isRunning}
               onChange={(event) => updateSelectedNode({ title: event.currentTarget.value })}
-              className="h-9 w-full rounded-md border border-border bg-card px-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+              className="h-9 w-full rounded-xl border border-glass-border/35 bg-card/80 px-3 text-sm text-foreground outline-none shadow-soft focus:ring-2 focus:ring-ring/25 disabled:opacity-50"
             />
           </Field>
           <Field label="Description / Instructions">
@@ -304,7 +304,7 @@ function NodeInspector() {
             />
           </Field>
           <Field label="Contracts">
-            <pre className="max-h-40 overflow-auto rounded-md border border-border bg-card p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+            <pre className="max-h-40 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 p-3 font-mono text-[11px] leading-5 text-muted-foreground shadow-soft">
               {jsonPreview({
                 input: selected.input_contract,
                 output: selected.output_contract,
@@ -314,7 +314,7 @@ function NodeInspector() {
             </pre>
           </Field>
           <Field label="Runtime Output">
-            <pre className="max-h-48 overflow-auto rounded-md border border-border bg-card p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+            <pre className="max-h-48 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 p-3 font-mono text-[11px] leading-5 text-muted-foreground shadow-soft">
               {selected.last_output || selected.output_preview || "No run output yet."}
             </pre>
           </Field>
@@ -334,8 +334,8 @@ function ExecutionTrace() {
   const trace = useLabStore((state) => state.workflow.workflow.trace_events);
   if (trace.length === 0) return null;
   return (
-    <div className="absolute bottom-5 left-1/2 max-h-36 w-[min(660px,calc(100%-3rem))] -translate-x-1/2 overflow-hidden rounded-lg border border-border bg-card/95 shadow-dock backdrop-blur">
-      <div className="flex h-8 items-center justify-between border-b border-border px-3 font-mono text-[10px] uppercase text-muted-foreground">
+    <div className="absolute bottom-5 left-1/2 max-h-36 w-[min(660px,calc(100%-3rem))] -translate-x-1/2 overflow-hidden rounded-2xl border border-glass-border/35 bg-card/90 shadow-dock backdrop-blur-2xl">
+      <div className="flex h-8 items-center justify-between border-b border-glass-border/25 px-3 font-mono text-[10px] uppercase text-muted-foreground">
         <span>Live Execution Trace</span>
         <span>{trace.length} events</span>
       </div>

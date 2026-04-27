@@ -14,11 +14,13 @@ import { useAppStore } from "./app-store";
 import {
   buildChatRequest,
   buildTeamRunStart,
+  emptySessionUsage,
   type ChatMessagePartUi,
   type ChatMessageUi,
   type GeneratedImage,
   type PersistedMessage,
   type PlanApprovalUi,
+  type SessionUsage,
   type StreamChunk,
   type TeamRunEvent,
   type TeamTraceEventUi,
@@ -34,6 +36,12 @@ const thinkingStates = new Map<string, ThinkingTagState>();
 const textFlushBuffers = new Map<string, TextFlushBuffer>();
 const teamDeltaFlushBuffers = new Map<string, TeamDeltaFlushBuffer>();
 const STREAM_TEXT_FLUSH_MS = 50;
+const liveTokenTotals = {
+  exactAgent: 0,
+  exactThinking: 0,
+  estimatedAgent: 0,
+  estimatedThinking: 0,
+};
 
 type TextFlushBuffer = {
   content: string;
@@ -53,13 +61,17 @@ type TeamDeltaFlushBuffer = {
 interface ChatState {
   messages: ChatMessageUi[];
   conversationId?: string;
+  conversationTitle?: string;
   error?: string;
   isStreaming: boolean;
+  isFinalizing: boolean;
   activeController?: AbortController;
   activeAgentId?: string;
   pendingPlanApproval?: PlanApprovalUi;
   pendingToolApproval?: ToolApprovalUi;
   nextStepSuggestion?: string;
+  liveSessionUsage: SessionUsage;
+  liveSubAgentIds: string[];
   loadConversation: (id: string) => Promise<void>;
   startNewConversation: () => void;
   sendMessage: (text: string, systemPrompt?: string) => Promise<void>;
@@ -75,20 +87,28 @@ interface ChatState {
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   isStreaming: false,
+  isFinalizing: false,
+  liveSessionUsage: emptySessionUsage(),
+  liveSubAgentIds: [],
 
   loadConversation: async (id) => {
     try {
       const detail = await getConversation(useAppStore.getState().baseUrl, id);
       set({
         conversationId: detail.id,
+        conversationTitle: detail.title,
         messages: detail.messages
           .filter((message) => message.role !== "system")
           .map(messageFromPersisted),
         pendingPlanApproval: undefined,
         pendingToolApproval: undefined,
         nextStepSuggestion: undefined,
+        liveSessionUsage: emptySessionUsage(),
+        liveSubAgentIds: [],
+        isFinalizing: false,
         error: undefined,
       });
+      resetLiveTokenTotals();
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -99,11 +119,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       messages: [],
       conversationId: undefined,
+      conversationTitle: undefined,
       pendingPlanApproval: undefined,
       pendingToolApproval: undefined,
       nextStepSuggestion: undefined,
+      liveSessionUsage: emptySessionUsage(),
+      liveSubAgentIds: [],
+      isFinalizing: false,
       error: undefined,
     });
+    resetLiveTokenTotals();
   },
 
   sendMessage: async (text, systemPrompt) => {
@@ -139,13 +164,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isReasoningStreaming: false,
     };
     const controller = new AbortController();
+    resetLiveTokenTotals();
     set((state) => ({
       messages: [...state.messages, userMessage, agentMessage],
       isStreaming: true,
+      isFinalizing: false,
       activeController: controller,
       activeAgentId: agentId,
       pendingPlanApproval: undefined,
       nextStepSuggestion: undefined,
+      liveSessionUsage: emptySessionUsage(),
+      liveSubAgentIds: [],
       error: undefined,
     }));
 
@@ -171,7 +200,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
     } catch (error) {
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && isActiveGenerationState(get(), controller, agentId)) {
         set({ error: error instanceof Error ? error.message : String(error) });
       }
     } finally {
@@ -179,9 +208,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       flushTextBuffer(agentId, set);
       thinkingStates.delete(agentId);
       set((state) => ({
-        isStreaming: false,
-        activeController: undefined,
-        activeAgentId: undefined,
+        isStreaming: isActiveGenerationState(state, controller, agentId) ? false : state.isStreaming,
+        isFinalizing: state.activeAgentId === agentId || !state.activeAgentId ? false : state.isFinalizing,
+        activeController: state.activeController === controller ? undefined : state.activeController,
+        activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
         messages: state.messages.map((item) =>
           item.id === agentId ? closeActiveReasoning(item, false) : item,
         ),
@@ -281,6 +311,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     set((state) => ({
       isStreaming: false,
+      isFinalizing: false,
       activeController: undefined,
       activeAgentId: undefined,
       messages: state.messages.map((item) =>
@@ -291,6 +322,125 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearError: () => set({ error: undefined }),
 }));
+
+function isActiveGenerationState(state: ChatState, controller: AbortController, agentId: string) {
+  return state.activeController === controller || state.activeAgentId === agentId;
+}
+
+function resetLiveTokenTotals() {
+  liveTokenTotals.exactAgent = 0;
+  liveTokenTotals.exactThinking = 0;
+  liveTokenTotals.estimatedAgent = 0;
+  liveTokenTotals.estimatedThinking = 0;
+}
+
+type SessionUsageKey = keyof SessionUsage;
+
+function incrementLiveUsage(
+  set: (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
+  key: SessionUsageKey,
+  value: number,
+  estimated = false,
+) {
+  set((state) => ({
+    liveSessionUsage: {
+      ...state.liveSessionUsage,
+      [key]: {
+        value: state.liveSessionUsage[key].value + Math.max(0, value),
+        estimated: state.liveSessionUsage[key].estimated || estimated,
+      },
+    },
+  }));
+}
+
+function applyLiveToolUsage(
+  chunk: StreamChunk,
+  set: (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
+) {
+  if (chunk.event === "tool_call_started") {
+    incrementLiveUsage(set, "tool_calls", 1);
+    if (chunk.tool_name === "Skill") incrementLiveUsage(set, "skills_used_count", 1);
+    if (chunk.tool_name?.startsWith("mcp__") || chunk.tool_data?.is_mcp === true) {
+      incrementLiveUsage(set, "mcp_calls_count", 1);
+    }
+  }
+  if (chunk.event === "tool_result" && chunk.tool_name === "TodoWrite") {
+    const todos = chunk.tool_data?.todos;
+    incrementLiveUsage(set, "todos_created", Array.isArray(todos) ? todos.length : 1);
+  }
+}
+
+function applyLiveTokenUsage(
+  chunk: Pick<StreamChunk, "content" | "reasoning_content" | "usage">,
+  set: (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
+) {
+  const exact = normalizeUsageTokens(chunk.usage);
+  if (exact.agent !== undefined) {
+    liveTokenTotals.exactAgent = exact.agent;
+    liveTokenTotals.estimatedAgent = 0;
+  } else if (chunk.content) {
+    liveTokenTotals.estimatedAgent += estimateTokens(chunk.content);
+  }
+  if (exact.thinking !== undefined) {
+    liveTokenTotals.exactThinking = exact.thinking;
+    liveTokenTotals.estimatedThinking = 0;
+  } else if (chunk.reasoning_content) {
+    liveTokenTotals.estimatedThinking += estimateTokens(chunk.reasoning_content);
+  }
+
+  set((state) => ({
+    liveSessionUsage: {
+      ...state.liveSessionUsage,
+      agent_output_tokens: {
+        value: liveTokenTotals.exactAgent + liveTokenTotals.estimatedAgent,
+        estimated: liveTokenTotals.estimatedAgent > 0,
+      },
+      thinking_output_tokens: {
+        value: liveTokenTotals.exactThinking + liveTokenTotals.estimatedThinking,
+        estimated: liveTokenTotals.estimatedThinking > 0,
+      },
+    },
+  }));
+}
+
+function normalizeUsageTokens(usage?: Record<string, unknown>) {
+  if (!usage) return {};
+  const completionDetails = objectValue(usage.completion_tokens_details);
+  const thinking =
+    numberValue(usage.reasoning_tokens) ??
+    numberValue(usage.thinking_tokens) ??
+    numberValue(usage.thoughtsTokenCount) ??
+    numberValue(usage.thoughts_token_count) ??
+    numberValue(completionDetails?.reasoning_tokens);
+  const rawAgent =
+    numberValue(usage.candidatesTokenCount) ??
+    numberValue(usage.candidates_token_count) ??
+    numberValue(usage.output_tokens) ??
+    numberValue(usage.completion_tokens);
+  const agent =
+    rawAgent !== undefined && thinking !== undefined && usage.completion_tokens !== undefined && usage.candidatesTokenCount === undefined
+      ? Math.max(0, rawAgent - thinking)
+      : rawAgent;
+  return { agent, thinking };
+}
+
+function estimateTokens(value: string) {
+  if (!value) return 0;
+  return Math.max(1, Math.ceil(value.length / 4));
+}
+
+function numberValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
 
 function handleChunk(
   rawChunk: StreamChunk,
@@ -303,25 +453,37 @@ function handleChunk(
   if (chunk.error) {
     flushTextBuffer(agentId, set);
     thinkingStates.delete(agentId);
-    set({
+    set((state) => ({
       error: chunk.error,
-      messages: get().messages.map((item) => (item.id === agentId ? closeActiveReasoning(item, false) : item)),
-    });
+      isStreaming: state.activeAgentId === agentId ? false : state.isStreaming,
+      isFinalizing: state.activeAgentId === agentId ? false : state.isFinalizing,
+      activeController: state.activeAgentId === agentId ? undefined : state.activeController,
+      activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
+      messages: state.messages.map((item) => (item.id === agentId ? closeActiveReasoning(item, false) : item)),
+    }));
     return;
   }
 
   if (chunk.event === "conversation" && chunk.conversation_id) {
     flushTextBuffer(agentId, set);
-    set({ conversationId: chunk.conversation_id });
+    set((state) => ({
+      conversationId: chunk.conversation_id,
+      conversationTitle: chunk.title || state.conversationTitle,
+    }));
     void useAppStore.getState().associateConversation(chunk.conversation_id, workspaceRoot);
     window.dispatchEvent(new CustomEvent("personagent:conversations-changed"));
     return;
   }
 
   if (chunk.event === "plan_approval_requested") {
+    incrementLiveUsage(set, "plans_created", 1);
     flushTextBuffer(agentId, set);
     thinkingStates.delete(agentId);
     set((state) => ({
+      isStreaming: state.activeAgentId === agentId ? false : state.isStreaming,
+      isFinalizing: state.activeAgentId === agentId ? true : state.isFinalizing,
+      activeController: state.activeAgentId === agentId ? undefined : state.activeController,
+      activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
       pendingPlanApproval: planApprovalFromChunk(chunk),
       messages: state.messages.map((item) => (item.id === agentId ? closeActiveReasoning(item, false) : item)),
     }));
@@ -336,6 +498,7 @@ function handleChunk(
   }
 
   if (chunk.event === "conversation_saved") {
+    resetLiveTokenTotals();
     flushTextBuffer(agentId, set);
     const suggestion =
       typeof chunk.next_step_suggestion === "string" && chunk.next_step_suggestion.trim()
@@ -343,7 +506,14 @@ function handleChunk(
         : undefined;
     window.dispatchEvent(new CustomEvent("personagent:conversations-changed"));
     set((state) => ({
-      nextStepSuggestion: suggestion,
+      isStreaming: state.activeAgentId === agentId ? false : state.isStreaming,
+      isFinalizing: false,
+      activeController: state.activeAgentId === agentId ? undefined : state.activeController,
+      activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
+      nextStepSuggestion: state.activeAgentId ? state.nextStepSuggestion : suggestion,
+      conversationTitle: chunk.title || state.conversationTitle,
+      liveSessionUsage: state.activeAgentId ? state.liveSessionUsage : emptySessionUsage(),
+      liveSubAgentIds: state.activeAgentId ? state.liveSubAgentIds : [],
       messages: state.messages.map((item) => {
         if (item.id !== agentId) return item;
         const withReasoning =
@@ -354,6 +524,7 @@ function handleChunk(
       }),
     }));
     thinkingStates.delete(agentId);
+    window.dispatchEvent(new CustomEvent("personagent:session-panel-changed"));
     return;
   }
 
@@ -367,9 +538,14 @@ function handleChunk(
   }
 
   if (isToolEvent(chunk)) {
+    applyLiveToolUsage(chunk, set);
     flushTextBuffer(agentId, set);
     if (chunk.event === "permission_required" && chunk.approval_id) {
-      set({ pendingToolApproval: toolApprovalFromChunk(chunk) });
+      set({
+        pendingToolApproval: toolApprovalFromChunk(chunk),
+        isStreaming: false,
+        isFinalizing: false,
+      });
     }
     if (!isToolGroupEvent(chunk)) {
       applyToolChunk(chunk, agentId, set);
@@ -393,6 +569,7 @@ function handleChunk(
 
   if (!chunk.content && !chunk.reasoning_content && !chunk.finish_reason) return;
 
+  applyLiveTokenUsage(chunk, set);
   queueTextChunk(agentId, chunk, set);
 }
 
@@ -430,8 +607,13 @@ function flushTextBuffer(
   const reasoning = buffer.reasoning;
   const finishReason = buffer.finishReason;
   if (!content && !reasoning && !finishReason) return;
+  const isFinalFinish = Boolean(finishReason && finishReason !== "tool_calls");
 
   set((state) => ({
+    isStreaming: isFinalFinish && state.activeAgentId === agentId ? false : state.isStreaming,
+    isFinalizing: isFinalFinish && state.activeAgentId === agentId ? true : state.isFinalizing,
+    activeController: isFinalFinish && state.activeAgentId === agentId ? undefined : state.activeController,
+    activeAgentId: isFinalFinish && state.activeAgentId === agentId ? undefined : state.activeAgentId,
     messages: state.messages.map((item) => {
       if (item.id !== agentId) return item;
       let next = item;
@@ -448,7 +630,6 @@ function flushTextBuffer(
           parts: appendContentPart(next.parts, next.id, content),
         };
       }
-      const isFinalFinish = Boolean(finishReason && finishReason !== "tool_calls");
       if (isFinalFinish) thinkingStates.delete(agentId);
       return {
         ...next,
@@ -504,12 +685,33 @@ function handleTeamEvent(
     set({ conversationId: event.conversation_id });
   }
 
+  if (event.event === "agent_turn_started" && event.agent_id) {
+    set((state) => {
+      if (state.liveSubAgentIds.includes(String(event.agent_id))) return {};
+      const ids = [...state.liveSubAgentIds, String(event.agent_id)];
+      return {
+        liveSubAgentIds: ids,
+        liveSessionUsage: {
+          ...state.liveSessionUsage,
+          subagents_used: { value: ids.length, estimated: false },
+        },
+      };
+    });
+  }
+
   if (event.event === "agent_delta") {
     queueTeamDeltaEvent(agentId, event, set);
     return;
   }
 
   if (event.event === "final_delta") {
+    applyLiveTokenUsage(
+      {
+        content: event.content,
+        reasoning_content: event.reasoning_content,
+      },
+      set,
+    );
     queueTextChunk(
       agentId,
       {
@@ -525,7 +727,9 @@ function handleTeamEvent(
   flushTextBuffer(agentId, set);
 
   if (event.event === "team_run_completed") {
+    resetLiveTokenTotals();
     window.dispatchEvent(new CustomEvent("personagent:conversations-changed"));
+    window.dispatchEvent(new CustomEvent("personagent:session-panel-changed"));
   }
 
   set((state) => ({

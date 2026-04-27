@@ -122,7 +122,7 @@ const GeneratedImageContent = memo(function GeneratedImageContent({ image }: { i
       <img
         src={src}
         alt={image.alt || "Generated image"}
-        className="max-h-[70vh] w-auto max-w-full rounded-lg border border-border bg-secondary object-contain"
+        className="max-h-[70vh] w-auto max-w-full rounded-2xl border border-glass-border/35 bg-secondary object-contain shadow-soft"
         loading="lazy"
       />
     </figure>
@@ -149,7 +149,7 @@ function hasVisibleContent(message: ChatMessageUi) {
 
 const TeamTrace = memo(function TeamTrace({ events }: { events: TeamTraceEventUi[] }) {
   return (
-    <div className="mb-4 space-y-2 border-l border-border pl-3">
+    <div className="mb-4 space-y-2 border-l border-glass-border/25 pl-3">
       {events.map((event) => (
         <TeamTraceEvent key={event.id} event={event} />
       ))}

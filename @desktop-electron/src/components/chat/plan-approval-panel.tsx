@@ -15,7 +15,7 @@ export function PlanApprovalPanel({ approval }: { approval: PlanApprovalUi }) {
   const disabled = isStreaming || !approval.approvalId;
 
   return (
-    <section className="mb-9 rounded-md border border-primary/30 bg-card/80 p-4 shadow-sm">
+    <section className="mb-9 rounded-2xl border border-primary/25 bg-card/80 p-4 shadow-soft">
       <div className="mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2">
         <div>
           <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
@@ -28,7 +28,7 @@ export function PlanApprovalPanel({ approval }: { approval: PlanApprovalUi }) {
         </span>
       </div>
 
-      <div className="max-h-[46vh] overflow-y-auto rounded-md border border-border/70 bg-background/40 px-3 py-2">
+      <div className="max-h-[46vh] overflow-y-auto rounded-xl border border-glass-border/35 bg-background/[0.45] px-3 py-2">
         <MarkdownContent content={approval.planContent || "No plan content was provided."} />
       </div>
 
@@ -70,7 +70,7 @@ export function ToolApprovalPanel({ approval }: { approval: ToolApprovalUi }) {
   const disabled = isStreaming || !approval.approvalId;
 
   return (
-    <section className="mb-9 rounded-md border border-warning/35 bg-card/80 p-4 shadow-sm">
+    <section className="mb-9 rounded-2xl border border-warning/30 bg-card/80 p-4 shadow-soft">
       <div className="mb-3">
         <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-warning">
           Command approval
@@ -81,7 +81,7 @@ export function ToolApprovalPanel({ approval }: { approval: ToolApprovalUi }) {
         <p className="mb-3 text-sm leading-6 text-muted-foreground">{approval.message}</p>
       ) : null}
       {approval.toolInput ? (
-        <pre className="mb-3 max-h-40 overflow-auto rounded-md border border-border/70 bg-background/50 p-3 text-xs text-muted-foreground">
+        <pre className="mb-3 max-h-40 overflow-auto rounded-xl border border-glass-border/35 bg-background/50 p-3 text-xs text-muted-foreground">
           {JSON.stringify(approval.toolInput, null, 2)}
         </pre>
       ) : null}
@@ -98,4 +98,3 @@ export function ToolApprovalPanel({ approval }: { approval: ToolApprovalUi }) {
     </section>
   );
 }
-

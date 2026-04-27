@@ -232,6 +232,93 @@ export interface StreamChunk {
   next_step_suggestion?: string | null;
 }
 
+export interface SessionUsageMetric {
+  value: number;
+  estimated: boolean;
+}
+
+export interface SessionUsage {
+  agent_output_tokens: SessionUsageMetric;
+  thinking_output_tokens: SessionUsageMetric;
+  tool_calls: SessionUsageMetric;
+  skills_used_count: SessionUsageMetric;
+  mcp_calls_count: SessionUsageMetric;
+  plans_created: SessionUsageMetric;
+  todos_created: SessionUsageMetric;
+  subagents_used: SessionUsageMetric;
+}
+
+export interface ChangedFile {
+  id: string;
+  path: string;
+  display_path: string;
+  added_lines: number;
+  removed_lines: number;
+  source: string;
+  status: string;
+  diff?: string;
+  content?: string;
+}
+
+export interface SessionSource {
+  id: string;
+  title: string;
+  description: string;
+  url: string;
+  domain: string;
+  favicon_url: string;
+  tool_name: string;
+}
+
+export interface ProjectItem {
+  id: string;
+  type: "commit" | "push" | "pr" | "branch" | string;
+  title: string;
+  subtitle?: string;
+  timestamp?: string | null;
+  url?: string | null;
+  active?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SessionProjectSnapshot {
+  repo?: {
+    name_with_owner?: string | null;
+    url?: string | null;
+    default_branch?: string | null;
+    pushed_at?: string | null;
+    source?: string;
+  } | null;
+  prs: ProjectItem[];
+  branches: ProjectItem[];
+  pushes: ProjectItem[];
+  commits: ProjectItem[];
+  errors: string[];
+}
+
+export interface ProjectDetail {
+  type: string;
+  id: string;
+  title: string;
+  url?: string | null;
+  metadata?: Record<string, unknown>;
+  files?: Array<Record<string, unknown>>;
+  commits?: Array<Record<string, unknown>>;
+  patch?: string;
+  source?: string;
+  error?: string | null;
+}
+
+export interface SessionPanelSnapshot {
+  conversation_id: string;
+  title: string;
+  updated_at: string;
+  changed_files: ChangedFile[];
+  sources: SessionSource[];
+  usage: SessionUsage;
+  project: SessionProjectSnapshot;
+}
+
 export interface PlanApprovalUi {
   conversationId: string;
   approvalId: string;
@@ -316,6 +403,19 @@ export interface ChatMessageUi {
   parts: ChatMessagePartUi[];
   isStreaming: boolean;
   isReasoningStreaming: boolean;
+}
+
+export function emptySessionUsage(): SessionUsage {
+  return {
+    agent_output_tokens: { value: 0, estimated: false },
+    thinking_output_tokens: { value: 0, estimated: false },
+    tool_calls: { value: 0, estimated: false },
+    skills_used_count: { value: 0, estimated: false },
+    mcp_calls_count: { value: 0, estimated: false },
+    plans_created: { value: 0, estimated: false },
+    todos_created: { value: 0, estimated: false },
+    subagents_used: { value: 0, estimated: false },
+  };
 }
 
 export function buildChatRequest(input: {

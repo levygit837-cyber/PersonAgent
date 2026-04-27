@@ -36,6 +36,7 @@ describe("InputDock", () => {
     useChatStore.setState({
       messages: [],
       isStreaming: false,
+      isFinalizing: false,
       conversationId: undefined,
       error: undefined,
       nextStepSuggestion: undefined,
@@ -169,5 +170,21 @@ describe("InputDock", () => {
     );
 
     expect(screen.getByText("Run focused tests")).toBeInTheDocument();
+  });
+
+  it("keeps the composer usable while a completed turn is finalizing", () => {
+    useChatStore.setState({ isStreaming: false, isFinalizing: true });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByRole("button", { name: /stop/i })).not.toBeInTheDocument();
+    const input = screen.getByPlaceholderText(/ask the local agent/i);
+    expect(input).not.toBeDisabled();
+    fireEvent.change(input, { target: { value: "next message" } });
+    expect(screen.getByRole("button", { name: /send/i })).not.toBeDisabled();
   });
 });

@@ -7,6 +7,8 @@ import type {
   LlmModel,
   ModelProvider,
   PlanDecisionResponse,
+  ProjectDetail,
+  SessionPanelSnapshot,
   StreamChunk,
   TeamConfig,
   TeamRunEvent,
@@ -60,6 +62,23 @@ export function getConversation(baseUrl: string, id: string) {
 
 export function deleteConversation(baseUrl: string, id: string) {
   return requestJson<{ deleted: boolean }>(baseUrl, `/conversations/${id}`, { method: "DELETE" });
+}
+
+export function getSessionPanel(baseUrl: string, conversationId: string, workspaceRoot?: string | null) {
+  const params = new URLSearchParams();
+  if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<SessionPanelSnapshot>(baseUrl, `/sessions/${conversationId}/panel${suffix}`);
+}
+
+export function getSessionProjectDetail(
+  baseUrl: string,
+  conversationId: string,
+  input: { type: string; id: string; workspaceRoot?: string | null },
+) {
+  const params = new URLSearchParams({ type: input.type, id: input.id });
+  if (input.workspaceRoot?.trim()) params.set("workspace_root", input.workspaceRoot.trim());
+  return requestJson<ProjectDetail>(baseUrl, `/sessions/${conversationId}/project/details?${params.toString()}`);
 }
 
 export async function listModels(baseUrl: string, provider: ModelProvider, capability?: string) {

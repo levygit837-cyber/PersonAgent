@@ -3,7 +3,7 @@ import { Button } from "../ui/button";
 
 export function TitleBar() {
   return (
-    <header className="drag-region flex h-9 shrink-0 items-center border-b border-border bg-background">
+    <header className="drag-region flex h-9 shrink-0 items-center border-b border-glass-border/25 bg-background">
       <div className="no-drag ml-3 flex items-center gap-1.5">
         <div className="grid h-[18px] w-[18px] place-items-center rounded bg-primary/15 text-[9px] font-bold text-primary">
           P

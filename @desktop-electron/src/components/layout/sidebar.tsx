@@ -26,6 +26,8 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 
+const MAX_VISIBLE_CONVERSATIONS = 4;
+
 export function Sidebar() {
   const collapsed = useAppStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useAppStore((state) => state.toggleSidebar);
@@ -34,8 +36,8 @@ export function Sidebar() {
 
   if (collapsed) {
     return (
-      <aside className="hidden w-12 shrink-0 flex-col items-center border-r border-border bg-card py-2.5 min-[720px]:flex">
-        <div className="mb-3 grid h-6 w-6 place-items-center rounded-md bg-primary/15 text-[10px] font-bold text-primary">
+      <aside className="hidden w-12 shrink-0 flex-col items-center border-r border-glass-border/25 bg-card/95 py-2.5 min-[720px]:flex">
+        <div className="mb-3 grid h-6 w-6 place-items-center rounded-lg bg-primary/15 text-[10px] font-bold text-primary">
           P
         </div>
         <Tooltip>
@@ -75,7 +77,7 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="hidden w-[240px] shrink-0 flex-col border-r border-border bg-card min-[720px]:flex">
+    <aside className="hidden w-[240px] shrink-0 flex-col border-r border-glass-border/25 bg-card/95 min-[720px]:flex">
       <SidebarHeader />
       <SidebarActions />
       <SessionList />
@@ -92,15 +94,15 @@ function SidebarHeader() {
   const pickWorkspace = useAppStore((state) => state.pickWorkspace);
 
   return (
-    <div className="flex items-center gap-2 border-b border-border px-2.5 py-2">
-      <div className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-primary/15 text-[10px] font-bold text-primary">
+    <div className="flex items-center gap-2 border-b border-glass-border/25 px-2.5 py-2">
+      <div className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-primary/15 text-[10px] font-bold text-primary">
         P
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-0.5 text-left hover:bg-accent"
+            className="flex min-w-0 flex-1 items-center gap-1 rounded-lg px-1.5 py-1 text-left hover:bg-glass/80"
           >
             <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
               {selectedWorkspace ? workspaceName(selectedWorkspace) : "PersonAgent"}
@@ -151,7 +153,7 @@ function SidebarActions() {
       <button
         type="button"
         onClick={() => { setSection("chat"); startNewConversation(); }}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground"
+        className="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-glass/80 hover:text-foreground"
       >
         <Plus className="h-3.5 w-3.5" />
         <span>New Chat</span>
@@ -161,8 +163,8 @@ function SidebarActions() {
         onClick={() => setSection("lab")}
         className={
           section === "lab"
-            ? "flex w-full items-center gap-2 rounded-md bg-accent px-2 py-1.5 text-[13px] font-medium text-foreground"
-            : "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground"
+            ? "flex w-full items-center gap-2 rounded-xl bg-accent/80 px-2 py-1.5 text-[13px] font-medium text-foreground shadow-soft"
+            : "flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-glass/80 hover:text-foreground"
         }
       >
         <FlaskConical className="h-3.5 w-3.5" />
@@ -170,6 +172,21 @@ function SidebarActions() {
       </button>
     </div>
   );
+}
+
+function getConversationTimestamp(conversation: import("../../types/chat").ConversationSummary) {
+  for (const value of [conversation.updated_at, conversation.created_at]) {
+    const timestamp = Date.parse(value);
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+  return 0;
+}
+
+function compareConversationsByRecency(
+  left: import("../../types/chat").ConversationSummary,
+  right: import("../../types/chat").ConversationSummary,
+) {
+  return getConversationTimestamp(right) - getConversationTimestamp(left);
 }
 
 interface WorkspaceGroup {
@@ -213,7 +230,7 @@ function useGroupedConversations() {
       .map(([ws, convs]) => ({
         workspace: ws,
         name: workspaceName(ws) ?? ws,
-        conversations: convs,
+        conversations: [...convs].sort(compareConversationsByRecency),
       }))
       .sort((a, b) => {
         if (a.workspace === selectedWorkspace) return -1;
@@ -270,7 +287,7 @@ function SessionList() {
             <button
               type="button"
               onClick={() => toggleFolder(group.workspace)}
-              className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-accent"
+              className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1 text-left hover:bg-glass/80"
             >
               <ChevronRight
                 className={`h-2.5 w-2.5 shrink-0 text-muted-foreground transition-transform duration-150 ${expandedFolders.has(group.workspace) ? "rotate-90" : ""}`}
@@ -282,8 +299,8 @@ function SessionList() {
               <span className="text-[10px] tabular-nums text-muted-foreground/60">{group.conversations.length}</span>
             </button>
             {expandedFolders.has(group.workspace) ? (
-              <div className="ml-3 space-y-px border-l border-border/50 pl-1.5 pt-0.5">
-                {group.conversations.map((conversation) => (
+              <div className="ml-3 space-y-px border-l border-glass-border/20 pl-1.5 pt-0.5">
+                {group.conversations.slice(0, MAX_VISIBLE_CONVERSATIONS).map((conversation) => (
                   <ConversationItem
                     key={conversation.id}
                     conversation={conversation}
@@ -293,6 +310,17 @@ function SessionList() {
                     queryClient={queryClient}
                   />
                 ))}
+                {group.conversations.length > MAX_VISIBLE_CONVERSATIONS ? (
+                  <MoreSessionsDropdown
+                    workspaceName={group.name}
+                    conversations={group.conversations.slice(MAX_VISIBLE_CONVERSATIONS)}
+                    activeConversationId={activeConversationId ?? null}
+                    onLoadConversation={(conversationId) => {
+                      setSection("chat");
+                      void loadConversation(conversationId);
+                    }}
+                  />
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -305,6 +333,63 @@ function SessionList() {
         ) : null}
       </div>
     </div>
+  );
+}
+
+function MoreSessionsDropdown({
+  workspaceName,
+  conversations,
+  activeConversationId,
+  onLoadConversation,
+}: {
+  workspaceName: string;
+  conversations: import("../../types/chat").ConversationSummary[];
+  activeConversationId: string | null;
+  onLoadConversation: (conversationId: string) => void;
+}) {
+  const remainingCount = conversations.length;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="subtle"
+          size="xs"
+          aria-label={`Mostrar mais sessões de ${workspaceName}`}
+          title={`Mostrar mais sessões de ${workspaceName}`}
+          className="mt-1 h-7 w-full justify-between rounded-xl border-glass-border/30 bg-background/[0.35] px-2 text-[11px] font-medium text-muted-foreground hover:border-glass-border/45 hover:bg-glass/80 hover:text-foreground data-[state=open]:border-primary/35 data-[state=open]:bg-glass data-[state=open]:text-foreground"
+        >
+          <span className="flex min-w-0 items-center gap-1.5">
+            <ChevronDown className="h-3 w-3 shrink-0" />
+            <span className="truncate">Mais sessões</span>
+          </span>
+          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+            +{remainingCount}
+          </span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="right" align="start" sideOffset={8} className="personagent-dropdown-fade w-72 rounded-xl">
+        <DropdownMenuLabel>Sessões adicionais</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <div className="max-h-72 overflow-y-auto">
+          {conversations.map((conversation) => (
+            <DropdownMenuItem
+              key={conversation.id}
+              onClick={() => onLoadConversation(conversation.id)}
+              className="gap-2 rounded-lg"
+            >
+              <MessageSquare className="h-3 w-3 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">{conversation.title || "Untitled"}</span>
+              {conversation.id === activeConversationId ? (
+                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-primary">
+                  Atual
+                </span>
+              ) : null}
+            </DropdownMenuItem>
+          ))}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -327,8 +412,8 @@ function ConversationItem({
       onClick={onLoad}
       className={
         active
-          ? "group flex w-full items-center gap-2 rounded-md bg-accent px-2 py-1.5 text-left text-[12px] text-foreground"
-          : "group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+          ? "group flex w-full items-center gap-2 rounded-xl bg-accent/80 px-2 py-1.5 text-left text-[12px] text-foreground shadow-soft"
+          : "group flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-[12px] text-muted-foreground hover:bg-glass/70 hover:text-foreground"
       }
     >
       <MessageSquare className="h-3 w-3 shrink-0 text-muted-foreground" />
@@ -353,7 +438,7 @@ function SidebarFooter() {
   const [mcpOpen, setMcpOpen] = useState(false);
 
   return (
-    <div className="shrink-0 border-t border-border px-2 py-1.5">
+    <div className="shrink-0 border-t border-glass-border/25 px-2 py-1.5">
       <CollapsibleSection
         label="MCP Connections"
         count={0}
@@ -392,7 +477,7 @@ function CollapsibleSection({
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-accent"
+        className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1 text-left hover:bg-glass/80"
       >
         <ChevronRight
           className={`h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-150 ${open ? "rotate-90" : ""}`}

@@ -13,6 +13,8 @@ interface CodeBlockProps {
 
 const COLLAPSE_THRESHOLD = 25;
 const MAX_HEIGHT = "400px";
+const MAX_HIGHLIGHT_CHARS = 20_000;
+const MAX_HIGHLIGHT_LINES = 400;
 
 export function CodeBlock({ children, className, node, filePath, isStreaming = false }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
@@ -21,27 +23,29 @@ export function CodeBlock({ children, className, node, filePath, isStreaming = f
   // Extract code content from children
   const codeContent = extractCodeContent(children);
   const language = detectLanguage(className) || "text";
+  const rawLines = useMemo(() => codeContent.split("\n"), [codeContent]);
+  const lineCount = rawLines.length;
+  const shouldCollapse = lineCount > COLLAPSE_THRESHOLD;
+  const effectiveCollapsed = shouldCollapse && collapsed;
+  const sourceForRender = effectiveCollapsed
+    ? rawLines.slice(0, COLLAPSE_THRESHOLD).join("\n")
+    : codeContent;
 
-  // Highlight the full code, then split into per-line HTML
   const highlightedLines = useMemo(() => {
     let html: string;
     try {
-      if (isStreaming) {
-        html = escapeHtml(codeContent);
+      if (isStreaming || shouldSkipHighlight(sourceForRender, language)) {
+        html = escapeHtml(sourceForRender);
       } else {
         const lang = hljs.getLanguage(language) ? language : "plaintext";
-        html = hljs.highlight(codeContent, { language: lang }).value;
+        html = hljs.highlight(sourceForRender, { language: lang }).value;
       }
     } catch {
-      html = escapeHtml(codeContent);
+      html = escapeHtml(sourceForRender);
     }
     return splitHighlightedLines(html);
-  }, [codeContent, language, isStreaming]);
+  }, [sourceForRender, language, isStreaming]);
 
-  const lineCount = highlightedLines.length;
-  const shouldCollapse = lineCount > COLLAPSE_THRESHOLD;
-  const effectiveCollapsed = shouldCollapse && collapsed;
-  const visibleLines = effectiveCollapsed ? highlightedLines.slice(0, COLLAPSE_THRESHOLD) : highlightedLines;
   const gutterWidth = String(lineCount).length;
   const displayLabel = filePath || language;
 
@@ -56,9 +60,9 @@ export function CodeBlock({ children, className, node, filePath, isStreaming = f
   };
 
   return (
-    <div className="code-block-wrapper not-prose my-3 rounded-lg border border-border bg-card overflow-hidden">
+    <div className="code-block-wrapper not-prose my-3 overflow-hidden rounded-2xl border border-glass-border/35 bg-card/90 shadow-soft">
       {/* Header */}
-      <div className="code-block-header flex items-center justify-between px-3 py-2 border-b border-border bg-card/50">
+      <div className="code-block-header flex items-center justify-between border-b border-glass-border/25 bg-glass/45 px-3 py-2">
         <div className="flex items-center gap-2">
           <FileCode className="h-4 w-4 text-muted-foreground" />
           <span className="text-xs font-mono text-muted-foreground">{displayLabel}</span>
@@ -66,7 +70,7 @@ export function CodeBlock({ children, className, node, filePath, isStreaming = f
         <button
           type="button"
           onClick={handleCopy}
-          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-glass/80 hover:text-foreground"
           title={copied ? "Copied!" : "Copy code"}
         >
           {copied ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
@@ -81,8 +85,8 @@ export function CodeBlock({ children, className, node, filePath, isStreaming = f
       >
         <table className="w-full border-collapse" style={{ tableLayout: "auto" }}>
           <tbody>
-            {visibleLines.map((lineHtml, i) => (
-              <tr key={i} className="code-block-row hover:bg-white/[0.02]">
+            {highlightedLines.map((lineHtml, i) => (
+              <tr key={i} className="code-block-row hover:bg-glass/35">
                 {/* Line number */}
                 <td
                   className="code-block-gutter select-none text-right align-top px-3 font-mono text-xs text-muted-foreground/40"
@@ -107,11 +111,11 @@ export function CodeBlock({ children, className, node, filePath, isStreaming = f
 
       {/* Collapse button */}
       {shouldCollapse && (
-        <div className="flex items-center justify-center border-t border-border bg-card/50 py-1.5">
+        <div className="flex items-center justify-center border-t border-glass-border/25 bg-glass/45 py-1.5">
           <button
             type="button"
             onClick={() => setCollapsed(!collapsed)}
-            className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-glass/80 hover:text-foreground"
           >
             {effectiveCollapsed ? (
               <>
@@ -163,6 +167,13 @@ function splitHighlightedLines(html: string): string[] {
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function shouldSkipHighlight(code: string, language: string): boolean {
+  if (language === "text" || language === "plaintext") return true;
+  if (code.length > MAX_HIGHLIGHT_CHARS) return true;
+  if (code.split("\n").length > MAX_HIGHLIGHT_LINES) return true;
+  return false;
 }
 
 /**
