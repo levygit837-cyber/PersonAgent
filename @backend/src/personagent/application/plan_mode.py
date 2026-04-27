@@ -14,6 +14,7 @@ from uuid import uuid4
 
 PLAN_MODE_METADATA_KEY = "plan_mode"
 PENDING_TOOL_APPROVAL_KEY = "pending_tool_approval"
+PENDING_USER_QUESTION_KEY = "pending_user_question"
 
 
 def new_plan_id() -> str:
@@ -105,4 +106,3 @@ def planning_instructions(plan_id: str | None) -> str:
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
-

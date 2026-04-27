@@ -54,6 +54,24 @@ _READ_ONLY_GIT_SUBCOMMANDS = {
     "status",
 }
 _SHELL_META_TOKENS = ("|", ">", "<", ";", "&&", "||", "$(", "`", "\n")
+_WRITE_ALLOWED_MODES = {"accept_edits", "full", "bypass", "dont_ask"}
+_READ_ONLY_MODES = {"read_only", "readonly"}
+_CRITICAL_PATTERNS = (
+    "rm -rf /",
+    "rm -rf -- /",
+    "sudo ",
+    "su ",
+    "mkfs",
+    "dd ",
+    "mount ",
+    "umount ",
+    "shutdown",
+    "reboot",
+    "systemctl ",
+    "chmod -R 777 /",
+    "chown -R ",
+    ":(){",
+)
 
 
 def create_shell_tool() -> Tool:
@@ -89,21 +107,47 @@ def create_shell_tool() -> Tool:
         context: ToolUseContext,
     ) -> ToolPermissionResult:
         command = str(arguments.get("command") or "")
-        allowed, reason = classify_read_only_shell(command)
-        if allowed:
-            allowed, reason = validate_shell_path_scope(command, context)
-            if allowed:
+        critical_reason = critical_shell_command_reason(command)
+        if critical_reason:
+            return ToolPermissionResult(
+                behavior=ToolPermissionBehavior.DENY,
+                message=f"shell command denied: {critical_reason}",
+                metadata={"classifier": "shell_safety_v2", "reason": critical_reason},
+            )
+
+        read_only, reason = classify_read_only_shell(command)
+        if read_only:
+            in_scope, scope_reason = validate_shell_path_scope(command, context)
+            if in_scope:
                 return ToolPermissionResult(
                     behavior=ToolPermissionBehavior.ALLOW,
                     updated_input=arguments,
-                    metadata={"classifier": "read_only_shell_v1"},
+                    metadata={"classifier": "shell_safety_v2", "mode": "read_only"},
                 )
+            reason = scope_reason
+
+        mode = str(context.permissions.get("mode") or "manual").strip().lower()
+        if mode in _READ_ONLY_MODES:
+            return ToolPermissionResult(
+                behavior=ToolPermissionBehavior.DENY,
+                message=f"shell command denied in read-only mode. {reason}",
+                metadata={"classifier": "shell_safety_v2", "reason": reason, "mode": mode},
+            )
+
+        if _matches_explicit_shell_allow(command, context) or mode in _WRITE_ALLOWED_MODES:
+            return ToolPermissionResult(
+                behavior=ToolPermissionBehavior.ALLOW,
+                updated_input=arguments,
+                metadata={"classifier": "shell_safety_v2", "mode": mode},
+            )
+
         return ToolPermissionResult(
             behavior=ToolPermissionBehavior.ASK,
             message=(
-                f"permission_required: shell command blocked by V1 read-only policy. {reason}"
+                f"permission_required: shell command may modify state or access paths outside "
+                f"the current workspace. {reason}"
             ),
-            metadata={"classifier": "read_only_shell_v1", "reason": reason},
+            metadata={"classifier": "shell_safety_v2", "reason": reason, "mode": mode},
         )
 
     async def handler(
@@ -205,16 +249,16 @@ def create_shell_tool() -> Tool:
         definition=ToolDefinition(
             name="shell",
             description=(
-                "Run a read-only shell command in the workspace, including safe pipes and "
-                "read-only command chains. "
-                "Commands that may mutate state require permission and are blocked in V1."
+                "Run a shell command in the workspace. Safe read-only commands auto-run; "
+                "write/exec/network commands require permission unless permission mode or "
+                "explicit shell rules allow them. Critical commands are denied."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "Read-only shell command to execute.",
+                        "description": "Shell command to execute.",
                     },
                     "cwd": {
                         "type": "string",
@@ -230,7 +274,7 @@ def create_shell_tool() -> Tool:
                 "required": ["command"],
                 "additionalProperties": False,
             },
-            metadata={"category": "shell", "read_only_policy": "v1"},
+            metadata={"category": "shell", "read_only_policy": "v2"},
             group=ToolGroup.SHELL.value,
             search_hint="shell bash command terminal read-only",
             max_result_size_chars=20_000,
@@ -276,6 +320,40 @@ def classify_read_only_shell(command: str) -> tuple[bool, str]:
         return False, "Empty command."
 
     return _classify_single_command(argv)
+
+
+def critical_shell_command_reason(command: str) -> str | None:
+    """Return a hard-deny reason for commands that should never be approved."""
+    normalized = " ".join(command.strip().split())
+    lowered = normalized.lower()
+    for pattern in _CRITICAL_PATTERNS:
+        if pattern in lowered:
+            return f"critical pattern matched: {pattern.strip()}"
+    if lowered.startswith("rm -rf /") or lowered.startswith("rm -fr /"):
+        return "recursive removal from filesystem root"
+    if "curl " in lowered and " | sh" in lowered:
+        return "remote shell installer pattern"
+    if "wget " in lowered and " | sh" in lowered:
+        return "remote shell installer pattern"
+    return None
+
+
+def _matches_explicit_shell_allow(command: str, context: ToolUseContext) -> bool:
+    rules = context.permissions.get("shell_execute") or context.permissions.get(
+        "shell_allow_patterns"
+    )
+    if not isinstance(rules, list):
+        return False
+    stripped = command.strip()
+    for raw_rule in rules:
+        rule = str(raw_rule).strip()
+        if not rule:
+            continue
+        if rule.endswith("*") and stripped.startswith(rule[:-1]):
+            return True
+        if stripped == rule:
+            return True
+    return False
 
 
 def _classify_shell_chain(command: str) -> tuple[bool, str]:

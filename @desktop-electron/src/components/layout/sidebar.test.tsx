@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "../ui/tooltip";
 import { Sidebar } from "./sidebar";
@@ -106,6 +106,20 @@ describe("Sidebar", () => {
       expect(loadConversation).toHaveBeenCalledWith("conversation_2", "/home/user/other-project");
     });
   });
+
+  it("keeps workspace folder order stable after the selected workspace changes", async () => {
+    renderSidebar();
+
+    expect(await screen.findByText("my-project")).toBeInTheDocument();
+    expect(await screen.findByText("other-project")).toBeInTheDocument();
+    expect(workspaceFolderNames()).toEqual(["my-project", "other-project"]);
+
+    await act(async () => {
+      await useAppStore.getState().selectWorkspace("/home/user/other-project");
+    });
+
+    expect(workspaceFolderNames()).toEqual(["my-project", "other-project"]);
+  });
 });
 
 function renderSidebar() {
@@ -124,4 +138,11 @@ function renderSidebar() {
       </TooltipProvider>
     </QueryClientProvider>,
   );
+}
+
+function workspaceFolderNames() {
+  const history = screen.getByTestId("session-history-list");
+  return within(history)
+    .getAllByRole("button", { name: /workspace folder/i })
+    .map((button) => button.getAttribute("aria-label")?.replace(/^(Expand|Collapse) workspace folder /, "") ?? "");
 }

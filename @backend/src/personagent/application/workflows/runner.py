@@ -451,6 +451,8 @@ class WorkflowRunner:
                 "shell_timeout_ms": config.shell_timeout_ms,
                 "web_timeout_ms": config.web_timeout_ms,
                 "web_max_bytes": config.web_max_bytes,
+                "max_tool_iterations": config.max_tool_iterations,
+                "max_concurrency": config.max_concurrency,
                 "result_max_chars": config.result_max_chars,
                 "tool_result_storage_root": (
                     str(config.tool_result_storage_root)

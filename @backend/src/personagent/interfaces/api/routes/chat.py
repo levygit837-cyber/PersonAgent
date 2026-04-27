@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from personagent.application.dto.chat_dto import ChatRequestDTO
 from personagent.application.plan_mode import (
     PENDING_TOOL_APPROVAL_KEY,
+    PENDING_USER_QUESTION_KEY,
     normalize_plan_state,
     plan_mode_event,
     write_plan_state,
@@ -199,6 +200,14 @@ class ToolApprovalDecisionRequest(BaseModel):
     approval_id: str = Field(..., description="ID da aprovação pendente")
 
 
+class UserQuestionResponseRequest(BaseModel):
+    """Resposta do usuário para AskUserQuestion."""
+
+    conversation_id: str = Field(..., description="ID da conversa")
+    approval_id: str = Field(..., description="ID da pergunta pendente")
+    answers: dict[str, Any] | list[Any] | str = Field(..., description="Respostas do usuário")
+
+
 def encode_sse(data: dict) -> str:
     """Codifica um payload JSON como evento SSE."""
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -369,6 +378,19 @@ def _require_tool_approval(metadata: dict[str, Any], approval_id: str) -> dict[s
     return dict(pending)
 
 
+def _require_user_question(metadata: dict[str, Any], approval_id: str) -> dict[str, Any]:
+    pending = metadata.get(PENDING_USER_QUESTION_KEY)
+    if not isinstance(pending, dict):
+        raise HTTPException(status_code=409, detail="Não há pergunta aguardando resposta.")
+    if pending.get("approval_id") != approval_id:
+        raise HTTPException(
+            status_code=409, detail="A pergunta pendente não corresponde ao estado atual."
+        )
+    if pending.get("status") != "awaiting_answer":
+        raise HTTPException(status_code=409, detail="A pergunta não está aguardando resposta.")
+    return dict(pending)
+
+
 def _last_user_message(conversation: Any) -> str:
     for message in reversed(conversation.messages):
         if message.role == Role.USER and message.content.strip():
@@ -519,6 +541,54 @@ async def _approve_pending_tool_call(
     }
     await conv_repo.update(conversation)
     return use_case, resume_request, pending, result
+
+
+async def _answer_pending_user_question(
+    *,
+    request: UserQuestionResponseRequest,
+    conversation: Any,
+    conv_repo: Any,
+    container: DIContainer,
+) -> tuple[ChatCompletionUseCase, ChatRequestDTO, dict[str, Any], dict[str, Any]]:
+    pending = _require_user_question(conversation.metadata, request.approval_id)
+    resume_request = _resume_request_from_tool_approval(conversation, pending)
+    llm_backend = container.get_llm_backend(resume_request.provider)
+    use_case = _create_chat_use_case(
+        container=container,
+        conv_repo=conv_repo,
+        llm_backend=llm_backend,
+        provider=resume_request.provider,
+        context_workspace_root=resolve_context_workspace_root_from_tool_context(
+            resume_request.tool_context
+        ),
+    )
+    answer_payload = {
+        "type": "ask_user_question_answer",
+        "questions": pending.get("questions") or [],
+        "answers": request.answers,
+        "content": json.dumps(request.answers, ensure_ascii=False),
+    }
+    conversation.add_message(
+        Message(
+            role=Role.TOOL,
+            content=json.dumps(answer_payload, ensure_ascii=False),
+            tool_call_id=str(pending["tool_call_id"]),
+            metadata={
+                "tool_name": str(pending["tool_name"]),
+                "status": ToolExecutionStatus.COMPLETED.value,
+                "is_error": False,
+                "answered": True,
+                "data": answer_payload,
+            },
+        )
+    )
+    conversation.metadata[PENDING_USER_QUESTION_KEY] = {
+        **pending,
+        "status": "answered",
+        "answers": request.answers,
+    }
+    await conv_repo.update(conversation)
+    return use_case, resume_request, pending, answer_payload
 
 
 @router.get("/teams")
@@ -1139,6 +1209,100 @@ async def reject_tool(
         "status": "rejected",
         "resume_available": False,
     }
+
+
+@router.post("/user-question/respond/stream")
+async def answer_user_question_stream(
+    request: UserQuestionResponseRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> StreamingResponse:
+    """Persiste uma resposta de AskUserQuestion e retoma o modelo via SSE."""
+
+    async def event_generator() -> AsyncIterator[str]:
+        try:
+            conversation, conv_repo = await _load_conversation_for_decision(
+                request.conversation_id, session
+            )
+            container = get_container()
+            use_case, resume_request, pending, answer_payload = await _answer_pending_user_question(
+                request=request,
+                conversation=conversation,
+                conv_repo=conv_repo,
+                container=container,
+            )
+            yield encode_sse(
+                {
+                    "event": "ask_user_question_answered",
+                    "conversation_id": str(conversation.id),
+                    "approval_id": request.approval_id,
+                    "tool_call_id": str(pending["tool_call_id"]),
+                    "tool_name": str(pending["tool_name"]),
+                    "answers": request.answers,
+                }
+            )
+            yield encode_sse(
+                {
+                    "event": "tool_result",
+                    "conversation_id": str(conversation.id),
+                    "tool_call_id": str(pending["tool_call_id"]),
+                    "tool_name": str(pending["tool_name"]),
+                    "tool_status": ToolExecutionStatus.COMPLETED.value,
+                    "tool_result": json.dumps(answer_payload, ensure_ascii=False),
+                    "tool_error": None,
+                    "tool_data": answer_payload,
+                    "metadata": {"answered": True},
+                }
+            )
+
+            async for chunk in use_case.resume_after_tool_result_stream(resume_request):
+                data: dict = dict(chunk.metadata)
+                if chunk.content:
+                    data["content"] = chunk.content
+                if chunk.reasoning_content:
+                    data["reasoning_content"] = chunk.reasoning_content
+                if chunk.is_thinking:
+                    data["is_thinking"] = True
+                if chunk.finish_reason:
+                    data["finish_reason"] = chunk.finish_reason
+                if chunk.usage:
+                    data["usage"] = chunk.usage
+                if chunk.tool_calls:
+                    data["tool_calls"] = chunk.tool_calls
+                if chunk.images:
+                    data["images"] = [image.to_dict() for image in chunk.images]
+                if data:
+                    yield encode_sse(data)
+        except ConversationNotFoundError as exc:
+            yield encode_sse({"event": "error", "error": str(exc), "status": 404})
+        except ValueError as exc:
+            yield encode_sse({"event": "error", "error": str(exc), "status": 400})
+        except LLMBackendConnectionError as exc:
+            yield encode_sse({"event": "error", "error": str(exc), "status": 503})
+        except LLMBackendError as exc:
+            yield encode_sse({"event": "error", "error": str(exc), "status": 500})
+        except HTTPException as exc:
+            yield encode_sse({"event": "error", "error": exc.detail, "status": exc.status_code})
+        except Exception as exc:
+            logger.exception("user_question_stream_unhandled_error")
+            yield encode_sse(
+                {
+                    "event": "error",
+                    "error": f"Erro inesperado ao responder pergunta: {exc}",
+                    "status": 500,
+                }
+            )
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.websocket("/team/ws")

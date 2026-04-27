@@ -1,5 +1,6 @@
 """Configuração centralizada do sistema (.env + YAML)."""
 
+import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -184,6 +185,9 @@ class Settings(BaseSettings):
     )
     tools_skill_roots: str | None = Field(default=None, alias="TOOLS_SKILL_ROOTS")
     tools_lsp_enabled: bool = Field(default=False, alias="TOOLS_LSP_ENABLED")
+    tools_mcp_enabled: bool = Field(default=True, alias="TOOLS_MCP_ENABLED")
+    tools_mcp_servers_json: str | None = Field(default=None, alias="TOOLS_MCP_SERVERS_JSON")
+    brief_tool_enabled: bool = Field(default=False, alias="PERSONAGENT_BRIEF_TOOL_ENABLED")
     prompt_command_roots: str | None = Field(default=None, alias="PROMPT_COMMAND_ROOTS")
     prompt_context_analysis_timeout_seconds: float = Field(
         default=4.0,
@@ -323,6 +327,20 @@ class Settings(BaseSettings):
     @property
     def prompt_command_root_paths(self) -> list[Path]:
         return [Path(item).expanduser() for item in _split_csv(self.prompt_command_roots)]
+
+    @property
+    def tool_mcp_server_configs(self) -> list[dict[str, Any]]:
+        if not self.tools_mcp_servers_json:
+            return []
+        try:
+            raw = json.loads(self.tools_mcp_servers_json)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(raw, dict):
+            raw = raw.get("servers", [])
+        if not isinstance(raw, list):
+            return []
+        return [item for item in raw if isinstance(item, dict)]
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Settings":

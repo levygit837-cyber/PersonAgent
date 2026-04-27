@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from uuid import UUID
 
@@ -29,13 +31,20 @@ from personagent.domain.tools import (
     build_tool,
 )
 from personagent.infrastructure.tools import (
+    create_agent_tools,
+    create_ask_user_question_tool,
+    create_config_tool,
     create_edit_file_tool,
     create_enter_plan_mode_tool,
+    create_enter_worktree_tool,
     create_exit_plan_mode_tool,
+    create_exit_worktree_tool,
     create_glob_tool,
     create_grep_tool,
     create_lsp_tool,
+    create_mcp_tools,
     create_read_file_tool,
+    create_send_user_message_tool,
     create_skill_tool,
     create_structured_output_tool,
     create_task_tools,
@@ -80,6 +89,126 @@ def test_registry_exposes_claude_names_aliases_deferred_and_schema_cache(tmp_pat
     )
     data = json.loads(result.content)
     assert any(tool["name"] == "WebSearch" and tool["enabled"] is False for tool in data["tools"])
+
+
+@pytest.mark.asyncio
+async def test_claude_parity_tool_registration_aliases_and_runtime_contracts(tmp_path):
+    store = InMemoryTaskStore()
+    mcp_config = {
+        "name": "fake",
+        "tools": [
+            {
+                "name": "lookup",
+                "description": "Lookup a fake value.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                    "additionalProperties": False,
+                },
+                "static_result": {"ok": True, "value": "found"},
+            }
+        ],
+        "resources": [
+            {
+                "uri": "fake://note",
+                "name": "Note",
+                "mimeType": "text/plain",
+                "content": "hello from mcp",
+            }
+        ],
+        "auth_url": "https://auth.example.test",
+    }
+    registry = ToolRegistry(
+        [
+            create_config_tool(),
+            create_ask_user_question_tool(),
+            create_send_user_message_tool(enabled=True),
+            *create_agent_tools(store),
+            *create_mcp_tools([mcp_config]),
+        ]
+    )
+
+    schemas = registry.openai_schemas(include_deferred=True, cache_scope="parity")
+    names = {schema["function"]["name"] for schema in schemas}
+
+    assert {"Agent", "SendMessage", "AskUserQuestion", "SendUserMessage", "Config"}.issubset(
+        names
+    )
+    assert {"ListMcpResourcesTool", "ReadMcpResourceTool", "McpAuth"}.issubset(names)
+    assert "mcp__fake__lookup" in names
+    assert "mcp__fake__authenticate" in names
+    assert registry.get("AgentTool") is registry.get("Agent")
+    assert registry.get("Brief") is registry.get("SendUserMessage")
+    assert registry.get("ReadMcpResoucersTool") is registry.get("ReadMcpResourceTool")
+
+    context = _tool_context(tmp_path)
+    ask = registry.get("AskUserQuestion")
+    assert ask is not None
+    ask_result = await ask.call(
+        {"questions": [{"question": "Proceed?", "options": [{"label": "Yes"}]}]},
+        context,
+        ToolCall("ask", "AskUserQuestion", {}),
+    )
+    assert ask_result.status == ToolExecutionStatus.PERMISSION_REQUIRED
+    assert ask_result.data["type"] == "ask_user_question"
+    assert context.metadata["pending_user_question"]["approval_id"]
+
+    config = registry.get("Config")
+    assert config is not None
+    read_permission = await config.check_permissions({"action": "get", "key": "permission_mode"}, context)
+    assert read_permission.allowed is True
+    write_permission = await config.check_permissions(
+        {"action": "set", "key": "permission_mode", "value": "full"},
+        context,
+    )
+    assert write_permission.behavior.value == "ask"
+    config_result = await config.call(
+        {"action": "set", "key": "permission_mode", "value": "full"},
+        context,
+        ToolCall("config", "Config", {}),
+    )
+    assert config_result.data["value"] == "full"
+    assert context.permissions["mode"] == "full"
+
+    agent = registry.get("Agent")
+    send = registry.get("SendMessage")
+    assert agent is not None and send is not None
+    created = await agent.call(
+        {"name": "researcher", "prompt": "Inspect the fake MCP resource."},
+        context,
+        ToolCall("agent", "Agent", {}),
+    )
+    agent_id = created.data["agent_id"]
+    sent = await send.call(
+        {"agent_id": agent_id, "message": "Use the MCP resource."},
+        context,
+        ToolCall("send", "SendMessage", {}),
+    )
+    assert sent.data["task"]["metadata"]["messages"][0]["message"] == "Use the MCP resource."
+
+    list_tool = registry.get("ListMcpResourcesTool")
+    read_tool = registry.get("ReadMcpResourceTool")
+    dynamic_tool = registry.get("mcp__fake__lookup")
+    auth_tool = registry.get("mcp__fake__authenticate")
+    assert list_tool is not None and read_tool is not None
+    assert dynamic_tool is not None and auth_tool is not None
+    listed = await list_tool.call({}, context, ToolCall("mcp_list", "ListMcpResourcesTool", {}))
+    assert listed.data["resources"][0]["uri"] == "fake://note"
+    read = await read_tool.call(
+        {"server": "fake", "uri": "fake://note"},
+        context,
+        ToolCall("mcp_read", "ReadMcpResourceTool", {}),
+    )
+    assert read.data["content"] == "hello from mcp"
+    dynamic = await dynamic_tool.call(
+        {"query": "x"},
+        context,
+        ToolCall("mcp_call", "mcp__fake__lookup", {}),
+    )
+    assert dynamic.data["result"]["ok"] is True
+    auth = await auth_tool.call({}, context, ToolCall("mcp_auth", "mcp__fake__authenticate", {}))
+    assert auth.data["auth_url"] == "https://auth.example.test"
 
 
 def test_plan_mode_tool_descriptions_are_explicit_request_only():
@@ -254,6 +383,67 @@ async def test_task_todo_and_plan_tools(tmp_path):
     assert exit_result.data["state"]["status"] == "awaiting_approval"
     assert exit_result.data["state"]["plan_content"] == "## Plan\n\n1. Update backend."
     assert exit_result.data["state"]["approval_id"]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+@pytest.mark.asyncio
+async def test_enter_exit_worktree_switches_active_tool_root_and_protects_dirty_remove(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "test@example.invalid"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.name", "Test"],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True)
+
+    context = _tool_context(repo)
+    enter = create_enter_worktree_tool()
+    exit_worktree = create_exit_worktree_tool()
+    write = create_write_file_tool()
+
+    entered = await enter.call(
+        {"name": "parity-test"},
+        context,
+        ToolCall("enter_worktree", "EnterWorktree", {}),
+    )
+    worktree_path = Path(entered.data["path"])
+    assert worktree_path.exists()
+    assert context.metadata["active_cwd"] == str(worktree_path)
+    assert context.metadata["active_allowed_roots"] == [str(worktree_path)]
+
+    await write.call(
+        {"path": "dirty.txt", "content": "dirty\n"},
+        context,
+        ToolCall("write_dirty", "Write", {}),
+    )
+    assert (worktree_path / "dirty.txt").exists()
+    assert not (repo / "dirty.txt").exists()
+
+    refused = await exit_worktree.call(
+        {"action": "remove"},
+        context,
+        ToolCall("exit_refuse", "ExitWorktree", {}),
+    )
+    assert refused.status == ToolExecutionStatus.ERROR
+    assert worktree_path.exists()
+
+    removed = await exit_worktree.call(
+        {"action": "remove", "discard_changes": True},
+        context,
+        ToolCall("exit_remove", "ExitWorktree", {}),
+    )
+    assert removed.data["removed"] is True
+    assert context.metadata.get("worktree_binding") is None
+    assert not worktree_path.exists()
 
 
 @pytest.mark.asyncio

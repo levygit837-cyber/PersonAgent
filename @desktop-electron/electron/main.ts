@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -9,6 +9,7 @@ const __dirname = dirname(__filename);
 type SettingsRecord = Record<string, unknown>;
 
 let mainWindow: BrowserWindow | null = null;
+let settingsWriteQueue: Promise<void> = Promise.resolve();
 
 function settingsPath() {
   return join(app.getPath("userData"), "personagent-settings.json");
@@ -26,7 +27,20 @@ async function readSettings(): Promise<SettingsRecord> {
 
 async function writeSettings(next: SettingsRecord) {
   await mkdir(app.getPath("userData"), { recursive: true });
-  await writeFile(settingsPath(), JSON.stringify(next, null, 2), "utf8");
+  const target = settingsPath();
+  const temp = `${target}.${process.pid}.tmp`;
+  await writeFile(temp, JSON.stringify(next, null, 2), "utf8");
+  await rename(temp, target);
+}
+
+async function updateSettings(mutator: (settings: SettingsRecord) => void) {
+  const write = settingsWriteQueue.then(async () => {
+    const settings = await readSettings();
+    mutator(settings);
+    await writeSettings(settings);
+  });
+  settingsWriteQueue = write.catch(() => undefined);
+  await write;
 }
 
 function isPathInside(candidatePath: string, rootPath: string) {
@@ -96,9 +110,9 @@ ipcMain.handle("settings:get", async (_event, key: string) => {
 });
 
 ipcMain.handle("settings:set", async (_event, key: string, value: unknown) => {
-  const settings = await readSettings();
-  settings[key] = value;
-  await writeSettings(settings);
+  await updateSettings((settings) => {
+    settings[key] = value;
+  });
   return true;
 });
 

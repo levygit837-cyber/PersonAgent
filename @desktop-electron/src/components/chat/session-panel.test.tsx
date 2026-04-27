@@ -157,17 +157,12 @@ describe("SessionPanel", () => {
     expect(screen.getByTestId("session-panel-shell")).toHaveClass("w-0");
   });
 
-  it("refreshes and persists the session summary while the panel is closed", async () => {
+  it("does not fetch the session summary while the panel is closed", async () => {
     renderWithProviders(<ChatWorkspace />);
 
-    await waitFor(() =>
-      expect(getSessionPanelMock).toHaveBeenCalledWith("http://localhost:8000", "conversation-1", "/tmp/personagent"),
-    );
-    await waitFor(() => {
-      const cache = JSON.parse(window.localStorage.getItem(SESSION_PANEL_CACHE_STORAGE_KEY) || "{}");
-      const entry = cache[sessionPanelCacheKey("http://localhost:8000", "conversation-1", "/tmp/personagent")];
-      expect(entry.snapshot.title).toBe("Debug Session");
-    });
+    await waitFor(() => expect(screen.getByText("Debug Session")).toBeInTheDocument());
+    expect(getSessionPanelMock).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(SESSION_PANEL_CACHE_STORAGE_KEY)).toBeNull();
   });
 
   it("opens the summary from the persisted snapshot while the background refresh is pending", async () => {

@@ -13,6 +13,7 @@ from personagent.application.jobs.memory_job import JobType, MemoryJob
 from personagent.application.jobs.memory_job_scheduler import MemoryJobScheduler
 from personagent.application.plan_mode import (
     PENDING_TOOL_APPROVAL_KEY,
+    PENDING_USER_QUESTION_KEY,
     is_plan_mode_active,
     new_tool_approval_id,
     normalize_plan_state,
@@ -502,16 +503,29 @@ class ChatCompletionUseCase:
                         results_by_id[event.call.id] = event.result
                     metadata = event.to_stream_metadata()
                     if event.result is not None and event.event == "permission_required":
-                        metadata.update(
-                            self._record_pending_tool_approval(
-                                conversation,
-                                event.call,
-                                event.result,
-                                request,
+                        if self._is_user_question_result(event.result):
+                            metadata.update(
+                                self._record_pending_user_question(
+                                    conversation,
+                                    event.call,
+                                    event.result,
+                                    request,
+                                )
                             )
-                        )
-                        waiting_for_tool_approval = True
-                        final_finish_reason = "permission_required"
+                            metadata["event"] = "ask_user_question"
+                            waiting_for_tool_approval = True
+                            final_finish_reason = "user_input_required"
+                        else:
+                            metadata.update(
+                                self._record_pending_tool_approval(
+                                    conversation,
+                                    event.call,
+                                    event.result,
+                                    request,
+                                )
+                            )
+                            waiting_for_tool_approval = True
+                            final_finish_reason = "permission_required"
                     yield StreamChunk(metadata=metadata)
                     if event.result is not None and self._is_plan_approval_result(event.result):
                         self._apply_tool_state_result(event.result, conversation)
@@ -683,6 +697,9 @@ class ChatCompletionUseCase:
             and result.data.get("action") == "request_approval"
         )
 
+    def _is_user_question_result(self, result: ToolResult) -> bool:
+        return result.data.get("type") == "ask_user_question"
+
     def _plan_state_from_result(
         self,
         result: ToolResult,
@@ -737,6 +754,49 @@ class ChatCompletionUseCase:
             "conversation_id": str(conversation.id),
             "approval_id": approval_id,
             "tool_approval": pending,
+        }
+
+    def _record_pending_user_question(
+        self,
+        conversation: Conversation,
+        call: ToolCall,
+        result: ToolResult,
+        request: ChatRequestDTO,
+    ) -> dict[str, Any]:
+        approval_id = str(result.data.get("approval_id") or new_tool_approval_id())
+        pending = {
+            "conversation_id": str(conversation.id),
+            "approval_id": approval_id,
+            "status": "awaiting_answer",
+            "tool_call_id": call.id,
+            "tool_name": call.name,
+            "arguments": call.arguments,
+            "questions": result.data.get("questions") or [],
+            "title": result.data.get("title") or "User input requested",
+            "resume_request": {
+                "message": request.message,
+                "system_prompt": request.system_prompt,
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+                "provider": request.provider,
+                "model": request.model,
+                "prompt_mode": request.prompt_mode,
+                "reasoning_level": request.reasoning_level,
+                "reasoning_budget_tokens": request.reasoning_budget_tokens,
+                "tools_enabled": request.tools_enabled,
+                "allowed_tools": request.allowed_tools,
+                "tool_context": request.tool_context,
+                "max_tool_iterations": request.max_tool_iterations,
+            },
+            "created_at": now_iso(),
+        }
+        conversation.metadata[PENDING_USER_QUESTION_KEY] = pending
+        return {
+            "conversation_id": str(conversation.id),
+            "approval_id": approval_id,
+            "user_question": pending,
+            "questions": pending["questions"],
+            "question_title": pending["title"],
         }
 
     def _parse_tool_calls(self, tool_calls: list[dict[str, Any]] | None) -> list[ToolCall]:
@@ -1523,6 +1583,8 @@ class ChatCompletionUseCase:
                 "shell_timeout_ms": config.shell_timeout_ms,
                 "web_timeout_ms": config.web_timeout_ms,
                 "web_max_bytes": config.web_max_bytes,
+                "max_tool_iterations": config.max_tool_iterations,
+                "max_concurrency": config.max_concurrency,
                 "result_max_chars": config.result_max_chars,
                 "tool_result_storage_root": (
                     str(config.tool_result_storage_root)
