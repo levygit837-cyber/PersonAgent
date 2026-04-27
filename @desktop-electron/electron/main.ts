@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -106,6 +106,15 @@ ipcMain.handle("dialog:select-workspace", async (_event, initialPath?: string) =
     : await dialog.showOpenDialog(options);
   if (result.canceled || result.filePaths.length === 0) return null;
   return result.filePaths[0];
+});
+
+ipcMain.handle("fs:read-dir", async (_event, dirPath: string) => {
+  const entries = await readdir(dirPath, { withFileTypes: true });
+  return entries.map((entry) => ({
+    name: entry.name,
+    isDirectory: entry.isDirectory(),
+    path: join(dirPath, entry.name),
+  }));
 });
 
 app.whenReady().then(async () => {

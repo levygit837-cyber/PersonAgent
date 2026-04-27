@@ -138,7 +138,7 @@ describe("SessionPanel", () => {
   it("opens and closes the persistent chat session panel button", async () => {
     renderWithProviders(<ChatWorkspace />);
 
-    expect(screen.getByText("personagent")).toBeInTheDocument();
+    expect(screen.getAllByText("personagent").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Debug Session")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Painel da Sessão" }));

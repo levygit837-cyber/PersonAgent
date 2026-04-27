@@ -13,6 +13,7 @@ from personagent.application.state.services import StateManager
 from personagent.domain.context.models import ContextBuildResult
 from personagent.domain.context.repositories import ContextRepository
 from personagent.domain.context.services.context_builder import ContextBuilder
+from personagent.domain.memory.repositories.memory_repository import MemoryRepository
 
 
 class BuildContextUseCase:
@@ -28,6 +29,7 @@ class BuildContextUseCase:
         context_repository: ContextRepository | None = None,
         enable_persona_md: bool = True,
         additional_directories: list[str | Path] | None = None,
+        memory_repository: MemoryRepository | None = None,
     ) -> None:
         """Inicializa o use case.
 
@@ -36,6 +38,7 @@ class BuildContextUseCase:
             context_repository: Repositório opcional para cache de contexto.
             enable_persona_md: Se False, desabilita carregamento de persona.md.
             additional_directories: Diretórios adicionais para buscar persona.md.
+            memory_repository: Repositório opcional para memória de longo prazo.
         """
         self._workspace_root = Path(workspace_root).expanduser().resolve()
         self._context_repository = context_repository
@@ -48,6 +51,7 @@ class BuildContextUseCase:
             context_repository=context_repository,
             enable_persona_md=enable_persona_md,
             additional_directories=additional_directories,
+            memory_repository=memory_repository,
         )
 
         # Obtém StateManager singleton

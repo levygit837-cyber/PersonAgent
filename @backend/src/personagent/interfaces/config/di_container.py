@@ -79,9 +79,12 @@ class DIContainer:
             return LlamaCppAdapter(
                 base_url=self._settings.llama_server_url,
                 api_key=self._settings.llama_server_api_key,
+                timeout=self._settings.llama_timeout_seconds,
+                stream_read_timeout=self._settings.llama_stream_read_timeout_seconds,
                 default_max_tokens=self._settings.llama_max_tokens,
                 reasoning=self._settings.llama_reasoning,
                 reasoning_budget=self._settings.llama_reasoning_budget,
+                ctx_size=self._settings.llama_ctx_size,
             )
         if provider == "nvidia":
             return NvidiaNimAdapter(
@@ -90,7 +93,7 @@ class DIContainer:
                 timeout=self._settings.nvidia_timeout_seconds,
                 stream_read_timeout=self._settings.nvidia_stream_read_timeout_seconds,
                 default_model=self._settings.nvidia_default_model,
-                default_max_tokens=self._settings.llama_max_tokens,
+                default_max_tokens=self._settings.nvidia_max_tokens,
                 models_cache_ttl_seconds=self._settings.nvidia_models_cache_ttl_seconds,
             )
         if provider == "vertex":
@@ -102,7 +105,7 @@ class DIContainer:
                 timeout=self._settings.vertex_timeout_seconds,
                 stream_read_timeout=self._settings.vertex_stream_read_timeout_seconds,
                 default_model=self._settings.vertex_default_model,
-                default_max_tokens=self._settings.llama_max_tokens,
+                default_max_tokens=self._settings.vertex_max_tokens,
                 models_cache_ttl_seconds=self._settings.vertex_models_cache_ttl_seconds,
             )
         raise ValueError(f"Unsupported LLM provider: {provider}")
@@ -181,10 +184,82 @@ class DIContainer:
 
     def create_build_context_use_case(self, workspace_root: str) -> BuildContextUseCase:
         """Cria um use case de contexto para o workspace selecionado."""
+        from personagent.infrastructure.persistence.memory.filesystem_memory_repository import (
+            FileSystemMemoryRepository,
+        )
         return BuildContextUseCase(
             workspace_root=workspace_root,
             context_repository=self.get_context_repository(),
             enable_persona_md=True,
+            memory_repository=FileSystemMemoryRepository(),
+        )
+
+    # --- Sistema de Memória Inteligente ---
+
+    def get_memory_repository(self):
+        """Retorna o repositório de memória (singleton)."""
+        from personagent.infrastructure.persistence.memory.filesystem_memory_repository import (
+            FileSystemMemoryRepository,
+        )
+        return FileSystemMemoryRepository()
+
+    def get_memory_job_scheduler(self):
+        """Retorna o scheduler de jobs de memória (singleton)."""
+        from personagent.application.jobs.memory_job_scheduler import MemoryJobScheduler
+        if not hasattr(self, "_memory_job_scheduler"):
+            self._memory_job_scheduler = MemoryJobScheduler()
+        return self._memory_job_scheduler
+
+    def create_memory_recall_selector(self, llm_backend: LLMBackendRepository):
+        """Cria o selector de memórias relevantes."""
+        from personagent.domain.memory.services.memory_recall_selector import MemoryRecallSelector
+        return MemoryRecallSelector(
+            llm_backend=llm_backend,
+            memory_repository=self.get_memory_repository(),
+            max_recall=self._settings.memory_max_recall_per_query,
+            max_tokens=self._settings.memory_recall_max_tokens,
+        )
+
+    def create_recall_memory_use_case(self, llm_backend: LLMBackendRepository):
+        """Cria o use case de recall de memórias."""
+        from personagent.application.use_cases.memory.recall_memory import RecallMemoryUseCase
+        return RecallMemoryUseCase(
+            recall_selector=self.create_memory_recall_selector(llm_backend),
+        )
+
+    def create_extract_memory_worker(self):
+        """Cria o worker de extração de memórias."""
+        from contextlib import asynccontextmanager
+
+        from personagent.application.jobs.workers.extract_memory_worker import ExtractMemoryWorker
+        from personagent.domain.memory.services.memory_extractor import MemoryExtractor
+
+        @asynccontextmanager
+        async def conversation_repo_factory():
+            async with AsyncSessionLocal() as session:
+                yield PostgresConversationRepository(session)
+
+        return ExtractMemoryWorker(
+            memory_repository=self.get_memory_repository(),
+            memory_extractor=MemoryExtractor(
+                llm_backend=self.get_llm_backend("llama"),
+                memory_repository=self.get_memory_repository(),
+            ),
+            conversation_repo_factory=conversation_repo_factory,
+        )
+
+    def create_consolidate_memory_worker(self):
+        """Cria o worker de consolidação de memórias."""
+        from personagent.application.jobs.workers.consolidate_memory_worker import (
+            ConsolidateMemoryWorker,
+        )
+        from personagent.domain.memory.services.memory_consolidator import MemoryConsolidator
+        return ConsolidateMemoryWorker(
+            memory_repository=self.get_memory_repository(),
+            memory_consolidator=MemoryConsolidator(
+                llm_backend=self.get_llm_backend("llama"),
+                memory_repository=self.get_memory_repository(),
+            ),
         )
 
     def get_lightpanda_browser_worker(self) -> LightPandaBrowserWorker:

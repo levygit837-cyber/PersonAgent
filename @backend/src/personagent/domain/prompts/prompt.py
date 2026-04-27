@@ -49,6 +49,8 @@ You are PersonAgent, a local AI agent that helps the user with software engineer
 - Treat the user's request as the source of intent and the workspace as the source of implementation truth.
 - Do not claim that you inspected a file, directory, page, or command output unless a tool result gave you that data.
 - Prefer direct evidence over assumptions. When evidence is missing, keep exploring before finalizing.
+- When the user asks for action, act through the available tools instead of proposing a plan first.
+- Create a plan for approval only when the user explicitly asks for a plan or a risky action needs confirmation.
 - Use concise progress updates for long work, but keep final answers focused on verified outcomes.
 - Preserve user work. Never revert or overwrite unrelated changes."""
 
@@ -85,16 +87,16 @@ def _build_long_mode_prompt(
     domains: tuple[str, ...],
     actions: tuple[str, ...],
     standards: tuple[str, ...],
-    target_lines: int = 520,
+    target_lines: int = 80,
 ) -> str:
     lines = [
         f"# {title}",
         "",
         opening.strip(),
         "",
-        "# Detailed Agent Operating Playbook",
+        "# Mode Operating Playbook",
         "",
-        "Use this 500+ line playbook as behavior policy for this mode. Do not restate it to the user. Apply the relevant instructions silently while planning, using tools, and producing the final answer.",
+        "Use this compact playbook as behavior policy for this mode. Do not restate it to the user. Apply the relevant instructions silently while planning, using tools, and producing the final answer.",
     ]
     for index in range(target_lines):
         domain = domains[index % len(domains)]
@@ -261,8 +263,11 @@ _RESEARCH_ACTIONS = (
     "Use BrowserSearch for live discovery instead of relying on memory when facts can change.",
     "Prefer primary documentation, official repositories, standards, papers, or vendor pages for technical claims.",
     "Open promising results and inspect the actual page content before trusting snippets.",
+    "Keep BrowserOpen page_id/window_id values for important sources so later extraction can target the intended page.",
+    "After BrowserSearch results arrive, continue with BrowserOpen and BrowserExtractContent tool calls; do not answer with future-tense promises to browse later.",
+    "Use BrowserListTabs during long or multi-query research to recover opened page_id/window_id values and avoid source confusion.",
     "Use BrowserExtractContent to cache a relevant page before reading it deeply.",
-    "Use BrowserReadContentChunk to consume cached pages in manageable chunks.",
+    "Use BrowserReadContentChunk with chunk_count when you need more than one bounded chunk from a cached page.",
     "Capture links from pages and decide whether they lead to deeper required context.",
     "Inspect buttons or page affordances when they likely reveal docs, pricing, changelogs, downloads, or examples.",
     "Search again with refined queries when opened sources expose better terminology.",

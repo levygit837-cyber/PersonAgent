@@ -138,8 +138,9 @@ class LlamaServerProcessManager:
             "--reasoning-budget",
             str(self._settings.llama_reasoning_budget),
             "--jinja",
-            "--verbose",
         ]
+        if self._settings.llama_verbose:
+            cmd.append("--verbose")
 
         logger.info(
             "starting_llama_server",
@@ -150,6 +151,7 @@ class LlamaServerProcessManager:
             cache_v=self._settings.llama_cache_type_v,
             reasoning=self._settings.llama_reasoning,
             reasoning_budget=self._settings.llama_reasoning_budget,
+            verbose=self._settings.llama_verbose,
         )
 
         try:
@@ -161,16 +163,19 @@ class LlamaServerProcessManager:
                 preexec_fn=os.setsid,  # Permite matar o grupo de processos
             )
 
+            # Inicia drenagem do stdout IMEDIATAMENTE para evitar deadlock
+            # de buffer durante o startup (o llama-server é verbose).
+            log_task = asyncio.create_task(self._log_output())
+
             # Aguarda o servidor iniciar (com timeout)
             started = await self._wait_for_startup(timeout=60.0)
             if started:
                 logger.info("llama_server_started", pid=self._process.pid)
-                # Inicia task para logar stdout
-                asyncio.create_task(self._log_output())
                 return True
             else:
                 if self.is_running:
                     logger.error("llama_server_startup_timeout")
+                log_task.cancel()
                 self.stop()
                 return False
 

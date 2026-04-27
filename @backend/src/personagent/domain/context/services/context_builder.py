@@ -18,6 +18,8 @@ from personagent.domain.context.models import (
 from personagent.domain.context.repositories import ContextRepository
 from personagent.domain.context.services.git_context import GitContextService
 from personagent.domain.context.services.personamd_loader import PersonaMdLoader
+from personagent.domain.memory.repositories.memory_repository import MemoryRepository
+from personagent.domain.memory.models.memory_types import MemoryScope
 
 
 class ContextBuilder:
@@ -33,6 +35,8 @@ class ContextBuilder:
         context_repository: ContextRepository | None = None,
         enable_persona_md: bool = True,
         additional_directories: list[str | Path] | None = None,
+        memory_repository: MemoryRepository | None = None,
+        project_slug: str | None = None,
     ) -> None:
         """Inicializa o ContextBuilder.
 
@@ -41,6 +45,8 @@ class ContextBuilder:
             context_repository: Repositório opcional para cache de contexto.
             enable_persona_md: Se False, desabilita carregamento de persona.md.
             additional_directories: Diretórios adicionais para buscar persona.md.
+            memory_repository: Repositório opcional para memória de longo prazo.
+            project_slug: Slug do projeto para resolver diretório de memória.
         """
         self._workspace_root = Path(workspace_root).expanduser().resolve()
         self._context_repository = context_repository
@@ -50,6 +56,8 @@ class ContextBuilder:
             additional_directories=additional_directories,
         )
         self._git_context_service = GitContextService(self._workspace_root)
+        self._memory_repository = memory_repository
+        self._project_slug = project_slug or self._workspace_root.name
 
     async def build_context(
         self,
@@ -123,9 +131,9 @@ class ContextBuilder:
     async def _build_user_context(self) -> UserContext:
         """Monta o contexto de usuário.
 
-        Carrega arquivos persona.md e informações do usuário.
+        Carrega arquivos persona.md, índice MEMORY.md e informações do usuário.
         """
-        # Carrega arquivos de memória
+        # Carrega arquivos de memória (persona.md)
         memory_files = self._persona_md_loader.load_memory_files()
 
         # Combina conteúdo persona.md
@@ -134,12 +142,24 @@ class ContextBuilder:
         # Data atual
         current_date = datetime.now(UTC).strftime("%Y-%m-%d")
 
+        # Carrega índice de memória de longo prazo (MEMORY.md)
+        long_term_memory_index: str | None = None
+        if self._memory_repository:
+            memory_dir = await self._memory_repository.get_memory_dir(
+                self._project_slug,
+                scope=MemoryScope.PRIVATE,
+            )
+            index = await self._memory_repository.read_index(memory_dir)
+            if index:
+                long_term_memory_index = index.content
+
         return UserContext(
             claude_md=persona_md if persona_md else None,
             memory_files=tuple(memory_files),
             current_date=current_date,
             user_settings={},  # TODO: carregar de configurações
             project_config={},  # TODO: carregar de config.yaml
+            long_term_memory_index=long_term_memory_index,
         )
 
     def _get_relevant_environment(self) -> dict[str, str]:

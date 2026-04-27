@@ -113,9 +113,13 @@ export interface TeamConfig {
   name: string;
   agents: TeamAgent[];
   execution_order: string[];
+  coordinator?: TeamAgent;
   max_rounds: number;
   vote_every_rounds: number;
   consensus_threshold: number;
+  force_final_vote?: boolean;
+  blackboard_mode?: string;
+  tool_policy?: string;
 }
 
 export interface TeamVote {
@@ -142,10 +146,25 @@ export interface TeamRunEvent {
     | "round_started"
     | "agent_turn_started"
     | "agent_delta"
-    | "agent_turn_completed"
-    | "vote_started"
-    | "agent_vote"
-    | "consensus_reached"
+	    | "agent_turn_completed"
+	    | "execution_contract"
+	    | "blackboard_event"
+	    | "blackboard_snapshot"
+	    | "claim_graph_delta"
+	    | "coverage_matrix"
+	    | "coherency_score"
+	    | "tool_phase"
+	    | "debate_started"
+	    | "debate_skipped"
+	    | "adaptive_vote"
+	    | "vote_started"
+	    | "agent_vote"
+	    | "consensus_reached"
+	    | "coordinator_planning_started"
+	    | "coordinator_planning_completed"
+	    | "coordinator_redirect"
+    | "coordinator_started"
+    | "coordinator_completed"
     | "final_delta"
     | "team_run_completed"
     | "team_consensus_failed"
@@ -156,9 +175,29 @@ export interface TeamRunEvent {
   title?: string;
   team?: TeamConfig;
   round?: number;
+  phase?: string;
   agent_id?: string;
   agent_name?: string;
   agent_role?: string;
+  sequence?: number;
+  event_type?: string;
+	  payload?: Record<string, unknown>;
+	  snapshot?: Record<string, unknown>;
+	  delta?: Record<string, unknown>;
+	  contract?: Record<string, unknown>;
+	  coverage_matrix?: Array<Record<string, unknown>>;
+	  coverage_complete?: number;
+	  coverage_total?: number;
+	  coherency_score?: number;
+	  coherency?: Record<string, unknown>;
+	  tool_phase?: string;
+	  calls?: Array<Record<string, unknown>>;
+	  results?: Array<Record<string, unknown>>;
+	  proposals?: Array<Record<string, unknown>>;
+	  triggers?: string[];
+	  redirect?: string;
+	  team_memory_snapshot?: Record<string, unknown>;
+	  blackboard_snapshot?: Record<string, unknown>;
   content?: string;
   reasoning_content?: string;
   digest?: string;
@@ -168,10 +207,11 @@ export interface TeamRunEvent {
   critical_blocker?: boolean;
   final_points?: string;
   consensus?: TeamConsensus;
+  guidance?: Record<string, unknown>;
   final_output?: string;
   reason?: string;
   error?: string;
-  status?: number;
+  status?: number | string;
   created_at?: string;
   started_at?: string;
   completed_at?: string;
@@ -184,9 +224,13 @@ export interface TeamTraceEventUi {
   kind:
     | "run"
     | "round"
-    | "turn"
-    | "vote"
+	    | "turn"
+	    | "tool"
+	    | "vote"
     | "consensus"
+    | "blackboard"
+    | "debate"
+    | "coordinator"
     | "failed"
     | "cancelled";
   title: string;

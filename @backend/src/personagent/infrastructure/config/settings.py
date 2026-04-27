@@ -43,15 +43,22 @@ class Settings(BaseSettings):
     llama_server_url: str = Field(default="http://localhost:8080/v1", alias="LLAMA_SERVER_URL")
     llama_server_api_key: str = Field(default="local", alias="LLAMA_SERVER_API_KEY")
     llama_model_path: str = Field(default="", alias="LLAMA_MODEL_PATH")
-    llama_ctx_size: int = Field(default=262144, alias="LLAMA_CTX_SIZE")
+    llama_ctx_size: int = Field(default=131072, alias="LLAMA_CTX_SIZE")
     llama_n_gpu_layers: int = Field(default=999, alias="LLAMA_N_GPU_LAYERS")
     llama_temperature: float = Field(default=0.7, alias="LLAMA_TEMPERATURE")
-    llama_max_tokens: int = Field(default=65536, alias="LLAMA_MAX_TOKENS")
+    llama_max_tokens: int = Field(default=16384, alias="LLAMA_MAX_TOKENS")
+    nvidia_max_tokens: int = Field(default=65536, alias="NVIDIA_MAX_TOKENS")
+    vertex_max_tokens: int = Field(default=65536, alias="VERTEX_MAX_TOKENS")
     llama_cache_type_k: str = Field(default="turbo4", alias="LLAMA_CACHE_TYPE_K")
     llama_cache_type_v: str = Field(default="turbo4", alias="LLAMA_CACHE_TYPE_V")
     llama_threads: int = Field(default=6, alias="LLAMA_THREADS")
     llama_reasoning: str = Field(default="off", alias="LLAMA_REASONING")
     llama_reasoning_budget: int = Field(default=2048, alias="LLAMA_REASONING_BUDGET")
+    llama_verbose: bool = Field(default=False, alias="LLAMA_VERBOSE")
+    llama_timeout_seconds: float = Field(default=120.0, alias="LLAMA_TIMEOUT_SECONDS")
+    llama_stream_read_timeout_seconds: float = Field(
+        default=0.0, alias="LLAMA_STREAM_READ_TIMEOUT_SECONDS"
+    )
     llama_auto_start: bool = Field(default=True, alias="LLAMA_AUTO_START")
     llama_bin_path: str = Field(
         default="./@llama/llama-cpp-turboquant/build/bin/llama-server",
@@ -148,6 +155,24 @@ class Settings(BaseSettings):
         default=False,
         alias="CHAT_SESSION_MEMORY_UPDATES_ENABLED",
     )
+
+    # --- Sistema de Memória Inteligente ---
+    auto_memory_enabled: bool = Field(default=False, alias="AUTO_MEMORY_ENABLED")
+    memory_recall_enabled: bool = Field(default=True, alias="MEMORY_RECALL_ENABLED")
+    extract_memories_enabled: bool = Field(default=True, alias="EXTRACT_MEMORIES_ENABLED")
+    auto_dream_enabled: bool = Field(default=False, alias="AUTO_DREAM_ENABLED")
+    team_memory_enabled: bool = Field(default=False, alias="TEAM_MEMORY_ENABLED")
+    auto_memory_directory: str | None = Field(default=None, alias="AUTO_MEMORY_DIRECTORY")
+    extract_memories_throttle_turns: int = Field(default=1, alias="EXTRACT_MEMORIES_THROTTLE_TURNS")
+    auto_dream_min_hours: int = Field(default=24, alias="AUTO_DREAM_MIN_HOURS")
+    auto_dream_min_sessions: int = Field(default=5, alias="AUTO_DREAM_MIN_SESSIONS")
+    memory_max_files: int = Field(default=200, alias="MEMORY_MAX_FILES")
+    memory_max_lines_per_file: int = Field(default=200, alias="MEMORY_MAX_LINES_PER_FILE")
+    memory_max_bytes_per_file: int = Field(default=25_000, alias="MEMORY_MAX_BYTES_PER_FILE")
+    memory_max_recall_per_query: int = Field(default=5, alias="MEMORY_MAX_RECALL_PER_QUERY")
+    memory_recall_max_tokens: int = Field(default=256, alias="MEMORY_RECALL_MAX_TOKENS")
+    memory_extract_max_turns: int = Field(default=5, alias="MEMORY_EXTRACT_MAX_TURNS")
+    memory_extract_max_tokens: int = Field(default=2048, alias="MEMORY_EXTRACT_MAX_TOKENS")
 
     # --- LightPanda Browser ---
     lightpanda_enabled: bool = Field(default=True, alias="LIGHTPANDA_ENABLED")

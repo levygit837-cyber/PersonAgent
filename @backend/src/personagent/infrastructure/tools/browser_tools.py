@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Mapping
 from hashlib import sha256
 from typing import Any
+from urllib.parse import urlparse
 
 from personagent.domain.tools import (
     Tool,
@@ -30,15 +33,83 @@ def create_browser_tools(worker: LightPandaBrowserWorker) -> list[Tool]:
     return [
         create_browser_search_tool(worker),
         create_browser_open_tool(worker),
+        create_browser_list_tabs_tool(worker),
         create_browser_extract_content_tool(worker),
         create_browser_read_content_chunk_tool(),
         create_browser_get_html_tool(worker),
     ]
 
 
-_DEFAULT_CHUNK_SIZE = 8_000
+_DEFAULT_CHUNK_SIZE = 3_000
+_EXTRACT_INLINE_CONTENT_CHARS = 3_000
+_MAX_CHUNK_COUNT = 6
+_MAX_RETURNED_LINKS = 20
+_LINK_SUPPRESSION_THRESHOLD = 24
+_MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+_LOW_QUALITY_LINK_TEXT = {
+    "about",
+    "advertise",
+    "all",
+    "author",
+    "careers",
+    "category",
+    "contact",
+    "deals",
+    "follow",
+    "games",
+    "home",
+    "login",
+    "more",
+    "privacy",
+    "read more",
+    "search",
+    "see all",
+    "see more",
+    "share",
+    "shop",
+    "sign in",
+    "sign up",
+    "subscribe",
+    "tag",
+    "terms",
+    "topics",
+}
+_LOW_QUALITY_PATH_MARKERS = (
+    "/about",
+    "/advert",
+    "/author/",
+    "/authors/",
+    "/category/",
+    "/contact",
+    "/deals",
+    "/gift",
+    "/login",
+    "/newsletter",
+    "/privacy",
+    "/search",
+    "/shop",
+    "/sitemap",
+    "/tag/",
+    "/tags/",
+    "/terms",
+    "/topics/",
+    "/vetted/",
+)
 _PAGE_CACHE: dict[str, dict[str, dict[str, Any]]] = {}
 _LATEST_CACHE_KEY: dict[str, str] = {}
+_BROWSER_OPEN_URL_KEYS = ("url", "result_url", "final_url", "href", "link")
+_BROWSER_OPEN_INDEX_KEYS = (
+    "result_index",
+    "index",
+    "resultIndex",
+    "position",
+    "result_number",
+    "result",
+)
+_BROWSER_OPEN_DIRECT_INDEX_KEYS = tuple(
+    key for key in _BROWSER_OPEN_INDEX_KEYS if key != "result"
+)
+_BROWSER_OPEN_SEARCH_ID_KEYS = ("search_id", "searchId")
 
 
 def create_browser_search_tool(worker: LightPandaBrowserWorker) -> Tool:
@@ -106,7 +177,7 @@ def create_browser_search_tool(worker: LightPandaBrowserWorker) -> Tool:
         handler=handler,
         validate_input=validate,
         is_read_only=lambda _args: True,
-        is_concurrency_safe=lambda _args: False,
+        is_concurrency_safe=lambda _args: True,
     )
 
 
@@ -114,47 +185,56 @@ def create_browser_open_tool(worker: LightPandaBrowserWorker) -> Tool:
     async def validate(
         arguments: ToolArguments, context: ToolUseContext
     ) -> ToolPermissionResult | None:
-        url = arguments.get("url")
-        result_index = arguments.get("result_index")
-        search_id = arguments.get("search_id")
-        has_url = isinstance(url, str) and bool(url.strip())
-        has_index = _is_int(result_index)
-        if has_url == has_index:
-            return _deny("BrowserOpen requires exactly one of 'url' or 'result_index'.")
-        if search_id is not None and not isinstance(search_id, str):
+        target = _normalize_browser_open_arguments(arguments)
+        url = target["url"]
+        result_index = target["result_index"]
+        search_id = target["search_id"]
+        if target["invalid_search_id"]:
             return _deny("BrowserOpen search_id must be a string when provided.")
-        if has_url and isinstance(search_id, str) and search_id.strip():
-            return _deny("BrowserOpen search_id can only be used with result_index.")
-        if has_url:
-            return validate_web_url(str(url), context)
-        if int(result_index) < 1:
+        if url:
+            return validate_web_url(url, context)
+        if result_index is not None and result_index < 1:
             return _deny("BrowserOpen result_index must be 1 or greater.")
+        if target["invalid_result_index"]:
+            return _deny("BrowserOpen result_index must be an integer.")
+        if result_index is None and search_id:
+            return None
+        if result_index is None:
+            return _deny(
+                "BrowserOpen requires 'url', 'result_index', or 'search_id'. "
+                "When only search_id is provided, it opens the first result from that search."
+            )
         return None
 
     async def handler(
         arguments: ToolArguments, context: ToolUseContext, call: ToolCall
     ) -> ToolResult:
-        url = arguments.get("url")
-        result_index = arguments.get("result_index")
-        search_id = arguments.get("search_id")
+        target = _normalize_browser_open_arguments(arguments)
+        target_url = target["url"]
+        target_result_index = target["result_index"]
+        target_search_id = target["search_id"]
+        if target_url and target_result_index is not None:
+            target_result_index = None
+        if target_url is None and target_result_index is None and target_search_id:
+            target_result_index = 1
         await _progress(
             context,
             call,
             "Opening page with LightPanda...",
-            {"url": url, "result_index": result_index, "search_id": search_id},
+            {
+                "url": target_url,
+                "result_index": target_result_index,
+                "search_id": target_search_id,
+                "recovered_from": target["recovered_from"],
+            },
         )
         try:
-            target_url = str(url).strip() if isinstance(url, str) and url.strip() else None
-            target_search_id = (
-                str(search_id).strip()
-                if isinstance(search_id, str) and search_id.strip()
-                else None
-            )
             data = await worker.open(
                 conversation_id=context.conversation_id,
                 url=target_url,
-                result_index=int(result_index) if _is_int(result_index) else None,
+                result_index=target_result_index,
                 search_id=target_search_id,
+                tool_call_id=call.id,
             )
             final_validation = validate_web_url(str(data.get("final_url") or ""), context)
             if final_validation is not None:
@@ -169,24 +249,41 @@ def create_browser_open_tool(worker: LightPandaBrowserWorker) -> Tool:
         definition=ToolDefinition(
             name="BrowserOpen",
             description=(
-                "Open a URL or a 1-based result_index from recent cached BrowserSearch "
-                "results in the same chat conversation."
+                "Open a URL, a 1-based result_index from recent cached BrowserSearch results, "
+                "or the first result from a provided search_id. Returns page_id/window_id for "
+                "later extraction. If url and result_index are both provided, url wins."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "HTTP or HTTPS URL to open."},
+                    "url": {
+                        "type": "string",
+                        "description": "HTTP or HTTPS URL to open. May be paired with search_id to record which BrowserSearch result it came from.",
+                    },
                     "result_index": {
                         "type": "integer",
                         "minimum": 1,
                         "description": "1-based index from a recent BrowserSearch result list.",
                     },
+                    "index": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Alias for result_index.",
+                    },
                     "search_id": {
                         "type": "string",
-                        "description": "Optional search_id returned by BrowserSearch to disambiguate cached recent searches.",
+                        "description": "Optional search_id returned by BrowserSearch. With result_index it disambiguates the cache; with url the backend matches the URL to that search when possible; alone it opens result_index 1.",
+                    },
+                    "href": {
+                        "type": "string",
+                        "description": "Alias for url when the model copied a search-result href.",
+                    },
+                    "link": {
+                        "type": "string",
+                        "description": "Alias for url.",
                     },
                 },
-                "additionalProperties": False,
+                "additionalProperties": True,
             },
             output_schema={"type": "object", "additionalProperties": True},
             group=ToolGroup.WEB.value,
@@ -198,7 +295,67 @@ def create_browser_open_tool(worker: LightPandaBrowserWorker) -> Tool:
         handler=handler,
         validate_input=validate,
         is_read_only=lambda _args: True,
-        is_concurrency_safe=lambda _args: False,
+        is_concurrency_safe=lambda _args: True,
+    )
+
+
+def create_browser_list_tabs_tool(worker: LightPandaBrowserWorker) -> Tool:
+    async def validate(
+        arguments: ToolArguments, context: ToolUseContext
+    ) -> ToolPermissionResult | None:
+        max_tabs = arguments.get("max_tabs", 20)
+        if not _is_int(max_tabs) or int(max_tabs) < 1 or int(max_tabs) > 50:
+            return _deny("BrowserListTabs max_tabs must be an integer between 1 and 50.")
+        return None
+
+    async def handler(
+        arguments: ToolArguments, context: ToolUseContext, call: ToolCall
+    ) -> ToolResult:
+        max_tabs = min(max(1, int(arguments.get("max_tabs") or 20)), 50)
+        await _progress(
+            context,
+            call,
+            "Listing browser tabs...",
+            {"max_tabs": max_tabs},
+        )
+        try:
+            data = await worker.list_tabs(
+                conversation_id=context.conversation_id,
+                max_tabs=max_tabs,
+            )
+        except Exception as exc:
+            return _error(call, "BrowserListTabs", str(exc), exc)
+        return _json_result(call, "BrowserListTabs", data)
+
+    return build_tool(
+        definition=ToolDefinition(
+            name="BrowserListTabs",
+            description=(
+                "List browser tabs/pages opened by BrowserOpen in the current chat conversation. "
+                "Use this to recover page_id values and keep long research sessions consistent."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "max_tabs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50,
+                        "default": 20,
+                    },
+                },
+                "additionalProperties": False,
+            },
+            output_schema={"type": "object", "additionalProperties": True},
+            group=ToolGroup.WEB.value,
+            search_hint="browser list tabs pages page_id research opened urls",
+            is_read_only=True,
+            is_open_world=True,
+        ),
+        handler=handler,
+        validate_input=validate,
+        is_read_only=lambda _args: True,
+        is_concurrency_safe=lambda _args: True,
     )
 
 
@@ -207,6 +364,18 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
         arguments: ToolArguments, context: ToolUseContext
     ) -> ToolPermissionResult | None:
         url = arguments.get("url")
+        page_id = arguments.get("page_id")
+        window_id = arguments.get("window_id")
+        target_error = _validate_page_or_window_id(
+            page_id,
+            window_id,
+            tool_name="BrowserExtractContent",
+        )
+        if target_error is not None:
+            return target_error
+        target_id = _coerce_page_or_window_id(page_id, window_id)
+        if isinstance(url, str) and url.strip() and target_id:
+            return _deny("BrowserExtractContent requires either 'url' or 'page_id/window_id', not both.")
         if isinstance(url, str) and url.strip():
             validation = validate_web_url(url, context)
             if validation is not None:
@@ -223,24 +392,35 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
         arguments: ToolArguments, context: ToolUseContext, call: ToolCall
     ) -> ToolResult:
         url = arguments.get("url")
+        page_id = arguments.get("page_id")
+        window_id = arguments.get("window_id")
+        target_id = _coerce_page_or_window_id(page_id, window_id)
         max_chars = int(
             arguments.get("max_chars") or context.limits.get("result_max_chars", 20_000)
         )
         include_links = bool(arguments.get("include_links", False))
-        await _progress(context, call, "Extracting page content with LightPanda...", {"url": url})
+        await _progress(
+            context,
+            call,
+            "Extracting page content with LightPanda...",
+            {"url": url, "page_id": page_id, "window_id": window_id},
+        )
         try:
             data = await worker.extract_content(
                 conversation_id=context.conversation_id,
                 url=str(url).strip() if isinstance(url, str) and url.strip() else None,
+                page_id=target_id,
                 max_chars=max_chars,
                 include_links=include_links,
             )
         except Exception as exc:
             return _error(call, "BrowserExtractContent", str(exc), exc)
         data = dict(data)
-        cache_metadata = _cache_page_content(context.conversation_id, data)
-        if cache_metadata:
-            data.update(cache_metadata)
+        data = _prepare_extracted_content_response(
+            conversation_id=context.conversation_id,
+            data=data,
+            include_links=include_links,
+        )
         return _json_result(call, "BrowserExtractContent", data)
 
     return build_tool(
@@ -248,12 +428,20 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
             name="BrowserExtractContent",
             description=(
                 "Return organized markdown/text content from the current LightPanda page or "
-                "from a provided URL."
+                "from a provided URL/page_id. Defaults to the last BrowserOpen page in the conversation."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "Optional HTTP or HTTPS URL."},
+                    "page_id": {
+                        "type": "string",
+                        "description": "Optional page_id returned by BrowserOpen. Defaults to the last BrowserOpen page.",
+                    },
+                    "window_id": {
+                        "type": "string",
+                        "description": "Optional window_id returned by BrowserOpen or BrowserListTabs. Alias of page_id.",
+                    },
                     "max_chars": {
                         "type": "integer",
                         "minimum": 1,
@@ -267,7 +455,7 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
             output_schema={"type": "object", "additionalProperties": True},
             group=ToolGroup.WEB.value,
             search_hint="browser extract content markdown lightpanda page",
-            max_result_size_chars=80_000,
+            max_result_size_chars=12_000,
             is_read_only=True,
             is_open_world=True,
             timeout_ms=60_000,
@@ -275,7 +463,11 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
         handler=handler,
         validate_input=validate,
         is_read_only=lambda _args: True,
-        is_concurrency_safe=lambda _args: False,
+        is_concurrency_safe=lambda args: bool(
+            str(args.get("url") or "").strip()
+            or str(args.get("page_id") or "").strip()
+            or str(args.get("window_id") or "").strip()
+        ),
     )
 
 
@@ -292,8 +484,13 @@ def create_browser_read_content_chunk_tool() -> Tool:
         if not _is_int(chunk_index) or int(chunk_index) < 1:
             return _deny("BrowserReadContentChunk chunk_index must be 1 or greater.")
         chunk_count = arguments.get("chunk_count", 1)
-        if not _is_int(chunk_count) or int(chunk_count) < 1 or int(chunk_count) > 10:
-            return _deny("BrowserReadContentChunk chunk_count must be between 1 and 10.")
+        if not _is_int(chunk_count) or int(chunk_count) < 1 or int(chunk_count) > _MAX_CHUNK_COUNT:
+            return _deny(
+                f"BrowserReadContentChunk chunk_count must be between 1 and {_MAX_CHUNK_COUNT}."
+            )
+        include_links = arguments.get("include_links", False)
+        if not isinstance(include_links, bool):
+            return _deny("BrowserReadContentChunk include_links must be a boolean.")
         return None
 
     async def handler(
@@ -307,22 +504,48 @@ def create_browser_read_content_chunk_tool() -> Tool:
             return _error(call, "BrowserReadContentChunk", f"No cached page for {cache_key}.")
 
         chunks = entry["chunks"]
+        if not chunks:
+            return _error(call, "BrowserReadContentChunk", f"No readable chunks for {cache_key}.")
+        requested_index = int(arguments.get("chunk_index") or 1)
+        requested_count = int(arguments.get("chunk_count") or 1)
+        include_links = bool(arguments.get("include_links", False))
         start_index = min(max(1, int(arguments.get("chunk_index") or 1)), len(chunks))
-        count = min(max(1, int(arguments.get("chunk_count") or 1)), 10)
+        count = min(max(1, int(arguments.get("chunk_count") or 1)), _MAX_CHUNK_COUNT)
         selected = chunks[start_index - 1 : start_index - 1 + count]
+        ranges = entry.get("chunk_ranges") if isinstance(entry.get("chunk_ranges"), list) else []
+        links_summary = entry.get("links_summary", {})
+        returned_links = entry.get("links", []) if include_links else []
         data = {
             "type": "browser_content_chunks",
             "cache_key": cache_key,
             "url": entry["url"],
             "title": entry["title"],
+            "page_id": entry.get("page_id"),
+            "window_id": entry.get("page_id"),
+            "content_chars": entry.get("content_chars", 0),
+            "chunk_size": entry.get("chunk_size", _DEFAULT_CHUNK_SIZE),
+            "requested_chunk_index": requested_index,
+            "requested_chunk_count": requested_count,
             "chunk_index": start_index,
             "chunk_count": len(selected),
             "total_chunks": len(chunks),
+            "returned_chars": sum(len(content) for content in selected),
             "chunks": [
-                {"index": start_index + offset, "content": content}
+                {
+                    "index": start_index + offset,
+                    "char_start": ranges[start_index + offset - 1][0]
+                    if start_index + offset - 1 < len(ranges)
+                    else None,
+                    "char_end": ranges[start_index + offset - 1][1]
+                    if start_index + offset - 1 < len(ranges)
+                    else None,
+                    "char_count": len(content),
+                    "content": content,
+                }
                 for offset, content in enumerate(selected)
             ],
-            "links": entry.get("links", []),
+            "links": returned_links,
+            "links_summary": links_summary,
             "buttons": entry.get("buttons", []),
         }
         return _json_result(call, "BrowserReadContentChunk", data)
@@ -350,8 +573,16 @@ def create_browser_read_content_chunk_tool() -> Tool:
                     "chunk_count": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 10,
+                        "maximum": _MAX_CHUNK_COUNT,
                         "default": 1,
+                        "description": (
+                            "Number of consecutive chunks to return, capped to keep tool output bounded."
+                        ),
+                    },
+                    "include_links": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Return curated links only when they were not suppressed as navigation/link-list noise.",
                     },
                 },
                 "additionalProperties": False,
@@ -359,6 +590,7 @@ def create_browser_read_content_chunk_tool() -> Tool:
             output_schema={"type": "object", "additionalProperties": True},
             group=ToolGroup.WEB.value,
             search_hint="browser cached content chunk page research",
+            max_result_size_chars=18_000,
             is_read_only=True,
             is_open_world=True,
         ),
@@ -374,6 +606,18 @@ def create_browser_get_html_tool(worker: LightPandaBrowserWorker) -> Tool:
         arguments: ToolArguments, context: ToolUseContext
     ) -> ToolPermissionResult | None:
         url = arguments.get("url")
+        page_id = arguments.get("page_id")
+        window_id = arguments.get("window_id")
+        target_error = _validate_page_or_window_id(
+            page_id,
+            window_id,
+            tool_name="BrowserGetHtml",
+        )
+        if target_error is not None:
+            return target_error
+        target_id = _coerce_page_or_window_id(page_id, window_id)
+        if isinstance(url, str) and url.strip() and target_id:
+            return _deny("BrowserGetHtml requires either 'url' or 'page_id/window_id', not both.")
         if isinstance(url, str) and url.strip():
             validation = validate_web_url(url, context)
             if validation is not None:
@@ -387,14 +631,23 @@ def create_browser_get_html_tool(worker: LightPandaBrowserWorker) -> Tool:
         arguments: ToolArguments, context: ToolUseContext, call: ToolCall
     ) -> ToolResult:
         url = arguments.get("url")
+        page_id = arguments.get("page_id")
+        window_id = arguments.get("window_id")
+        target_id = _coerce_page_or_window_id(page_id, window_id)
         max_chars = int(
             arguments.get("max_chars") or context.limits.get("result_max_chars", 20_000)
         )
-        await _progress(context, call, "Reading raw page HTML with LightPanda...", {"url": url})
+        await _progress(
+            context,
+            call,
+            "Reading raw page HTML with LightPanda...",
+            {"url": url, "page_id": page_id, "window_id": window_id},
+        )
         try:
             data = await worker.get_html(
                 conversation_id=context.conversation_id,
                 url=str(url).strip() if isinstance(url, str) and url.strip() else None,
+                page_id=target_id,
                 max_chars=max_chars,
             )
         except Exception as exc:
@@ -404,11 +657,22 @@ def create_browser_get_html_tool(worker: LightPandaBrowserWorker) -> Tool:
     return build_tool(
         definition=ToolDefinition(
             name="BrowserGetHtml",
-            description="Return raw HTML from the current LightPanda page or from a provided URL.",
+            description=(
+                "Return raw HTML from a provided URL/page_id or, by default, the last "
+                "BrowserOpen page in the conversation."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "Optional HTTP or HTTPS URL."},
+                    "page_id": {
+                        "type": "string",
+                        "description": "Optional page_id returned by BrowserOpen. Defaults to the last BrowserOpen page.",
+                    },
+                    "window_id": {
+                        "type": "string",
+                        "description": "Optional window_id returned by BrowserOpen or BrowserListTabs. Alias of page_id.",
+                    },
                     "max_chars": {
                         "type": "integer",
                         "minimum": 1,
@@ -429,7 +693,11 @@ def create_browser_get_html_tool(worker: LightPandaBrowserWorker) -> Tool:
         handler=handler,
         validate_input=validate,
         is_read_only=lambda _args: True,
-        is_concurrency_safe=lambda _args: False,
+        is_concurrency_safe=lambda args: bool(
+            str(args.get("url") or "").strip()
+            or str(args.get("page_id") or "").strip()
+            or str(args.get("window_id") or "").strip()
+        ),
     )
 
 
@@ -460,6 +728,58 @@ def _json_result(call: ToolCall, tool_name: str, data: dict[str, Any]) -> ToolRe
     )
 
 
+def _prepare_extracted_content_response(
+    *,
+    conversation_id: str,
+    data: dict[str, Any],
+    include_links: bool,
+) -> dict[str, Any]:
+    content = str(data.get("content") or "").strip()
+    data["content"] = content
+    data["content_chars"] = len(content)
+    data["chunk_size"] = _DEFAULT_CHUNK_SIZE
+    if not content:
+        data.update(
+            {
+                "cache_key": None,
+                "chunk_count": 0,
+                "chunks_available": False,
+                "content_available_in_chunks": False,
+                "content_unavailable": True,
+                "links": [],
+                "links_summary": {
+                    "total": 0,
+                    "returned": 0,
+                    "suppressed": False,
+                    "reason": "no_readable_content",
+                },
+                "buttons": [],
+                "message": (
+                    "No readable page content was extracted. Try BrowserGetHtml, another source, "
+                    "or opening the page in the browser before extracting again."
+                ),
+            }
+        )
+        return data
+
+    cache_metadata = _cache_page_content(conversation_id, data)
+    data.update(cache_metadata)
+    if not include_links:
+        data["links"] = []
+    if len(content) > _EXTRACT_INLINE_CONTENT_CHARS:
+        preview = _trim_content(content, _EXTRACT_INLINE_CONTENT_CHARS)
+        data["content"] = preview
+        data["content_preview"] = preview
+        data["inline_content_truncated"] = True
+        data["content_available_in_chunks"] = True
+    else:
+        data["content_preview"] = content
+        data["inline_content_truncated"] = False
+        data["content_available_in_chunks"] = False
+    data["chunks_available"] = bool(data.get("chunk_count"))
+    return data
+
+
 def _cache_page_content(conversation_id: str, data: dict[str, Any]) -> dict[str, Any]:
     content = str(data.get("content") or "")
     if not content:
@@ -468,17 +788,21 @@ def _cache_page_content(conversation_id: str, data: dict[str, Any]) -> dict[str,
     title = str(data.get("title") or "")
     digest = sha256(f"{url}\n{title}\n{content[:256]}".encode()).hexdigest()[:12]
     cache_key = f"page_{digest}"
-    chunks = [
-        content[index : index + _DEFAULT_CHUNK_SIZE]
-        for index in range(0, len(content), _DEFAULT_CHUNK_SIZE)
-    ] or [""]
+    chunks, ranges = _split_content_chunks(content, _DEFAULT_CHUNK_SIZE)
+    raw_links = _coerce_links(data.get("links"))
+    if not raw_links:
+        raw_links = _extract_markdown_links(content)
+    links, links_summary = _curate_links(raw_links, content=content, source_url=url)
     entry = {
         "url": url,
         "title": title,
+        "page_id": _coerce_page_or_window_id(data.get("page_id"), data.get("window_id")),
         "content_chars": len(content),
         "chunk_size": _DEFAULT_CHUNK_SIZE,
         "chunks": chunks,
-        "links": data.get("links") if isinstance(data.get("links"), list) else [],
+        "chunk_ranges": ranges,
+        "links": links,
+        "links_summary": links_summary,
         "buttons": data.get("buttons") if isinstance(data.get("buttons"), list) else [],
     }
     _PAGE_CACHE.setdefault(conversation_id, {})[cache_key] = entry
@@ -488,15 +812,247 @@ def _cache_page_content(conversation_id: str, data: dict[str, Any]) -> dict[str,
         "content_chars": len(content),
         "chunk_size": _DEFAULT_CHUNK_SIZE,
         "chunk_count": len(chunks),
+        "page_id": entry.get("page_id"),
+        "window_id": entry.get("page_id"),
         "links": entry["links"],
+        "links_summary": entry["links_summary"],
         "buttons": entry["buttons"],
     }
+
+
+def _split_content_chunks(content: str, chunk_size: int) -> tuple[list[str], list[tuple[int, int]]]:
+    chunks: list[str] = []
+    ranges: list[tuple[int, int]] = []
+    index = 0
+    total = len(content)
+    while index < total:
+        hard_end = min(index + chunk_size, total)
+        end = hard_end
+        if hard_end < total:
+            boundary = max(
+                content.rfind("\n\n", index, hard_end),
+                content.rfind("\n", index, hard_end),
+                content.rfind(". ", index, hard_end),
+            )
+            if boundary > index + int(chunk_size * 0.55):
+                end = boundary + (2 if content.startswith("\n\n", boundary) else 1)
+        chunk = content[index:end].strip()
+        if chunk:
+            chunks.append(chunk)
+            ranges.append((index, end))
+        index = max(end, index + 1)
+    return chunks, ranges
+
+
+def _trim_content(content: str, max_chars: int) -> str:
+    if len(content) <= max_chars:
+        return content
+    boundary = max(
+        content.rfind("\n\n", 0, max_chars),
+        content.rfind("\n", 0, max_chars),
+        content.rfind(". ", 0, max_chars),
+    )
+    if boundary > int(max_chars * 0.6):
+        return content[: boundary + 1].rstrip()
+    return content[:max_chars].rstrip()
+
+
+def _extract_markdown_links(content: str) -> list[dict[str, str]]:
+    links: list[dict[str, str]] = []
+    for match in _MARKDOWN_LINK_PATTERN.finditer(content):
+        links.append({"text": " ".join(match.group(1).split()), "url": match.group(2).strip()})
+    return links
+
+
+def _coerce_links(raw_links: Any) -> list[dict[str, str]]:
+    if not isinstance(raw_links, list):
+        return []
+    links: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw_links:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        if not url.startswith(("http://", "https://")) or url in seen:
+            continue
+        seen.add(url)
+        links.append({"url": url, "text": " ".join(str(item.get("text") or "").split())})
+    return links
+
+
+def _curate_links(
+    raw_links: list[dict[str, str]],
+    *,
+    content: str,
+    source_url: str,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    unique_links = _coerce_links(raw_links)
+    low_quality = [link for link in unique_links if _is_low_quality_link(link, source_url)]
+    suppress = False
+    reason = ""
+    if len(unique_links) >= _LINK_SUPPRESSION_THRESHOLD:
+        low_quality_ratio = len(low_quality) / max(1, len(unique_links))
+        markdown_link_count = len(_MARKDOWN_LINK_PATTERN.findall(content))
+        if low_quality_ratio >= 0.55 or markdown_link_count >= _LINK_SUPPRESSION_THRESHOLD:
+            suppress = True
+            reason = "link_dense_navigation_or_low_quality_links"
+    returned = [] if suppress else unique_links[:_MAX_RETURNED_LINKS]
+    return returned, {
+        "total": len(unique_links),
+        "returned": len(returned),
+        "suppressed": suppress,
+        "reason": reason,
+        "max_returned": _MAX_RETURNED_LINKS,
+    }
+
+
+def _is_low_quality_link(link: dict[str, str], source_url: str) -> bool:
+    url = str(link.get("url") or "")
+    text = " ".join(str(link.get("text") or "").lower().split())
+    parsed = urlparse(url)
+    source = urlparse(source_url)
+    path = parsed.path.lower()
+    if not text or text in _LOW_QUALITY_LINK_TEXT:
+        return True
+    if any(marker in path for marker in _LOW_QUALITY_PATH_MARKERS):
+        return True
+    if parsed.netloc == source.netloc and path in {"", "/"}:
+        return True
+    return len(text) <= 3 and not any(char.isdigit() for char in text)
 
 
 def _resolve_cache_key(conversation_id: str, raw_cache_key: Any) -> str | None:
     if isinstance(raw_cache_key, str) and raw_cache_key.strip():
         return raw_cache_key.strip()
     return _LATEST_CACHE_KEY.get(conversation_id)
+
+
+def _normalize_browser_open_arguments(arguments: ToolArguments) -> dict[str, Any]:
+    """Recover common model argument variants while preserving canonical behavior."""
+
+    url, url_key = _first_non_empty_string_with_key(arguments, _BROWSER_OPEN_URL_KEYS)
+    search_id, search_id_key, invalid_search_id = _first_string_with_key(
+        arguments,
+        _BROWSER_OPEN_SEARCH_ID_KEYS,
+    )
+    raw_result_index, index_key = _first_present_with_key(
+        arguments,
+        _BROWSER_OPEN_DIRECT_INDEX_KEYS,
+    )
+    recovered_from: list[str] = []
+    raw_result = arguments.get("result")
+
+    if isinstance(raw_result, Mapping):
+        if not url:
+            url, url_key = _first_non_empty_string_with_key(raw_result, _BROWSER_OPEN_URL_KEYS)
+        if not search_id and not invalid_search_id:
+            search_id, search_id_key, invalid_search_id = _first_string_with_key(
+                raw_result,
+                _BROWSER_OPEN_SEARCH_ID_KEYS,
+            )
+        if raw_result_index is None:
+            raw_result_index, index_key = _first_present_with_key(
+                raw_result,
+                _BROWSER_OPEN_INDEX_KEYS,
+            )
+    elif raw_result is not None and raw_result_index is None:
+        raw_result_index = raw_result
+        index_key = "result"
+
+    if isinstance(raw_result, str) and raw_result.strip().startswith(("http://", "https://")):
+        if not url:
+            url = raw_result.strip()
+            url_key = "result"
+        if index_key == "result":
+            raw_result_index = None
+            index_key = ""
+
+    result_index = int(raw_result_index) if _is_int(raw_result_index) else None
+    invalid_result_index = raw_result_index is not None and result_index is None
+    if url_key and url_key != "url":
+        recovered_from.append(url_key)
+    if index_key and index_key != "result_index":
+        recovered_from.append(index_key)
+    if search_id_key and search_id_key != "search_id":
+        recovered_from.append(search_id_key)
+    if search_id and result_index is None and not url:
+        recovered_from.append("search_id_only_default_result_1")
+
+    return {
+        "url": url,
+        "result_index": result_index,
+        "search_id": search_id,
+        "invalid_result_index": invalid_result_index,
+        "invalid_search_id": invalid_search_id,
+        "recovered_from": sorted(set(recovered_from)),
+    }
+
+
+def _first_present_with_key(
+    values: Mapping[str, Any],
+    keys: tuple[str, ...],
+) -> tuple[Any | None, str]:
+    for key in keys:
+        if key in values:
+            return values[key], key
+    return None, ""
+
+
+def _first_non_empty_string_with_key(
+    values: Mapping[str, Any],
+    keys: tuple[str, ...],
+) -> tuple[str | None, str]:
+    for key in keys:
+        value = values.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip(), key
+    return None, ""
+
+
+def _first_string_with_key(
+    values: Mapping[str, Any],
+    keys: tuple[str, ...],
+) -> tuple[str | None, str, bool]:
+    for key in keys:
+        if key not in values:
+            continue
+        value = values[key]
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            return None, key, True
+        if value.strip():
+            return value.strip(), key, False
+    return None, "", False
+
+
+def _coerce_page_or_window_id(page_id: Any, window_id: Any) -> str | None:
+    if isinstance(page_id, str) and page_id.strip():
+        return page_id.strip()
+    if isinstance(window_id, str) and window_id.strip():
+        return window_id.strip()
+    return None
+
+
+def _validate_page_or_window_id(
+    page_id: Any,
+    window_id: Any,
+    *,
+    tool_name: str,
+) -> ToolPermissionResult | None:
+    if page_id is not None and (not isinstance(page_id, str) or not page_id.strip()):
+        return _deny(f"{tool_name} page_id must be a non-empty string.")
+    if window_id is not None and (not isinstance(window_id, str) or not window_id.strip()):
+        return _deny(f"{tool_name} window_id must be a non-empty string.")
+    if (
+        isinstance(page_id, str)
+        and page_id.strip()
+        and isinstance(window_id, str)
+        and window_id.strip()
+        and page_id.strip() != window_id.strip()
+    ):
+        return _deny(f"{tool_name} requires either page_id or window_id, not both.")
+    return None
 
 
 def _error(
@@ -523,6 +1079,7 @@ def _error_type(tool_name: str) -> str:
     return {
         "BrowserSearch": "browser_search",
         "BrowserOpen": "browser_open",
+        "BrowserListTabs": "browser_tabs",
         "BrowserExtractContent": "browser_extract_content",
         "BrowserReadContentChunk": "browser_content_chunks",
         "BrowserGetHtml": "browser_get_html",

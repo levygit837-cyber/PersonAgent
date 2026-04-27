@@ -94,6 +94,9 @@ class UserContext:
     user_settings: dict[str, Any] = field(default_factory=dict)
     project_config: dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Memória de longo prazo (sistema de memória inteligente)
+    long_term_memory_index: str | None = None
+    relevant_memories: tuple[str, ...] = ()
 
     @property
     def has_claude_md(self) -> bool:
@@ -105,6 +108,16 @@ class UserContext:
         """Retorna True se há arquivos de memória."""
         return len(self.memory_files) > 0
 
+    @property
+    def has_long_term_memory(self) -> bool:
+        """Retorna True se há índice de memória de longo prazo."""
+        return bool(self.long_term_memory_index and self.long_term_memory_index.strip())
+
+    @property
+    def has_relevant_memories(self) -> bool:
+        """Retorna True se há memórias relevantes selecionadas."""
+        return len(self.relevant_memories) > 0
+
     def with_memory_files(self, files: list[MemoryFile]) -> UserContext:
         """Retorna uma cópia com novos arquivos de memória."""
         return type(self)(
@@ -114,6 +127,21 @@ class UserContext:
             user_settings=self.user_settings,
             project_config=self.project_config,
             timestamp=self.timestamp,
+            long_term_memory_index=self.long_term_memory_index,
+            relevant_memories=self.relevant_memories,
+        )
+
+    def with_relevant_memories(self, memories: list[str]) -> UserContext:
+        """Retorna uma cópia com memórias relevantes selecionadas."""
+        return type(self)(
+            claude_md=self.claude_md,
+            memory_files=self.memory_files,
+            current_date=self.current_date,
+            user_settings=self.user_settings,
+            project_config=self.project_config,
+            timestamp=self.timestamp,
+            long_term_memory_index=self.long_term_memory_index,
+            relevant_memories=tuple(memories),
         )
 
 

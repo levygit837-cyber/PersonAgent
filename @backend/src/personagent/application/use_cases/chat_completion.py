@@ -9,6 +9,8 @@ from typing import Any, cast
 import structlog
 
 from personagent.application.dto.chat_dto import ChatRequestDTO, ChatResponseDTO
+from personagent.application.jobs.memory_job import JobType, MemoryJob
+from personagent.application.jobs.memory_job_scheduler import MemoryJobScheduler
 from personagent.application.plan_mode import (
     PENDING_TOOL_APPROVAL_KEY,
     is_plan_mode_active,
@@ -26,11 +28,14 @@ from personagent.application.tools import (
     ToolRuntimeConfig,
 )
 from personagent.application.use_cases.context import BuildContextUseCase
+from personagent.application.use_cases.memory.recall_memory import RecallMemoryUseCase
 from personagent.domain.context.models import ContextBuildResult, SystemContext, UserContext
 from personagent.domain.exceptions import (
     ConversationNotFoundError,
     LLMBackendError,
 )
+from personagent.domain.memory.repositories.memory_repository import MemoryRepository
+from personagent.domain.memory.services.memory_formatter import MemoryFormatter
 from personagent.domain.models.conversation import Conversation, Message, Role
 from personagent.domain.models.inference_result import GeneratedImage, InferenceResult, StreamChunk
 from personagent.domain.prompts.commands import (
@@ -84,6 +89,9 @@ class ChatCompletionUseCase:
         command_registry: CommandRegistry | None = None,
         session_memory_service: SessionMemoryService | None = None,
         next_step_suggestion_service: NextStepSuggestionService | None = None,
+        recall_memory_use_case: RecallMemoryUseCase | None = None,
+        memory_job_scheduler: MemoryJobScheduler | None = None,
+        memory_repository: MemoryRepository | None = None,
         context_window_tokens: int = 262_144,
         default_output_tokens: int = 65_536,
     ):
@@ -97,6 +105,9 @@ class ChatCompletionUseCase:
         self._command_registry = command_registry or CommandRegistry()
         self._session_memory_service = session_memory_service
         self._next_step_suggestion_service = next_step_suggestion_service
+        self._recall_memory_use_case = recall_memory_use_case
+        self._memory_job_scheduler = memory_job_scheduler
+        self._memory_repository = memory_repository
         self._context_window_tokens = max(4_096, int(context_window_tokens))
         self._default_output_tokens = max(1, int(default_output_tokens))
         self._state_manager = StateManager.get_instance()
@@ -115,12 +126,18 @@ class ChatCompletionUseCase:
         user_msg = Message(role=Role.USER, content=request.message)
         conversation.add_message(user_msg)
 
+        # Recall memórias relevantes
+        relevant_memories = await self._recall_relevant_memories(
+            request, context_result, conversation
+        )
+
         prompt_package = await self._build_prompt_package(
             request,
             conversation,
             context_result,
             tools,
             preparation,
+            relevant_memories=relevant_memories,
         )
 
         tool_context = self._build_tool_context(request, conversation) if tools else None
@@ -194,6 +211,9 @@ class ChatCompletionUseCase:
             request,
             finish_reason=result.finish_reason,
         )
+        # Trigger extração de memória em background
+        await self._trigger_memory_extraction(conversation, request)
+
         await self._conversation_repo.update(conversation)
         return ChatResponseDTO(
             conversation_id=conversation.id,
@@ -229,12 +249,23 @@ class ChatCompletionUseCase:
         user_msg = Message(role=Role.USER, content=request.message)
         conversation.add_message(user_msg)
 
+        # Emite status para o frontend saber que está montando o prompt
+        yield StreamChunk(
+            metadata={"event": "status", "status": "building_prompt"}
+        )
+
+        # Recall memórias relevantes
+        relevant_memories = await self._recall_relevant_memories(
+            request, context_result, conversation
+        )
+
         prompt_package = await self._build_prompt_package(
             request,
             conversation,
             context_result,
             tools,
             preparation,
+            relevant_memories=relevant_memories,
         )
 
         tool_context = self._build_tool_context(request, conversation) if tools else None
@@ -456,6 +487,9 @@ class ChatCompletionUseCase:
             )
 
         await self._conversation_repo.update(conversation)
+
+        # Trigger extração de memória em background
+        await self._trigger_memory_extraction(conversation, request)
 
         # Atualiza título se necessário
         if was_empty:
@@ -779,6 +813,10 @@ class ChatCompletionUseCase:
         available_tools: list[str],
         workspace_root: str,
     ):
+        if request.provider == "llama" and request.prompt_mode == "auto":
+            from personagent.domain.prompts.services.context_analyzer import fallback_prompt_profile
+
+            return fallback_prompt_profile()
         if self._prompt_context_analyzer is None:
             from personagent.domain.prompts.services.context_analyzer import fallback_prompt_profile
 
@@ -833,6 +871,7 @@ class ChatCompletionUseCase:
             workspace_root=workspace_root,
             cwd=cwd,
             extra_roots=self._skill_roots(),
+            include_global=False,
         )
 
     def _skill_roots(self) -> tuple[str | Path, ...]:
@@ -877,6 +916,73 @@ class ChatCompletionUseCase:
             metadata={"source": "fallback"},
         )
 
+    async def _recall_relevant_memories(
+        self,
+        request: ChatRequestDTO,
+        context_result: ContextBuildResult,
+        conversation: Conversation,
+    ) -> list[str]:
+        """Executa o recall de memórias relevantes para a query atual.
+
+        Args:
+            request: DTO do chat request.
+            context_result: Resultado do build context.
+            conversation: Conversa atual (para tracking de already_surfaced).
+
+        Returns:
+            Lista de memórias relevantes formatadas como strings.
+        """
+        if self._recall_memory_use_case is None or self._memory_repository is None:
+            return []
+
+        workspace_root = context_result.system_context.workspace_root
+        project_slug = self._sanitize_project_slug(workspace_root)
+
+        try:
+            memory_dir = await self._memory_repository.get_memory_dir(project_slug)
+
+            # Recupera memórias já surfacadas nesta conversa
+            already_surfaced = set(
+                conversation.metadata.get("_surfaced_memory_paths", [])
+            )
+
+            recent_tools = self._extract_recent_tools(context_result)
+            memories = await self._recall_memory_use_case.execute(
+                query=request.message,
+                memory_dir=memory_dir,
+                recent_tools=recent_tools,
+                already_surfaced=already_surfaced,
+            )
+
+            # Atualiza already_surfaced na conversa
+            if memories:
+                new_paths = [m.path for m in memories]
+                existing = set(conversation.metadata.get("_surfaced_memory_paths", []))
+                existing.update(new_paths)
+                conversation.metadata["_surfaced_memory_paths"] = list(existing)
+
+            return MemoryFormatter.format_relevant_memories(memories)
+        except Exception:
+            logger.warning("memory_recall_failed", exc_info=True)
+            return []
+
+    def _sanitize_project_slug(self, workspace_root: str | None) -> str:
+        """Sanitiza o nome do diretório para uso como project_slug."""
+        if not workspace_root:
+            return "default"
+        name = Path(workspace_root).name
+        # Remove caracteres problemáticos para filesystem
+        import re
+        return re.sub(r'[^a-zA-Z0-9_-]', '_', name).lower() or "default"
+
+    def _extract_recent_tools(
+        self,
+        context_result: ContextBuildResult,
+    ) -> list[str]:
+        """Extrai nomes de ferramentas usadas recentemente do contexto."""
+        # TODO: implementar rastreamento real de ferramentas recentes
+        return []
+
     async def _build_prompt_package(
         self,
         request: ChatRequestDTO,
@@ -884,6 +990,7 @@ class ChatCompletionUseCase:
         context_result: ContextBuildResult,
         tools: list[dict[str, Any]],
         preparation: _PromptPreparation | None = None,
+        relevant_memories: list[str] | None = None,
     ) -> _PromptPackage:
         schema_tool_names = self._available_tool_names(tools)
         tool_definitions = self._prompt_tool_definitions(request)
@@ -917,6 +1024,7 @@ class ChatCompletionUseCase:
             skill_inventory=skills,
             session_memory=session_memory,
             runtime_reminders=runtime_reminders,
+            relevant_memories=relevant_memories,
         )
         system_prompt = built_prompt.content
         sections_used = list(built_prompt.sections_used)
@@ -1038,6 +1146,57 @@ class ChatCompletionUseCase:
             self._context_window_tokens - output_reserve - reasoning_reserve,
         )
         return max(2_048, int(prompt_budget * 0.9))
+
+    async def _trigger_memory_extraction(
+        self,
+        conversation: Conversation,
+        request: ChatRequestDTO,
+    ) -> None:
+        """Dispara um job de extração de memória em background.
+
+        Args:
+            conversation: Conversa atual.
+            request: Request do chat.
+        """
+        if self._memory_job_scheduler is None:
+            return
+
+        # Debounce: só extrai se última extração foi há > 60 segundos
+        last_extract = conversation.metadata.get("_last_memory_extraction")
+        if last_extract:
+            from datetime import datetime as dt
+            try:
+                last_dt = dt.fromisoformat(last_extract)
+                elapsed = (dt.now(UTC) - last_dt).total_seconds()
+                if elapsed < 60:
+                    return
+            except (ValueError, TypeError):
+                pass
+
+        workspace_root = self._prompt_workspace_root(request)
+        project_slug = self._sanitize_project_slug(str(workspace_root))
+
+        import uuid
+        job = MemoryJob(
+            id=f"extract_{conversation.id}_{uuid.uuid4().hex}",
+            type=JobType.EXTRACT_MEMORIES,
+            conversation_id=str(conversation.id),
+            project_slug=project_slug,
+            payload={
+                "model": request.model,
+                "provider": request.provider,
+            },
+        )
+        try:
+            await self._memory_job_scheduler.submit_job(job)
+            conversation.metadata["_last_memory_extraction"] = datetime.now(UTC).isoformat()
+            logger.info(
+                "memory_extraction_triggered",
+                conversation_id=str(conversation.id),
+                project_slug=project_slug,
+            )
+        except Exception:
+            logger.warning("memory_extraction_trigger_failed", exc_info=True)
 
     async def _after_turn_services(
         self,

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
@@ -21,6 +23,132 @@ Connector = Callable[[str], Awaitable[Any]]
 
 _DEFAULT_SEARCH_BASE_URL = "https://search.yahoo.com/search"
 _MAX_CACHED_SEARCHES_PER_CONVERSATION = 8
+_MAX_OPENED_PAGES_PER_CONVERSATION = 32
+_MARKDOWN_ANY_LINK_PATTERN = re.compile(r"\[([^\]]*)]\([^)]*\)")
+_MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+_URL_PATTERN = re.compile(r"https?://[^\s)>\]]+")
+_MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*]\([^)]*\)")
+_MIN_READABLE_CONTENT_CHARS = 240
+_URL_EDGE_NOISE_CHARS = " \t\r\n\f\v\u00a0\u200b\u200c\u200d\ufeff"
+_URL_ENCODED_EDGE_NOISE_SUFFIXES = (
+    "%c2%a0",
+    "%e2%80%8b",
+    "%e2%80%8c",
+    "%e2%80%8d",
+    "%ef%bb%bf",
+    "%20",
+    "%09",
+    "%0a",
+    "%0d",
+)
+_RAW_CDP_RETRY_DELAYS = (0.0, 0.5, 1.5, 3.0, 5.0)
+_NOISE_LINE_MARKERS = {
+    "advertise",
+    "advertisement",
+    "all rights reserved",
+    "cookie policy",
+    "copyright",
+    "follow us",
+    "forbes logo",
+    "privacy policy",
+    "see all",
+    "see more",
+    "share a news tip",
+    "sign in",
+    "sign up",
+    "sign up for newsletters",
+    "subscribe",
+    "terms of service",
+}
+_NOISE_LINE_SUBSTRINGS = (
+    "crown each region",
+    "frase by forbes",
+    "guess the category",
+    "mini crossword",
+    "pinpoint by linkedin",
+    "quick solve. big win",
+    "queens by linkedin",
+    "unscramble the anagram",
+)
+_READABLE_DOM_SCRIPT = r"""
+(() => {
+  const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const body = document.body ? document.body.cloneNode(true) : document.documentElement.cloneNode(true);
+  const removeSelectors = [
+    'script', 'style', 'noscript', 'template', 'svg', 'canvas', 'iframe',
+    'nav', 'header', 'footer', 'aside',
+    '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]',
+    'form', 'button'
+  ];
+  body.querySelectorAll(removeSelectors.join(',')).forEach((el) => el.remove());
+  const noisyMeta = /(cookie|newsletter|subscribe|advert|promo|share|social|related|recommend|most-popular|trending|nav|menu|footer|header|sidebar)/i;
+  Array.from(body.querySelectorAll('*')).forEach((el) => {
+    const meta = `${el.id || ''} ${typeof el.className === 'string' ? el.className : ''} ${el.getAttribute('aria-label') || ''}`;
+    if (!noisyMeta.test(meta)) return;
+    const textLength = normalize(el.textContent).length;
+    const linkCount = el.querySelectorAll('a[href]').length;
+    if (textLength < 1400 || linkCount >= 8) el.remove();
+  });
+  const selectors = [
+    'article',
+    'main',
+    '[role="main"]',
+    '[itemprop="articleBody"]',
+    '.article-body',
+    '.articleBody',
+    '.story-body',
+    '.entry-content',
+    '.post-content',
+    '.post__content',
+    '.content-body',
+    '.body-content',
+    '.article-content'
+  ];
+  const candidates = Array.from(body.querySelectorAll(selectors.join(',')));
+  if (!candidates.includes(body)) candidates.push(body);
+  const textFor = (node) => {
+    const pieces = [];
+    const seen = new Set();
+    node.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figcaption,td,th').forEach((el) => {
+      const text = normalize(el.textContent);
+      if (text.length < 2 || seen.has(text)) return;
+      seen.add(text);
+      pieces.push(text);
+    });
+    const structured = pieces.join('\n\n');
+    if (structured.length >= 300) return structured;
+    return normalize(node.textContent);
+  };
+  const scoreFor = (node) => {
+    const text = textFor(node);
+    const linkCount = node.querySelectorAll('a[href]').length;
+    const paragraphCount = node.querySelectorAll('p').length;
+    const headingCount = node.querySelectorAll('h1,h2,h3').length;
+    return text.length + paragraphCount * 180 + headingCount * 100 - linkCount * 90;
+  };
+  let best = candidates[0] || body;
+  let bestScore = -Infinity;
+  for (const candidate of candidates) {
+    const score = scoreFor(candidate);
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  const content = textFor(best);
+  const links = Array.from(best.querySelectorAll('a[href]')).map((a) => ({
+    url: a.href || a.getAttribute('href') || '',
+    text: normalize(a.textContent)
+  })).filter((item) => /^https?:\/\//i.test(item.url)).slice(0, 80);
+  return {
+    title: normalize(document.title),
+    content,
+    link_count: links.length,
+    selected_tag: best.tagName ? best.tagName.toLowerCase() : 'body',
+    score: bestScore
+  };
+})()
+"""
 
 
 class BrowserError(RuntimeError):
@@ -85,12 +213,49 @@ class BrowserSearchSnapshot:
 
 
 @dataclass(slots=True)
+class BrowserOpenedPage:
+    """Logical browser page opened during a conversation research session."""
+
+    page_id: str
+    url: str
+    final_url: str
+    title: str = ""
+    source_search_id: str | None = None
+    opener_tool_call_id: str | None = None
+    opened_at: float = field(default_factory=time.monotonic)
+    extraction_count: int = 0
+    last_extracted_at: float | None = None
+
+    @property
+    def window_id(self) -> str:
+        """Public browser-window identifier. Kept equal to page_id for compatibility."""
+
+        return self.page_id
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "page_id": self.page_id,
+            "window_id": self.window_id,
+            "url": self.url,
+            "final_url": self.final_url,
+            "title": self.title,
+            "source_search_id": self.source_search_id,
+            "opener_tool_call_id": self.opener_tool_call_id,
+            "extraction_count": self.extraction_count,
+        }
+
+
+@dataclass(slots=True)
 class _BrowserSession:
     browser: Any
     context: Any
     page: Any
+    pages: dict[str, Any] = field(default_factory=dict)
     search_results: list[BrowserSearchResult] = field(default_factory=list)
     current_url: str | None = None
+    last_open_url: str | None = None
+    last_open_page_id: str | None = None
+    current_page_id: str | None = None
     created_at: float = field(default_factory=time.monotonic)
     updated_at: float = field(default_factory=time.monotonic)
 
@@ -152,6 +317,174 @@ def _search_results_script(provider: str) -> str:
     return _GENERIC_RESULTS_SCRIPT
 
 
+def _clean_browser_url(raw_url: str) -> str:
+    """Trim whitespace/invisible suffixes that search pages often append to hrefs."""
+
+    url = str(raw_url or "").strip(_URL_EDGE_NOISE_CHARS)
+    while url:
+        lowered = url.lower()
+        for suffix in _URL_ENCODED_EDGE_NOISE_SUFFIXES:
+            if lowered.endswith(suffix):
+                url = url[: -len(suffix)].rstrip(_URL_EDGE_NOISE_CHARS)
+                break
+        else:
+            break
+    return url
+
+
+def _urls_equivalent(first: str, second: str) -> bool:
+    first_clean = _clean_browser_url(first)
+    second_clean = _clean_browser_url(second)
+    if first_clean == second_clean:
+        return True
+    first_parsed = urlparse(first_clean)
+    second_parsed = urlparse(second_clean)
+    return (
+        first_parsed.scheme.lower(),
+        first_parsed.netloc.lower(),
+        first_parsed.path.rstrip("/") or "/",
+        first_parsed.query,
+    ) == (
+        second_parsed.scheme.lower(),
+        second_parsed.netloc.lower(),
+        second_parsed.path.rstrip("/") or "/",
+        second_parsed.query,
+    )
+
+
+def _is_retryable_raw_cdp_error(exc: Exception) -> bool:
+    if isinstance(exc, (OSError, TimeoutError, asyncio.TimeoutError)):
+        return True
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "connect call failed",
+            "connection refused",
+            "connection reset",
+            "connection closed",
+            "did not receive a valid http response",
+        )
+    )
+
+
+def _clean_extracted_content(raw_content: str) -> tuple[str, dict[str, Any]]:
+    """Remove navigation/link-list noise while preserving article text."""
+
+    raw = str(raw_content or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    raw = _MARKDOWN_IMAGE_PATTERN.sub("", raw)
+    raw_link_count = len(_MARKDOWN_ANY_LINK_PATTERN.findall(raw)) + len(_URL_PATTERN.findall(raw))
+    if not raw:
+        return "", {
+            "raw_chars": 0,
+            "cleaned_chars": 0,
+            "raw_link_count": 0,
+            "removed_link_noise_blocks": 0,
+        }
+
+    kept_blocks: list[str] = []
+    removed_blocks = 0
+    for block in re.split(r"\n\s*\n+", raw):
+        cleaned_block = _clean_content_block(block)
+        if not cleaned_block:
+            continue
+        if _is_link_noise_block(block):
+            removed_blocks += 1
+            continue
+        kept_blocks.append(cleaned_block)
+
+    cleaned = "\n\n".join(kept_blocks)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    if _should_keep_raw_content(raw, cleaned, raw_link_count):
+        cleaned = _collapse_text_spacing(raw)
+    return cleaned, {
+        "raw_chars": len(raw),
+        "cleaned_chars": len(cleaned),
+        "raw_link_count": raw_link_count,
+        "removed_link_noise_blocks": removed_blocks,
+    }
+
+
+def _clean_content_block(block: str) -> str:
+    lines: list[str] = []
+    for raw_line in block.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = _MARKDOWN_ANY_LINK_PATTERN.sub(lambda match: match.group(1).strip(), line)
+        line = _URL_PATTERN.sub("", line)
+        line = re.sub(r"^[\-*+]\s+", "", line)
+        line = _collapse_text_spacing(line)
+        if not line or _is_noise_line(line):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _is_link_noise_block(block: str) -> bool:
+    lines = [line.strip() for line in block.splitlines() if line.strip()]
+    if not lines:
+        return False
+    link_count = len(_MARKDOWN_ANY_LINK_PATTERN.findall(block)) + len(_URL_PATTERN.findall(block))
+    if link_count < 6:
+        return False
+    link_only_lines = sum(1 for line in lines if _is_link_only_line(line))
+    if link_only_lines / max(1, len(lines)) >= 0.55:
+        return True
+    text_without_links = _MARKDOWN_ANY_LINK_PATTERN.sub("", block)
+    text_without_links = _URL_PATTERN.sub("", text_without_links)
+    non_link_chars = len(_collapse_text_spacing(text_without_links))
+    return link_count >= 12 and non_link_chars < link_count * 24
+
+
+def _is_link_only_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    link_count = len(_MARKDOWN_ANY_LINK_PATTERN.findall(stripped)) + len(_URL_PATTERN.findall(stripped))
+    if link_count == 0:
+        return False
+    without_links = _MARKDOWN_ANY_LINK_PATTERN.sub("", stripped)
+    without_links = _URL_PATTERN.sub("", without_links)
+    without_links = re.sub(r"^[\-*+]\s*", "", without_links)
+    return len(_collapse_text_spacing(without_links)) <= 12
+
+
+def _is_noise_line(line: str) -> bool:
+    normalized = _collapse_text_spacing(line).strip(" :-|").lower()
+    if not normalized:
+        return True
+    if not any(char.isalnum() for char in normalized):
+        return True
+    if normalized in _NOISE_LINE_MARKERS:
+        return True
+    if any(marker in normalized for marker in _NOISE_LINE_SUBSTRINGS):
+        return True
+    return len(normalized) <= 4 and normalized in {"ad", "ads", "new", "more"}
+
+
+def _should_keep_raw_content(raw: str, cleaned: str, raw_link_count: int) -> bool:
+    if len(cleaned) >= _MIN_READABLE_CONTENT_CHARS:
+        return False
+    if raw_link_count >= 12:
+        return False
+    return len(raw) > len(cleaned)
+
+
+def _should_prefer_readable_dom(cleaned: str, stats: dict[str, Any]) -> bool:
+    raw_link_count = int(stats.get("raw_link_count") or 0)
+    removed_blocks = int(stats.get("removed_link_noise_blocks") or 0)
+    cleaned_chars = len(cleaned)
+    if cleaned_chars < _MIN_READABLE_CONTENT_CHARS:
+        return True
+    return bool(raw_link_count >= 40 and removed_blocks)
+
+
+def _collapse_text_spacing(value: str) -> str:
+    return re.sub(r"[ \t\f\v]+", " ", str(value or "")).strip()
+
+
 class LightPandaBrowserWorker:
     """Keeps one CDP browser connection and per-conversation pages."""
 
@@ -175,10 +508,13 @@ class LightPandaBrowserWorker:
         self.max_sessions = max(1, int(max_sessions))
         self._connector = connector
         self._lock = asyncio.Lock()
+        self._sessions_lock = asyncio.Lock()
         self._playwright: Any | None = None
         self._sessions: dict[str, _BrowserSession] = {}
         self._search_cache: dict[str, list[BrowserSearchSnapshot]] = {}
         self._current_url_cache: dict[str, str] = {}
+        self._last_open_cache: dict[str, BrowserOpenedPage] = {}
+        self._opened_pages_cache: dict[str, list[BrowserOpenedPage]] = {}
 
     async def warmup(self) -> bool:
         """Best-effort startup connection. Failures are logged, not raised."""
@@ -188,8 +524,7 @@ class LightPandaBrowserWorker:
         except BrowserError as exc:
             logger.warning("lightpanda_warmup_failed", error=str(exc))
             return False
-        with suppress(Exception):
-            await browser.close()
+        await self._release_browser(browser)
         return True
 
     async def close(self) -> None:
@@ -198,11 +533,15 @@ class LightPandaBrowserWorker:
         async with self._lock:
             await self._close_sessions()
             if self._playwright is not None:
-                with suppress(Exception):
-                    await self._playwright.stop()
+                await self._best_effort_resource_call(
+                    "playwright_stop",
+                    self._playwright.stop,
+                )
                 self._playwright = None
             self._search_cache.clear()
             self._current_url_cache.clear()
+            self._last_open_cache.clear()
+            self._opened_pages_cache.clear()
 
     @property
     def search_provider_label(self) -> str:
@@ -224,43 +563,66 @@ class LightPandaBrowserWorker:
 
         session = await self._get_session(conversation_id)
         search_url = self.search_url(query, max_results=max_results)
-        await self._goto(session, search_url)
-        await self._raise_if_search_blocked(session.page)
-        extracted = await self._evaluate_page(
-            session.page,
-            _search_results_script(self.search_provider),
-            {"maxResults": max_results},
-        )
+        resolved_search_url = search_url
+        search_page = await self._new_session_page(session)
+        if search_page is not None:
+            try:
+                await self._goto_page(search_page, search_url)
+                await self._raise_if_search_blocked(search_page)
+                extracted = await self._evaluate_page(
+                    search_page,
+                    _search_results_script(self.search_provider),
+                    {"maxResults": max_results},
+                )
+                resolved_search_url = str(getattr(search_page, "url", search_url) or search_url)
+            finally:
+                if search_page is not session.page:
+                    await self._best_effort_resource_call(
+                        "browser_search_page_close",
+                        search_page.close,
+                    )
+        else:
+            expression = (
+                f"({_search_results_script(self.search_provider)})"
+                f"({json.dumps({'maxResults': max_results})})"
+            )
+            extracted = await self._raw_runtime_evaluate_value(
+                search_url,
+                expression,
+                label="search_results",
+                timeout=min(self.timeout_ms / 1000, 12),
+            )
         results = [
             BrowserSearchResult(
                 index=index + 1,
                 title=str(item.get("title") or "").strip(),
-                url=str(item.get("url") or "").strip(),
+                url=_clean_browser_url(str(item.get("url") or "")),
                 snippet=str(item.get("snippet") or "").strip(),
             )
             for index, item in enumerate(extracted or [])
-            if isinstance(item, dict) and item.get("title") and item.get("url")
+            if isinstance(item, dict)
+            and item.get("title")
+            and _clean_browser_url(str(item.get("url") or ""))
         ][:max_results]
         snapshot = self._cache_search_results(
             conversation_id=conversation_id,
             query=query,
-            search_url=search_url,
+            search_url=resolved_search_url,
             results=results,
         )
         session.search_results = self._copy_search_results(snapshot.results)
-        session.current_url = str(getattr(session.page, "url", search_url) or search_url)
+        session.current_url = resolved_search_url
         self._remember_current_url(conversation_id, session.current_url)
         session.touch()
         return {
             "type": "browser_search",
             "provider": self.search_provider,
             "query": query,
-            "search_url": search_url,
+            "search_url": resolved_search_url,
             "search_id": snapshot.search_id,
             "cached_search_count": len(self._search_cache.get(conversation_id, [])),
             "results": [
-                {**result.to_dict(), "search_id": snapshot.search_id}
-                for result in snapshot.results
+                {**result.to_dict(), "search_id": snapshot.search_id} for result in snapshot.results
             ],
         }
 
@@ -271,11 +633,12 @@ class LightPandaBrowserWorker:
         url: str | None = None,
         result_index: int | None = None,
         search_id: str | None = None,
+        tool_call_id: str | None = None,
     ) -> dict[str, Any]:
         """Open a URL or one of the last search results."""
 
         session = await self._get_session(conversation_id)
-        target_url = url
+        target_url = _clean_browser_url(url) if isinstance(url, str) else url
         matched_search_id = None
         if target_url is None and result_index is not None:
             target_url, matched_search_id = self._result_url(
@@ -284,14 +647,43 @@ class LightPandaBrowserWorker:
                 result_index,
                 search_id=search_id,
             )
+        elif target_url and search_id:
+            matched_search_id = self._match_search_result_url(
+                conversation_id,
+                target_url,
+                search_id=search_id,
+            )
         if target_url is None:
             raise BrowserError("BrowserOpen requires url or result_index.")
-        await self._goto(session, target_url)
-        await self._raise_if_search_blocked(session.page)
-        title = await self._safe_title(session.page)
-        final_url = str(getattr(session.page, "url", target_url) or target_url)
+        page = await self._new_session_page(session)
+        if page is not None:
+            try:
+                await self._goto_page(page, target_url, allow_partial=True)
+                await self._raise_if_search_blocked(page)
+            except Exception:
+                await self._best_effort_resource_call("browser_open_failed_page_close", page.close)
+                raise
+            title = await self._safe_title(page)
+            final_url = str(getattr(page, "url", target_url) or target_url)
+        else:
+            final_url = target_url
+            title = await self._safe_title_for_url(target_url)
         session.current_url = final_url
         self._remember_current_url(conversation_id, final_url)
+        opened_page = self._cache_opened_page(
+            conversation_id=conversation_id,
+            url=target_url,
+            final_url=final_url,
+            title=title,
+            source_search_id=matched_search_id,
+            opener_tool_call_id=tool_call_id,
+        )
+        if page is not None:
+            session.pages[opened_page.page_id] = page
+            session.page = page
+        session.last_open_url = opened_page.final_url
+        session.last_open_page_id = opened_page.page_id
+        session.current_page_id = opened_page.page_id
         session.touch()
         return {
             "type": "browser_open",
@@ -299,6 +691,12 @@ class LightPandaBrowserWorker:
             "final_url": final_url,
             "title": title,
             "search_id": matched_search_id,
+            "page_id": opened_page.page_id,
+            "window_id": opened_page.window_id,
+            "opened_page_count": len(self._opened_pages_cache.get(conversation_id, [])),
+            "recent_opened_pages": [
+                page.to_dict() for page in self._opened_pages_cache.get(conversation_id, [])[:5]
+            ],
         }
 
     async def extract_content(
@@ -306,34 +704,63 @@ class LightPandaBrowserWorker:
         *,
         conversation_id: str,
         url: str | None = None,
+        page_id: str | None = None,
         max_chars: int,
         include_links: bool,
     ) -> dict[str, Any]:
         """Return organized markdown/text content for the current or provided URL."""
 
-        session = await self._get_session(conversation_id)
-        if url:
-            await self._goto(session, url)
-        elif self._should_restore_current_page(session):
-            await self._goto(session, str(session.current_url))
-        await self._raise_if_search_blocked(session.page)
-        title = await self._safe_title(session.page)
-        final_url = str(getattr(session.page, "url", url or "") or url or "")
-        content, extraction_method = await self._markdown_or_text(session)
+        session = self._cached_usable_session(conversation_id)
+        target_url, target_page_id = self._resolve_content_target(
+            conversation_id,
+            session,
+            url=url,
+            page_id=page_id,
+        )
+        if not target_url:
+            session = await self._get_session(conversation_id)
+            target_url, target_page_id = self._resolve_content_target(
+                conversation_id,
+                session,
+                url=url,
+                page_id=page_id,
+            )
+        if not target_url:
+            raise BrowserError("No browser page selected. Run BrowserOpen or provide a URL.")
+        title = self._target_title(conversation_id, target_page_id)
+        if not title and session is not None:
+            title = await self._safe_title(session.page)
+        final_url = _clean_browser_url(str(target_url))
+        content, extraction_method, content_cleanup = await self._markdown_or_text_url(final_url)
         truncated = len(content) > max_chars
         if truncated:
             content = content[:max_chars].rstrip()
-        links = await self._extract_links(session.page) if include_links else []
-        buttons = await self._extract_buttons(session.page)
-        session.current_url = final_url
+        links = self._extract_links_from_content(content) if include_links else []
+        buttons: list[dict[str, str]] = []
+        if session is not None:
+            session.current_url = final_url
         self._remember_current_url(conversation_id, final_url)
-        session.touch()
+        opened_page = self._opened_page(conversation_id, target_page_id) if target_page_id else None
+        if opened_page is not None:
+            if session is not None:
+                session.last_open_url = opened_page.final_url
+                session.last_open_page_id = opened_page.page_id
+                session.current_page_id = opened_page.page_id
+                tab_page = session.pages.get(opened_page.page_id)
+                if tab_page is not None:
+                    session.page = tab_page
+            self._mark_opened_page_extracted(opened_page)
+        if session is not None:
+            session.touch()
         return {
             "type": "browser_extract_content",
             "url": final_url,
             "title": title,
+            "page_id": target_page_id,
+            "window_id": target_page_id,
             "content": content,
             "extraction_method": extraction_method,
+            "content_cleanup": content_cleanup,
             "links": links,
             "buttons": buttons,
             "truncated": truncated,
@@ -344,31 +771,94 @@ class LightPandaBrowserWorker:
         *,
         conversation_id: str,
         url: str | None = None,
+        page_id: str | None = None,
         max_chars: int,
     ) -> dict[str, Any]:
         """Return raw HTML for the current or provided URL."""
 
-        session = await self._get_session(conversation_id)
-        if url:
-            await self._goto(session, url)
-        elif self._should_restore_current_page(session):
-            await self._goto(session, str(session.current_url))
-        await self._raise_if_search_blocked(session.page)
-        title = await self._safe_title(session.page)
-        final_url = str(getattr(session.page, "url", url or "") or url or "")
-        html = await session.page.content()
+        session = self._cached_usable_session(conversation_id)
+        target_url, target_page_id = self._resolve_content_target(
+            conversation_id,
+            session,
+            url=url,
+            page_id=page_id,
+        )
+        if not target_url:
+            session = await self._get_session(conversation_id)
+            target_url, target_page_id = self._resolve_content_target(
+                conversation_id,
+                session,
+                url=url,
+                page_id=page_id,
+            )
+        if not target_url:
+            raise BrowserError("No browser page selected. Run BrowserOpen or provide a URL.")
+        title = self._target_title(conversation_id, target_page_id)
+        if not title and session is not None:
+            title = await self._safe_title(session.page)
+        final_url = _clean_browser_url(str(target_url))
+        html, html_method = await self._html_or_empty_url(final_url)
         truncated = len(html) > max_chars
         if truncated:
             html = html[:max_chars].rstrip()
-        session.current_url = final_url
+        if session is not None:
+            session.current_url = final_url
         self._remember_current_url(conversation_id, final_url)
-        session.touch()
+        if session is not None and target_page_id:
+            opened_page = self._opened_page(conversation_id, target_page_id)
+            if opened_page is not None:
+                session.last_open_url = opened_page.final_url
+                session.last_open_page_id = opened_page.page_id
+                session.current_page_id = opened_page.page_id
+                tab_page = session.pages.get(opened_page.page_id)
+                if tab_page is not None:
+                    session.page = tab_page
+        if session is not None:
+            session.touch()
         return {
             "type": "browser_get_html",
             "url": final_url,
             "title": title,
+            "page_id": target_page_id,
+            "window_id": target_page_id,
             "html": html,
+            "html_method": html_method,
             "truncated": truncated,
+        }
+
+    async def list_tabs(
+        self,
+        *,
+        conversation_id: str,
+        max_tabs: int,
+    ) -> dict[str, Any]:
+        """Return logical browser tabs opened during the conversation."""
+
+        await self._cleanup_sessions()
+        max_tabs = min(max(1, int(max_tabs)), 50)
+        session = self._sessions.get(conversation_id)
+        current_url = self._current_url_cache.get(conversation_id)
+        if session is not None:
+            current_url = session.current_url or current_url
+        last_open = self._last_open_cache.get(conversation_id)
+        pages = self._opened_pages_cache.get(conversation_id, [])[:max_tabs]
+        tabs = [
+            self._opened_page_tab(
+                page,
+                index=index,
+                current_url=current_url,
+                last_open_page_id=last_open.page_id if last_open is not None else None,
+            )
+            for index, page in enumerate(pages, start=1)
+        ]
+        return {
+            "type": "browser_tabs",
+            "tab_count": len(tabs),
+            "max_tabs": max_tabs,
+            "current_url": current_url,
+            "last_open_page_id": last_open.page_id if last_open is not None else None,
+            "last_open_window_id": last_open.window_id if last_open is not None else None,
+            "tabs": tabs,
         }
 
     def search_url(self, query: str, *, max_results: int | None = None) -> str:
@@ -414,52 +904,61 @@ class LightPandaBrowserWorker:
         )
 
     async def _get_session(self, conversation_id: str) -> _BrowserSession:
-        await self._cleanup_sessions()
-        session = self._sessions.get(conversation_id)
-        if session is not None:
-            try:
-                browser_connected = True
-                is_connected = getattr(session.browser, "is_connected", None)
-                if callable(is_connected):
-                    browser_connected = bool(is_connected())
-                if browser_connected and not session.page.is_closed():
-                    cached_results = self._latest_cached_search_results(conversation_id)
-                    if cached_results:
-                        session.search_results = cached_results
-                    else:
-                        session.search_results = []
-                    session.current_url = (
-                        session.current_url or self._current_url_cache.get(conversation_id)
-                    )
-                    session.touch()
-                    return session
-            except Exception:
-                await self._close_session(conversation_id, session)
-                session = None
+        async with self._sessions_lock:
+            await self._cleanup_sessions()
+            session = self._sessions.get(conversation_id)
             if session is not None:
-                await self._close_session(conversation_id, session)
+                try:
+                    browser_connected = True
+                    is_connected = getattr(session.browser, "is_connected", None)
+                    if callable(is_connected):
+                        browser_connected = bool(is_connected())
+                    if browser_connected and self._session_has_open_page(session):
+                        session.page = self._preferred_session_page(session)
+                        cached_results = self._latest_cached_search_results(conversation_id)
+                        if cached_results:
+                            session.search_results = cached_results
+                        else:
+                            session.search_results = []
+                        session.current_url = session.current_url or self._current_url_cache.get(
+                            conversation_id
+                        )
+                        last_open = self._last_open_cache.get(conversation_id)
+                        if last_open is not None:
+                            session.last_open_url = session.last_open_url or last_open.final_url
+                            session.last_open_page_id = session.last_open_page_id or last_open.page_id
+                        session.touch()
+                        return session
+                except Exception:
+                    await self._close_session(conversation_id, session)
+                    session = None
+                if session is not None:
+                    await self._close_session(conversation_id, session)
 
-        browser = await self._connect_browser()
-        try:
-            context = await browser.new_context()
-            page = await context.new_page()
-            page.set_default_timeout(self.timeout_ms)
-            session = _BrowserSession(
-                browser=browser,
-                context=context,
-                page=page,
-                search_results=self._latest_cached_search_results(conversation_id),
-                current_url=self._current_url_cache.get(conversation_id),
-            )
-            self._sessions[conversation_id] = session
-            await self._enforce_session_limit()
-            return session
-        except Exception as exc:
-            with suppress(Exception):
-                await browser.close()
-            raise BrowserUnavailableError(
-                f"Could not create a LightPanda browser session: {exc}"
-            ) from exc
+            browser = await self._connect_browser()
+            try:
+                context = await browser.new_context()
+                page = await context.new_page()
+                page.set_default_timeout(self.timeout_ms)
+                last_open = self._last_open_cache.get(conversation_id)
+                session = _BrowserSession(
+                    browser=browser,
+                    context=context,
+                    page=page,
+                    search_results=self._latest_cached_search_results(conversation_id),
+                    current_url=self._current_url_cache.get(conversation_id),
+                    last_open_url=last_open.final_url if last_open is not None else None,
+                    last_open_page_id=last_open.page_id if last_open is not None else None,
+                    current_page_id=last_open.page_id if last_open is not None else None,
+                )
+                self._sessions[conversation_id] = session
+                await self._enforce_session_limit()
+                return session
+            except Exception as exc:
+                await self._release_browser(browser)
+                raise BrowserUnavailableError(
+                    f"Could not create a LightPanda browser session: {exc}"
+                ) from exc
 
     async def _ensure_browser(self) -> Any:
         """Open one CDP browser connection.
@@ -471,6 +970,54 @@ class LightPandaBrowserWorker:
         """
 
         return await self._connect_browser()
+
+    def _cached_usable_session(self, conversation_id: str) -> _BrowserSession | None:
+        session = self._sessions.get(conversation_id)
+        if session is None:
+            return None
+        try:
+            browser_connected = True
+            is_connected = getattr(session.browser, "is_connected", None)
+            if callable(is_connected):
+                browser_connected = bool(is_connected())
+            if browser_connected and self._session_has_open_page(session):
+                session.page = self._preferred_session_page(session)
+                return session
+        except Exception:
+            pass
+        self._sessions.pop(conversation_id, None)
+        return None
+
+    def _session_has_open_page(self, session: _BrowserSession) -> bool:
+        for page in self._session_pages(session):
+            with suppress(Exception):
+                if not page.is_closed():
+                    return True
+        return False
+
+    def _preferred_session_page(self, session: _BrowserSession) -> Any:
+        if session.current_page_id:
+            page = session.pages.get(session.current_page_id)
+            if page is not None:
+                with suppress(Exception):
+                    if not page.is_closed():
+                        return page
+        for page in self._session_pages(session):
+            with suppress(Exception):
+                if not page.is_closed():
+                    return page
+        return session.page
+
+    def _session_pages(self, session: _BrowserSession) -> list[Any]:
+        pages: list[Any] = []
+        seen: set[int] = set()
+        for page in (session.page, *session.pages.values()):
+            marker = id(page)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            pages.append(page)
+        return pages
 
     async def _connect_browser(self) -> Any:
         if not self.enabled:
@@ -510,6 +1057,18 @@ class LightPandaBrowserWorker:
             timeout=self.timeout_ms,
         )
 
+    async def _new_session_page(self, session: _BrowserSession) -> Any | None:
+        try:
+            page = await session.context.new_page()
+        except Exception as exc:
+            if "TargetAlreadyLoaded" in str(exc):
+                logger.debug("lightpanda_new_page_unavailable", error=str(exc))
+                return None
+            raise
+        with suppress(Exception):
+            page.set_default_timeout(self.timeout_ms)
+        return page
+
     async def _resolve_endpoint(self) -> str:
         version_payload = None
         if self.cdp_url.strip().startswith(("http://", "https://")):
@@ -520,20 +1079,53 @@ class LightPandaBrowserWorker:
                     version_payload = response.json()
         return normalize_lightpanda_cdp_endpoint(self.cdp_url, version_payload)
 
-    async def _goto(self, session: _BrowserSession, url: str) -> None:
+    async def _goto(
+        self,
+        conversation_id: str,
+        session: _BrowserSession,
+        url: str,
+        *,
+        allow_partial: bool = False,
+    ) -> None:
         try:
-            await session.page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-            await session.page.wait_for_timeout(250)
+            await self._goto_page(session.page, url, allow_partial=allow_partial)
+        except Exception:
+            await self._close_session(conversation_id, session)
+            raise
+
+    async def _goto_page(
+        self,
+        page: Any,
+        url: str,
+        *,
+        allow_partial: bool = False,
+    ) -> None:
+        clean_url = _clean_browser_url(url)
+        try:
+            await page.goto(
+                clean_url, wait_until="domcontentloaded", timeout=self.timeout_ms
+            )
+            await page.wait_for_timeout(250)
         except Exception as exc:
-            await self._reset_browser()
+            page_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
+            if allow_partial and page_url.startswith(("http://", "https://")):
+                logger.warning(
+                    "lightpanda_navigation_partial",
+                    url=clean_url,
+                    page_url=page_url,
+                    error=str(exc),
+                )
+                return
             if "RobotsBlocked" in str(exc):
                 raise BrowserBlockedError(
                     "LightPanda blocked navigation because `--obey-robots` is enabled.",
-                    provider=urlparse(url).hostname or "",
+                    provider=urlparse(clean_url).hostname or "",
                     reason="robots_txt",
-                    url=url,
+                    url=clean_url,
                 ) from exc
-            raise BrowserUnavailableError(f"LightPanda navigation failed for {url}: {exc}") from exc
+            raise BrowserUnavailableError(
+                f"LightPanda navigation failed for {clean_url}: {exc}"
+            ) from exc
 
     async def _evaluate_page(
         self,
@@ -565,32 +1157,86 @@ class LightPandaBrowserWorker:
             raise last_error
         return None
 
-    async def _markdown_or_text(self, session: _BrowserSession) -> tuple[str, str]:
-        markdown = await self._lightpanda_markdown(session)
+    async def _markdown_or_text(self, session: _BrowserSession) -> tuple[str, str, dict[str, Any]]:
+        url = _clean_browser_url(str(getattr(session.page, "url", "") or ""))
+        return await self._markdown_or_text_url(url)
+
+    async def _markdown_or_text_url(self, url: str) -> tuple[str, str, dict[str, Any]]:
+        markdown = await self._lightpanda_markdown_url(url)
         if markdown:
-            return markdown.strip(), "lightpanda_markdown"
-        text = str(
-            await self._evaluate_page(
-                session.page,
-                "() => (document.body && (document.body.innerText || document.body.textContent)) "
-                "|| document.documentElement.textContent || ''"
-            )
-            or ""
-        ).strip()
-        return text, "dom_text"
+            cleaned_markdown, stats = _clean_extracted_content(markdown)
+            if _should_prefer_readable_dom(cleaned_markdown, stats):
+                readable = await self._readable_dom_content_url(url)
+                if readable:
+                    return readable, "readable_dom_text", {
+                        **stats,
+                        "fallback": "readable_dom_text",
+                    }
+            if cleaned_markdown:
+                method = (
+                    "lightpanda_markdown_cleaned"
+                    if stats.get("removed_link_noise_blocks")
+                    else "lightpanda_markdown"
+                )
+                return cleaned_markdown, method, stats
+        readable = await self._readable_dom_content_url(url)
+        if readable:
+            return readable, "readable_dom_text", {}
+        text = await self._raw_runtime_evaluate_value(
+            url,
+            "(document.body && (document.body.innerText || document.body.textContent)) "
+            "|| document.documentElement.textContent || ''",
+            label="dom_text",
+            timeout=min(self.timeout_ms / 1000, 5),
+        )
+        if not isinstance(text, str):
+            return "", "dom_text_failed", {}
+        cleaned_text, stats = _clean_extracted_content(text)
+        return cleaned_text, "dom_text", stats
+
+    async def _readable_dom_content_url(self, url: str) -> str:
+        value = await self._raw_runtime_evaluate_value(
+            url,
+            _READABLE_DOM_SCRIPT,
+            label="readable_dom",
+            timeout=min(self.timeout_ms / 1000, 8),
+        )
+        if not isinstance(value, dict):
+            return ""
+        content = value.get("content")
+        if not isinstance(content, str):
+            return ""
+        cleaned, _stats = _clean_extracted_content(content)
+        return cleaned
 
     async def _lightpanda_markdown(self, session: _BrowserSession) -> str:
-        url = str(getattr(session.page, "url", "") or "")
+        url = _clean_browser_url(str(getattr(session.page, "url", "") or ""))
+        return await self._lightpanda_markdown_url(url)
+
+    async def _lightpanda_markdown_url(self, url: str) -> str:
+        url = _clean_browser_url(url)
         if not url or url == "about:blank":
             return ""
         try:
-            payload = await self._lightpanda_raw_cdp_command(
-                url=url,
-                method="LP.getMarkdown",
+            payload = await asyncio.wait_for(
+                self._lightpanda_raw_cdp_command(
+                    url=url,
+                    method="LP.getMarkdown",
+                ),
+                timeout=min(self.timeout_ms / 1000, 15),
             )
+            markdown = self._extract_markdown_payload(payload)
+            if markdown:
+                return markdown
+        except TimeoutError as exc:
+            logger.warning("lightpanda_markdown_raw_timeout", error=str(exc), url=url)
+            return ""
         except Exception as exc:
             logger.warning("lightpanda_markdown_failed", error=str(exc))
             return ""
+        return ""
+
+    def _extract_markdown_payload(self, payload: Any) -> str:
         if isinstance(payload, dict):
             for key in ("markdown", "content", "text"):
                 value = payload.get(key)
@@ -599,6 +1245,58 @@ class LightPandaBrowserWorker:
         if isinstance(payload, str):
             return payload
         return ""
+
+    async def _raw_runtime_evaluate_value(
+        self,
+        url: str,
+        expression: str,
+        *,
+        label: str,
+        timeout: float,
+    ) -> Any:
+        if not url or url == "about:blank":
+            return None
+        try:
+            payload = await asyncio.wait_for(
+                self._lightpanda_raw_cdp_command(
+                    url=url,
+                    method="Runtime.evaluate",
+                    params={
+                        "expression": expression,
+                        "returnByValue": True,
+                    },
+                ),
+                timeout=timeout,
+            )
+        except TimeoutError as exc:
+            logger.warning("lightpanda_raw_runtime_evaluate_timeout", label=label, error=str(exc))
+            return None
+        except Exception as exc:
+            logger.warning("lightpanda_raw_runtime_evaluate_failed", label=label, error=str(exc))
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            return None
+        return result.get("value")
+
+    async def _html_or_empty(self, session: _BrowserSession) -> tuple[str, str]:
+        url = _clean_browser_url(str(getattr(session.page, "url", "") or ""))
+        return await self._html_or_empty_url(url)
+
+    async def _html_or_empty_url(self, url: str) -> tuple[str, str]:
+        url = _clean_browser_url(url)
+        value = await self._raw_runtime_evaluate_value(
+            url,
+            "document.documentElement ? document.documentElement.outerHTML : ''",
+            label="html",
+            timeout=min(self.timeout_ms / 1000, 10),
+        )
+        if isinstance(value, str):
+            return value, "raw_cdp_runtime_evaluate"
+        return "", "raw_cdp_runtime_unavailable"
 
     async def _lightpanda_raw_cdp_command(
         self,
@@ -614,93 +1312,100 @@ class LightPandaBrowserWorker:
                 "Python package `websockets` is required for LightPanda native CDP commands."
             ) from exc
 
-        endpoint = await self._resolve_endpoint()
         timeout_seconds = self.timeout_ms / 1000
-        async with websockets.connect(
-            endpoint,
-            open_timeout=timeout_seconds,
-            close_timeout=min(timeout_seconds, 5),
-            max_size=8 * 1024 * 1024,
-        ) as websocket:
-            client = _RawCdpClient(websocket)
-            created = await client.send("Target.createTarget", {"url": "about:blank"})
-            target_id = str(created.get("targetId") or "")
-            attached = await client.send(
-                "Target.attachToTarget",
-                {"targetId": target_id, "flatten": True},
-            )
-            session_id = str(attached.get("sessionId") or "")
+        last_error: Exception | None = None
+        for attempt, delay in enumerate(_RAW_CDP_RETRY_DELAYS):
+            if delay:
+                await asyncio.sleep(delay)
             try:
-                with suppress(Exception):
-                    await client.send("Page.enable", session_id=session_id)
-                await client.send("Page.navigate", {"url": url}, session_id=session_id)
-                with suppress(TimeoutError, asyncio.TimeoutError):
-                    await client.wait_for_event(
-                        "Page.domContentEventFired",
-                        session_id=session_id,
-                        timeout=timeout_seconds,
+                endpoint = await self._resolve_endpoint()
+                async with websockets.connect(
+                    endpoint,
+                    open_timeout=timeout_seconds,
+                    close_timeout=min(timeout_seconds, 5),
+                    max_size=8 * 1024 * 1024,
+                ) as websocket:
+                    client = _RawCdpClient(websocket)
+                    created = await client.send("Target.createTarget", {"url": "about:blank"})
+                    target_id = str(created.get("targetId") or "")
+                    attached = await client.send(
+                        "Target.attachToTarget",
+                        {"targetId": target_id, "flatten": True},
                     )
-                await asyncio.sleep(0.25)
-                return await client.send(method, params or {}, session_id=session_id)
-            finally:
-                if target_id:
-                    with suppress(Exception):
-                        await client.send("Target.closeTarget", {"targetId": target_id})
+                    session_id = str(attached.get("sessionId") or "")
+                    try:
+                        with suppress(Exception):
+                            await client.send("Page.enable", session_id=session_id)
+                        await client.send("Page.navigate", {"url": url}, session_id=session_id)
+                        with suppress(TimeoutError, asyncio.TimeoutError):
+                            await client.wait_for_event(
+                                "Page.domContentEventFired",
+                                session_id=session_id,
+                                timeout=timeout_seconds,
+                            )
+                        await asyncio.sleep(0.25)
+                        return await client.send(method, params or {}, session_id=session_id)
+                    finally:
+                        if target_id:
+                            with suppress(Exception):
+                                await client.send("Target.closeTarget", {"targetId": target_id})
+            except Exception as exc:
+                last_error = exc
+                if attempt == len(_RAW_CDP_RETRY_DELAYS) - 1 or not _is_retryable_raw_cdp_error(
+                    exc
+                ):
+                    raise
+                logger.debug(
+                    "lightpanda_raw_cdp_retry",
+                    attempt=attempt + 1,
+                    method=method,
+                    url=url,
+                    error=str(exc),
+                )
+        if last_error is not None:
+            raise last_error
+        raise BrowserUnavailableError("LightPanda raw CDP command failed.")
 
-    async def _extract_links(self, page: Any) -> list[dict[str, str]]:
-        links = await self._evaluate_page(
-            page,
-            """() => {
-              const seen = new Set();
-              return Array.from(document.querySelectorAll('a[href]')).map((a) => {
-                const href = a.href || a.getAttribute('href') || '';
-                const text = (a.textContent || '').replace(/\\s+/g, ' ').trim();
-                return { url: href, text };
-              }).filter((item) => {
-                if (!/^https?:\\/\\//i.test(item.url) || seen.has(item.url)) return false;
-                seen.add(item.url);
-                return true;
-              }).slice(0, 50);
-            }"""
-        )
-        return [
-            {"url": str(item.get("url") or ""), "text": str(item.get("text") or "")}
-            for item in links
-            if isinstance(item, dict) and item.get("url")
-        ]
-
-    async def _extract_buttons(self, page: Any) -> list[dict[str, str]]:
-        buttons = await self._evaluate_page(
-            page,
-            """() => {
-              return Array.from(document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]')).map((el) => {
-                const text = (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
-                const type = el.tagName ? el.tagName.toLowerCase() : '';
-                const id = el.id || '';
-                const name = el.getAttribute('name') || '';
-                return { text, type, id, name };
-              }).filter((item) => item.text || item.id || item.name).slice(0, 50);
-            }"""
-        )
-        return [
-            {
-                "text": str(item.get("text") or ""),
-                "type": str(item.get("type") or ""),
-                "id": str(item.get("id") or ""),
-                "name": str(item.get("name") or ""),
-            }
-            for item in buttons
-            if isinstance(item, dict)
-        ]
+    def _extract_links_from_content(self, content: str) -> list[dict[str, str]]:
+        links: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for match in _MARKDOWN_LINK_PATTERN.finditer(content):
+            text = " ".join(match.group(1).split())
+            url = match.group(2).strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            links.append({"url": url, "text": text})
+            if len(links) >= 50:
+                break
+        return links
 
     async def _safe_title(self, page: Any) -> str:
         try:
-            return str(await page.title() or "").strip()
+            title = await asyncio.wait_for(
+                page.title(),
+                timeout=min(self.timeout_ms / 1000, 3),
+            )
+            return str(title or "").strip()
+        except TimeoutError as exc:
+            logger.warning("lightpanda_title_timeout", error=str(exc))
+            return ""
         except Exception:
             return ""
 
+    async def _safe_title_for_url(self, url: str) -> str:
+        value = await self._raw_runtime_evaluate_value(
+            url,
+            "document.title || ''",
+            label="title",
+            timeout=min(self.timeout_ms / 1000, 5),
+        )
+        return str(value or "").strip() if isinstance(value, str) else ""
+
     async def _raise_if_google_blocked(self, page: Any) -> None:
         page_url = str(getattr(page, "url", "") or "").lower()
+        if "sorry/index" not in page_url and "google." not in page_url:
+            return
         raw_title = await self._safe_title(page)
         title = raw_title.lower()
         is_google_surface = "google." in page_url or "google" in title
@@ -712,7 +1417,7 @@ class LightPandaBrowserWorker:
                 await self._evaluate_page(
                     page,
                     "() => ((document.body && (document.body.innerText || document.body.textContent)) "
-                    "|| '').slice(0, 3000)"
+                    "|| '').slice(0, 3000)",
                 )
                 or ""
             )
@@ -740,6 +1445,8 @@ class LightPandaBrowserWorker:
 
     async def _raise_if_bing_blocked(self, page: Any) -> None:
         page_url = str(getattr(page, "url", "") or "").lower()
+        if "bing.com" not in page_url:
+            return
         raw_title = await self._safe_title(page)
         title = raw_title.lower()
         is_bing_surface = "bing.com" in page_url or "bing" in title
@@ -751,7 +1458,7 @@ class LightPandaBrowserWorker:
                 await self._evaluate_page(
                     page,
                     "() => ((document.body && (document.body.innerText || document.body.textContent)) "
-                    "|| '').slice(0, 3000)"
+                    "|| '').slice(0, 3000)",
                 )
                 or ""
             )
@@ -779,6 +1486,8 @@ class LightPandaBrowserWorker:
 
     async def _raise_if_yahoo_blocked(self, page: Any) -> None:
         page_url = str(getattr(page, "url", "") or "").lower()
+        if "search.yahoo.com" not in page_url:
+            return
         raw_title = await self._safe_title(page)
         title = raw_title.lower()
         is_yahoo_surface = "search.yahoo.com" in page_url or "yahoo search" in title
@@ -790,7 +1499,7 @@ class LightPandaBrowserWorker:
                 await self._evaluate_page(
                     page,
                     "() => ((document.body && (document.body.innerText || document.body.textContent)) "
-                    "|| '').slice(0, 3000)"
+                    "|| '').slice(0, 3000)",
                 )
                 or ""
             )
@@ -863,16 +1572,145 @@ class LightPandaBrowserWorker:
         ]
 
     def _remember_current_url(self, conversation_id: str, url: str | None) -> None:
+        url = _clean_browser_url(str(url or ""))
         if not url or url == "about:blank":
             return
         self._current_url_cache[conversation_id] = url
 
-    def _should_restore_current_page(self, session: _BrowserSession) -> bool:
-        current_url = str(session.current_url or "")
-        if not current_url.startswith(("http://", "https://")):
+    def _cache_opened_page(
+        self,
+        *,
+        conversation_id: str,
+        url: str,
+        final_url: str,
+        title: str,
+        source_search_id: str | None,
+        opener_tool_call_id: str | None,
+    ) -> BrowserOpenedPage:
+        url = _clean_browser_url(url)
+        final_url = _clean_browser_url(final_url)
+        raw_id = f"{conversation_id}\n{final_url}\n{time.monotonic_ns()}"
+        page_id = f"page_{hashlib.sha256(raw_id.encode()).hexdigest()[:12]}"
+        opened_page = BrowserOpenedPage(
+            page_id=page_id,
+            url=url,
+            final_url=final_url,
+            title=title,
+            source_search_id=source_search_id,
+            opener_tool_call_id=opener_tool_call_id,
+        )
+        pages = self._opened_pages_cache.setdefault(conversation_id, [])
+        pages.insert(0, opened_page)
+        del pages[_MAX_OPENED_PAGES_PER_CONVERSATION:]
+        self._last_open_cache[conversation_id] = opened_page
+        return opened_page
+
+    def _mark_opened_page_extracted(self, opened_page: BrowserOpenedPage) -> None:
+        opened_page.extraction_count += 1
+        opened_page.last_extracted_at = time.monotonic()
+
+    def _opened_page_tab(
+        self,
+        page: BrowserOpenedPage,
+        *,
+        index: int,
+        current_url: str | None,
+        last_open_page_id: str | None,
+    ) -> dict[str, Any]:
+        parsed = urlparse(page.final_url or page.url)
+        domain = parsed.netloc
+        title = page.title.strip() if page.title else ""
+        summary = title or domain or page.final_url
+        return {
+            "index": index,
+            "page_id": page.page_id,
+            "window_id": page.window_id,
+            "url": page.url,
+            "final_url": page.final_url,
+            "domain": domain,
+            "title": title,
+            "summary": summary,
+            "source_search_id": page.source_search_id,
+            "opener_tool_call_id": page.opener_tool_call_id,
+            "extraction_count": page.extraction_count,
+            "is_last_open": page.page_id == last_open_page_id,
+            "is_current_page": bool(current_url and current_url == page.final_url),
+        }
+
+    def _opened_page(
+        self,
+        conversation_id: str,
+        page_id: str,
+    ) -> BrowserOpenedPage | None:
+        for opened_page in self._opened_pages_cache.get(conversation_id, []):
+            if opened_page.page_id == page_id:
+                return opened_page
+        return None
+
+    def _target_title(self, conversation_id: str, page_id: str | None) -> str:
+        if not page_id:
+            return ""
+        opened_page = self._opened_page(conversation_id, page_id)
+        return opened_page.title if opened_page is not None else ""
+
+    def _resolve_content_target(
+        self,
+        conversation_id: str,
+        session: _BrowserSession | None,
+        *,
+        url: str | None = None,
+        page_id: str | None = None,
+    ) -> tuple[str | None, str | None]:
+        if url and page_id:
+            raise BrowserError("Use either url or page_id, not both.")
+        if page_id:
+            opened_page = self._opened_page(conversation_id, page_id)
+            if opened_page is None:
+                raise BrowserError(
+                    f"No opened browser page with page_id {page_id}. Run BrowserOpen first."
+                )
+            return opened_page.final_url, opened_page.page_id
+        if url:
+            return _clean_browser_url(url), None
+        next_unextracted = self._next_unextracted_opened_page(conversation_id)
+        if next_unextracted is not None:
+            return next_unextracted.final_url, next_unextracted.page_id
+        last_open = self._last_open_cache.get(conversation_id)
+        if last_open is not None:
+            return last_open.final_url, last_open.page_id
+        if session is not None and session.last_open_url:
+            return session.last_open_url, session.last_open_page_id
+        current_url = _clean_browser_url(
+            str(
+                (session.current_url if session is not None else None)
+                or self._current_url_cache.get(conversation_id)
+                or ""
+            )
+        )
+        if current_url.startswith(("http://", "https://")):
+            return current_url, None
+        if session is not None:
+            page_url = _clean_browser_url(str(getattr(session.page, "url", "") or ""))
+            if page_url.startswith(("http://", "https://")):
+                return page_url, None
+        return None, None
+
+    def _next_unextracted_opened_page(self, conversation_id: str) -> BrowserOpenedPage | None:
+        pages = [
+            page
+            for page in self._opened_pages_cache.get(conversation_id, [])
+            if page.extraction_count == 0
+        ]
+        if len(pages) <= 1:
+            return None
+        return min(pages, key=lambda page: page.opened_at)
+
+    def _should_navigate_for_content(self, session: _BrowserSession, target_url: str) -> bool:
+        target_url = _clean_browser_url(target_url)
+        if not target_url.startswith(("http://", "https://")):
             return False
-        page_url = str(getattr(session.page, "url", "") or "")
-        return not page_url or page_url == "about:blank"
+        page_url = _clean_browser_url(str(getattr(session.page, "url", "") or ""))
+        return page_url != target_url
 
     def _result_url(
         self,
@@ -888,7 +1726,7 @@ class LightPandaBrowserWorker:
                     continue
                 for result in snapshot.results:
                     if result.index == result_index:
-                        return result.url, snapshot.search_id
+                        return _clean_browser_url(result.url), snapshot.search_id
                 raise BrowserError(
                     f"No browser search result with index {result_index} in search_id {search_id}."
                 )
@@ -899,14 +1737,30 @@ class LightPandaBrowserWorker:
         for snapshot in self._search_cache.get(conversation_id, []):
             for result in snapshot.results:
                 if result.index == result_index:
-                    return result.url, snapshot.search_id
+                    return _clean_browser_url(result.url), snapshot.search_id
 
         for result in session.search_results:
             if result.index == result_index:
-                return result.url, None
+                return _clean_browser_url(result.url), None
         raise BrowserError(
             f"No browser search result with index {result_index}. Run BrowserSearch first."
         )
+
+    def _match_search_result_url(
+        self,
+        conversation_id: str,
+        url: str,
+        *,
+        search_id: str | None = None,
+    ) -> str | None:
+        snapshots = self._search_cache.get(conversation_id, [])
+        for snapshot in snapshots:
+            if search_id and snapshot.search_id != search_id:
+                continue
+            for result in snapshot.results:
+                if _urls_equivalent(url, result.url):
+                    return snapshot.search_id
+        return None
 
     async def _cleanup_sessions(self) -> None:
         now = time.monotonic()
@@ -932,6 +1786,8 @@ class LightPandaBrowserWorker:
                 self._search_cache.pop(conversation_id, None)
                 if conversation_id not in self._sessions:
                     self._current_url_cache.pop(conversation_id, None)
+                    self._last_open_cache.pop(conversation_id, None)
+                    self._opened_pages_cache.pop(conversation_id, None)
 
     async def _enforce_session_limit(self) -> None:
         while len(self._sessions) > self.max_sessions:
@@ -951,12 +1807,28 @@ class LightPandaBrowserWorker:
 
     async def _close_session(self, conversation_id: str, session: _BrowserSession) -> None:
         self._sessions.pop(conversation_id, None)
-        with suppress(Exception):
-            await session.page.close()
-        with suppress(Exception):
-            await session.context.close()
-        with suppress(Exception):
-            await session.browser.close()
+        for page in self._session_pages(session):
+            await self._best_effort_resource_call("browser_page_close", page.close)
+        await self._best_effort_resource_call("browser_context_close", session.context.close)
+        await self._release_browser(session.browser)
+
+    async def _release_browser(self, browser: Any) -> None:
+        await self._best_effort_resource_call("browser_close", browser.close)
+
+    async def _best_effort_resource_call(
+        self,
+        label: str,
+        operation: Callable[[], Any],
+    ) -> None:
+        try:
+            result = operation()
+            if inspect.isawaitable(result):
+                await asyncio.wait_for(
+                    result,
+                    timeout=min(max(self.timeout_ms / 1000, 0.5), 2),
+                )
+        except Exception as exc:
+            logger.debug("lightpanda_resource_close_failed", label=label, error=str(exc))
 
 
 class _RawCdpClient:

@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { ChevronRight, FolderOpen, PanelRight } from "lucide-react";
+import { ChevronRight, FolderOpen, LayoutGrid, PanelRight } from "lucide-react";
 import { InputDock } from "./input-dock";
 import { MessageFeed } from "./message-feed";
 import { SessionPanel } from "./session-panel";
+import { WorkspacePanel } from "./workspace-panel";
 import { workspaceName } from "../../lib/utils";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
@@ -11,6 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 export function ChatWorkspace() {
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
+  const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false);
   const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
   const conversationTitle = useChatStore((state) => state.conversationTitle);
   const folderLabel = selectedWorkspace ? workspaceName(selectedWorkspace) : "Folder";
@@ -25,7 +27,21 @@ export function ChatWorkspace() {
           <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/70" />
           <span className="min-w-0 truncate text-muted-foreground">{sessionLabel}</span>
         </div>
-        <div className="shrink-0">
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={workspacePanelOpen ? "secondary" : "ghost"}
+                size="iconSm"
+                aria-label="Workspace"
+                onClick={() => setWorkspacePanelOpen((value) => !value)}
+                className="rounded-xl border border-glass-border/35 bg-background/80 shadow-soft backdrop-blur"
+              >
+                <LayoutGrid className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Workspace</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -46,6 +62,17 @@ export function ChatWorkspace() {
         <div className="relative min-w-0 flex-1 overflow-hidden transition-[width,transform] duration-300 ease-out">
           <MessageFeed />
           <InputDock />
+        </div>
+        <div
+          data-testid="workspace-panel-shell"
+          aria-hidden={!workspacePanelOpen}
+          className={
+            workspacePanelOpen
+              ? "h-full w-[min(320px,calc(100vw-64px))] shrink-0 translate-x-0 overflow-hidden border-l border-glass-border/25 opacity-100 transition-[width,opacity,transform] duration-300 ease-out"
+              : "pointer-events-none h-full w-0 shrink-0 translate-x-6 overflow-hidden border-l-0 border-glass-border/25 opacity-0 transition-[width,opacity,transform] duration-300 ease-out"
+          }
+        >
+          <WorkspacePanel key={selectedWorkspace || "no-workspace"} visible={workspacePanelOpen} onClose={() => setWorkspacePanelOpen(false)} workspaceRoot={selectedWorkspace} />
         </div>
         <div
           data-testid="session-panel-shell"

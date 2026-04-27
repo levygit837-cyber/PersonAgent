@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import type { ToolBlockStatus, ToolBlockUi } from "../../types/chat";
 
+const TOOL_OUTPUT_VISIBILITY_STORAGE_KEY = "personagent.toolOutputVisibility";
+
 type SearchOutputRow = {
   kind: "file" | "match" | "line";
   file?: string;
@@ -15,10 +17,6 @@ type WriteOutputRow = {
 };
 
 export function ToolBlock({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
-  const [collapsed, setCollapsed] = useState(block.isCollapsed);
-  const hasDetails = block.content.trim().length > 0;
-  const error = isError(block);
-
   if (block.name === "Read" || block.name === "read_file") {
     return <ReadToolEvent block={block} nested={nested} />;
   }
@@ -31,31 +29,11 @@ export function ToolBlock({ block, nested = false }: { block: ToolBlockUi; neste
     return <SearchToolEvent block={block} nested={nested} />;
   }
 
-  return (
-    <div className={nested ? "mb-1" : "mb-2"}>
-      <button
-        type="button"
-        disabled={!hasDetails}
-        onClick={() => setCollapsed((value) => !value)}
-        className="flex w-full items-center gap-2 text-left font-mono text-xs"
-      >
-        <StatusDot status={block.status} />
-        <span className={error ? "min-w-0 flex-1 truncate text-destructive" : "min-w-0 flex-1 truncate text-muted-foreground"}>
-          {inlineToolText(block)}
-          {hasDetails ? ` - ${collapsed ? "Show" : "Hide"}` : ""}
-        </span>
-      </button>
-      {hasDetails && !collapsed ? (
-        <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 p-3 font-mono text-[11px] leading-5 text-muted-foreground shadow-soft">
-          {block.content}
-        </pre>
-      ) : null}
-    </div>
-  );
+  return <GenericToolEvent block={block} nested={nested} />;
 }
 
 export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: ToolBlockUi[] }) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true);
   const hasError = blocks.some(isError);
   const hasRunning = blocks.some(isRunning);
   const status: ToolBlockStatus = hasError ? "error" : hasRunning ? "running" : "completed";
@@ -66,7 +44,7 @@ export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: 
       <button
         type="button"
         className="flex w-fit items-center gap-2 rounded-lg px-1.5 py-[2px] -ml-1.5 font-mono text-[11px] transition-colors hover:bg-glass/70"
-        onClick={() => !hasRunning && setCollapsed((value) => !value)}
+        onClick={() => !hasRunning && hasDetails && toggleCollapsed()}
       >
         <StatusDot status={status} />
         <span className={hasError ? "text-destructive" : hasRunning ? "text-muted-foreground" : "text-muted-foreground hover:text-foreground"}>
@@ -79,7 +57,7 @@ export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: 
             if (kind === "read") return <ReadToolEvent key={block.id} block={block} nested />;
             if (kind === "search") return <SearchToolEvent key={block.id} block={block} nested />;
             if (kind === "shell") return <ShellToolEvent key={block.id} block={block} nested />;
-            return <GenericCompactToolEvent key={block.id} block={block} nested />;
+            return <GenericToolEvent key={block.id} block={block} nested />;
           })}
         </div>
       ) : null}
@@ -99,7 +77,7 @@ function ReadToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?:
 }
 
 function SearchToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true);
   const rows = useMemo(() => (collapsed ? [] : searchOutputRows(block)), [block, collapsed]);
   const hasOutput = searchHasOutput(block);
   const summary = searchSummary(block);
@@ -118,7 +96,7 @@ function SearchToolEvent({ block, nested = false }: { block: ToolBlockUi; nested
           {summary ? <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/70">{summary}</div> : null}
           {preview ? <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/70">{preview}</div> : null}
           {hasOutput && !isRunning(block) ? (
-            <button type="button" className="mt-1 font-mono text-[11px] text-primary" onClick={() => setCollapsed((value) => !value)}>
+            <button type="button" className="mt-1 font-mono text-[11px] text-primary" onClick={toggleCollapsed}>
               Output - {collapsed ? "Show" : "Hide"}
             </button>
           ) : null}
@@ -130,7 +108,7 @@ function SearchToolEvent({ block, nested = false }: { block: ToolBlockUi; nested
 }
 
 function WriteToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
-  const [collapsed, setCollapsed] = useState(block.isCollapsed);
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(block.isCollapsed);
   const rows = useMemo(() => (collapsed ? [] : writeOutputRows(block)), [block, collapsed]);
   const hasOutput = writeHasOutput(block);
   const stats = writeLineStats(block);
@@ -142,7 +120,7 @@ function WriteToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?
         type="button"
         disabled={!hasOutput}
         className="flex w-full min-w-0 flex-wrap items-center gap-2 text-left font-mono text-xs disabled:cursor-default"
-        onClick={() => hasOutput && setCollapsed((value) => !value)}
+        onClick={() => hasOutput && toggleCollapsed()}
       >
         <StatusDot status={block.status} />
         <span className={isError(block) ? "text-destructive" : "text-muted-foreground"}>{writeEventText(block)}</span>
@@ -165,7 +143,7 @@ function WriteToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?
 }
 
 function ShellToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true);
   const output = block.content.trimEnd();
   const hasOutput = output.trim().length > 0;
   return (
@@ -182,7 +160,7 @@ function ShellToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?
             <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/70">{shellOutputPreview(output)}</div>
           ) : null}
           {hasOutput ? (
-            <button type="button" className="mt-1 font-mono text-[11px] text-primary" onClick={() => setCollapsed((value) => !value)}>
+            <button type="button" className="mt-1 font-mono text-[11px] text-primary" onClick={toggleCollapsed}>
               Output - {collapsed ? "Show" : "Hide"}
             </button>
           ) : null}
@@ -195,6 +173,46 @@ function ShellToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?
       ) : null}
     </div>
   );
+}
+
+function useToolOutputCollapsed(fallbackCollapsed: boolean) {
+  const [collapsed, setCollapsed] = useState(() => initialToolOutputCollapsed(fallbackCollapsed));
+
+  const toggleCollapsed = () => {
+    setCollapsed((value) => {
+      const next = !value;
+      persistToolOutputCollapsed(next);
+      return next;
+    });
+  };
+
+  return [collapsed, toggleCollapsed] as const;
+}
+
+function initialToolOutputCollapsed(fallbackCollapsed: boolean) {
+  const persisted = readPersistedToolOutputCollapsed();
+  return persisted ?? fallbackCollapsed;
+}
+
+function readPersistedToolOutputCollapsed() {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const value = window.localStorage.getItem(TOOL_OUTPUT_VISIBILITY_STORAGE_KEY);
+    if (value === "show") return false;
+    if (value === "hide") return true;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function persistToolOutputCollapsed(collapsed: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(TOOL_OUTPUT_VISIBILITY_STORAGE_KEY, collapsed ? "hide" : "show");
+  } catch {
+    // Ignore storage failures; the current click should still update the visible row.
+  }
 }
 
 function WriteOutputPanel({ rows }: { rows: WriteOutputRow[] }) {
@@ -227,13 +245,30 @@ function WriteOutputLine({ row }: { row: WriteOutputRow }) {
   );
 }
 
-function GenericCompactToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
+function GenericToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(block.isCollapsed);
+  const hasDetails = block.content.trim().length > 0;
+  const error = isError(block);
+
   return (
-    <div className={nested ? "mb-1 flex items-center gap-2" : "mb-2 flex items-center gap-2"}>
-      <StatusDot status={block.status} size={6} />
-      <span className={isError(block) ? "min-w-0 truncate font-mono text-xs text-destructive" : "min-w-0 truncate font-mono text-xs text-muted-foreground"}>
-        {inlineToolText(block)}
-      </span>
+    <div className={nested ? "mb-1" : "mb-2"}>
+      <button
+        type="button"
+        disabled={!hasDetails}
+        onClick={toggleCollapsed}
+        className="flex w-full items-center gap-2 text-left font-mono text-xs disabled:cursor-default"
+      >
+        <StatusDot status={block.status} size={nested ? 6 : 8} />
+        <span className={error ? "min-w-0 flex-1 truncate text-destructive" : "min-w-0 flex-1 truncate text-muted-foreground"}>
+          {inlineToolText(block)}
+          {hasDetails ? ` - ${collapsed ? "Show" : "Hide"}` : ""}
+        </span>
+      </button>
+      {hasDetails && !collapsed ? (
+        <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 p-3 font-mono text-[11px] leading-5 text-muted-foreground shadow-soft">
+          {block.content}
+        </pre>
+      ) : null}
     </div>
   );
 }

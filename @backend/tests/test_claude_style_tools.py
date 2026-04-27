@@ -82,6 +82,16 @@ def test_registry_exposes_claude_names_aliases_deferred_and_schema_cache(tmp_pat
     assert any(tool["name"] == "WebSearch" and tool["enabled"] is False for tool in data["tools"])
 
 
+def test_plan_mode_tool_descriptions_are_explicit_request_only():
+    enter = create_enter_plan_mode_tool()
+    exit_plan = create_exit_plan_mode_tool()
+
+    assert "only when the user explicitly asks" in enter.definition.description
+    assert "normal task execution" in enter.definition.description
+    assert "only after EnterPlanMode is active" in exit_plan.definition.description
+    assert "generic approval request" in exit_plan.definition.description
+
+
 @pytest.mark.asyncio
 async def test_workspace_write_edit_glob_grep_and_plan_mode_policy(tmp_path):
     context = _tool_context(tmp_path)

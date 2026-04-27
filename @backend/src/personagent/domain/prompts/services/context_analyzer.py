@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from hashlib import sha256
 from typing import Any
@@ -67,34 +68,40 @@ class PromptContextAnalyzer:
             return fallback_prompt_profile()
 
         try:
-            result = await self._llm_backend.chat_completion(
-                messages=[
-                    {"role": "system", "content": _ANALYZER_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "message": message,
-                                "available_tools": available_tools or [],
-                                "workspace_root": workspace_root,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ],
-                temperature=0,
-                max_tokens=4096,
-                stream=False,
-                tools=None,
-                tool_choice=None,
-                model=model,
-                provider=provider,
-                reasoning_level="low",
-                reasoning_budget_tokens=0,
+            result = await asyncio.wait_for(
+                self._llm_backend.chat_completion(
+                    messages=[
+                        {"role": "system", "content": _ANALYZER_SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": json.dumps(
+                                {
+                                    "message": message,
+                                    "available_tools": available_tools or [],
+                                    "workspace_root": workspace_root,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    ],
+                    temperature=0,
+                    max_tokens=256,
+                    stream=False,
+                    tools=None,
+                    tool_choice=None,
+                    model=model,
+                    provider=provider,
+                    reasoning_level="low",
+                    reasoning_budget_tokens=0,
+                ),
+                timeout=8.0,
             )
             profile = _profile_from_json(result.content)
             self._cache[cache_key] = profile
             return profile
+        except asyncio.TimeoutError:
+            logger.warning("prompt_context_analysis_timeout", provider=provider)
+            return fallback_prompt_profile()
         except Exception:
             logger.warning("prompt_context_analysis_failed", exc_info=True)
             return fallback_prompt_profile()

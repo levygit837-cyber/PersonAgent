@@ -259,6 +259,7 @@ class SessionPanelService:
                 "WebFetch",
                 "BrowserSearch",
                 "BrowserOpen",
+                "BrowserListTabs",
                 "BrowserExtractContent",
                 "BrowserGetHtml",
             }:
@@ -662,6 +663,13 @@ def _sources_from_tool_data(tool_name: str, data: dict[str, Any]) -> list[dict[s
             for index, result in enumerate(results, start=1):
                 if isinstance(result, dict):
                     sources.extend(_source_from_record(tool_name, result, index))
+        return sources
+    if tool_name == "BrowserListTabs":
+        tabs = data.get("tabs")
+        if isinstance(tabs, list):
+            for index, tab in enumerate(tabs, start=1):
+                if isinstance(tab, dict):
+                    sources.extend(_source_from_record(tool_name, tab, index))
         return sources
     sources.extend(_source_from_record(tool_name, data, 1))
     return sources

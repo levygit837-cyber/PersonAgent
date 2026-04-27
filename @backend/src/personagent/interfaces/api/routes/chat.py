@@ -12,6 +12,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from personagent.application.dto.chat_dto import ChatRequestDTO
@@ -42,7 +43,11 @@ from personagent.domain.prompts.skills import discover_skills
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.domain.tools import ToolCall, ToolExecutionStatus
 from personagent.infrastructure.persistence.database import AsyncSessionLocal
-from personagent.infrastructure.persistence.models import TeamRunORM
+from personagent.infrastructure.persistence.models import (
+    TeamBlackboardEventORM,
+    TeamMemorySnapshotORM,
+    TeamRunORM,
+)
 from personagent.interfaces.config.di_container import DIContainer, get_container
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -256,6 +261,16 @@ def resolve_context_workspace_root(request: ChatRequest) -> str:
     return str(get_container().settings.tool_workspace_root_path)
 
 
+def resolve_team_workspace_id(request: ChatRequest, tool_context: dict[str, Any]) -> str | None:
+    raw = tool_context.get("workspace_id")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    workspace_root = tool_context.get("workspace_root") or request.workspace_root
+    if isinstance(workspace_root, str) and workspace_root.strip():
+        return workspace_root.strip()
+    return None
+
+
 async def _load_conversation_for_decision(
     conversation_id: str,
     session: AsyncSession,
@@ -400,6 +415,17 @@ async def chat_completion(
         command_registry=container.create_command_registry(),
         session_memory_service=resolve_session_memory_service(container, llm_backend),
         next_step_suggestion_service=resolve_next_step_suggestion_service(container, llm_backend),
+        recall_memory_use_case=(
+            container.create_recall_memory_use_case(llm_backend)
+            if container.settings.memory_recall_enabled
+            else None
+        ),
+        memory_job_scheduler=(
+            container.get_memory_job_scheduler()
+            if container.settings.auto_memory_enabled
+            else None
+        ),
+        memory_repository=container.get_memory_repository(),
         context_window_tokens=container.settings.llama_ctx_size,
         default_output_tokens=container.settings.llama_max_tokens,
     )
@@ -475,6 +501,17 @@ async def chat_completion_stream(
         command_registry=container.create_command_registry(),
         session_memory_service=resolve_session_memory_service(container, llm_backend),
         next_step_suggestion_service=resolve_next_step_suggestion_service(container, llm_backend),
+        recall_memory_use_case=(
+            container.create_recall_memory_use_case(llm_backend)
+            if container.settings.memory_recall_enabled
+            else None
+        ),
+        memory_job_scheduler=(
+            container.get_memory_job_scheduler()
+            if container.settings.auto_memory_enabled
+            else None
+        ),
+        memory_repository=container.get_memory_repository(),
         context_window_tokens=container.settings.llama_ctx_size,
         default_output_tokens=container.settings.llama_max_tokens,
     )
@@ -787,8 +824,12 @@ async def team_chat_websocket(websocket: WebSocket) -> None:
     final_output: str | None = None
     final_output_parts: list[str] = []
     consensus: dict[str, Any] | None = None
+    blackboard_snapshot: dict[str, Any] | None = None
+    team_memory_snapshot: dict[str, Any] | None = None
     error_message: str | None = None
     conversation_id: str | None = None
+    run_id: str | None = None
+    workspace_id: str | None = None
     team_config_payload: dict[str, Any] | None = None
     stop_event = asyncio.Event()
 
@@ -804,12 +845,27 @@ async def team_chat_websocket(websocket: WebSocket) -> None:
         team_config_payload = serialize_team_config(team)
         container = get_container()
         llm_backend = container.get_llm_backend(provider)
+        initial_tool_context = resolve_tool_context(start)
+        workspace_id = resolve_team_workspace_id(start, initial_tool_context)
+        loaded_memory = await load_team_memory_snapshot(workspace_id)
+        if loaded_memory:
+            initial_tool_context["team_memory_snapshot"] = loaded_memory
+        if workspace_id:
+            initial_tool_context["workspace_id"] = workspace_id
 
         async with AsyncSessionLocal() as session:
             conv_repo = await container.get_conversation_repo(session)
+            tool_registry = getattr(container, "get_tool_registry", lambda: None)() if start.tools_enabled else None
+            tool_runtime_config = (
+                getattr(container, "get_tool_runtime_config", lambda: None)()
+                if start.tools_enabled
+                else None
+            )
             orchestrator = TeamChatOrchestrator(
                 conversation_repo=conv_repo,
                 llm_backend=llm_backend,
+                tool_registry=tool_registry,
+                tool_runtime_config=tool_runtime_config,
             )
             request = TeamChatRequest(
                 conversation_id=UUID(start.conversation_id) if start.conversation_id else None,
@@ -822,7 +878,9 @@ async def team_chat_websocket(websocket: WebSocket) -> None:
                 reasoning_level=start.reasoning_level,
                 reasoning_budget_tokens=resolve_reasoning_budget(start),
                 workspace_root=start.workspace_root,
-                tool_context=resolve_tool_context(start),
+                tool_context=initial_tool_context,
+                allowed_tools=start.allowed_tools,
+                max_tool_iterations=start.max_tool_iterations,
             )
             stop_task = asyncio.create_task(_watch_team_stop(websocket, stop_event))
             try:
@@ -834,7 +892,27 @@ async def team_chat_websocket(websocket: WebSocket) -> None:
                     trace_event = _team_trace_event_for_storage(event)
                     if trace_event is not None:
                         trace_events.append(trace_event)
+                    if event.get("run_id"):
+                        run_id = str(event.get("run_id"))
                     conversation_id = str(event.get("conversation_id") or conversation_id or "")
+                    if event.get("event") == "team_run_started" and run_id:
+                        await persist_team_run_started(
+                            run_id=run_id,
+                            conversation_id=conversation_id,
+                            workspace_id=workspace_id,
+                            team_config=team_config_payload,
+                        )
+                    if event.get("event") == "blackboard_event" and run_id:
+                        await persist_team_blackboard_event(
+                            run_id=run_id,
+                            conversation_id=conversation_id,
+                            workspace_id=workspace_id,
+                            event=event,
+                        )
+                    if event.get("event") == "blackboard_snapshot" and isinstance(
+                        event.get("snapshot"), dict
+                    ):
+                        blackboard_snapshot = event.get("snapshot")
                     if event.get("event") == "final_delta":
                         final_output_parts.append(str(event.get("content") or ""))
                     if event.get("event") == "consensus_reached":
@@ -853,12 +931,32 @@ async def team_chat_websocket(websocket: WebSocket) -> None:
                             if isinstance(event.get("consensus"), dict)
                             else consensus
                         )
+                        blackboard_snapshot = (
+                            event.get("blackboard_snapshot")
+                            if isinstance(event.get("blackboard_snapshot"), dict)
+                            else blackboard_snapshot
+                        )
+                        team_memory_snapshot = (
+                            event.get("team_memory_snapshot")
+                            if isinstance(event.get("team_memory_snapshot"), dict)
+                            else team_memory_snapshot
+                        )
                     if event.get("event") == "team_consensus_failed":
                         status = "failed"
                         consensus = (
                             event.get("consensus")
                             if isinstance(event.get("consensus"), dict)
                             else consensus
+                        )
+                        blackboard_snapshot = (
+                            event.get("blackboard_snapshot")
+                            if isinstance(event.get("blackboard_snapshot"), dict)
+                            else blackboard_snapshot
+                        )
+                        team_memory_snapshot = (
+                            event.get("team_memory_snapshot")
+                            if isinstance(event.get("team_memory_snapshot"), dict)
+                            else team_memory_snapshot
                         )
                     if event.get("event") == "team_run_cancelled":
                         status = "cancelled"
@@ -894,14 +992,24 @@ async def team_chat_websocket(websocket: WebSocket) -> None:
             if final_output is None and final_output_parts:
                 final_output = "".join(final_output_parts)
             await persist_team_run(
+                run_id=run_id,
                 conversation_id=conversation_id,
+                workspace_id=workspace_id,
                 status=status,
                 team_config=team_config_payload,
                 trace_events=trace_events,
+                blackboard_snapshot=blackboard_snapshot,
+                team_memory_snapshot=team_memory_snapshot,
                 final_output=final_output,
                 consensus=consensus,
                 error_message=error_message,
             )
+            if workspace_id and team_memory_snapshot is not None:
+                await persist_team_memory_snapshot(
+                    workspace_id=workspace_id,
+                    run_id=run_id,
+                    snapshot=team_memory_snapshot,
+                )
         await _close_ws_safely(websocket)
 
 
@@ -934,15 +1042,128 @@ async def _close_ws_safely(websocket: WebSocket) -> None:
         return
 
 
+async def persist_team_run_started(
+    *,
+    run_id: str,
+    conversation_id: str | None,
+    team_config: dict[str, Any] | None,
+    workspace_id: str | None = None,
+) -> None:
+    """Create the Team Mode run row while the WebSocket is still active."""
+
+    try:
+        async with AsyncSessionLocal() as session:
+            existing = (
+                await session.execute(select(TeamRunORM).where(TeamRunORM.run_id == run_id))
+            ).scalar_one_or_none()
+            if existing is not None:
+                return
+            session.add(
+                TeamRunORM(
+                    run_id=run_id,
+                    conversation_id=UUID(conversation_id) if conversation_id else None,
+                    workspace_id=workspace_id,
+                    status="running",
+                    team_config=team_config or {},
+                    trace_events=[],
+                )
+            )
+            await session.commit()
+    except Exception:
+        logger.exception("team_run_started_persist_failed", run_id=run_id)
+
+
+async def persist_team_blackboard_event(
+    *,
+    run_id: str,
+    conversation_id: str | None,
+    event: dict[str, Any],
+    workspace_id: str | None = None,
+) -> None:
+    """Persist one Blackboard journal event as soon as it is emitted."""
+
+    try:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                TeamBlackboardEventORM(
+                    run_id=run_id,
+                    conversation_id=UUID(conversation_id) if conversation_id else None,
+                    workspace_id=workspace_id,
+                    sequence=int(event.get("sequence") or 0),
+                    phase=str(event.get("phase") or ""),
+                    round=event.get("round") if isinstance(event.get("round"), int) else None,
+                    agent_id=str(event.get("agent_id") or "") or None,
+                    event_type=str(event.get("event_type") or "blackboard_event"),
+                    payload=event.get("payload") if isinstance(event.get("payload"), dict) else {},
+                )
+            )
+            await session.commit()
+    except Exception:
+        logger.exception("team_blackboard_event_persist_failed", run_id=run_id)
+
+
+async def load_team_memory_snapshot(workspace_id: str | None) -> dict[str, Any] | None:
+    """Load the compact Team memory snapshot for a workspace."""
+
+    if not workspace_id:
+        return None
+    try:
+        async with AsyncSessionLocal() as session:
+            row = (
+                await session.execute(
+                    select(TeamMemorySnapshotORM).where(
+                        TeamMemorySnapshotORM.workspace_id == workspace_id
+                    )
+                )
+            ).scalar_one_or_none()
+            snapshot = row.snapshot if row is not None else None
+            return snapshot if isinstance(snapshot, dict) else None
+    except Exception:
+        logger.exception("team_memory_snapshot_load_failed", workspace_id=workspace_id)
+        return None
+
+
+async def persist_team_memory_snapshot(
+    *,
+    workspace_id: str,
+    run_id: str | None,
+    snapshot: dict[str, Any],
+) -> None:
+    """Upsert the compact Team memory snapshot for a workspace."""
+
+    try:
+        async with AsyncSessionLocal() as session:
+            row = (
+                await session.execute(
+                    select(TeamMemorySnapshotORM).where(
+                        TeamMemorySnapshotORM.workspace_id == workspace_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                row = TeamMemorySnapshotORM(workspace_id=workspace_id)
+                session.add(row)
+            row.snapshot = snapshot
+            row.last_run_id = run_id
+            row.updated_at = datetime.now(UTC)
+            await session.commit()
+    except Exception:
+        logger.exception("team_memory_snapshot_persist_failed", workspace_id=workspace_id)
+
+
 async def persist_team_run(
     *,
+    run_id: str | None,
     conversation_id: str | None,
     status: str,
     team_config: dict[str, Any],
     trace_events: list[dict[str, Any]],
+    blackboard_snapshot: dict[str, Any] | None,
     final_output: str | None,
     consensus: dict[str, Any] | None,
     error_message: str | None,
+    workspace_id: str | None = None,
+    team_memory_snapshot: dict[str, Any] | None = None,
 ) -> None:
     """Persist a Team Mode run after the WebSocket closes."""
 
@@ -953,17 +1174,24 @@ async def persist_team_run(
             if (compact_event := _team_trace_event_for_storage(event)) is not None
         ]
         async with AsyncSessionLocal() as session:
-            run = TeamRunORM(
-                conversation_id=UUID(conversation_id) if conversation_id else None,
-                status=status,
-                team_config=team_config,
-                trace_events=compact_trace_events,
-                final_output=final_output,
-                consensus=consensus,
-                error_message=error_message,
-                finished_at=datetime.now(UTC),
-            )
-            session.add(run)
+            run = None
+            if run_id:
+                run = (
+                    await session.execute(select(TeamRunORM).where(TeamRunORM.run_id == run_id))
+                ).scalar_one_or_none()
+            if run is None:
+                run = TeamRunORM(run_id=run_id)
+                session.add(run)
+            run.conversation_id = UUID(conversation_id) if conversation_id else None
+            run.workspace_id = workspace_id
+            run.status = status
+            run.team_config = team_config
+            run.trace_events = compact_trace_events
+            run.blackboard_snapshot = blackboard_snapshot or team_memory_snapshot
+            run.final_output = final_output
+            run.consensus = consensus
+            run.error_message = error_message
+            run.finished_at = datetime.now(UTC)
             await session.commit()
     except Exception:
         logger.exception("team_run_persist_failed", conversation_id=conversation_id)
@@ -976,6 +1204,11 @@ def _team_trace_event_for_storage(event: dict[str, Any]) -> dict[str, Any] | Non
         return None
 
     compact = dict(event)
+    if compact.get("event") == "blackboard_snapshot":
+        snapshot = compact.pop("snapshot", None)
+        if isinstance(snapshot, dict):
+            compact["snapshot_entry_count"] = snapshot.get("entry_count", 0)
+            compact["snapshot_latest_sequence"] = snapshot.get("latest_sequence", 0)
     for field in ("content", "reasoning_content", "final_output"):
         value = compact.pop(field, None)
         if isinstance(value, str) and value:

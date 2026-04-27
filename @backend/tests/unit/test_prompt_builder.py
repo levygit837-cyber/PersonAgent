@@ -1,6 +1,7 @@
 """Unit tests for PromptBuilder."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +11,7 @@ from personagent.domain.prompts import infer_prompt_mode
 from personagent.domain.prompts.models import SystemPromptSection
 from personagent.domain.prompts.prompt import PROMPT_DYNAMIC_BOUNDARY, get_mode_prompt_section
 from personagent.domain.prompts.services import PromptBuilder, PromptContextAnalyzer
+from personagent.domain.prompts.skills import discover_skills
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
 
@@ -80,6 +82,25 @@ class TestPromptBuilder:
         result = await builder.build(system_context, user_context)
 
         assert "manual-permission mode" in result.content
+        assert "Do not ask for approval in prose before ordinary tool calls" in result.content
+        assert "Tool calls require explicit user approval" not in result.content
+
+    @pytest.mark.asyncio
+    async def test_plan_mode_tool_prompt_requires_explicit_user_request(
+        self, system_context, user_context
+    ):
+        """PlanMode should not be advertised as the default execution path."""
+        builder = PromptBuilder(permission_mode="manual")
+        result = await builder.build(
+            system_context,
+            user_context,
+            available_tools=["EnterPlanMode", "ExitPlanMode"],
+        )
+
+        assert "Use EnterPlanMode only when the user explicitly asks" in result.content
+        assert "Do not use it for ordinary implementation" in result.content
+        assert "generic approval request for normal tool use" in result.content
+        assert "implementation needs explicit approval" not in result.content
 
     @pytest.mark.asyncio
     async def test_build_with_agent_sections_enabled(self, system_context, user_context):
@@ -273,6 +294,21 @@ class TestPromptBuilder:
         assert llm.calls[0]["kwargs"]["tools"] is None
         assert llm.calls[0]["kwargs"]["reasoning_level"] == "low"
 
+    def test_discover_skills_can_skip_global_roots(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        workspace = tmp_path / "workspace"
+        global_skill = home / ".codex" / "skills" / "global-skill" / "SKILL.md"
+        workspace_skill = workspace / ".personagent" / "skills" / "local-skill" / "SKILL.md"
+        global_skill.parent.mkdir(parents=True)
+        workspace_skill.parent.mkdir(parents=True)
+        global_skill.write_text("---\nname: Global Skill\n---\nGlobal body", encoding="utf-8")
+        workspace_skill.write_text("---\nname: Local Skill\n---\nLocal body", encoding="utf-8")
+        monkeypatch.setattr(Path, "home", lambda: home)
+
+        skills = discover_skills(workspace_root=workspace, include_global=False)
+
+        assert [skill.name for skill in skills] == ["Local Skill"]
+
     @pytest.mark.asyncio
     async def test_prompt_context_analyzer_reuses_llm_cache(self):
         llm = FakeAnalysisLLM(
@@ -368,11 +404,11 @@ class TestPromptBuilder:
         assert "# Research Mode" in result.content
 
     @pytest.mark.parametrize("mode", ["writing", "exploring", "research"])
-    def test_each_mode_prompt_has_500_plus_instruction_lines(self, mode):
+    def test_each_mode_prompt_has_compact_instruction_lines(self, mode):
         content = get_mode_prompt_section(mode).compute()
 
         assert isinstance(content, str)
-        assert len(content.splitlines()) >= 500
+        assert 80 <= len(content.splitlines()) <= 120
 
     @pytest.mark.asyncio
     async def test_dynamic_boundary_is_inserted(self, system_context, user_context):

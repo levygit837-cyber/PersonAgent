@@ -24,11 +24,24 @@ def test_team_websocket_streams_run_and_persists(monkeypatch):
         events = _receive_until(websocket, "team_run_completed")
 
     names = [event["event"] for event in events]
-    assert names[:3] == ["team_run_started", "round_started", "agent_turn_started"]
+    assert names[:3] == ["team_run_started", "coordinator_planning_started", "execution_contract"]
+    assert "blackboard_event" in names
+    assert "blackboard_snapshot" in names
+    assert "claim_graph_delta" in names
+    assert "coverage_matrix" in names
+    assert "coherency_score" in names
+    assert "adaptive_vote" in names
+    assert "coordinator_planning_started" in names
+    assert "coordinator_planning_completed" in names
+    assert "coordinator_started" in names
+    assert "coordinator_completed" in names
     assert "agent_vote" in names
     assert names[-1] == "team_run_completed"
     assert persisted[0]["status"] == "completed"
     assert persisted[0]["final_output"] == "Team final."
+    assert persisted[0]["run_id"].startswith("team_")
+    assert persisted[0]["blackboard_snapshot"]["entry_count"] >= 4
+    assert persisted[0]["team_memory_snapshot"]["claim_graph"]["nodes"]
     trace_events = persisted[0]["trace_events"]
     assert not any(event["event"] in {"agent_delta", "final_delta"} for event in trace_events)
     completed_turn = next(
@@ -93,7 +106,15 @@ def _app_with_fakes(monkeypatch, llm: LLMBackendRepository, persisted: list[dict
     async def fake_persist_team_run(**kwargs):
         persisted.append(kwargs)
 
+    async def fake_persist_team_run_started(**kwargs):
+        return None
+
+    async def fake_persist_team_blackboard_event(**kwargs):
+        return None
+
     monkeypatch.setattr(chat, "persist_team_run", fake_persist_team_run)
+    monkeypatch.setattr(chat, "persist_team_run_started", fake_persist_team_run_started)
+    monkeypatch.setattr(chat, "persist_team_blackboard_event", fake_persist_team_blackboard_event)
     app = FastAPI()
     app.include_router(chat.router)
     return app
@@ -197,6 +218,22 @@ class ScriptedWsLLM(LLMBackendRepository):
         tool_choice: str | dict | None = None,
         **kwargs,
     ) -> InferenceResult:
+        if "focus_assignments" in messages[-1]["content"]:
+            return InferenceResult(
+                content=json.dumps(
+                    {
+                        "summary": "Coordinator split the next debate.",
+                        "overlap_risks": ["duplicate summaries"],
+                        "focus_assignments": {
+                            "analyst": "requirements",
+                            "critic": "risks",
+                            "builder": "solution",
+                            "reviewer": "coherence",
+                        },
+                        "debate_goals": ["distinct contributions"],
+                    }
+                )
+            )
         approve = self.vote_index < 3
         self.vote_index += 1
         return InferenceResult(

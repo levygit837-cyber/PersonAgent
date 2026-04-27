@@ -60,7 +60,10 @@ def create_enter_plan_mode_tool() -> Tool:
     return build_tool(
         definition=ToolDefinition(
             name="EnterPlanMode",
-            description="Enter planning mode. Workspace and task mutation tools become blocked.",
+            description=(
+                "Enter planning-only mode only when the user explicitly asks for a plan or "
+                "approval-gated planning. Do not use for normal task execution."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {"reason": {"type": "string"}},
@@ -124,8 +127,8 @@ def create_exit_plan_mode_tool() -> Tool:
         definition=ToolDefinition(
             name="ExitPlanMode",
             description=(
-                "Request user approval for the completed plan. This does not execute the plan; "
-                "execution starts only after the user approves it."
+                "Request approval for the completed plan only after EnterPlanMode is active. "
+                "Do not use as a generic approval request for ordinary tool calls."
             ),
             input_schema={
                 "type": "object",

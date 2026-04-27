@@ -1,40 +1,77 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useChatStore } from "../../stores/chat-store";
 import { AgentMessage } from "./agent-message";
 import { PlanApprovalPanel, ToolApprovalPanel } from "./plan-approval-panel";
 import { UserMessage } from "./user-message";
 
-const threshold = 120;
+const followThreshold = 120;
+const scrollUpKeys = new Set(["ArrowUp", "PageUp", "Home"]);
 
 export function MessageFeed() {
   const messages = useChatStore((state) => state.messages);
+  const conversationId = useChatStore((state) => state.conversationId);
   const error = useChatStore((state) => state.error);
   const pendingPlanApproval = useChatStore((state) => state.pendingPlanApproval);
   const pendingToolApproval = useChatStore((state) => state.pendingToolApproval);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const scrollFrameRef = useRef<number | undefined>(undefined);
-  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const shouldAutoScrollRef = useRef(true);
   const lastMessage = messages.at(-1);
+
+  useEffect(() => {
+    shouldAutoScrollRef.current = true;
+  }, [conversationId]);
 
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
+    const cancelScheduledScroll = () => {
+      if (scrollFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+        scrollFrameRef.current = undefined;
+      }
+    };
+    const setAutoScrollFromPosition = () => {
+      const shouldFollow = isNearLatest(scroller);
+      shouldAutoScrollRef.current = shouldFollow;
+      if (!shouldFollow) cancelScheduledScroll();
+    };
     const onScroll = () => {
-      const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-      setShouldAutoScroll(distance <= threshold);
+      setAutoScrollFromPosition();
+    };
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0 && scroller.scrollTop > 0) {
+        shouldAutoScrollRef.current = false;
+        cancelScheduledScroll();
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (scrollUpKeys.has(event.key) || (event.key === " " && event.shiftKey)) {
+        shouldAutoScrollRef.current = false;
+        cancelScheduledScroll();
+      }
     };
     scroller.addEventListener("scroll", onScroll);
-    return () => scroller.removeEventListener("scroll", onScroll);
+    scroller.addEventListener("wheel", onWheel, { passive: true });
+    scroller.addEventListener("keydown", onKeyDown);
+    return () => {
+      scroller.removeEventListener("scroll", onScroll);
+      scroller.removeEventListener("wheel", onWheel);
+      scroller.removeEventListener("keydown", onKeyDown);
+      cancelScheduledScroll();
+    };
   }, []);
 
   useEffect(() => {
     const scroller = scrollerRef.current;
-    if (!scroller || !shouldAutoScroll) return;
+    if (!scroller || !shouldAutoScrollRef.current) return;
     if (scrollFrameRef.current !== undefined) {
       window.cancelAnimationFrame(scrollFrameRef.current);
     }
     scrollFrameRef.current = window.requestAnimationFrame(() => {
-      scroller.scrollTop = scroller.scrollHeight;
+      if (shouldAutoScrollRef.current) {
+        scroller.scrollTop = scroller.scrollHeight;
+      }
       scrollFrameRef.current = undefined;
     });
     return () => {
@@ -50,7 +87,6 @@ export function MessageFeed() {
     messages.length,
     pendingPlanApproval,
     pendingToolApproval,
-    shouldAutoScroll,
   ]);
 
   if (messages.length === 0) {
@@ -70,8 +106,14 @@ export function MessageFeed() {
   }
 
   return (
-    <div ref={scrollerRef} className="h-full overflow-y-auto px-5 pb-44 pt-6">
-      <div className="mx-auto flex w-full max-w-[820px] flex-col">
+    <div
+      ref={scrollerRef}
+      data-testid="message-feed-scroller"
+      className="h-full overflow-x-hidden overflow-y-auto px-5 pb-44 pt-6"
+      style={{ overflowAnchor: "none" }}
+      tabIndex={-1}
+    >
+      <div className="mx-auto flex w-full min-w-0 max-w-[820px] flex-col">
         {error ? <ErrorBanner message={error} /> : null}
         {messages.map((message) =>
           message.role === "user" ? (
@@ -85,6 +127,11 @@ export function MessageFeed() {
       </div>
     </div>
   );
+}
+
+function isNearLatest(scroller: HTMLDivElement) {
+  const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+  return distance <= followThreshold;
 }
 
 function ErrorBanner({ message }: { message: string }) {
