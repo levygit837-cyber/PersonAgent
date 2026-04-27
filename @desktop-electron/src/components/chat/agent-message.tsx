@@ -17,7 +17,7 @@ import type {
   ToolBlockUi,
 } from "../../types/chat";
 import { ReasoningBlock } from "./reasoning-block";
-import { CompactToolGroupBlock, ToolBlock, isSearchShellCommand, isTodoTool } from "./tool-block";
+import { CompactToolGroupBlock, ToolBlock, isBrowserToolName, isSearchShellCommand, isTodoTool } from "./tool-block";
 import { CodeBlock } from "./code-block";
 
 export const AgentMessage = memo(function AgentMessage({ message }: { message: ChatMessageUi }) {
@@ -679,13 +679,22 @@ function renderToolBlocks(blocks: ToolBlockUi[]) {
 
 export function compactToolKindFor(block: ToolBlockUi) {
   if (block.name === "Read" || block.name === "read_file") return "read";
+  if (block.name === "Write" || block.name === "Edit") return "write";
   if (block.name === "Glob" || block.name === "Grep" || block.name === "search_files") return "search";
   if (block.name === "shell" && isSearchShellCommand(block)) return "search";
   if (block.name === "shell") return "shell";
   if (block.name === "WebFetch") return "web";
+  if (block.name === "BrowserOpen") return "browser_open";
+  if (block.name === "BrowserExtractContent") return "browser_extract";
+  if (block.name === "BrowserSearch") return "browser_search";
+  if (block.name === "BrowserListTabs") return "browser_tabs";
+  if (block.name === "BrowserReadContentChunk") return "browser_chunks";
+  if (block.name === "BrowserGetHtml") return "browser_html";
   if (block.name === "LSP") return "lsp";
   if (isTodoTool(block)) return "todo";
   if (block.name === "Task" || block.name.startsWith("Task")) return "task";
+  if (isBrowserToolName(block.name)) return `tool:${block.name}`;
+  if (block.name.trim()) return `tool:${block.name.trim().toLowerCase()}`;
   return undefined;
 }
 

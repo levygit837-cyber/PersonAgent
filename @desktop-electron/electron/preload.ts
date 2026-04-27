@@ -17,8 +17,8 @@ const api = {
       ipcRenderer.invoke("dialog:select-workspace", initialPath) as Promise<string | null>,
   },
   fs: {
-    readDir: (dirPath: string) =>
-      ipcRenderer.invoke("fs:read-dir", dirPath) as Promise<Array<{ name: string; isDirectory: boolean; path: string }>>,
+    readDir: (dirPath: string, workspaceRoot?: string) =>
+      ipcRenderer.invoke("fs:read-dir", dirPath, workspaceRoot) as Promise<Array<{ name: string; isDirectory: boolean; path: string }>>,
   },
 };
 

@@ -121,7 +121,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   setProvider: (provider) =>
     set({
       provider,
-      selectedModelId: provider === "llama" ? "local-model" : get().selectedModelId,
+      selectedModelId:
+        provider === "llama"
+          ? "local-model"
+          : provider === "codex" && get().selectedModelId === "local-model"
+            ? "gpt-5.5"
+            : get().selectedModelId,
     }),
   setSelectedModelId: (selectedModelId) => set({ selectedModelId }),
 

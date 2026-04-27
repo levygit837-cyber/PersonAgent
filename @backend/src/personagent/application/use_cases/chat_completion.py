@@ -20,7 +20,11 @@ from personagent.application.plan_mode import (
     plan_mode_event,
     write_plan_state,
 )
-from personagent.application.services import NextStepSuggestionService, SessionMemoryService
+from personagent.application.services import (
+    NextStepSuggestionService,
+    SessionMemoryService,
+    SessionTitleService,
+)
 from personagent.application.state.services import StateManager
 from personagent.application.tools import (
     ToolOrchestrator,
@@ -89,6 +93,7 @@ class ChatCompletionUseCase:
         command_registry: CommandRegistry | None = None,
         session_memory_service: SessionMemoryService | None = None,
         next_step_suggestion_service: NextStepSuggestionService | None = None,
+        session_title_service: SessionTitleService | None = None,
         recall_memory_use_case: RecallMemoryUseCase | None = None,
         memory_job_scheduler: MemoryJobScheduler | None = None,
         memory_repository: MemoryRepository | None = None,
@@ -105,6 +110,7 @@ class ChatCompletionUseCase:
         self._command_registry = command_registry or CommandRegistry()
         self._session_memory_service = session_memory_service
         self._next_step_suggestion_service = next_step_suggestion_service
+        self._session_title_service = session_title_service
         self._recall_memory_use_case = recall_memory_use_case
         self._memory_job_scheduler = memory_job_scheduler
         self._memory_repository = memory_repository
@@ -200,17 +206,13 @@ class ChatCompletionUseCase:
         # Persiste conversa atualizada
         await self._conversation_repo.update(conversation)
 
-        # Atualiza título se for a primeira mensagem
-        if was_empty:
-            conversation.title = conversation.generate_title()
-            await self._conversation_repo.update(conversation)
-
         assistant_msg = conversation.messages[-1]
         await self._after_turn_services(
             conversation,
             request,
             finish_reason=result.finish_reason,
         )
+        await self._refresh_session_title(conversation, was_empty=was_empty)
         # Trigger extração de memória em background
         await self._trigger_memory_extraction(conversation, request)
 
@@ -533,10 +535,7 @@ class ChatCompletionUseCase:
         # Trigger extração de memória em background
         await self._trigger_memory_extraction(conversation, request)
 
-        # Atualiza título se necessário
-        if was_empty:
-            conversation.title = conversation.generate_title()
-            await self._conversation_repo.update(conversation)
+        await self._refresh_session_title(conversation, was_empty=was_empty)
 
         yield StreamChunk(
             metadata={
@@ -1284,6 +1283,22 @@ class ChatCompletionUseCase:
                 conversation.metadata["session_memory_updated_at"] = datetime.now(UTC).isoformat()
 
         return next_step
+
+    async def _refresh_session_title(
+        self,
+        conversation: Conversation,
+        *,
+        was_empty: bool,
+    ) -> None:
+        if self._session_title_service is not None:
+            await self._session_title_service.refresh_title(
+                self._conversation_repo,
+                conversation,
+            )
+            return
+        if was_empty:
+            conversation.title = conversation.generate_title()
+            await self._conversation_repo.update(conversation)
 
     async def _compact_conversation(
         self,

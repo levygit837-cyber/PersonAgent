@@ -1,9 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "../ui/tooltip";
 import { Sidebar } from "./sidebar";
 import { useAppStore } from "../../stores/app-store";
+import { useChatStore } from "../../stores/chat-store";
+
+const originalLoadConversation = useChatStore.getState().loadConversation;
 
 describe("Sidebar", () => {
   beforeEach(() => {
@@ -39,6 +42,10 @@ describe("Sidebar", () => {
       selectedWorkspace: "/home/user/my-project",
       recentWorkspaces: ["/home/user/my-project"],
       convWorkspaceMap: map,
+    });
+    useChatStore.setState({
+      conversationId: undefined,
+      loadConversation: originalLoadConversation,
     });
 
   });
@@ -84,6 +91,20 @@ describe("Sidebar", () => {
 
     fireEvent.click(screen.getByText("Lab"));
     expect(useAppStore.getState().section).toBe("lab");
+  });
+
+  it("loads sessions with the workspace from their folder group", async () => {
+    const loadConversation = vi.fn(async () => undefined);
+    useChatStore.setState({ loadConversation });
+
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /other-project/i }));
+    fireEvent.click(await screen.findByText("Long History 1"));
+
+    await waitFor(() => {
+      expect(loadConversation).toHaveBeenCalledWith("conversation_2", "/home/user/other-project");
+    });
   });
 });
 

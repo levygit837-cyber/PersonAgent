@@ -22,13 +22,16 @@ def _is_relative_to(path: Path, root: Path) -> bool:
 
 def _resolve_within_allowed_roots(raw_path: str, workspace_root: str | None = None) -> Path:
     settings = get_settings()
-    allowed_roots = list(settings.tool_allowed_root_paths)
-
-    if workspace_root:
-        allowed_roots.append(Path(workspace_root).expanduser().resolve())
-
     path = Path(raw_path).expanduser()
     resolved = path.resolve()
+
+    if workspace_root:
+        active_workspace = Path(workspace_root).expanduser().resolve()
+        if not _is_relative_to(resolved, active_workspace):
+            raise ValueError(f"Path '{raw_path}' is outside active workspace: {active_workspace}")
+        return resolved
+
+    allowed_roots = list(settings.tool_allowed_root_paths)
     if not any(_is_relative_to(resolved, root) for root in allowed_roots):
         roots = ", ".join(str(root) for root in allowed_roots)
         raise ValueError(f"Path '{raw_path}' is outside allowed roots: {roots}")

@@ -92,7 +92,7 @@ class ChatRequest(BaseModel):
     max_tokens: int = Field(default=-1, ge=-1)
     provider: str = Field(
         default="llama",
-        description="Provider de inferência: llama, nvidia, vertex ou kimi",
+        description="Provider de inferência: llama, nvidia, vertex, kimi ou codex",
     )
     model: str = Field(default="local-model", description="Modelo a ser usado para inferência")
     prompt_mode: str = Field(
@@ -216,10 +216,10 @@ def resolve_reasoning_budget(request: ChatRequest) -> int | None:
 def resolve_provider(provider: str) -> str:
     """Normaliza e valida o provider de inferência."""
     normalized = provider.strip().lower()
-    if normalized not in {"llama", "nvidia", "vertex", "kimi"}:
+    if normalized not in {"llama", "nvidia", "vertex", "kimi", "codex"}:
         raise HTTPException(
             status_code=400,
-            detail="provider inválido. Use llama, nvidia, vertex ou kimi.",
+            detail="provider inválido. Use llama, nvidia, vertex, kimi ou codex.",
         )
     return normalized
 
@@ -232,6 +232,8 @@ def resolve_model(provider: str, model: str) -> str:
         return get_container().settings.vertex_default_model
     if provider == "kimi" and (not model or model == "local-model"):
         return get_container().settings.kimi_default_model
+    if provider == "codex" and (not model or model == "local-model"):
+        return get_container().settings.codex_default_model
     return model
 
 
@@ -239,6 +241,8 @@ def resolve_context_window_tokens(container: DIContainer, provider: str) -> int:
     """Resolve janela de contexto usada para orçamento/compactação por provider."""
     if provider == "kimi":
         return container.settings.kimi_context_window
+    if provider == "codex":
+        return container.settings.codex_context_window
     return container.settings.llama_ctx_size
 
 
@@ -250,6 +254,8 @@ def resolve_default_output_tokens(container: DIContainer, provider: str) -> int:
         return container.settings.vertex_max_tokens
     if provider == "kimi":
         return container.settings.kimi_max_tokens
+    if provider == "codex":
+        return container.settings.codex_max_tokens
     return container.settings.llama_max_tokens
 
 
@@ -414,6 +420,7 @@ def _create_chat_use_case(
         command_registry=container.create_command_registry(),
         session_memory_service=resolve_session_memory_service(container, llm_backend),
         next_step_suggestion_service=resolve_next_step_suggestion_service(container, llm_backend),
+        session_title_service=getattr(container, "get_session_title_service", lambda: None)(),
         recall_memory_use_case=(
             container.create_recall_memory_use_case(llm_backend)
             if container.settings.memory_recall_enabled
@@ -506,7 +513,7 @@ async def list_teams() -> dict[str, Any]:
 
 @router.get("/models")
 async def list_models(
-    provider: str = Query(default="llama", description="Provider: llama, nvidia, vertex ou kimi"),
+    provider: str = Query(default="llama", description="Provider: llama, nvidia, vertex, kimi ou codex"),
     capability: str | None = Query(default=None, description="Filtro de capability"),
     refresh: bool = Query(default=False, description="Ignora cache do catálogo"),
 ) -> dict:
@@ -514,7 +521,7 @@ async def list_models(
     container = get_container()
     resolved_provider = resolve_provider(provider)
     llm_backend = container.get_llm_backend(resolved_provider)
-    if resolved_provider in {"nvidia", "vertex", "kimi"}:
+    if resolved_provider in {"nvidia", "vertex", "kimi", "codex"}:
         list_provider_models = getattr(llm_backend, "list_models", None)
         if list_provider_models is None:
             raise HTTPException(status_code=500, detail=f"{resolved_provider} provider sem catálogo")
@@ -522,6 +529,33 @@ async def list_models(
 
     models_info = await llm_backend.get_model_info()
     return models_info if models_info else {"data": [], "object": "list"}
+
+
+@router.get("/auth/codex/status")
+async def codex_auth_status() -> dict[str, Any]:
+    """Retorna estado de autenticação do Codex CLI sem expor tokens."""
+    container = get_container()
+    llm_backend = container.get_llm_backend("codex")
+    auth_status = getattr(llm_backend, "auth_status", None)
+    if auth_status is None:
+        raise HTTPException(status_code=500, detail="codex provider sem estado de auth")
+    return auth_status()
+
+
+@router.post("/auth/codex/logout")
+async def codex_auth_logout() -> dict[str, Any]:
+    """Executa `codex logout` para desconectar a conta do ChatGPT Subscription."""
+    container = get_container()
+    llm_backend = container.get_llm_backend("codex")
+    logout = getattr(llm_backend, "logout", None)
+    if logout is None:
+        raise HTTPException(status_code=500, detail="codex provider sem logout")
+    try:
+        return await logout()
+    except LLMBackendConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LLMBackendError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/commands", response_model=list[ChatCommandInfo])
@@ -588,6 +622,7 @@ async def chat_completion(
         command_registry=container.create_command_registry(),
         session_memory_service=resolve_session_memory_service(container, llm_backend),
         next_step_suggestion_service=resolve_next_step_suggestion_service(container, llm_backend),
+        session_title_service=getattr(container, "get_session_title_service", lambda: None)(),
         recall_memory_use_case=(
             container.create_recall_memory_use_case(llm_backend)
             if container.settings.memory_recall_enabled
@@ -674,6 +709,7 @@ async def chat_completion_stream(
         command_registry=container.create_command_registry(),
         session_memory_service=resolve_session_memory_service(container, llm_backend),
         next_step_suggestion_service=resolve_next_step_suggestion_service(container, llm_backend),
+        session_title_service=getattr(container, "get_session_title_service", lambda: None)(),
         recall_memory_use_case=(
             container.create_recall_memory_use_case(llm_backend)
             if container.settings.memory_recall_enabled
@@ -1085,6 +1121,7 @@ async def team_chat_websocket(websocket: WebSocket) -> None:
                 llm_backend=llm_backend,
                 tool_registry=tool_registry,
                 tool_runtime_config=tool_runtime_config,
+                session_title_service=getattr(container, "get_session_title_service", lambda: None)(),
             )
             request = TeamChatRequest(
                 conversation_id=UUID(start.conversation_id) if start.conversation_id else None,

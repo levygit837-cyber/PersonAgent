@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { listChatCommands, listModels } from "../../api/client";
+import { getCodexAuthStatus, listChatCommands, listModels, logoutCodex } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
 import type { ChatMessageUi, ToolBlockUi } from "../../types/chat";
@@ -9,8 +9,13 @@ import { InputDock } from "./input-dock";
 
 vi.mock("../../api/client", () => ({
   getConversation: vi.fn(),
+  getCodexAuthStatus: vi.fn().mockResolvedValue({
+    authenticated: false,
+    error: "Run codex login",
+  }),
   listModels: vi.fn().mockResolvedValue([]),
   listChatCommands: vi.fn().mockResolvedValue([]),
+  logoutCodex: vi.fn().mockResolvedValue({ authenticated: false, logout_started: true }),
   resolveBackendUrl: vi.fn().mockResolvedValue("http://localhost:8000"),
   streamChatCompletion: vi.fn(),
   streamTeamChat: vi.fn(),
@@ -19,12 +24,21 @@ vi.mock("../../api/client", () => ({
 describe("InputDock", () => {
   const listModelsMock = vi.mocked(listModels);
   const listChatCommandsMock = vi.mocked(listChatCommands);
+  const getCodexAuthStatusMock = vi.mocked(getCodexAuthStatus);
+  const logoutCodexMock = vi.mocked(logoutCodex);
 
   beforeEach(() => {
     listModelsMock.mockReset();
     listModelsMock.mockResolvedValue([]);
     listChatCommandsMock.mockReset();
     listChatCommandsMock.mockResolvedValue([]);
+    getCodexAuthStatusMock.mockReset();
+    getCodexAuthStatusMock.mockResolvedValue({
+      authenticated: false,
+      error: "Run codex login",
+    });
+    logoutCodexMock.mockReset();
+    logoutCodexMock.mockResolvedValue({ authenticated: false, logout_started: true });
     useAppStore.setState({
       baseUrl: "http://localhost:8000",
       provider: "llama",
@@ -146,6 +160,24 @@ describe("InputDock", () => {
           },
         ];
       }
+      if (provider === "codex") {
+        return [
+          {
+            id: "gpt-5.5",
+            name: "GPT-5.5",
+            provider: "codex",
+            capabilities: ["chat", "reasoning_chat", "tools", "streaming"],
+            context_length: 272000,
+          },
+          {
+            id: "gpt-5.4-mini",
+            name: "GPT-5.4-Mini",
+            provider: "codex",
+            capabilities: ["chat", "reasoning_chat", "tools", "streaming"],
+            context_length: 272000,
+          },
+        ];
+      }
       return [];
     });
 
@@ -193,6 +225,45 @@ describe("InputDock", () => {
 
     expect(useAppStore.getState().provider).toBe("kimi");
     expect(useAppStore.getState().selectedModelId).toBe("kimi-for-coding");
+  });
+
+  it("shows ChatGPT Subscription models and selects the codex provider", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: /model and reasoning/i }));
+
+    expect((await screen.findAllByText("ChatGPT Subscription")).length).toBeGreaterThan(0);
+    const codexItem = screen.getByText("GPT-5.5");
+    fireEvent.click(codexItem);
+
+    expect(useAppStore.getState().provider).toBe("codex");
+    expect(useAppStore.getState().selectedModelId).toBe("gpt-5.5");
+  });
+
+  it("shows Codex auth status and runs logout", async () => {
+    getCodexAuthStatusMock.mockResolvedValue({
+      authenticated: true,
+      email: "user@example.com",
+      account_id: "acct_123",
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: /model and reasoning/i }));
+
+    expect(await screen.findByText("Connected")).toBeInTheDocument();
+    expect(screen.getByText("user@example.com")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /logout/i }));
+
+    await waitFor(() => expect(logoutCodexMock).toHaveBeenCalledWith("http://localhost:8000"));
   });
 
   it("shows slash command autocomplete from the backend", async () => {

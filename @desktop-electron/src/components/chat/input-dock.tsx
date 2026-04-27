@@ -1,8 +1,8 @@
-import { ArrowUp, Brain, ChevronDown, ChevronRight, Command, Plus, Sparkles, Square, UsersRound } from "lucide-react";
+import { ArrowUp, Brain, ChevronDown, ChevronRight, Command, LogOut, Plus, Sparkles, Square, UsersRound } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
-import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { listChatCommands, listModels } from "../../api/client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { getCodexAuthStatus, listChatCommands, listModels, logoutCodex } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
 import { localModel, reasoningPresets, type ChatCommandInfo, type ChatMessageUi, type LlmModel, type ModelProvider, type ReasoningPreset, type ToolBlockStatus, type ToolBlockUi } from "../../types/chat";
@@ -29,6 +29,8 @@ type ModelOption = {
 
 const curatedHostedModels: ModelOption[] = [
   { id: "kimi-for-coding", provider: "kimi", label: "Kimi K2.6", group: "Kimi Code", contextLength: 262144 },
+  { id: "gpt-5.5", provider: "codex", label: "GPT-5.5", group: "ChatGPT Subscription", contextLength: 272000 },
+  { id: "gpt-5.4-mini", provider: "codex", label: "GPT-5.4-Mini", group: "ChatGPT Subscription", contextLength: 272000 },
   { id: "qwen/qwen3.5-397b-a17b", provider: "nvidia", label: "Qwen3.5-397B", group: "Qwen" },
   { id: "qwen/qwen3-coder-480b-a35b-instruct", provider: "nvidia", label: "Qwen3 Coder 480B", group: "Qwen" },
   { id: "minimaxai/minimax-m2.5", provider: "nvidia", label: "Minimax M2.5", group: "Minimax" },
@@ -46,6 +48,7 @@ const curatedHostedModels: ModelOption[] = [
 const modelGroupOrder = [
   "Local",
   "Kimi Code",
+  "ChatGPT Subscription",
   "OpenAI",
   "Qwen",
   "Minimax",
@@ -67,6 +70,7 @@ const ICONIFY_BASE = "https://api.iconify.design/simple-icons";
 const GROUP_ICON_SLUG: Record<string, string> = {
   Local: "ollama",
   "Kimi Code": "moonshotai",
+  "ChatGPT Subscription": "openai",
   OpenAI: "openai",
   Qwen: "qwen",
   Minimax: "minimax",
@@ -562,6 +566,7 @@ function FeatureMenu({ enabled }: { enabled: boolean }) {
 }
 
 function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
+  const queryClient = useQueryClient();
   const baseUrl = useAppStore((state) => state.baseUrl);
   const provider = useAppStore((state) => state.provider);
   const setProvider = useAppStore((state) => state.setProvider);
@@ -569,6 +574,7 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
   const setSelectedModelId = useAppStore((state) => state.setSelectedModelId);
   const preset = useAppStore((state) => state.reasoningPreset);
   const setReasoningPreset = useAppStore((state) => state.setReasoningPreset);
+  const [codexLogoutPending, setCodexLogoutPending] = useState(false);
   const localModels = useQuery({
     queryKey: ["models", baseUrl, "llama"],
     queryFn: () => listModels(baseUrl, "llama"),
@@ -593,7 +599,25 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
     enabled: enabled && Boolean(baseUrl),
     staleTime: 60_000,
   });
-  const modelOptions = buildModelOptions(localModels.data, hostedModels.data, vertexModels.data, kimiModels.data);
+  const codexModels = useQuery({
+    queryKey: ["models", baseUrl, "codex"],
+    queryFn: () => listModels(baseUrl, "codex"),
+    enabled: enabled && Boolean(baseUrl),
+    staleTime: 60_000,
+  });
+  const codexAuth = useQuery({
+    queryKey: ["codex-auth", baseUrl],
+    queryFn: () => getCodexAuthStatus(baseUrl),
+    enabled: enabled && Boolean(baseUrl),
+    staleTime: 15_000,
+  });
+  const modelOptions = buildModelOptions(
+    localModels.data,
+    hostedModels.data,
+    vertexModels.data,
+    kimiModels.data,
+    codexModels.data,
+  );
   const selectedOption =
     modelOptions.find((item) => item.provider === provider && item.id === selectedModelId) ??
     modelOptions.find((item) => item.id === selectedModelId) ??
@@ -603,6 +627,20 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
   const selectModel = (option: ModelOption) => {
     if (option.provider !== provider) setProvider(option.provider);
     setSelectedModelId(option.id);
+  };
+  const handleCodexLogout = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setCodexLogoutPending(true);
+    try {
+      await logoutCodex(baseUrl);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["codex-auth", baseUrl] }),
+        queryClient.invalidateQueries({ queryKey: ["models", baseUrl, "codex"] }),
+      ]);
+    } finally {
+      setCodexLogoutPending(false);
+    }
   };
 
   return (
@@ -629,6 +667,38 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <div className="px-2 py-1.5">
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <span className="flex min-w-0 items-center gap-2 font-medium">
+              <ProviderIcon group="ChatGPT Subscription" />
+              <span className="truncate">ChatGPT Subscription</span>
+            </span>
+            <span className={codexAuth.data?.authenticated ? "text-emerald-400" : "text-muted-foreground"}>
+              {codexAuth.isLoading
+                ? "Checking"
+                : codexAuth.data?.authenticated
+                  ? "Connected"
+                  : "Disconnected"}
+            </span>
+          </div>
+          <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+            <span className="min-w-0 truncate">
+              {codexAuth.data?.authenticated
+                ? codexAuth.data.email || codexAuth.data.account_id || "Codex CLI"
+                : codexAuth.data?.error || "Run codex login"}
+            </span>
+            <button
+              type="button"
+              disabled={codexLogoutPending || !codexAuth.data?.authenticated}
+              onClick={handleCodexLogout}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-glass/70 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            >
+              <LogOut className="h-3 w-3" />
+              Logout
+            </button>
+          </div>
+        </div>
         <DropdownMenuSeparator />
         <div className="max-h-72 overflow-y-auto">
           {groupedModels.map((group, index) => (
@@ -661,6 +731,7 @@ function buildModelOptions(
   hostedModels?: LlmModel[],
   vertexModels?: LlmModel[],
   kimiModels?: LlmModel[],
+  codexModels?: LlmModel[],
 ) {
   const byKey = new Map<string, ModelOption>();
   const add = (option: ModelOption) => {
@@ -681,6 +752,9 @@ function buildModelOptions(
   }
   for (const model of kimiModels ?? []) {
     add(toModelOption(model, "kimi"));
+  }
+  for (const model of codexModels ?? []) {
+    add(toModelOption(model, "codex"));
   }
 
   return [...byKey.values()];
@@ -720,6 +794,7 @@ function modelGroup(id: string, provider: ModelProvider) {
   const normalized = id.toLowerCase();
   if (provider === "llama") return "Local";
   if (provider === "kimi") return "Kimi Code";
+  if (provider === "codex") return "ChatGPT Subscription";
   if (provider === "vertex") return "Google Vertex";
   if (normalized.startsWith("openai/") || normalized.startsWith("gpt-")) return "OpenAI";
   if (normalized.startsWith("qwen/")) return "Qwen";
@@ -741,6 +816,8 @@ function formatModelLabel(value: string) {
   const normalized = value.trim();
   if (!normalized || normalized === "local-model" || normalized.toLowerCase() === "local model") return "Local";
   const exact: Record<string, string> = {
+    "gpt-5.5": "GPT-5.5",
+    "gpt-5.4-mini": "GPT-5.4-Mini",
     "kimi-for-coding": "Kimi K2.6",
     "qwen/qwen3.5-397b-a17b": "Qwen3.5-397B",
     "qwen/qwen3-coder-480b-a35b-instruct": "Qwen3 Coder 480B",
@@ -813,8 +890,20 @@ function ContextWindowIndicator() {
     enabled: Boolean(baseUrl),
     staleTime: 60_000,
   });
+  const codexModels = useQuery({
+    queryKey: ["models", baseUrl, "codex"],
+    queryFn: () => listModels(baseUrl, "codex"),
+    enabled: Boolean(baseUrl),
+    staleTime: 60_000,
+  });
 
-  const modelOptions = buildModelOptions(localModels.data, hostedModels.data, vertexModels.data, kimiModels.data);
+  const modelOptions = buildModelOptions(
+    localModels.data,
+    hostedModels.data,
+    vertexModels.data,
+    kimiModels.data,
+    codexModels.data,
+  );
   const selectedOption =
     modelOptions.find((item) => item.provider === provider && item.id === selectedModelId) ??
     modelOptions.find((item) => item.id === selectedModelId);

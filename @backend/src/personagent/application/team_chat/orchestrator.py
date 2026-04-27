@@ -8,6 +8,7 @@ import math
 import re
 import time
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +17,7 @@ from uuid import uuid4
 
 import structlog
 
+from personagent.application.services import SessionTitleService
 from personagent.application.team_chat.contracts import (
     TeamAgentConfig,
     TeamChatRequest,
@@ -870,11 +872,13 @@ class TeamChatOrchestrator:
         llm_backend: LLMBackendRepository,
         tool_registry: ToolRegistry | None = None,
         tool_runtime_config: ToolRuntimeConfig | None = None,
+        session_title_service: SessionTitleService | None = None,
     ) -> None:
         self._conversation_repo = conversation_repo
         self._llm_backend = llm_backend
         self._tool_registry = tool_registry
         self._tool_runtime_config = tool_runtime_config
+        self._session_title_service = session_title_service
 
     async def execute(
         self,
@@ -1231,9 +1235,7 @@ class TeamChatOrchestrator:
                 )
             )
             await self._conversation_repo.update(conversation)
-            if was_empty:
-                conversation.title = conversation.generate_title()
-                await self._conversation_repo.update(conversation)
+            await self._refresh_session_title(conversation, was_empty=was_empty)
             yield {
                 "event": "team_run_completed",
                 "run_id": run_id,
@@ -1249,9 +1251,7 @@ class TeamChatOrchestrator:
 
         failure_consensus = _consensus_snapshot(team, last_votes)
         await self._conversation_repo.update(conversation)
-        if was_empty:
-            conversation.title = conversation.generate_title()
-            await self._conversation_repo.update(conversation)
+        await self._refresh_session_title(conversation, was_empty=was_empty)
         yield {
             "event": "team_consensus_failed",
             "run_id": run_id,
@@ -1811,6 +1811,22 @@ class TeamChatOrchestrator:
         conversation = Conversation()
         await self._conversation_repo.create(conversation)
         return conversation
+
+    async def _refresh_session_title(
+        self,
+        conversation: Conversation,
+        *,
+        was_empty: bool,
+    ) -> None:
+        if self._session_title_service is not None:
+            await self._session_title_service.refresh_title(
+                self._conversation_repo,
+                conversation,
+            )
+            return
+        if was_empty:
+            conversation.title = conversation.generate_title()
+            await self._conversation_repo.update(conversation)
 
     def _agent_messages(
         self,
@@ -2458,10 +2474,8 @@ def _parse_partial_claim_graph(text: str) -> dict[str, Any]:
             payload.setdefault(target_key, []).extend(items)
     coherency_match = re.search(r'"coherency_score"\s*:\s*([0-9]*\.?[0-9]+)', text)
     if coherency_match:
-        try:
+        with suppress(ValueError):
             payload["coherency_score"] = _clamp_float(float(coherency_match.group(1)), 0, 1)
-        except ValueError:
-            pass
     return payload
 
 

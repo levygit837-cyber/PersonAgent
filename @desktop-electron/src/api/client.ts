@@ -2,6 +2,7 @@ import { readSseStream } from "./sse";
 import type {
   ChatRequestPayload,
   ChatCommandInfo,
+  CodexAuthStatus,
   ConversationDetail,
   ConversationSummary,
   LlmModel,
@@ -93,6 +94,14 @@ export async function listModels(baseUrl: string, provider: ModelProvider, capab
   const response = await requestJson<{ data?: unknown[] } | LlmModel[]>(baseUrl, `/chat/models?${params.toString()}`);
   const data = Array.isArray(response) ? response : response.data ?? [];
   return data.map((item) => normalizeModel(item, provider));
+}
+
+export function getCodexAuthStatus(baseUrl: string) {
+  return requestJson<CodexAuthStatus>(baseUrl, "/chat/auth/codex/status");
+}
+
+export function logoutCodex(baseUrl: string) {
+  return requestJson<CodexAuthStatus>(baseUrl, "/chat/auth/codex/logout", { method: "POST" });
 }
 
 export async function listChatCommands(baseUrl: string, workspaceRoot?: string | null) {

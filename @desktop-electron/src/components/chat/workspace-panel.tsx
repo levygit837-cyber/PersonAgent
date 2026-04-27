@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -27,6 +27,7 @@ interface TreeNodeState {
 }
 
 const DEVICON_BASE = "https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons";
+const WORKSPACE_MISMATCH_ERROR = "A listagem recebida não pertence ao workspace ativo.";
 
 const EXT_TO_LANG: Record<string, string> = {
   ts: "typescript",
@@ -169,7 +170,7 @@ function isHidden(name: string): boolean {
 
 async function readDirectory(dirPath: string, baseUrl: string, workspaceRoot?: string): Promise<DirEntry[]> {
   if (window.personAgent?.fs?.readDir) {
-    return window.personAgent.fs.readDir(dirPath);
+    return window.personAgent.fs.readDir(dirPath, workspaceRoot);
   }
   return listWorkspaceFiles(baseUrl, dirPath, workspaceRoot);
 }
@@ -190,39 +191,71 @@ export function WorkspacePanel({ visible, onClose, workspaceRoot }: WorkspacePan
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const baseUrl = useWorkspaceBaseUrl();
+  const activeWorkspaceRef = useRef<string | undefined>(workspaceRoot);
+  const requestVersionRef = useRef(0);
 
-  const loadDir = useCallback(async (path: string): Promise<TreeNodeState[]> => {
-    const entries = await readDirectory(path, baseUrl, workspaceRoot);
-    const visibleEntries = entries.filter((e) => !isHidden(e.name));
+  useEffect(() => {
+    activeWorkspaceRef.current = workspaceRoot;
+  }, [workspaceRoot]);
+
+  const loadDir = useCallback(async (path: string, activeWorkspace: string): Promise<TreeNodeState[]> => {
+    const entries = await readDirectory(path, baseUrl, activeWorkspace);
+    const visibleEntries = normalizeDirectoryEntries(entries, path, activeWorkspace).filter((e) => !isHidden(e.name));
     visibleEntries.sort((a, b) => {
       if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
       return a.isDirectory ? -1 : 1;
     });
     return visibleEntries.map((entry) => ({ entry }));
-  }, [baseUrl, workspaceRoot]);
+  }, [baseUrl]);
 
   useEffect(() => {
+    requestVersionRef.current += 1;
     setTree([]);
     setExpanded(new Set());
     setError(null);
+    setLoading(false);
   }, [workspaceRoot]);
 
   useEffect(() => {
     if (!visible || !workspaceRoot) return;
+    const requestVersion = requestVersionRef.current + 1;
+    requestVersionRef.current = requestVersion;
+    const activeWorkspace = workspaceRoot;
+
     setLoading(true);
     setError(null);
-    loadDir(workspaceRoot)
+    setTree([]);
+    setExpanded(new Set());
+
+    loadDir(activeWorkspace, activeWorkspace)
       .then((nodes) => {
+        if (!isCurrentWorkspaceRequest(requestVersionRef.current, requestVersion, activeWorkspaceRef.current, activeWorkspace)) return;
         setTree(nodes);
-        setExpanded(new Set([workspaceRoot]));
+        setExpanded(new Set([activeWorkspace]));
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!isCurrentWorkspaceRequest(requestVersionRef.current, requestVersion, activeWorkspaceRef.current, activeWorkspace)) return;
+        setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (isCurrentWorkspaceRequest(requestVersionRef.current, requestVersion, activeWorkspaceRef.current, activeWorkspace)) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      requestVersionRef.current += 1;
+    };
   }, [visible, workspaceRoot, loadDir]);
 
   const toggleExpand = useCallback(
     async (node: TreeNodeState) => {
       const path = node.entry.path;
+      const activeWorkspace = activeWorkspaceRef.current;
+      if (!activeWorkspace || !isPathInside(path, activeWorkspace)) {
+        setError(WORKSPACE_MISMATCH_ERROR);
+        return;
+      }
       const next = new Set(expanded);
       if (next.has(path)) {
         next.delete(path);
@@ -230,12 +263,16 @@ export function WorkspacePanel({ visible, onClose, workspaceRoot }: WorkspacePan
         return;
       }
       if (node.entry.isDirectory && !node.children) {
+        const requestVersion = requestVersionRef.current;
         setTree((current) => updateTreeNode(current, path, (n) => ({ ...n, loading: true })));
         try {
-          const children = await loadDir(path);
+          const children = await loadDir(path, activeWorkspace);
+          if (!isCurrentWorkspaceRequest(requestVersionRef.current, requestVersion, activeWorkspaceRef.current, activeWorkspace)) return;
           setTree((current) => updateTreeNode(current, path, (n) => ({ ...n, children, loading: false })));
-        } catch {
+        } catch (err) {
+          if (!isCurrentWorkspaceRequest(requestVersionRef.current, requestVersion, activeWorkspaceRef.current, activeWorkspace)) return;
           setTree((current) => updateTreeNode(current, path, (n) => ({ ...n, loading: false })));
+          setError(err instanceof Error ? err.message : String(err));
         }
       }
       next.add(path);
@@ -370,6 +407,54 @@ function EmptyState({ text }: { text: string }) {
       <span>{text}</span>
     </div>
   );
+}
+
+function normalizeDirectoryEntries(entries: DirEntry[], requestedPath: string, workspaceRoot: string): DirEntry[] {
+  if (!Array.isArray(entries)) {
+    throw new Error("Resposta inválida ao listar o workspace.");
+  }
+
+  const normalized: DirEntry[] = [];
+  for (const entry of entries) {
+    if (!isDirEntry(entry) || !isPathInside(entry.path, workspaceRoot) || !isPathInside(entry.path, requestedPath)) {
+      throw new Error(WORKSPACE_MISMATCH_ERROR);
+    }
+    normalized.push({
+      name: entry.name.trim(),
+      isDirectory: entry.isDirectory,
+      path: entry.path.trim(),
+    });
+  }
+  return normalized;
+}
+
+function isDirEntry(value: unknown): value is DirEntry {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Partial<DirEntry>;
+  return typeof entry.name === "string" && entry.name.trim().length > 0
+    && typeof entry.path === "string" && entry.path.trim().length > 0
+    && typeof entry.isDirectory === "boolean";
+}
+
+function normalizePath(path: string) {
+  const normalized = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function isPathInside(path: string, root: string) {
+  const normalizedPath = normalizePath(path);
+  const normalizedRoot = normalizePath(root);
+  if (normalizedRoot === "/") return normalizedPath.startsWith("/");
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
+function isCurrentWorkspaceRequest(
+  currentVersion: number,
+  requestVersion: number,
+  currentWorkspace: string | undefined,
+  requestWorkspace: string,
+) {
+  return currentVersion === requestVersion && currentWorkspace === requestWorkspace;
 }
 
 function updateTreeNode(

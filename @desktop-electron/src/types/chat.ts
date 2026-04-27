@@ -1,4 +1,4 @@
-export type ModelProvider = "llama" | "nvidia" | "vertex" | "kimi";
+export type ModelProvider = "llama" | "nvidia" | "vertex" | "kimi" | "codex";
 
 export type ReasoningPreset = "low" | "medium" | "high" | "xhigh" | "max";
 export type PromptMode = "auto" | "writing" | "exploring" | "research";
@@ -26,6 +26,18 @@ export interface LlmModel {
   context_length?: number;
   capabilities?: string[];
   metadata?: Record<string, unknown>;
+}
+
+export interface CodexAuthStatus {
+  authenticated: boolean;
+  auth_mode?: string | null;
+  account_id?: string | null;
+  email?: string | null;
+  plan_type?: string | null;
+  last_refresh?: string | null;
+  auth_path?: string | null;
+  error?: string | null;
+  logout_started?: boolean;
 }
 
 export const localModel: LlmModel = {
@@ -576,6 +588,10 @@ export function buildChatRequest(input: {
   promptMode?: PromptMode;
 }): ChatRequestPayload {
   const trimmedWorkspace = input.workspaceRoot?.trim();
+  const reasoningPreset =
+    input.provider === "codex" && input.reasoningPreset === "max"
+      ? "xhigh"
+      : input.reasoningPreset;
   const payload: ChatRequestPayload = {
     message: input.message.trim(),
     stream: true,
@@ -584,8 +600,8 @@ export function buildChatRequest(input: {
     provider: input.provider,
     model: input.model,
     prompt_mode: input.promptMode ?? "auto",
-    reasoning_level: input.reasoningPreset,
-    reasoning_budget_tokens: reasoningTokenBudget(input.reasoningPreset),
+    reasoning_level: reasoningPreset,
+    reasoning_budget_tokens: reasoningTokenBudget(reasoningPreset),
   };
 
   if (input.conversationId) payload.conversation_id = input.conversationId;
