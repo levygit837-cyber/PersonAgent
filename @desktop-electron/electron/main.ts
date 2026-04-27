@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -27,6 +27,13 @@ async function readSettings(): Promise<SettingsRecord> {
 async function writeSettings(next: SettingsRecord) {
   await mkdir(app.getPath("userData"), { recursive: true });
   await writeFile(settingsPath(), JSON.stringify(next, null, 2), "utf8");
+}
+
+function isPathInside(candidatePath: string, rootPath: string) {
+  const resolvedCandidate = resolve(candidatePath);
+  const resolvedRoot = resolve(rootPath);
+  const relativePath = relative(resolvedRoot, resolvedCandidate);
+  return relativePath === "" || Boolean(relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
 async function createWindow() {
@@ -108,12 +115,18 @@ ipcMain.handle("dialog:select-workspace", async (_event, initialPath?: string) =
   return result.filePaths[0];
 });
 
-ipcMain.handle("fs:read-dir", async (_event, dirPath: string) => {
-  const entries = await readdir(dirPath, { withFileTypes: true });
+ipcMain.handle("fs:read-dir", async (_event, dirPath: string, workspaceRoot?: string) => {
+  const resolvedPath = resolve(dirPath);
+  const resolvedWorkspace = workspaceRoot?.trim() ? resolve(workspaceRoot) : undefined;
+  if (resolvedWorkspace && !isPathInside(resolvedPath, resolvedWorkspace)) {
+    throw new Error(`Path '${dirPath}' is outside active workspace: ${resolvedWorkspace}`);
+  }
+
+  const entries = await readdir(resolvedPath, { withFileTypes: true });
   return entries.map((entry) => ({
     name: entry.name,
     isDirectory: entry.isDirectory(),
-    path: join(dirPath, entry.name),
+    path: join(resolvedPath, entry.name),
   }));
 });
 

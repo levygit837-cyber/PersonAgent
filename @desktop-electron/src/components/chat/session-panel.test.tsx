@@ -8,6 +8,7 @@ import { useChatStore } from "../../stores/chat-store";
 import { emptySessionUsage, type SessionPanelSnapshot } from "../../types/chat";
 import { TooltipProvider } from "../ui/tooltip";
 import { ChatWorkspace } from "./chat-workspace";
+import { SESSION_PANEL_CACHE_STORAGE_KEY } from "./session-panel";
 
 vi.mock("../../api/client", () => ({
   approvePlan: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("../../api/client", () => ({
   getSessionPanel: vi.fn(),
   getSessionProjectDetail: vi.fn(),
   listChatCommands: vi.fn().mockResolvedValue([]),
+  listWorkspaceFiles: vi.fn().mockResolvedValue([]),
   listModels: vi.fn().mockResolvedValue([]),
   rejectTool: vi.fn(),
   resolveBackendUrl: vi.fn().mockResolvedValue("http://localhost:8000"),
@@ -97,6 +99,7 @@ describe("SessionPanel", () => {
   const listChatCommandsMock = vi.mocked(listChatCommands);
 
   beforeEach(() => {
+    window.localStorage.clear();
     getSessionPanelMock.mockReset();
     getSessionPanelMock.mockResolvedValue(snapshot);
     getSessionProjectDetailMock.mockReset();
@@ -152,6 +155,48 @@ describe("SessionPanel", () => {
 
     await waitFor(() => expect(screen.queryByRole("tab", { name: "Resumo" })).not.toBeInTheDocument());
     expect(screen.getByTestId("session-panel-shell")).toHaveClass("w-0");
+  });
+
+  it("refreshes and persists the session summary while the panel is closed", async () => {
+    renderWithProviders(<ChatWorkspace />);
+
+    await waitFor(() =>
+      expect(getSessionPanelMock).toHaveBeenCalledWith("http://localhost:8000", "conversation-1", "/tmp/personagent"),
+    );
+    await waitFor(() => {
+      const cache = JSON.parse(window.localStorage.getItem(SESSION_PANEL_CACHE_STORAGE_KEY) || "{}");
+      const entry = cache[sessionPanelCacheKey("http://localhost:8000", "conversation-1", "/tmp/personagent")];
+      expect(entry.snapshot.title).toBe("Debug Session");
+    });
+  });
+
+  it("opens the summary from the persisted snapshot while the background refresh is pending", async () => {
+    const cachedSnapshot: SessionPanelSnapshot = {
+      ...snapshot,
+      title: "Cached Debug Session",
+      updated_at: "2026-04-27T10:05:00Z",
+      usage: {
+        ...snapshot.usage,
+        agent_output_tokens: { value: 99, estimated: false },
+      },
+    };
+    window.localStorage.setItem(
+      SESSION_PANEL_CACHE_STORAGE_KEY,
+      JSON.stringify({
+        [sessionPanelCacheKey("http://localhost:8000", "conversation-1", "/tmp/personagent")]: {
+          cachedAt: Date.now() - 60_000,
+          snapshot: cachedSnapshot,
+        },
+      }),
+    );
+    getSessionPanelMock.mockReturnValue(new Promise<SessionPanelSnapshot>(() => {}));
+
+    renderWithProviders(<ChatWorkspace />);
+    fireEvent.click(screen.getByRole("button", { name: "Painel da Sessão" }));
+
+    expect(await screen.findByText("Cached Debug Session")).toBeInTheDocument();
+    expect(screen.getByText("99")).toBeInTheDocument();
+    expect(getSessionPanelMock).toHaveBeenCalledWith("http://localhost:8000", "conversation-1", "/tmp/personagent");
   });
 
   it("opens project item details as a closeable browser tab inside the panel", async () => {
@@ -237,4 +282,8 @@ function renderWithProviders(ui: ReactNode) {
       <TooltipProvider>{ui}</TooltipProvider>
     </QueryClientProvider>,
   );
+}
+
+function sessionPanelCacheKey(baseUrl: string, conversationId: string, workspaceRoot?: string | null) {
+  return JSON.stringify([baseUrl.trim(), conversationId, workspaceRoot?.trim() || ""]);
 }

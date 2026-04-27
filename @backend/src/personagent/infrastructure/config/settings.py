@@ -123,6 +123,27 @@ class Settings(BaseSettings):
         alias="KIMI_ANTHROPIC_VERSION",
     )
 
+    # --- ChatGPT Subscription via Codex ---
+    codex_home: str = Field(default="", alias="CODEX_HOME")
+    codex_cli_path: str = Field(default="codex", alias="CODEX_CLI_PATH")
+    codex_base_url: str = Field(
+        default="https://chatgpt.com/backend-api/codex",
+        alias="CODEX_BASE_URL",
+    )
+    codex_default_model: str = Field(default="gpt-5.5", alias="CODEX_DEFAULT_MODEL")
+    codex_max_tokens: int = Field(default=65536, alias="CODEX_MAX_TOKENS")
+    codex_context_window: int = Field(default=272000, alias="CODEX_CONTEXT_WINDOW")
+    codex_timeout_seconds: float = Field(default=240.0, alias="CODEX_TIMEOUT_SECONDS")
+    codex_stream_read_timeout_seconds: float = Field(
+        default=0.0,
+        alias="CODEX_STREAM_READ_TIMEOUT_SECONDS",
+    )
+    codex_models_cache_ttl_seconds: int = Field(
+        default=300,
+        alias="CODEX_MODELS_CACHE_TTL_SECONDS",
+    )
+    codex_client_version: str = Field(default="", alias="CODEX_CLIENT_VERSION")
+
     # --- Ferramentas ---
     tools_enabled: bool = Field(default=True, alias="TOOLS_ENABLED")
     tools_workspace_root: str | None = Field(default=None, alias="TOOLS_WORKSPACE_ROOT")
@@ -164,6 +185,14 @@ class Settings(BaseSettings):
     tools_skill_roots: str | None = Field(default=None, alias="TOOLS_SKILL_ROOTS")
     tools_lsp_enabled: bool = Field(default=False, alias="TOOLS_LSP_ENABLED")
     prompt_command_roots: str | None = Field(default=None, alias="PROMPT_COMMAND_ROOTS")
+    prompt_context_analysis_timeout_seconds: float = Field(
+        default=4.0,
+        alias="PROMPT_CONTEXT_ANALYSIS_TIMEOUT_SECONDS",
+    )
+    prompt_context_analysis_failure_cooldown_seconds: float = Field(
+        default=60.0,
+        alias="PROMPT_CONTEXT_ANALYSIS_FAILURE_COOLDOWN_SECONDS",
+    )
 
     # --- Chat post-turn services ---
     chat_next_step_suggestions_enabled: bool = Field(
@@ -173,6 +202,46 @@ class Settings(BaseSettings):
     chat_session_memory_updates_enabled: bool = Field(
         default=False,
         alias="CHAT_SESSION_MEMORY_UPDATES_ENABLED",
+    )
+    chat_session_title_checks_enabled: bool = Field(
+        default=True,
+        alias="CHAT_SESSION_TITLE_CHECKS_ENABLED",
+    )
+    chat_session_title_primary_provider: str = Field(
+        default="nvidia",
+        alias="CHAT_SESSION_TITLE_PRIMARY_PROVIDER",
+    )
+    chat_session_title_primary_model: str = Field(
+        default="openai/gpt-oss-120b",
+        alias="CHAT_SESSION_TITLE_PRIMARY_MODEL",
+    )
+    chat_session_title_fallback_provider: str = Field(
+        default="llama",
+        alias="CHAT_SESSION_TITLE_FALLBACK_PROVIDER",
+    )
+    chat_session_title_fallback_model: str = Field(
+        default="local-model",
+        alias="CHAT_SESSION_TITLE_FALLBACK_MODEL",
+    )
+    chat_session_title_batch_size: int = Field(
+        default=6,
+        alias="CHAT_SESSION_TITLE_BATCH_SIZE",
+    )
+    chat_session_title_scan_limit: int = Field(
+        default=10_000,
+        alias="CHAT_SESSION_TITLE_SCAN_LIMIT",
+    )
+    chat_session_title_max_history_chars: int = Field(
+        default=180_000,
+        alias="CHAT_SESSION_TITLE_MAX_HISTORY_CHARS",
+    )
+    chat_session_title_duplicate_check_interval_seconds: float = Field(
+        default=300.0,
+        alias="CHAT_SESSION_TITLE_DUPLICATE_CHECK_INTERVAL_SECONDS",
+    )
+    chat_session_title_similarity_threshold: float = Field(
+        default=0.9,
+        alias="CHAT_SESSION_TITLE_SIMILARITY_THRESHOLD",
     )
 
     # --- Sistema de Memória Inteligente ---

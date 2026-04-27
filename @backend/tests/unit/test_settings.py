@@ -126,6 +126,59 @@ kimi:
     assert settings.kimi_anthropic_version == "2023-06-01"
 
 
+def test_project_env_overrides_codex_subscription_defaults(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+codex:
+  home: "/tmp/yaml-codex"
+  cli_path: "yaml-codex"
+  base_url: "https://yaml.example/backend-api/codex"
+  default_model: "yaml-model"
+  max_tokens: 8192
+  context_window: 131072
+  timeout_seconds: 45
+  stream_read_timeout_seconds: 10
+  models_cache_ttl_seconds: 1
+  client_version: "0.1.0"
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "CODEX_HOME=/tmp/project-codex",
+                "CODEX_CLI_PATH=project-codex",
+                "CODEX_BASE_URL=https://chatgpt.com/backend-api/codex",
+                "CODEX_DEFAULT_MODEL=gpt-5.5",
+                "CODEX_MAX_TOKENS=65536",
+                "CODEX_CONTEXT_WINDOW=272000",
+                "CODEX_TIMEOUT_SECONDS=240",
+                "CODEX_STREAM_READ_TIMEOUT_SECONDS=0",
+                "CODEX_MODELS_CACHE_TTL_SECONDS=300",
+                "CODEX_CLIENT_VERSION=0.124.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("CODEX_HOME", "/tmp/stale-codex")
+    monkeypatch.setenv("CODEX_DEFAULT_MODEL", "stale-model")
+
+    settings = Settings.from_yaml(config_path)
+
+    assert settings.codex_home == "/tmp/project-codex"
+    assert settings.codex_cli_path == "project-codex"
+    assert settings.codex_base_url == "https://chatgpt.com/backend-api/codex"
+    assert settings.codex_default_model == "gpt-5.5"
+    assert settings.codex_max_tokens == 65536
+    assert settings.codex_context_window == 272000
+    assert settings.codex_timeout_seconds == 240
+    assert settings.codex_stream_read_timeout_seconds == 0
+    assert settings.codex_models_cache_ttl_seconds == 300
+    assert settings.codex_client_version == "0.124.0"
+
+
 def test_lightpanda_settings_defaults():
     settings = Settings()
 
@@ -136,6 +189,8 @@ def test_lightpanda_settings_defaults():
     assert settings.lightpanda_search_base_url == "https://search.yahoo.com/search"
     assert settings.lightpanda_session_ttl_seconds == 900
     assert settings.lightpanda_max_sessions == 32
+    assert settings.prompt_context_analysis_timeout_seconds == 4
+    assert settings.prompt_context_analysis_failure_cooldown_seconds == 60
 
 
 def test_chat_post_turn_llm_services_default_off():

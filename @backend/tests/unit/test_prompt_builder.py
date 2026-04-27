@@ -1,5 +1,6 @@
 """Unit tests for PromptBuilder."""
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -390,6 +391,32 @@ class TestPromptBuilder:
         assert profile.intent == "greeting"
 
     @pytest.mark.asyncio
+    async def test_prompt_context_analyzer_uses_cooldown_after_timeout(self):
+        llm = SlowAnalysisLLM()
+        analyzer = PromptContextAnalyzer(
+            llm,
+            timeout_seconds=0.01,
+            failure_cooldown_seconds=60,
+        )
+
+        first = await analyzer.analyze(
+            message="Pesquise fontes recentes",
+            requested_mode="auto",
+            provider="nvidia",
+            model="slow-model",
+        )
+        second = await analyzer.analyze(
+            message="Implemente a correcao",
+            requested_mode="auto",
+            provider="nvidia",
+            model="slow-model",
+        )
+
+        assert first.source == "fallback"
+        assert second.source == "fallback"
+        assert len(llm.calls) == 1
+
+    @pytest.mark.asyncio
     async def test_prompt_mode_override(self, system_context, user_context):
         builder = PromptBuilder(permission_mode="manual")
 
@@ -468,3 +495,13 @@ class FakeAnalysisLLM(LLMBackendRepository):
 
     async def get_model_info(self) -> dict:
         return {}
+
+
+class SlowAnalysisLLM(FakeAnalysisLLM):
+    def __init__(self):
+        super().__init__({"primary_mode": "research"})
+
+    async def chat_completion(self, messages, *args, **kwargs) -> InferenceResult:
+        self.calls.append({"messages": messages, "kwargs": kwargs})
+        await asyncio.sleep(0.2)
+        return InferenceResult(content=json.dumps(self.payload))

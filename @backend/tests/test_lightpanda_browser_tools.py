@@ -153,6 +153,63 @@ async def test_lightpanda_worker_keeps_recent_search_cache_after_session_reset()
 
 
 @pytest.mark.asyncio
+async def test_lightpanda_worker_remembers_single_target_sessions():
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222")
+    context = TargetAlreadyLoadedContext(page=FakePage())
+    session = _BrowserSession(browser=FakeBrowser(context=context), context=context, page=context.page)
+
+    first = await worker._new_session_page(session)
+    second = await worker._new_session_page(session)
+
+    assert first is None
+    assert second is None
+    assert context.new_page_calls == 1
+    assert session.new_pages_supported is False
+
+
+@pytest.mark.asyncio
+async def test_browser_open_uses_cached_search_title_when_new_targets_are_unavailable():
+    page = ScriptedPage()
+    context = TargetAlreadyLoadedContext(page=page)
+
+    async def connector(_endpoint: str):
+        return FakeBrowser(context=context)
+
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=connector)
+    raw_labels: list[str] = []
+
+    async def raw_runtime_value(url: str, _expression: str, *, label: str, timeout: float):
+        raw_labels.append(label)
+        assert label == "search_results"
+        assert "first+query" in url
+        return [
+            {
+                "title": "Cached Search Title",
+                "url": "https://source-a.test/article",
+                "snippet": "Cached snippet",
+            }
+        ]
+
+    worker._raw_runtime_evaluate_value = raw_runtime_value
+
+    search = await worker.search(
+        conversation_id="conversation-single-target",
+        query="first query",
+        max_results=1,
+    )
+    opened = await worker.open(
+        conversation_id="conversation-single-target",
+        result_index=1,
+        search_id=search["search_id"],
+    )
+
+    assert opened["final_url"] == "https://source-a.test/article"
+    assert opened["title"] == "Cached Search Title"
+    assert raw_labels == ["search_results"]
+    assert context.new_page_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_extract_defaults_to_last_browser_open_after_followup_search():
     page = ScriptedPage()
     context = FakeContext(page=page)
@@ -1066,6 +1123,17 @@ class FakeContext:
     async def close(self):
         self.closed = True
         return None
+
+
+class TargetAlreadyLoadedContext(FakeContext):
+    def __init__(self, page=None):
+        super().__init__(page=page or FakePage())
+        self.pages = [self.page]
+        self.new_page_calls = 0
+
+    async def new_page(self):
+        self.new_page_calls += 1
+        raise RuntimeError("BrowserContext.new_page: Protocol error (Target.createTarget): TargetAlreadyLoaded")
 
 
 class FakePage:

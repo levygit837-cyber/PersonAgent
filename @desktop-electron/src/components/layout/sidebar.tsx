@@ -306,7 +306,7 @@ function SessionList() {
                     conversation={conversation}
                     active={conversation.id === activeConversationId}
                     baseUrl={baseUrl}
-                    onLoad={() => { setSection("chat"); void loadConversation(conversation.id); }}
+                    onLoad={() => { setSection("chat"); void loadConversation(conversation.id, group.workspace); }}
                     queryClient={queryClient}
                   />
                 ))}
@@ -317,7 +317,7 @@ function SessionList() {
                     activeConversationId={activeConversationId ?? null}
                     onLoadConversation={(conversationId) => {
                       setSection("chat");
-                      void loadConversation(conversationId);
+                      void loadConversation(conversationId, group.workspace);
                     }}
                   />
                 ) : null}

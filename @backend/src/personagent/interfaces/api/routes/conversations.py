@@ -52,6 +52,9 @@ async def list_conversations(
     """Lista todas as conversas."""
     container = get_container()
     repo = await container.get_conversation_repo(session)
+    title_service = getattr(container, "get_session_title_service", lambda: None)()
+    if title_service is not None:
+        await title_service.maybe_repair_duplicate_titles(repo)
     list_summaries = getattr(repo, "list_summaries", None)
     if callable(list_summaries):
         return [

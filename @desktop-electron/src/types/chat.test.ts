@@ -26,6 +26,18 @@ describe("chat request contracts", () => {
     expect(reasoningTokenBudget("max")).toBe(32768);
   });
 
+  it("maps Codex max reasoning to xhigh for the provider contract", () => {
+    const request = buildChatRequest({
+      message: "Use Codex",
+      provider: "codex",
+      model: "gpt-5.5",
+      reasoningPreset: "max",
+    });
+
+    expect(request.reasoning_level).toBe("xhigh");
+    expect(request.reasoning_budget_tokens).toBe(16382);
+  });
+
   it("serializes Team Mode runs over the chat request contract", () => {
     const request = buildTeamRunStart({
       conversationId: "conversation-1",

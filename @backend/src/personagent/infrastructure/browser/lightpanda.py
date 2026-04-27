@@ -256,6 +256,9 @@ class _BrowserSession:
     last_open_url: str | None = None
     last_open_page_id: str | None = None
     current_page_id: str | None = None
+    new_pages_supported: bool = True
+    new_page_unavailable_logged: bool = False
+    new_page_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     created_at: float = field(default_factory=time.monotonic)
     updated_at: float = field(default_factory=time.monotonic)
 
@@ -366,6 +369,10 @@ def _is_retryable_raw_cdp_error(exc: Exception) -> bool:
             "did not receive a valid http response",
         )
     )
+
+
+def _is_target_already_loaded_error(exc: Exception) -> bool:
+    return "targetalreadyloaded" in str(exc).replace(" ", "").lower()
 
 
 def _clean_extracted_content(raw_content: str) -> tuple[str, dict[str, Any]]:
@@ -640,6 +647,7 @@ class LightPandaBrowserWorker:
         session = await self._get_session(conversation_id)
         target_url = _clean_browser_url(url) if isinstance(url, str) else url
         matched_search_id = None
+        matched_search_title = ""
         if target_url is None and result_index is not None:
             target_url, matched_search_id = self._result_url(
                 conversation_id,
@@ -647,12 +655,23 @@ class LightPandaBrowserWorker:
                 result_index,
                 search_id=search_id,
             )
+            matched_search_title = self._result_title(
+                conversation_id,
+                result_index,
+                search_id=matched_search_id or search_id,
+            )
         elif target_url and search_id:
             matched_search_id = self._match_search_result_url(
                 conversation_id,
                 target_url,
                 search_id=search_id,
             )
+            if matched_search_id:
+                matched_search_title = self._match_search_result_title(
+                    conversation_id,
+                    target_url,
+                    search_id=matched_search_id,
+                )
         if target_url is None:
             raise BrowserError("BrowserOpen requires url or result_index.")
         page = await self._new_session_page(session)
@@ -664,10 +683,12 @@ class LightPandaBrowserWorker:
                 await self._best_effort_resource_call("browser_open_failed_page_close", page.close)
                 raise
             title = await self._safe_title(page)
+            if not title:
+                title = matched_search_title
             final_url = str(getattr(page, "url", target_url) or target_url)
         else:
             final_url = target_url
-            title = await self._safe_title_for_url(target_url)
+            title = matched_search_title
         session.current_url = final_url
         self._remember_current_url(conversation_id, final_url)
         opened_page = self._cache_opened_page(
@@ -938,7 +959,16 @@ class LightPandaBrowserWorker:
             browser = await self._connect_browser()
             try:
                 context = await browser.new_context()
-                page = await context.new_page()
+                new_pages_supported = True
+                try:
+                    page = await context.new_page()
+                except Exception as exc:
+                    if not _is_target_already_loaded_error(exc):
+                        raise
+                    page = self._first_open_context_page(context)
+                    if page is None:
+                        raise
+                    new_pages_supported = False
                 page.set_default_timeout(self.timeout_ms)
                 last_open = self._last_open_cache.get(conversation_id)
                 session = _BrowserSession(
@@ -950,6 +980,7 @@ class LightPandaBrowserWorker:
                     last_open_url=last_open.final_url if last_open is not None else None,
                     last_open_page_id=last_open.page_id if last_open is not None else None,
                     current_page_id=last_open.page_id if last_open is not None else None,
+                    new_pages_supported=new_pages_supported,
                 )
                 self._sessions[conversation_id] = session
                 await self._enforce_session_limit()
@@ -1019,6 +1050,16 @@ class LightPandaBrowserWorker:
             pages.append(page)
         return pages
 
+    def _first_open_context_page(self, context: Any) -> Any | None:
+        raw_pages = getattr(context, "pages", None)
+        if not raw_pages:
+            return None
+        for page in list(raw_pages):
+            with suppress(Exception):
+                if not page.is_closed():
+                    return page
+        return None
+
     async def _connect_browser(self) -> Any:
         if not self.enabled:
             raise BrowserUnavailableError("LightPanda browser tools are disabled.")
@@ -1058,13 +1099,21 @@ class LightPandaBrowserWorker:
         )
 
     async def _new_session_page(self, session: _BrowserSession) -> Any | None:
-        try:
-            page = await session.context.new_page()
-        except Exception as exc:
-            if "TargetAlreadyLoaded" in str(exc):
-                logger.debug("lightpanda_new_page_unavailable", error=str(exc))
+        if not session.new_pages_supported:
+            return None
+        async with session.new_page_lock:
+            if not session.new_pages_supported:
                 return None
-            raise
+            try:
+                page = await session.context.new_page()
+            except Exception as exc:
+                if _is_target_already_loaded_error(exc):
+                    session.new_pages_supported = False
+                    if not session.new_page_unavailable_logged:
+                        logger.debug("lightpanda_new_page_unavailable", error=str(exc))
+                        session.new_page_unavailable_logged = True
+                    return None
+                raise
         with suppress(Exception):
             page.set_default_timeout(self.timeout_ms)
         return page
@@ -1388,7 +1437,7 @@ class LightPandaBrowserWorker:
             )
             return str(title or "").strip()
         except TimeoutError as exc:
-            logger.warning("lightpanda_title_timeout", error=str(exc))
+            logger.debug("lightpanda_title_timeout", error=str(exc))
             return ""
         except Exception:
             return ""
@@ -1746,6 +1795,22 @@ class LightPandaBrowserWorker:
             f"No browser search result with index {result_index}. Run BrowserSearch first."
         )
 
+    def _result_title(
+        self,
+        conversation_id: str,
+        result_index: int,
+        *,
+        search_id: str | None = None,
+    ) -> str:
+        snapshots = self._search_cache.get(conversation_id, [])
+        for snapshot in snapshots:
+            if search_id and snapshot.search_id != search_id:
+                continue
+            for result in snapshot.results:
+                if result.index == result_index:
+                    return result.title
+        return ""
+
     def _match_search_result_url(
         self,
         conversation_id: str,
@@ -1761,6 +1826,22 @@ class LightPandaBrowserWorker:
                 if _urls_equivalent(url, result.url):
                     return snapshot.search_id
         return None
+
+    def _match_search_result_title(
+        self,
+        conversation_id: str,
+        url: str,
+        *,
+        search_id: str | None = None,
+    ) -> str:
+        snapshots = self._search_cache.get(conversation_id, [])
+        for snapshot in snapshots:
+            if search_id and snapshot.search_id != search_id:
+                continue
+            for result in snapshot.results:
+                if _urls_equivalent(url, result.url):
+                    return result.title
+        return ""
 
     async def _cleanup_sessions(self) -> None:
         now = time.monotonic()

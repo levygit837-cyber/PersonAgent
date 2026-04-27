@@ -2,5 +2,6 @@
 
 from personagent.application.services.next_step import NextStepSuggestionService
 from personagent.application.services.session_memory import SessionMemoryService
+from personagent.application.services.session_titles import SessionTitleService
 
-__all__ = ["NextStepSuggestionService", "SessionMemoryService"]
+__all__ = ["NextStepSuggestionService", "SessionMemoryService", "SessionTitleService"]

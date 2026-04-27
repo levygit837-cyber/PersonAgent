@@ -2,6 +2,22 @@ import { useMemo, useState } from "react";
 import type { ToolBlockStatus, ToolBlockUi } from "../../types/chat";
 
 const TOOL_OUTPUT_VISIBILITY_STORAGE_KEY = "personagent.toolOutputVisibility";
+const AUTO_COLLAPSED_TOOL_OUTPUT_NAMES = new Set([
+  "browserextractcontent",
+  "browsergethtml",
+  "browserlisttabs",
+  "browseropen",
+  "browserreadcontentchunk",
+  "browsersearch",
+  "find",
+  "glob",
+  "grep",
+  "rg",
+  "search",
+  "search_files",
+  "toolsearch",
+  "websearch",
+]);
 
 type SearchOutputRow = {
   kind: "file" | "match" | "line";
@@ -22,13 +38,13 @@ export type TodoItem = {
   status: "pending" | "in_progress" | "completed";
 };
 
-export function ToolBlock({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
+export function ToolBlock({ block, nested = false, forceExpanded = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
   if (block.name === "Read" || block.name === "read_file") {
     return <ReadToolEvent block={block} nested={nested} />;
   }
 
   if (block.name === "Write") {
-    return <WriteToolEvent block={block} nested={nested} />;
+    return <WriteToolEvent block={block} nested={nested} forceExpanded={forceExpanded} />;
   }
 
   if (isTodoTool(block)) {
@@ -36,18 +52,21 @@ export function ToolBlock({ block, nested = false }: { block: ToolBlockUi; neste
   }
 
   if (isSearchTool(block)) {
-    return <SearchToolEvent block={block} nested={nested} />;
+    return <SearchToolEvent block={block} nested={nested} forceExpanded={forceExpanded} />;
   }
 
-  return <GenericToolEvent block={block} nested={nested} />;
+  return <GenericToolEvent block={block} nested={nested} forceExpanded={forceExpanded} />;
 }
 
 export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: ToolBlockUi[] }) {
-  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true);
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true, { autoCollapse: kind === "search" });
   const hasError = blocks.some(isError);
   const hasRunning = blocks.some(isRunning);
   const status: ToolBlockStatus = hasError ? "error" : hasRunning ? "running" : "completed";
   const hasDetails = blocks.some(toolBlockHasDetails);
+  const expanded = hasRunning || !collapsed;
+  const showDetails = hasRunning || (hasDetails && expanded);
+  const canToggle = !hasRunning && hasDetails;
 
   if (kind === "todo") {
     return <TodoToolGroupBlock blocks={blocks} />;
@@ -58,21 +77,21 @@ export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: 
       <button
         type="button"
         className="flex w-fit items-center gap-2 rounded-lg px-1.5 py-[2px] -ml-1.5 font-mono text-[11px] transition-colors hover:bg-glass/70"
-        onClick={() => !hasRunning && hasDetails && toggleCollapsed()}
+        onClick={() => canToggle && toggleCollapsed()}
       >
         <StatusDot status={status} />
         <span className={hasError ? "text-destructive" : hasRunning ? "text-muted-foreground" : "text-muted-foreground hover:text-foreground"}>
           {groupLabel(kind, blocks, collapsed)}
         </span>
       </button>
-      {!hasRunning && hasDetails && !collapsed ? (
+      {showDetails ? (
         <div className="ml-4 mt-2">
           {blocks.map((block) => {
+            const forceChildExpanded = hasRunning || (expanded && kind !== "search");
             if (kind === "read") return <ReadToolEvent key={block.id} block={block} nested />;
-            if (kind === "search") return <SearchToolEvent key={block.id} block={block} nested />;
-            if (kind === "shell") return <ShellToolEvent key={block.id} block={block} nested />;
+            if (kind === "shell") return <ShellToolEvent key={block.id} block={block} nested forceExpanded={forceChildExpanded} />;
             if (kind === "todo") return <TodoToolEvent key={block.id} block={block} nested />;
-            return <GenericToolEvent key={block.id} block={block} nested />;
+            return <ToolBlock key={block.id} block={block} nested forceExpanded={forceChildExpanded} />;
           })}
         </div>
       ) : null}
@@ -182,9 +201,10 @@ function TodoStatusDot({ status }: { status: TodoItem["status"] }) {
   );
 }
 
-function SearchToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
-  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true);
-  const rows = useMemo(() => (collapsed ? [] : searchOutputRows(block)), [block, collapsed]);
+function SearchToolEvent({ block, nested = false, forceExpanded = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true, { autoCollapse: true });
+  const outputCollapsed = forceExpanded || isRunning(block) ? false : collapsed;
+  const rows = useMemo(() => (outputCollapsed ? [] : searchOutputRows(block)), [block, outputCollapsed]);
   const hasOutput = searchHasOutput(block);
   const summary = searchSummary(block);
   const preview = searchOutputPreview(block);
@@ -208,14 +228,15 @@ function SearchToolEvent({ block, nested = false }: { block: ToolBlockUi; nested
           ) : null}
         </div>
       </div>
-      {hasOutput && !collapsed ? <SearchOutputPanel block={block} rows={rows} /> : null}
+      {hasOutput && !outputCollapsed ? <SearchOutputPanel block={block} rows={rows} /> : null}
     </div>
   );
 }
 
-function WriteToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
+function WriteToolEvent({ block, nested = false, forceExpanded = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
   const [collapsed, toggleCollapsed] = useToolOutputCollapsed(block.isCollapsed);
-  const rows = useMemo(() => (collapsed ? [] : writeOutputRows(block)), [block, collapsed]);
+  const outputCollapsed = forceExpanded || isRunning(block) ? false : collapsed;
+  const rows = useMemo(() => (outputCollapsed ? [] : writeOutputRows(block)), [block, outputCollapsed]);
   const hasOutput = writeHasOutput(block);
   const stats = writeLineStats(block);
   const showStats = !isRunning(block) && !isError(block) && (stats.added > 0 || stats.removed > 0);
@@ -224,9 +245,9 @@ function WriteToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?
     <div className={nested ? "mb-1" : "mb-2"}>
       <button
         type="button"
-        disabled={!hasOutput}
+        disabled={!hasOutput || forceExpanded || isRunning(block)}
         className="flex w-full min-w-0 flex-wrap items-center gap-2 text-left font-mono text-xs disabled:cursor-default"
-        onClick={() => hasOutput && toggleCollapsed()}
+        onClick={() => hasOutput && !forceExpanded && !isRunning(block) && toggleCollapsed()}
       >
         <StatusDot status={block.status} />
         <span className={isError(block) ? "text-destructive" : "text-muted-foreground"}>{writeEventText(block)}</span>
@@ -236,20 +257,21 @@ function WriteToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?
             {stats.removed > 0 ? <span className="font-medium text-destructive">-{stats.removed}</span> : null}
           </span>
         ) : null}
-        {hasOutput ? (
+        {hasOutput && !forceExpanded && !isRunning(block) ? (
           <>
             <span className="text-muted-foreground/70">-</span>
-            <span className="text-primary">{collapsed ? "Show" : "Hide"}</span>
+            <span className="text-primary">{outputCollapsed ? "Show" : "Hide"}</span>
           </>
         ) : null}
       </button>
-      {hasOutput && !collapsed ? <WriteOutputPanel rows={rows} /> : null}
+      {hasOutput && !outputCollapsed ? <WriteOutputPanel rows={rows} /> : null}
     </div>
   );
 }
 
-function ShellToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
+function ShellToolEvent({ block, nested = false, forceExpanded = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
   const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true);
+  const outputCollapsed = forceExpanded || isRunning(block) ? false : collapsed;
   const output = block.content.trimEnd();
   const hasOutput = output.trim().length > 0;
   return (
@@ -265,14 +287,14 @@ function ShellToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?
           {shellOutputPreview(output) ? (
             <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/70">{shellOutputPreview(output)}</div>
           ) : null}
-          {hasOutput ? (
+          {hasOutput && !forceExpanded && !isRunning(block) ? (
             <button type="button" className="mt-1 font-mono text-[11px] text-primary" onClick={toggleCollapsed}>
-              Output - {collapsed ? "Show" : "Hide"}
+              Output - {outputCollapsed ? "Show" : "Hide"}
             </button>
           ) : null}
         </div>
       </div>
-      {hasOutput && !collapsed ? (
+      {hasOutput && !outputCollapsed ? (
         <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 p-3 font-mono text-[11px] leading-5 text-muted-foreground shadow-soft">
           {output}
         </pre>
@@ -281,8 +303,8 @@ function ShellToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?
   );
 }
 
-function useToolOutputCollapsed(fallbackCollapsed: boolean) {
-  const [collapsed, setCollapsed] = useState(() => initialToolOutputCollapsed(fallbackCollapsed));
+function useToolOutputCollapsed(fallbackCollapsed: boolean, options: { autoCollapse?: boolean } = {}) {
+  const [collapsed, setCollapsed] = useState(() => initialToolOutputCollapsed(fallbackCollapsed, options));
 
   const toggleCollapsed = () => {
     setCollapsed((value) => {
@@ -295,8 +317,9 @@ function useToolOutputCollapsed(fallbackCollapsed: boolean) {
   return [collapsed, toggleCollapsed] as const;
 }
 
-function initialToolOutputCollapsed(fallbackCollapsed: boolean) {
+function initialToolOutputCollapsed(fallbackCollapsed: boolean, options: { autoCollapse?: boolean }) {
   const persisted = readPersistedToolOutputCollapsed();
+  if (options.autoCollapse && persisted === false) return true;
   return persisted ?? fallbackCollapsed;
 }
 
@@ -351,28 +374,30 @@ function WriteOutputLine({ row }: { row: WriteOutputRow }) {
   );
 }
 
-function GenericToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
-  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(block.isCollapsed);
-  const hasDetails = block.content.trim().length > 0;
+function GenericToolEvent({ block, nested = false, forceExpanded = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(block.isCollapsed || shouldAutoCollapseToolOutput(block), { autoCollapse: shouldAutoCollapseToolOutput(block) });
+  const output = normalizedToolOutput(block);
+  const outputCollapsed = forceExpanded || isRunning(block) ? false : collapsed;
+  const hasDetails = output.trim().length > 0;
   const error = isError(block);
 
   return (
     <div className={nested ? "mb-1" : "mb-2"}>
       <button
         type="button"
-        disabled={!hasDetails}
-        onClick={toggleCollapsed}
+        disabled={!hasDetails || forceExpanded || isRunning(block)}
+        onClick={() => !forceExpanded && !isRunning(block) && toggleCollapsed()}
         className="flex w-full items-center gap-2 text-left font-mono text-xs disabled:cursor-default"
       >
         <StatusDot status={block.status} size={nested ? 6 : 8} />
         <span className={error ? "min-w-0 flex-1 truncate text-destructive" : "min-w-0 flex-1 truncate text-muted-foreground"}>
           {inlineToolText(block)}
-          {hasDetails ? ` - ${collapsed ? "Show" : "Hide"}` : ""}
+          {hasDetails && !forceExpanded && !isRunning(block) ? ` - ${outputCollapsed ? "Show" : "Hide"}` : ""}
         </span>
       </button>
-      {hasDetails && !collapsed ? (
+      {hasDetails && !outputCollapsed ? (
         <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 p-3 font-mono text-[11px] leading-5 text-muted-foreground shadow-soft">
-          {block.content}
+          {output}
         </pre>
       ) : null}
     </div>
@@ -444,7 +469,12 @@ function toolBlockHasDetails(block: ToolBlockUi) {
   if (block.name === "Write") return writeHasOutput(block);
   if (isTodoTool(block)) return todoItems(block).length > 0 || block.content.trim().length > 0;
   if (isSearchTool(block)) return searchHasOutput(block);
-  return block.content.trim().length > 0;
+  return normalizedToolOutput(block).trim().length > 0;
+}
+
+function shouldAutoCollapseToolOutput(block: ToolBlockUi) {
+  if (isSearchTool(block)) return true;
+  return AUTO_COLLAPSED_TOOL_OUTPUT_NAMES.has(block.name.trim().toLowerCase());
 }
 
 function StatusDot({ status, size = 8 }: { status: ToolBlockStatus; size?: number }) {
@@ -613,6 +643,9 @@ function searchSummary(block: ToolBlockUi) {
 }
 
 function inlineToolText(block: ToolBlockUi) {
+  const browserText = browserInlineText(block);
+  if (browserText) return browserText;
+
   const label =
     block.name === "Grep" || block.name === "search_files"
       ? searchLabel(block)
@@ -638,14 +671,30 @@ function inlineToolText(block: ToolBlockUi) {
 
 function groupLabel(kind: string, blocks: ToolBlockUi[], collapsed: boolean) {
   const count = blocks.length;
-  if (kind === "read") return blocks.some(isRunning) ? readRunningLabel(count) : collapsed ? readCollapsedLabel(count) : `Read ${count} ${count === 1 ? "File" : "Files"} Hide`;
-  if (kind === "shell") return `${blocks.some(isRunning) ? "Running" : "Ran"} ${count} ${count === 1 ? "command" : "commands"}`;
-  if (kind === "search") return blocks.some(isRunning) ? searchRunningLabel() : collapsed ? searchCollapsedLabel(count) : `Search ${count} ${count === 1 ? "time" : "times"} Hide`;
-  if (kind === "web") return `Fetched ${count} URLs`;
-  if (kind === "task") return `Updated ${count} tasks`;
+  const running = blocks.some(isRunning);
+  if (kind === "read") return running ? readRunningLabel(count) : collapsed ? readCollapsedLabel(count) : `Read ${count} ${count === 1 ? "File" : "Files"} Hide`;
+  if (kind === "shell") return running ? `Running ${count} ${count === 1 ? "command" : "commands"}...` : withGroupToggle(`Ran ${count} ${count === 1 ? "command" : "commands"}`, collapsed);
+  if (kind === "search") return running ? searchRunningLabel() : collapsed ? searchCollapsedLabel(count) : `Search ${count} ${count === 1 ? "time" : "times"} Hide`;
+  if (kind === "web") return running ? `Fetching ${count} URLs...` : withGroupToggle(`Fetched ${count} URLs`, collapsed);
+  if (kind === "browser_open") return running ? `Opening ${count} ${count === 1 ? "Tab" : "Tabs"}...` : withGroupToggle(`Opened ${count} ${count === 1 ? "Tab" : "Tabs"}`, collapsed);
+  if (kind === "browser_extract") return running ? `Extracting content from ${count} URLs...` : withGroupToggle(`Extracted content from ${count} URLs`, collapsed);
+  if (kind === "browser_search") return running ? `Searching ${count} web ${count === 1 ? "query" : "queries"}...` : withGroupToggle(`Searched ${count} web ${count === 1 ? "query" : "queries"}`, collapsed);
+  if (kind === "browser_tabs") return running ? "Listing browser tabs..." : withGroupToggle(`Listed ${count} browser tab ${count === 1 ? "snapshot" : "snapshots"}`, collapsed);
+  if (kind === "browser_chunks") return running ? `Reading ${count} content ${count === 1 ? "chunk" : "chunks"}...` : withGroupToggle(`Read ${count} content ${count === 1 ? "chunk" : "chunks"}`, collapsed);
+  if (kind === "browser_html") return running ? `Reading HTML from ${count} URLs...` : withGroupToggle(`Read HTML from ${count} URLs`, collapsed);
+  if (kind === "write") return running ? `Writing ${count} ${count === 1 ? "File" : "Files"}...` : withGroupToggle(`Wrote ${count} ${count === 1 ? "File" : "Files"}`, collapsed);
+  if (kind === "task") return running ? `Updating ${count} tasks...` : withGroupToggle(`Updated ${count} tasks`, collapsed);
   if (kind === "todo") return `Updated ${count} todo ${count === 1 ? "list" : "lists"}`;
-  if (kind === "lsp") return `Ran ${count} LSP queries`;
-  return `${count} tool calls`;
+  if (kind === "lsp") return running ? `Running ${count} LSP queries...` : withGroupToggle(`Ran ${count} LSP queries`, collapsed);
+  if (kind.startsWith("tool:")) {
+    const label = compactGenericToolLabel(kind.slice("tool:".length));
+    return running ? `Running ${count} ${label} ${count === 1 ? "call" : "calls"}...` : withGroupToggle(`Ran ${count} ${label} ${count === 1 ? "call" : "calls"}`, collapsed);
+  }
+  return running ? `Running ${count} tool calls...` : withGroupToggle(`${count} tool calls`, collapsed);
+}
+
+function withGroupToggle(label: string, collapsed: boolean) {
+  return `${label} ${collapsed ? ">" : "Hide"}`;
 }
 
 export function isTodoTool(block: Pick<ToolBlockUi, "name">) {
@@ -687,6 +736,67 @@ function webFetchLabel(block: ToolBlockUi) {
   return url ? `Fetch ${url}` : "WebFetch";
 }
 
+function browserInlineText(block: ToolBlockUi) {
+  if (!isBrowserToolName(block.name)) return undefined;
+
+  const action = browserActionLabel(block);
+  if (block.status === "permission_required") return `Permission required for ${action.base}`;
+  if (block.status === "error") return `Failed ${action.base}`;
+  if (isRunning(block)) return action.running;
+  return action.completed;
+}
+
+function browserActionLabel(block: ToolBlockUi) {
+  const target = browserTargetLabel(block);
+  if (block.name === "BrowserOpen") {
+    return {
+      base: target ? `BrowserOpen ${target}` : "BrowserOpen",
+      running: target ? `Opening ${target}` : "Opening browser tab",
+      completed: target ? `Opened ${target}` : "Opened browser tab",
+    };
+  }
+  if (block.name === "BrowserExtractContent") {
+    return {
+      base: target ? `BrowserExtractContent ${target}` : "BrowserExtractContent",
+      running: target ? `Extracting content from ${target}` : "Extracting browser content",
+      completed: target ? `Extracted content from ${target}` : "Extracted browser content",
+    };
+  }
+  if (block.name === "BrowserSearch") {
+    const query = stringValue(block.data?.query);
+    return {
+      base: query ? `BrowserSearch ${query}` : "BrowserSearch",
+      running: query ? `Searching ${query}` : "Searching the web",
+      completed: query ? `Searched ${query}` : "Searched the web",
+    };
+  }
+  if (block.name === "BrowserListTabs") {
+    return { base: "BrowserListTabs", running: "Listing browser tabs", completed: "Listed browser tabs" };
+  }
+  if (block.name === "BrowserReadContentChunk") {
+    return { base: "BrowserReadContentChunk", running: "Reading browser content chunks", completed: "Read browser content chunks" };
+  }
+  if (block.name === "BrowserGetHtml") {
+    return {
+      base: target ? `BrowserGetHtml ${target}` : "BrowserGetHtml",
+      running: target ? `Reading HTML from ${target}` : "Reading browser HTML",
+      completed: target ? `Read HTML from ${target}` : "Read browser HTML",
+    };
+  }
+  return { base: block.name, running: `${block.name} running`, completed: block.name };
+}
+
+function browserTargetLabel(block: ToolBlockUi) {
+  return (
+    stringValue(block.data?.title) ??
+    stringValue(block.data?.final_url) ??
+    stringValue(block.data?.url) ??
+    stringValue(block.data?.page_id) ??
+    stringValue(block.data?.window_id) ??
+    block.path
+  );
+}
+
 function lspLabel(block: ToolBlockUi) {
   const operation = stringValue(block.data?.operation);
   return operation ? `LSP ${operation}` : "LSP";
@@ -707,6 +817,145 @@ function taskLabel(block: ToolBlockUi) {
   return taskId ? `${block.name} ${taskId}` : block.name;
 }
 
+function normalizedToolOutput(block: ToolBlockUi) {
+  if (isBrowserToolName(block.name)) return browserOutputText(block);
+  return block.content.trimEnd();
+}
+
+function browserOutputText(block: ToolBlockUi) {
+  const data = block.data ?? {};
+  const error = stringValue(data.error);
+  if (error) return error;
+
+  if (block.name === "BrowserOpen") return browserOpenOutput(data);
+  if (block.name === "BrowserExtractContent") return browserExtractOutput(block, data);
+  if (block.name === "BrowserSearch") return browserSearchOutput(data);
+  if (block.name === "BrowserListTabs") return browserTabsOutput(data);
+  if (block.name === "BrowserReadContentChunk") return browserChunksOutput(block, data);
+  if (block.name === "BrowserGetHtml") return browserHtmlOutput(block, data);
+  return block.content.trimEnd();
+}
+
+function browserOpenOutput(data: Record<string, unknown>) {
+  return compactOutputLines([
+    keyValueLine("Title", stringValue(data.title)),
+    keyValueLine("URL", stringValue(data.url)),
+    keyValueLine("Final URL", stringValue(data.final_url)),
+    keyValueLine("Page ID", stringValue(data.page_id)),
+    keyValueLine("Window ID", stringValue(data.window_id)),
+    keyValueLine("Search ID", stringValue(data.search_id)),
+    keyValueLine("Opened pages", numberValue(data.opened_page_count)),
+  ]);
+}
+
+function browserExtractOutput(block: ToolBlockUi, data: Record<string, unknown>) {
+  const content = rawStringValue(data.content) ?? rawStringValue(data.content_preview) ?? block.content;
+  return compactOutputLines([
+    keyValueLine("Title", stringValue(data.title)),
+    keyValueLine("URL", stringValue(data.url)),
+    keyValueLine("Page ID", stringValue(data.page_id)),
+    keyValueLine("Cache key", stringValue(data.cache_key)),
+    keyValueLine("Content chars", numberValue(data.content_chars)),
+    keyValueLine("Chunks", numberValue(data.chunk_count)),
+    data.inline_content_truncated === true ? "Inline content truncated: true" : undefined,
+    content.trim() ? `\n${content.trimEnd()}` : stringValue(data.message),
+  ]);
+}
+
+function browserSearchOutput(data: Record<string, unknown>) {
+  const results = arrayValue(data.results) ?? [];
+  const lines = compactOutputLines([
+    keyValueLine("Query", stringValue(data.query)),
+    keyValueLine("Provider", stringValue(data.provider)),
+    keyValueLine("Search ID", stringValue(data.search_id)),
+    keyValueLine("Results", results.length),
+  ]);
+  const resultLines = results
+    .map((item, index) => browserSearchResultOutput(item, index))
+    .filter((line) => line.length > 0);
+  return compactOutputLines([lines, resultLines.length ? `\n${resultLines.join("\n\n")}` : undefined]);
+}
+
+function browserSearchResultOutput(value: unknown, index: number) {
+  if (!isRecord(value)) return "";
+  return compactOutputLines([
+    `${index + 1}. ${stringValue(value.title) ?? stringValue(value.url) ?? "Untitled result"}`,
+    stringValue(value.url) ? `   ${stringValue(value.url)}` : undefined,
+    stringValue(value.snippet) ? `   ${stringValue(value.snippet)}` : undefined,
+  ]);
+}
+
+function browserTabsOutput(data: Record<string, unknown>) {
+  const tabs = arrayValue(data.tabs) ?? [];
+  const lines = compactOutputLines([
+    keyValueLine("Tab count", numberValue(data.tab_count) ?? tabs.length),
+    keyValueLine("Current URL", stringValue(data.current_url)),
+    keyValueLine("Last page ID", stringValue(data.last_open_page_id)),
+  ]);
+  const tabLines = tabs
+    .map((item, index) => browserTabOutput(item, index))
+    .filter((line) => line.length > 0);
+  return compactOutputLines([lines, tabLines.length ? `\n${tabLines.join("\n\n")}` : undefined]);
+}
+
+function browserTabOutput(value: unknown, index: number) {
+  if (!isRecord(value)) return "";
+  return compactOutputLines([
+    `${index + 1}. ${stringValue(value.title) ?? stringValue(value.url) ?? "Untitled tab"}`,
+    stringValue(value.url) ? `   ${stringValue(value.url)}` : undefined,
+    stringValue(value.page_id) ? `   page_id: ${stringValue(value.page_id)}` : undefined,
+  ]);
+}
+
+function browserChunksOutput(block: ToolBlockUi, data: Record<string, unknown>) {
+  const chunks = arrayValue(data.chunks) ?? [];
+  const lines = compactOutputLines([
+    keyValueLine("Title", stringValue(data.title)),
+    keyValueLine("URL", stringValue(data.url)),
+    keyValueLine("Cache key", stringValue(data.cache_key)),
+    keyValueLine("Chunks returned", numberValue(data.chunk_count) ?? chunks.length),
+    keyValueLine("Total chunks", numberValue(data.total_chunks)),
+  ]);
+  const chunkLines = chunks
+    .map((item) => browserChunkOutput(item))
+    .filter((line) => line.length > 0);
+  return compactOutputLines([
+    lines,
+    chunkLines.length ? `\n${chunkLines.join("\n\n")}` : undefined,
+    !chunkLines.length ? block.content.trimEnd() : undefined,
+  ]);
+}
+
+function browserChunkOutput(value: unknown) {
+  if (!isRecord(value)) return "";
+  const index = numberValue(value.index);
+  const content = rawStringValue(value.content);
+  return compactOutputLines([
+    `## Chunk ${index ?? "?"}`,
+    content?.trimEnd(),
+  ]);
+}
+
+function browserHtmlOutput(block: ToolBlockUi, data: Record<string, unknown>) {
+  const html = rawStringValue(data.html);
+  return compactOutputLines([
+    keyValueLine("Title", stringValue(data.title)),
+    keyValueLine("URL", stringValue(data.url)),
+    keyValueLine("Page ID", stringValue(data.page_id)),
+    keyValueLine("HTML chars", typeof html === "string" ? html.length : undefined),
+    html ? `\n${html.trimEnd()}` : block.content.trimEnd(),
+  ]);
+}
+
+function keyValueLine(label: string, value: string | number | undefined) {
+  if (value === undefined || value === "") return undefined;
+  return `${label}: ${value}`;
+}
+
+function compactOutputLines(lines: Array<string | undefined>) {
+  return lines.filter((line): line is string => Boolean(line && line.trim().length > 0)).join("\n");
+}
+
 function shellLabel(block: ToolBlockUi) {
   const command = stringValue(block.data?.command);
   if (!command) return "Shell command";
@@ -716,6 +965,21 @@ function shellLabel(block: ToolBlockUi) {
   if (base === "grep") return `Grep ${args}`;
   if (base === "rg") return `Search ${args}`;
   return `Shell ${command}`;
+}
+
+export function isBrowserToolName(name: string) {
+  return (
+    name === "BrowserSearch" ||
+    name === "BrowserOpen" ||
+    name === "BrowserListTabs" ||
+    name === "BrowserExtractContent" ||
+    name === "BrowserReadContentChunk" ||
+    name === "BrowserGetHtml"
+  );
+}
+
+function compactGenericToolLabel(kindName: string) {
+  return kindName.replace(/[_-]+/g, " ");
 }
 
 function searchMetadata(block: ToolBlockUi) {

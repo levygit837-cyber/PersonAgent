@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from hashlib import sha256
 from typing import Any
 
@@ -21,9 +22,18 @@ _VALID_CONCRETE_MODES: set[str] = {"writing", "exploring", "research"}
 class PromptContextAnalyzer:
     """Resolve `prompt_mode=auto` with a short, tool-free LLM classification."""
 
-    def __init__(self, llm_backend: LLMBackendRepository | None = None) -> None:
+    def __init__(
+        self,
+        llm_backend: LLMBackendRepository | None = None,
+        *,
+        timeout_seconds: float = 4.0,
+        failure_cooldown_seconds: float = 60.0,
+    ) -> None:
         self._llm_backend = llm_backend
+        self._timeout_seconds = max(0.1, float(timeout_seconds))
+        self._failure_cooldown_seconds = max(0.0, float(failure_cooldown_seconds))
         self._cache: dict[str, PromptProfile] = {}
+        self._fallback_until: dict[str, float] = {}
 
     async def analyze(
         self,
@@ -67,6 +77,10 @@ class PromptContextAnalyzer:
         if self._llm_backend is None:
             return fallback_prompt_profile()
 
+        backend_key = f"{provider}:{model}".lower()
+        if self._is_in_fallback_cooldown(backend_key):
+            return fallback_prompt_profile()
+
         try:
             result = await asyncio.wait_for(
                 self._llm_backend.chat_completion(
@@ -94,17 +108,53 @@ class PromptContextAnalyzer:
                     reasoning_level="low",
                     reasoning_budget_tokens=0,
                 ),
-                timeout=8.0,
+                timeout=self._timeout_seconds,
             )
             profile = _profile_from_json(result.content)
             self._cache[cache_key] = profile
             return profile
-        except asyncio.TimeoutError:
-            logger.warning("prompt_context_analysis_timeout", provider=provider)
-            return fallback_prompt_profile()
+        except TimeoutError:
+            return self._fallback_after_failure(
+                cache_key=cache_key,
+                backend_key=backend_key,
+                reason="timeout",
+                provider=provider,
+            )
         except Exception:
-            logger.warning("prompt_context_analysis_failed", exc_info=True)
-            return fallback_prompt_profile()
+            return self._fallback_after_failure(
+                cache_key=cache_key,
+                backend_key=backend_key,
+                reason="error",
+                provider=provider,
+                exc_info=True,
+            )
+
+    def _is_in_fallback_cooldown(self, backend_key: str) -> bool:
+        until = self._fallback_until.get(backend_key, 0.0)
+        return bool(until and time.monotonic() < until)
+
+    def _fallback_after_failure(
+        self,
+        *,
+        cache_key: str,
+        backend_key: str,
+        reason: str,
+        provider: str,
+        exc_info: bool = False,
+    ) -> PromptProfile:
+        profile = fallback_prompt_profile()
+        self._cache[cache_key] = profile
+        if self._failure_cooldown_seconds:
+            self._fallback_until[backend_key] = time.monotonic() + self._failure_cooldown_seconds
+        logger.debug(
+            "prompt_context_analysis_fallback",
+            reason=reason,
+            provider=provider,
+            timeout_seconds=self._timeout_seconds,
+            cooldown_seconds=self._failure_cooldown_seconds,
+            exc_info=exc_info,
+        )
+        return profile
 
     def _cache_key(
         self,

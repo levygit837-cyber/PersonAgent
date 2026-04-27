@@ -73,7 +73,7 @@ interface ChatState {
   nextStepSuggestion?: string;
   liveSessionUsage: SessionUsage;
   liveSubAgentIds: string[];
-  loadConversation: (id: string) => Promise<void>;
+  loadConversation: (id: string, workspaceRoot?: string | null) => Promise<void>;
   startNewConversation: () => void;
   sendMessage: (text: string, systemPrompt?: string) => Promise<void>;
   approvePendingPlan: (feedback?: string) => Promise<void>;
@@ -92,8 +92,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   liveSessionUsage: emptySessionUsage(),
   liveSubAgentIds: [],
 
-  loadConversation: async (id) => {
+  loadConversation: async (id, workspaceRoot) => {
     try {
+      const appStore = useAppStore.getState();
+      const mappedWorkspace = workspaceRoot?.trim() || appStore.convWorkspaceMap[id]?.trim();
+      if (mappedWorkspace && mappedWorkspace !== appStore.selectedWorkspace) {
+        await appStore.selectWorkspace(mappedWorkspace);
+      }
+
       const detail = await getConversation(useAppStore.getState().baseUrl, id);
       set({
         conversationId: detail.id,
@@ -2080,6 +2086,12 @@ function shouldCollapseToolBlock(name: string, status: ToolBlockStatus) {
     "search_files",
     "LSP",
     "WebFetch",
+    "BrowserSearch",
+    "BrowserOpen",
+    "BrowserListTabs",
+    "BrowserExtractContent",
+    "BrowserReadContentChunk",
+    "BrowserGetHtml",
     "Task",
     "TaskCreate",
     "TaskGet",
@@ -2088,6 +2100,7 @@ function shouldCollapseToolBlock(name: string, status: ToolBlockStatus) {
     "TaskOutput",
     "TaskStop",
     "Write",
+    "Edit",
   ]).has(name);
 }
 
@@ -2097,6 +2110,12 @@ function toolTitle(name: string, path?: string) {
   if (name === "Glob") return "Glob";
   if (name === "shell") return "Shell command";
   if (name === "WebFetch") return path ? `Fetch ${path}` : "WebFetch";
+  if (name === "BrowserSearch") return "BrowserSearch";
+  if (name === "BrowserOpen") return path ? `Open ${path}` : "BrowserOpen";
+  if (name === "BrowserListTabs") return "BrowserListTabs";
+  if (name === "BrowserExtractContent") return path ? `Extract ${path}` : "BrowserExtractContent";
+  if (name === "BrowserReadContentChunk") return "BrowserReadContentChunk";
+  if (name === "BrowserGetHtml") return path ? `HTML ${path}` : "BrowserGetHtml";
   if (name === "LSP") return "LSP";
   if (isTodoToolName(name)) return name;
   if (name.startsWith("Task")) return name;

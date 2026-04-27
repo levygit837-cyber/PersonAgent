@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from personagent.application.services.session_panel import SessionPanelService
@@ -12,6 +13,56 @@ from personagent.interfaces.config.di_container import get_container
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 DB_SESSION_DEPENDENCY = Depends(get_db)
+
+
+class SessionTitleVerifyRequest(BaseModel):
+    """Request for batch session-title verification."""
+
+    limit: int | None = Field(default=None, ge=1)
+    offset: int = Field(default=0, ge=0)
+    batch_size: int | None = Field(default=None, ge=1, le=50)
+    force: bool = False
+    dry_run: bool = False
+
+
+@router.post("/titles/verify")
+async def verify_session_titles(
+    request: SessionTitleVerifyRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Run cached LLM title verification across persisted sessions."""
+
+    container = get_container()
+    service = getattr(container, "get_session_title_service", lambda: None)()
+    if service is None:
+        raise HTTPException(status_code=409, detail="Verificação de nomes de sessão desativada.")
+    repo = await container.get_conversation_repo(session)
+    result = await service.verify_all(
+        repo,
+        limit=request.limit,
+        offset=request.offset,
+        batch_size=request.batch_size,
+        force=request.force,
+        dry_run=request.dry_run,
+    )
+    return result.to_dict()
+
+
+@router.post("/titles/dedupe")
+async def dedupe_session_titles(
+    force: bool = Query(default=True),
+    dry_run: bool = Query(default=False),
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Repair duplicate or near-duplicate persisted session titles."""
+
+    container = get_container()
+    service = getattr(container, "get_session_title_service", lambda: None)()
+    if service is None:
+        raise HTTPException(status_code=409, detail="Verificação de nomes de sessão desativada.")
+    repo = await container.get_conversation_repo(session)
+    result = await service.maybe_repair_duplicate_titles(repo, force=force, dry_run=dry_run)
+    return result.to_dict()
 
 
 @router.get("/{conversation_id}/panel")

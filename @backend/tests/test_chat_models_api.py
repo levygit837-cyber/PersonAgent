@@ -78,16 +78,61 @@ class FakeKimiBackend:
         }
 
 
+class FakeCodexBackend:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+        self.logout_calls = 0
+
+    async def list_models(self, *, capability=None, refresh=False):
+        self.calls.append({"capability": capability, "refresh": refresh})
+        return {
+            "object": "list",
+            "provider": "codex",
+            "data": [
+                {
+                    "id": "gpt-5.5",
+                    "provider": "codex",
+                    "label": "GPT-5.5",
+                    "capabilities": ["chat", "reasoning_chat", "tools", "streaming"],
+                    "supports_streaming": True,
+                    "supports_reasoning": True,
+                },
+                {
+                    "id": "gpt-5.4-mini",
+                    "provider": "codex",
+                    "label": "GPT-5.4-Mini",
+                    "capabilities": ["chat", "reasoning_chat", "tools", "streaming"],
+                    "supports_streaming": True,
+                    "supports_reasoning": True,
+                },
+            ],
+        }
+
+    def auth_status(self):
+        return {
+            "authenticated": True,
+            "auth_mode": "chatgpt",
+            "email": "user@example.com",
+            "account_id": "acct_123",
+        }
+
+    async def logout(self):
+        self.logout_calls += 1
+        return {"authenticated": False, "logout_started": True}
+
+
 class FakeContainer:
     def __init__(self) -> None:
         self.settings = SimpleNamespace(
             nvidia_default_model="deepseek-ai/deepseek-v4-flash",
             vertex_default_model="gemini-3.1-flash-lite-preview",
             kimi_default_model="kimi-for-coding",
+            codex_default_model="gpt-5.5",
         )
         self.nvidia = FakeNvidiaBackend()
         self.vertex = FakeVertexBackend()
         self.kimi = FakeKimiBackend()
+        self.codex = FakeCodexBackend()
         self.requested_provider = None
 
     def get_llm_backend(self, provider="llama"):
@@ -96,6 +141,8 @@ class FakeContainer:
             return self.vertex
         if provider == "kimi":
             return self.kimi
+        if provider == "codex":
+            return self.codex
         return self.nvidia
 
 
@@ -219,6 +266,33 @@ async def test_chat_models_routes_to_kimi_catalog(monkeypatch):
     assert body["data"][0]["id"] == "kimi-for-coding"
 
 
+@pytest.mark.asyncio
+async def test_chat_models_routes_to_codex_catalog(monkeypatch):
+    container = FakeContainer()
+    monkeypatch.setattr(chat, "get_container", lambda: container)
+
+    app = FastAPI()
+    app.include_router(chat.router)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/chat/models",
+            params={
+                "provider": "codex",
+                "capability": "reasoning_chat",
+                "refresh": "true",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert container.requested_provider == "codex"
+    assert container.codex.calls == [{"capability": "reasoning_chat", "refresh": True}]
+    assert body["provider"] == "codex"
+    assert [item["id"] for item in body["data"]] == ["gpt-5.5", "gpt-5.4-mini"]
+
+
 def test_resolve_model_uses_nvidia_default_for_legacy_local_model(monkeypatch):
     container = FakeContainer()
     monkeypatch.setattr(chat, "get_container", lambda: container)
@@ -244,6 +318,36 @@ def test_resolve_model_uses_kimi_default_for_legacy_local_model(monkeypatch):
     model = chat.resolve_model("kimi", "local-model")
 
     assert model == "kimi-for-coding"
+
+
+def test_resolve_model_uses_codex_default_for_legacy_local_model(monkeypatch):
+    container = FakeContainer()
+    monkeypatch.setattr(chat, "get_container", lambda: container)
+
+    model = chat.resolve_model("codex", "local-model")
+
+    assert model == "gpt-5.5"
+
+
+@pytest.mark.asyncio
+async def test_codex_auth_status_and_logout(monkeypatch):
+    container = FakeContainer()
+    monkeypatch.setattr(chat, "get_container", lambda: container)
+
+    app = FastAPI()
+    app.include_router(chat.router)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        status_response = await client.get("/chat/auth/codex/status")
+        logout_response = await client.post("/chat/auth/codex/logout")
+
+    assert status_response.status_code == 200
+    assert status_response.json()["authenticated"] is True
+    assert status_response.json()["email"] == "user@example.com"
+    assert logout_response.status_code == 200
+    assert logout_response.json()["logout_started"] is True
+    assert container.codex.logout_calls == 1
 
 
 @pytest.mark.asyncio

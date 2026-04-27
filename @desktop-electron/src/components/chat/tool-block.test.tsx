@@ -441,6 +441,8 @@ describe("chat rendering", () => {
     expect(compactToolKindFor(toolBlock({ name: "shell", data: { command: "grep -R foo src" } }))).toBe("search");
     expect(compactToolKindFor(toolBlock({ name: "shell", data: { command: "find src -name '*.ts'" } }))).toBe("search");
     expect(compactToolKindFor(toolBlock({ name: "shell", data: { command: "pwd" } }))).toBe("shell");
+    expect(compactToolKindFor(toolBlock({ name: "BrowserOpen" }))).toBe("browser_open");
+    expect(compactToolKindFor(toolBlock({ name: "BrowserExtractContent" }))).toBe("browser_extract");
     expect(compactToolKindFor(toolBlock({ name: "TodoUpdate" }))).toBe("todo");
   });
 
@@ -526,6 +528,121 @@ describe("chat rendering", () => {
     expect(screen.getByText("src/chat.ts")).toBeInTheDocument();
   });
 
+  it("auto-collapses search output even when generic tool visibility is set to show", () => {
+    const setup = render(
+      <ToolBlock
+        block={toolBlock({
+          name: "Write",
+          title: "Write",
+          content: "Wrote first.py",
+          path: "first.py",
+          data: {
+            type: "file_write",
+            display_path: "first.py",
+            written_content: "alpha\n",
+          },
+          isCollapsed: true,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Show"));
+    setup.unmount();
+
+    render(
+      <ToolBlock
+        block={toolBlock({
+          name: "Grep",
+          title: "Grep PersonAgent",
+          content: "src/app.ts:1:PersonAgent",
+          data: {
+            type: "search_results",
+            pattern: "PersonAgent",
+            matches: 1,
+            shown: 1,
+            content: "src/app.ts:1:PersonAgent",
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Output - Show")).toBeInTheDocument();
+    expect(screen.queryByText("Pattern")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Output - Show"));
+
+    expect(screen.getByText("Pattern")).toBeInTheDocument();
+    expect(screen.getAllByText("PersonAgent").length).toBeGreaterThan(0);
+  });
+
+  it("keeps grouped search calls individually collapsed after the group opens", () => {
+    const setup = render(
+      <ToolBlock
+        block={toolBlock({
+          name: "Write",
+          title: "Write",
+          content: "Wrote first.py",
+          path: "first.py",
+          data: {
+            type: "file_write",
+            display_path: "first.py",
+            written_content: "alpha\n",
+          },
+          isCollapsed: true,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Show"));
+    setup.unmount();
+
+    render(
+      <AgentMessage
+        message={baseAgentMessage({
+          toolBlocks: [
+            toolBlock({
+              id: "grep_1",
+              name: "Grep",
+              title: "Grep PersonAgent",
+              content: "src/app.ts:1:PersonAgent",
+              data: {
+                type: "search_results",
+                pattern: "PersonAgent",
+                matches: 1,
+                shown: 1,
+                content: "src/app.ts:1:PersonAgent",
+              },
+            }),
+            toolBlock({
+              id: "find_1",
+              name: "shell",
+              title: "Shell command",
+              content: "src/app.ts\nsrc/chat.ts",
+              data: {
+                type: "shell",
+                command: "find src -name '*.ts'",
+                content: "src/app.ts\nsrc/chat.ts",
+                return_code: 0,
+              },
+            }),
+          ],
+          parts: [
+            { kind: "tool", id: "part_grep_1", toolBlockId: "grep_1" },
+            { kind: "tool", id: "part_find_1", toolBlockId: "find_1" },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Search 2 times >")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Search 2 times >"));
+
+    expect(screen.getAllByText("Output - Show")).toHaveLength(2);
+    expect(screen.queryByText("Pattern")).not.toBeInTheDocument();
+    expect(screen.queryByText("Command")).not.toBeInTheDocument();
+  });
+
   it("persists output visibility across future tool calls", () => {
     const first = render(
       <ToolBlock
@@ -552,24 +669,17 @@ describe("chat rendering", () => {
     const second = render(
       <ToolBlock
         block={toolBlock({
-          name: "Grep",
-          title: "Grep PersonAgent",
-          content: "src/app.ts:1:PersonAgent",
-          data: {
-            type: "search_results",
-            pattern: "PersonAgent",
-            matches: 1,
-            shown: 1,
-            content: "src/app.ts:1:PersonAgent",
-          },
+          name: "WebFetch",
+          title: "WebFetch",
+          content: "fetched page",
+          data: { url: "https://example.com" },
         })}
       />,
     );
 
-    expect(screen.getByText("Output - Hide")).toBeInTheDocument();
-    expect(screen.getByText("Pattern")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Output - Hide"));
-    expect(screen.queryByText("Pattern")).not.toBeInTheDocument();
+    expect(screen.getByText("fetched page")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Fetch https:\/\/example\.com - Hide/ }));
+    expect(screen.queryByText("fetched page")).not.toBeInTheDocument();
     second.unmount();
 
     render(
@@ -641,9 +751,137 @@ describe("chat rendering", () => {
       />,
     );
 
-    expect(screen.getByText("Fetched 2 URLs")).toBeInTheDocument();
+    expect(screen.getByText("Fetched 2 URLs Hide")).toBeInTheDocument();
     expect(screen.getByText("first page")).toBeInTheDocument();
     expect(screen.getByText("second page")).toBeInTheDocument();
+  });
+
+  it("groups BrowserOpen calls as opened tabs with normalized output", () => {
+    window.localStorage.setItem("personagent.toolOutputVisibility", "hide");
+    const message = baseAgentMessage({
+      toolBlocks: [
+        browserOpenBlock("open_1", "https://one.example", "One"),
+        browserOpenBlock("open_2", "https://two.example", "Two"),
+        browserOpenBlock("open_3", "https://three.example", "Three"),
+      ],
+      parts: [
+        { kind: "tool", id: "part_open_1", toolBlockId: "open_1" },
+        { kind: "tool", id: "part_open_2", toolBlockId: "open_2" },
+        { kind: "tool", id: "part_open_3", toolBlockId: "open_3" },
+      ],
+    });
+
+    render(<AgentMessage message={message} />);
+
+    expect(screen.getByText("Opened 3 Tabs >")).toBeInTheDocument();
+    expect(screen.queryByText(/Final URL: https:\/\/one\.example/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Opened 3 Tabs >"));
+
+    expect(screen.getByText(/Final URL: https:\/\/one\.example/)).toBeInTheDocument();
+    expect(screen.getByText(/Page ID: page-open_2/)).toBeInTheDocument();
+    expect(screen.queryByText(/"type":"browser_open"/)).not.toBeInTheDocument();
+  });
+
+  it("groups BrowserExtractContent calls by URL and keeps content in code blocks", () => {
+    window.localStorage.setItem("personagent.toolOutputVisibility", "hide");
+    const message = baseAgentMessage({
+      toolBlocks: [
+        toolBlock({
+          id: "extract_1",
+          name: "BrowserExtractContent",
+          title: "BrowserExtractContent",
+          content: "First article content",
+          path: "https://one.example",
+          data: {
+            type: "browser_extract_content",
+            title: "One",
+            url: "https://one.example",
+            page_id: "page-one",
+            cache_key: "page_111",
+            content: "First article content",
+            content_chars: 21,
+            chunk_count: 1,
+          },
+        }),
+        toolBlock({
+          id: "extract_2",
+          name: "BrowserExtractContent",
+          title: "BrowserExtractContent",
+          content: "Second article content",
+          path: "https://two.example",
+          data: {
+            type: "browser_extract_content",
+            title: "Two",
+            url: "https://two.example",
+            page_id: "page-two",
+            cache_key: "page_222",
+            content: "Second article content",
+            content_chars: 22,
+            chunk_count: 1,
+          },
+        }),
+      ],
+      parts: [
+        { kind: "tool", id: "part_extract_1", toolBlockId: "extract_1" },
+        { kind: "tool", id: "part_extract_2", toolBlockId: "extract_2" },
+      ],
+    });
+
+    render(<AgentMessage message={message} />);
+
+    expect(screen.getByText("Extracted content from 2 URLs >")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Extracted content from 2 URLs >"));
+
+    expect(screen.getByText(/Cache key: page_111/)).toBeInTheDocument();
+    expect(screen.getByText(/First article content/).tagName.toLowerCase()).toBe("pre");
+  });
+
+  it("keeps grouped parallel output expanded while running and collapses after completion", () => {
+    window.localStorage.setItem("personagent.toolOutputVisibility", "hide");
+    const runningMessage = baseAgentMessage({
+      toolBlocks: [
+        toolBlock({
+          id: "fetch_1",
+          name: "WebFetch",
+          title: "WebFetch",
+          status: "completed",
+          content: "first page",
+          data: { url: "https://one.example" },
+        }),
+        toolBlock({
+          id: "fetch_2",
+          name: "WebFetch",
+          title: "WebFetch",
+          status: "running",
+          content: "second page partial",
+          data: { url: "https://two.example" },
+          isCollapsed: false,
+        }),
+      ],
+      parts: [
+        { kind: "tool", id: "part_fetch_1", toolBlockId: "fetch_1" },
+        { kind: "tool", id: "part_fetch_2", toolBlockId: "fetch_2" },
+      ],
+      isStreaming: true,
+    });
+    const completedMessage = {
+      ...runningMessage,
+      toolBlocks: runningMessage.toolBlocks.map((block) => ({ ...block, status: "completed" as const, isCollapsed: true })),
+      isStreaming: false,
+    };
+
+    const { rerender } = render(<AgentMessage message={runningMessage} />);
+
+    expect(screen.getByText("Fetching 2 URLs...")).toBeInTheDocument();
+    expect(screen.getByText("first page")).toBeInTheDocument();
+    expect(screen.getByText("second page partial")).toBeInTheDocument();
+
+    rerender(<AgentMessage message={completedMessage} />);
+
+    expect(screen.getByText("Fetched 2 URLs >")).toBeInTheDocument();
+    expect(screen.queryByText("first page")).not.toBeInTheDocument();
+    expect(screen.queryByText("second page partial")).not.toBeInTheDocument();
   });
 
   it("renders TodoWrite as an exposed checklist with item status dots", () => {
@@ -796,6 +1034,32 @@ function toolBlock(overrides: Partial<ToolBlockUi> = {}): ToolBlockUi {
     isCollapsed: true,
     ...overrides,
   };
+}
+
+function browserOpenBlock(id: string, url: string, title: string): ToolBlockUi {
+  return toolBlock({
+    id,
+    name: "BrowserOpen",
+    title: `Open ${url}`,
+    content: JSON.stringify({
+      type: "browser_open",
+      url,
+      final_url: url,
+      title,
+      page_id: `page-${id}`,
+      window_id: `page-${id}`,
+    }),
+    path: url,
+    data: {
+      type: "browser_open",
+      url,
+      final_url: url,
+      title,
+      page_id: `page-${id}`,
+      window_id: `page-${id}`,
+      opened_page_count: 3,
+    },
+  });
 }
 
 function compactTeamRun(overrides: Partial<TeamRunUi> = {}): TeamRunUi {
