@@ -1,0 +1,85 @@
+# AIDesigner
+.aidesigner/
+
+# Benchmarks
+.benchmarks/
+
+# MCP Data
+.mcp_data/
+
+# Playwright MCP
+.playwright-mcp/
+
+# Pytest Cache
+.pytest_cache/
+
+# Print directory
+print/
+
+# Backend Python
+@backend/.mypy_cache/
+@backend/.pytest_cache/
+@backend/.ruff_cache/
+@backend/__pycache__/
+@backend/**/*.py[cod]
+@backend/*$py.class
+@backend/**/*.so
+@backend/.Python
+@backend/*.egg-info/
+@backend/dist/
+@backend/build/
+@backend/.venv/
+@backend/venv/
+@backend/.env
+
+# Frontend Node
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.cache/
+frontend/.parcel-cache/
+frontend/coverage/
+frontend/.npm/
+frontend/.eslintcache
+frontend/.env
+frontend/.env.local
+
+# Desktop Electron
+@desktop-electron/node_modules/
+@desktop-electron/dist/
+@desktop-electron/dist-electron/
+@desktop-electron/release/
+@desktop-electron/.eslintcache
+@desktop-electron/.env
+@desktop-electron/.env.local
+
+# Llama (fork - ignore build artifacts)
+@llama/llama-cpp-turboquant/build/
+@llama/llama-cpp-turboquant/*.so
+@llama/llama-cpp-turboquant/*.dylib
+@llama/llama-cpp-turboquant/*.dll
+
+# General
+.env
+.env.local
+.env.*.local
+*.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
