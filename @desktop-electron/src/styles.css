@@ -219,6 +219,15 @@ pre,
   transform: scale(1.06);
 }
 
+.personagent-input-todo-dock + .personagent-input-composer {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.personagent-input-todo-scroll {
+  scrollbar-gutter: stable;
+}
+
 @keyframes personagent-spin {
   to {
     transform: rotate(360deg);
@@ -270,7 +279,7 @@ pre,
 @keyframes personagent-todo-rise {
   from {
     opacity: 0;
-    transform: translateY(34px) scale(0.985);
+    transform: translateY(18px) scale(0.99);
   }
   to {
     opacity: 1;
@@ -280,14 +289,14 @@ pre,
 
 @keyframes personagent-todo-exit {
   from {
-    max-height: 18rem;
+    max-height: 9rem;
     opacity: 1;
     transform: translateY(0) scale(1);
   }
   to {
     max-height: 0;
     opacity: 0;
-    transform: translateY(42px) scale(0.985);
+    transform: translateY(22px) scale(0.99);
   }
 }
 

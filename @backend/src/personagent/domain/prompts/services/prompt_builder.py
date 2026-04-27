@@ -24,6 +24,10 @@ from personagent.domain.prompts.prompt import (
     get_default_prompt_sections,
     get_mode_prompt_section,
     normalize_prompt_mode,
+    parallel_tool_use_section,
+    provider_boundary_section,
+    provider_data_boundary,
+    todo_write_policy_section,
 )
 from personagent.domain.prompts.sections import (
     get_agent_sections,
@@ -76,6 +80,9 @@ class PromptBuilder:
         session_memory: str | None = None,
         runtime_reminders: list[str] | None = None,
         relevant_memories: list[str] | None = None,
+        provider: str = "llama",
+        model: str = "local-model",
+        supports_parallel_tool_calls: bool | None = None,
     ) -> BuiltSystemPrompt:
         """Monta o system prompt completo.
 
@@ -94,7 +101,12 @@ class PromptBuilder:
         normalized_mode = normalize_prompt_mode(prompt_mode)
         profile = self._resolve_profile(normalized_mode, prompt_profile)
         resolved_mode = profile.primary_mode
-        active_surfaces = self._surface_registry.resolve_active(profile)
+        all_tool_names = self._prompt_tool_names(available_tools, available_tool_definitions)
+        can_use_todos = "TodoWrite" in all_tool_names
+        can_use_parallel_tools = (
+            bool(supports_parallel_tool_calls)
+            or len(all_tool_names) > 1
+        )
 
         # Obtém seções base
         base_sections = get_default_prompt_sections()
@@ -106,7 +118,12 @@ class PromptBuilder:
         )
 
         # Obtém seções de execução
-        execution_sections = get_execution_sections(self._permission_mode) + (
+        execution_sections = (provider_boundary_section(provider, model),)
+        if can_use_todos:
+            execution_sections += (todo_write_policy_section(),)
+        if can_use_parallel_tools:
+            execution_sections += (parallel_tool_use_section(),)
+        execution_sections += get_execution_sections(self._permission_mode) + (
             self._context_lifecycle_section(),
         )
 
@@ -120,16 +137,6 @@ class PromptBuilder:
             agent_sections += (self._session_memory_section(session_memory),)
         if relevant_memories:
             agent_sections += (self._relevant_memories_section(relevant_memories),)
-        surfaces_used = self._surfaces_used(
-            active_surfaces=active_surfaces,
-            profile=profile,
-            available_tool_definitions=available_tool_definitions,
-            command_inventory=command_inventory,
-            skill_inventory=skill_inventory,
-            session_memory=session_memory,
-            runtime_reminders=runtime_reminders,
-            relevant_memories=relevant_memories,
-        )
 
         # Cria SystemPromptParts
         parts = SystemPromptParts(
@@ -142,8 +149,10 @@ class PromptBuilder:
         # Resolve seções
         cache_scope = self._cache_scope(
             system_context=system_context,
-            available_tools=available_tools,
+            available_tools=sorted(all_tool_names),
             prompt_mode=resolved_mode,
+            provider=provider,
+            model=model,
         )
         resolved_sections = await self._resolve_sections(parts, cache_scope)
 
@@ -153,20 +162,30 @@ class PromptBuilder:
             system_context,
         )
         user_context_message = self.build_user_context_message(user_context, runtime_reminders)
+        resolved_section_names = tuple(section.name for section, _content in resolved_sections)
+        surfaces_used = self._surfaces_used(
+            section_names=resolved_section_names,
+            runtime_reminders=runtime_reminders,
+        )
 
         build_duration_ms = int((time.time() - start_time) * 1000)
         estimated_tokens = estimate_text_tokens(
             "\n\n".join(part for part in (content, user_context_message) if part)
         )
+        line_count = len(content.splitlines())
+        char_count = len(content)
 
         return BuiltSystemPrompt(
             content=content,
             user_context_message=user_context_message,
-            sections_used=tuple(s.name for s in parts.all_sections()),
+            sections_used=resolved_section_names,
             metadata={
                 "permission_mode": self._permission_mode,
                 "prompt_mode": resolved_mode,
                 "requested_prompt_mode": normalized_mode,
+                "provider": provider,
+                "model": model,
+                "provider_data_boundary": provider_data_boundary(provider),
                 "prompt_analysis_source": profile.source,
                 "prompt_analysis_confidence": profile.confidence,
                 "prompt_profile": {
@@ -184,6 +203,9 @@ class PromptBuilder:
                 "has_session_memory": bool(session_memory and session_memory.strip()),
                 "is_git_repo": system_context.git_status is not None,
                 "dynamic_sections_used": dynamic_sections,
+                "line_count": line_count,
+                "char_count": char_count,
+                "estimated_tokens": estimated_tokens,
                 "cache_scope": cache_scope,
                 "conversation_id": conversation_id,
             },
@@ -194,14 +216,8 @@ class PromptBuilder:
     def _surfaces_used(
         self,
         *,
-        active_surfaces: tuple[Any, ...],
-        profile: PromptProfile,
-        available_tool_definitions: list[ToolDefinition] | None,
-        command_inventory: list[PromptCommand] | None,
-        skill_inventory: list[SkillDefinition] | None,
-        session_memory: str | None,
+        section_names: tuple[str, ...],
         runtime_reminders: list[str] | None,
-        relevant_memories: list[str] | None,
     ) -> list[str]:
         """Return the actual prompt surfaces present in this built prompt."""
 
@@ -211,27 +227,52 @@ class PromptBuilder:
             if name not in names:
                 names.append(name)
 
-        for surface in active_surfaces:
-            add(surface.name)
-        add("system")
-        add("tool")
-        add("compact")
-        add("reminder")
-        for mode in profile.all_modes:
-            add(f"mode:{mode}")
-        if available_tool_definitions:
+        sections = set(section_names)
+        if sections.intersection(
+            {
+                "identity_and_objective",
+                "work_management",
+                "evidence_and_tool_use",
+                "safety_and_user_work",
+                "final_response_contract",
+                "provider_data_boundary",
+            }
+        ):
+            add("system")
+        for mode in ("writing", "exploring", "research"):
+            if f"mode_{mode}" in sections:
+                add(f"mode:{mode}")
+        if sections.intersection({"tool_usage", "file_operations", "shell"}):
+            add("tool")
+        if "tool_prompts" in sections:
+            add("tool")
             add("tool_prompts")
-        if command_inventory:
+        if "todo_write_policy" in sections:
+            add("todo")
+        if "parallel_tool_use" in sections:
+            add("parallel_tool_use")
+        if "command_inventory" in sections:
             add("command")
-        if skill_inventory:
+        if "skill_inventory" in sections:
             add("skill")
-        if session_memory and session_memory.strip():
+        if "session_memory" in sections:
             add("memory")
+        if "relevant_memories" in sections:
+            add("relevant_memory")
+        if "context_lifecycle" in sections:
+            add("context_lifecycle")
         if any(item.strip() for item in runtime_reminders or []):
             add("slash")
             add("reminder")
-        if relevant_memories and any(m.strip() for m in relevant_memories):
-            add("relevant_memory")
+        return names
+
+    def _prompt_tool_names(
+        self,
+        available_tools: list[str] | None,
+        available_tool_definitions: list[ToolDefinition] | None,
+    ) -> set[str]:
+        names = {name for name in available_tools or [] if name}
+        names.update(definition.name for definition in available_tool_definitions or [])
         return names
 
     async def _resolve_sections(
@@ -525,10 +566,12 @@ class PromptBuilder:
         system_context: SystemContext,
         available_tools: list[str] | None,
         prompt_mode: PromptMode,
+        provider: str,
+        model: str,
     ) -> str:
         tools = ",".join(sorted(available_tools or ()))
         workspace = system_context.workspace_root or ""
-        raw = f"{workspace}|{prompt_mode}|{self._permission_mode}|{tools}"
+        raw = f"{workspace}|{prompt_mode}|{self._permission_mode}|{provider}|{model}|{tools}"
         digest = sha256(raw.encode("utf-8")).hexdigest()[:16]
         return f"system-prompt:{digest}"
 

@@ -358,7 +358,16 @@ describe("InputDock", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByTestId("input-todo-tracker")).toHaveAttribute("data-state", "visible");
+    const stack = screen.getByTestId("input-dock-stack");
+    const tracker = screen.getByTestId("input-todo-tracker");
+    const scrollRegion = screen.getByTestId("input-todo-scroll");
+    const composer = screen.getByTestId("input-composer");
+
+    expect(stack).toHaveClass("gap-0");
+    expect(tracker).toHaveAttribute("data-state", "visible");
+    expect(tracker).toHaveClass("rounded-b-none", "border-b-0");
+    expect(tracker.nextElementSibling).toBe(composer);
+    expect(scrollRegion).toHaveClass("max-h-24", "overflow-y-auto");
     expect(screen.getByText("TodoWrite - 2 updates")).toBeInTheDocument();
     expect(screen.getByText("1/3 done")).toBeInTheDocument();
     expect(screen.getByText("Verify dock behavior")).toBeInTheDocument();

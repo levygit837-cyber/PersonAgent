@@ -29,7 +29,8 @@ class PromptSurfaceRegistry:
         hints = {hint.strip().lower() for hint in profile.surface_hints}
         active: list[PromptSurface] = []
         for surface in self._surfaces.values():
-            if surface.always_active or surface.name in hints or surface.category in hints:
+            category_matches = surface.category in hints and surface.category != "mode"
+            if surface.always_active or surface.name in hints or category_matches:
                 active.append(surface)
         for mode in profile.all_modes:
             surface = self._surfaces.get(f"mode:{mode}")

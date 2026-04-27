@@ -46,8 +46,10 @@ class TestPromptBuilder:
 
         assert result.content is not None
         assert len(result.content) > 0
-        assert "# Introduction" in result.content
-        assert "# Operating Principles" in result.content
+        assert "# Identity and Objective" in result.content
+        assert "# Work Management" in result.content
+        assert "# Evidence and Tool Use" in result.content
+        assert "# Provider Data Boundary" in result.content
 
     @pytest.mark.asyncio
     async def test_build_with_tools(self, system_context, user_context):
@@ -109,7 +111,8 @@ class TestPromptBuilder:
         builder = PromptBuilder(permission_mode="manual", enable_agent_sections=True)
         result = await builder.build(system_context, user_context)
 
-        assert "# Agent Identity" in result.content
+        assert "# Collaboration Style" in result.content
+        assert "# Continuity" in result.content
         assert "PersonAgent" in result.content
 
     @pytest.mark.asyncio
@@ -118,7 +121,8 @@ class TestPromptBuilder:
         builder = PromptBuilder(permission_mode="manual", enable_agent_sections=False)
         result = await builder.build(system_context, user_context)
 
-        assert "# Agent Identity" not in result.content
+        assert "# Collaboration Style" not in result.content
+        assert "# Continuity" not in result.content
 
     @pytest.mark.asyncio
     async def test_build_includes_system_context(self, system_context, user_context):
@@ -223,8 +227,81 @@ class TestPromptBuilder:
         result = await builder.build(system_context, user_context)
 
         assert len(result.sections_used) > 0
-        assert "intro" in result.sections_used
-        assert "operating_principles" in result.sections_used
+        assert "identity_and_objective" in result.sections_used
+        assert "work_management" in result.sections_used
+        assert "evidence_and_tool_use" in result.sections_used
+        assert "provider_data_boundary" in result.sections_used
+
+    @pytest.mark.asyncio
+    async def test_todo_write_policy_is_conditional(self, system_context, user_context):
+        """TodoWrite policy should appear only when the tool is available."""
+        builder = PromptBuilder(permission_mode="manual")
+
+        without_todo = await builder.build(
+            system_context,
+            user_context,
+            available_tools=["Read"],
+            supports_parallel_tool_calls=False,
+        )
+        with_todo = await builder.build(
+            system_context,
+            user_context,
+            available_tools=["Read", "TodoWrite"],
+            supports_parallel_tool_calls=False,
+        )
+
+        assert "# TodoWrite Policy" not in without_todo.content
+        assert "todo_write_policy" not in without_todo.sections_used
+        assert "# TodoWrite Policy" in with_todo.content
+        assert "todo_write_policy" in with_todo.sections_used
+        assert "Keep exactly one todo in progress" in with_todo.content
+
+    @pytest.mark.asyncio
+    async def test_parallel_tool_use_policy_is_conditional(self, system_context, user_context):
+        """Parallel tool policy should reflect actual tool/capability availability."""
+        builder = PromptBuilder(permission_mode="manual")
+
+        single_tool = await builder.build(
+            system_context,
+            user_context,
+            available_tools=["Read"],
+            supports_parallel_tool_calls=False,
+        )
+        multiple_tools = await builder.build(
+            system_context,
+            user_context,
+            available_tools=["Read", "Grep"],
+            supports_parallel_tool_calls=False,
+        )
+        provider_supported = await builder.build(
+            system_context,
+            user_context,
+            available_tools=["Read"],
+            supports_parallel_tool_calls=True,
+        )
+
+        assert "# Parallel Tool Use" not in single_tool.content
+        assert "# Parallel Tool Use" in multiple_tools.content
+        assert "# Parallel Tool Use" in provider_supported.content
+        assert "parallel_tool_use" in multiple_tools.sections_used
+
+    @pytest.mark.asyncio
+    async def test_provider_boundary_changes_by_provider(self, system_context, user_context):
+        """Provider boundary should not make absolute local-only privacy claims."""
+        builder = PromptBuilder(permission_mode="manual")
+
+        local = await builder.build(system_context, user_context, provider="llama", model="local")
+        hosted = await builder.build(system_context, user_context, provider="nvidia", model="hosted")
+        codex = await builder.build(system_context, user_context, provider="codex", model="gpt-5.5")
+        unknown = await builder.build(system_context, user_context, provider="custom", model="custom")
+
+        assert local.metadata["provider_data_boundary"] == "local_model_local_tools"
+        assert hosted.metadata["provider_data_boundary"] == "hosted_model_external_provider_local_tools"
+        assert codex.metadata["provider_data_boundary"] == "codex_subscription_external_model_local_tools"
+        assert unknown.metadata["provider_data_boundary"] == "unknown_provider_local_tools"
+        assert "Do not claim that all data stays local" in hosted.content
+        assert "Do not claim that all data stays local" in codex.content
+        assert "provider boundary is not recognized" in unknown.content
 
     @pytest.mark.asyncio
     async def test_size_chars(self, system_context, user_context):
@@ -428,14 +505,17 @@ class TestPromptBuilder:
         )
 
         assert result.metadata["prompt_mode"] == "research"
-        assert "# Research Mode" in result.content
+        assert "# Mode Overlay: Research" in result.content
 
     @pytest.mark.parametrize("mode", ["writing", "exploring", "research"])
     def test_each_mode_prompt_has_compact_instruction_lines(self, mode):
         content = get_mode_prompt_section(mode).compute()
 
         assert isinstance(content, str)
-        assert 80 <= len(content.splitlines()) <= 120
+        lines = content.splitlines()
+        assert 7 <= len(lines) <= 20
+        assert lines[0] == f"# Mode Overlay: {mode.title()}"
+        assert "80" not in content
 
     @pytest.mark.asyncio
     async def test_dynamic_boundary_is_inserted(self, system_context, user_context):

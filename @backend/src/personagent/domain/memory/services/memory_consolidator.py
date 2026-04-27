@@ -9,6 +9,7 @@ Periodicamente revisa memórias existentes e as reorganiza:
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -32,10 +33,9 @@ _CONSOLIDATE_SYSTEM_PROMPT = (
     "3. Remove memories that are no longer relevant or have been contradicted\n"
     "4. Reorganize into clear topic-based files\n"
     "5. Keep MEMORY.md as a concise index (max 200 lines)\n\n"
-    "For each memory file you want to create/update, output:\n"
-    "ACTION | PATH | CONTENT\n"
-    "Where ACTION is: CREATE, UPDATE, DELETE\n"
-    "If no changes needed, respond with 'NONE'."
+    "Return only compact JSON:\n"
+    '{"actions":[{"action":"CREATE|UPDATE|DELETE","path":"relative/file.md","content":"full content or empty for delete"}]}\n'
+    'If no changes are needed, return {"actions":[]}.'
 )
 
 
@@ -134,6 +134,10 @@ class MemoryConsolidator:
 
     def _parse_actions(self, raw: str) -> list[dict[str, Any]]:
         """Parseia ações de consolidação."""
+        parsed_json = self._parse_actions_json(raw)
+        if parsed_json is not None:
+            return parsed_json
+
         actions: list[dict[str, Any]] = []
         for line in raw.split("\n"):
             line = line.strip()
@@ -146,4 +150,39 @@ class MemoryConsolidator:
                     "path": parts[1],
                     "content": " | ".join(parts[2:]),
                 })
+        return actions
+
+    def _parse_actions_json(self, raw: str) -> list[dict[str, Any]] | None:
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start < 0 or end <= start:
+                return None
+            try:
+                payload = json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                return None
+        items = payload.get("actions") if isinstance(payload, dict) else payload
+        if not isinstance(items, list):
+            return None
+        actions: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            action = str(item.get("action") or "").upper().strip()
+            path = str(item.get("path") or "").strip()
+            if action not in {"CREATE", "UPDATE", "DELETE"} or not path:
+                continue
+            actions.append(
+                {
+                    "action": action,
+                    "path": path,
+                    "content": str(item.get("content") or ""),
+                }
+            )
         return actions

@@ -251,6 +251,49 @@ class ChatCompletionUseCase:
         ):
             yield chunk
 
+    async def preview_prompt(self, request: ChatRequestDTO) -> dict[str, Any]:
+        """Build the prompt package without creating messages or calling tools."""
+
+        if request.conversation_id:
+            conversation = await self._conversation_repo.get_by_id(request.conversation_id)
+            if conversation is None:
+                raise ConversationNotFoundError(
+                    f"Conversa {request.conversation_id} não encontrada"
+                )
+        else:
+            conversation = Conversation()
+
+        context_result = await self._build_context_result(request, conversation)
+        preparation = self._prepare_prompt_surfaces(request, context_result)
+        request = preparation.request
+        tools = self._resolve_tool_schemas(request)
+        prompt_package = await self._build_prompt_package(
+            request,
+            conversation,
+            context_result,
+            tools,
+            preparation,
+            relevant_memories=[],
+        )
+        system_prompt = prompt_package.system_prompt or ""
+        return {
+            "system_prompt": system_prompt,
+            "user_context_message": prompt_package.user_context_message,
+            "sections": prompt_package.metadata.get("prompt_sections_used") or [],
+            "surfaces": prompt_package.metadata.get("prompt_surfaces_used") or [],
+            "dynamic_sections": prompt_package.metadata.get("dynamic_sections_used") or [],
+            "mode": prompt_package.metadata.get("prompt_mode"),
+            "requested_mode": prompt_package.metadata.get("requested_prompt_mode"),
+            "analysis_source": prompt_package.metadata.get("prompt_analysis_source"),
+            "analysis_confidence": prompt_package.metadata.get("prompt_analysis_confidence"),
+            "line_count": len(system_prompt.splitlines()),
+            "char_count": len(system_prompt),
+            "estimated_tokens": prompt_package.metadata.get("prompt_tokens_estimated"),
+            "provider_data_boundary": prompt_package.metadata.get("provider_data_boundary"),
+            "provider": request.provider,
+            "model": request.model,
+        }
+
     async def resume_after_tool_result_stream(
         self,
         request: ChatRequestDTO,
@@ -1081,6 +1124,9 @@ class ChatCompletionUseCase:
             session_memory=session_memory,
             runtime_reminders=runtime_reminders,
             relevant_memories=relevant_memories,
+            provider=request.provider,
+            model=request.model,
+            supports_parallel_tool_calls=self._supports_parallel_tool_calls(request, tools),
         )
         system_prompt = built_prompt.content
         sections_used = list(built_prompt.sections_used)
@@ -1096,6 +1142,9 @@ class ChatCompletionUseCase:
                 f"{request.system_prompt.strip()}"
             )
             sections_used.append("custom_system_instructions")
+        final_prompt_tokens = estimate_text_tokens(system_prompt) + estimate_text_tokens(
+            built_prompt.user_context_message or ""
+        )
         return _PromptPackage(
             system_prompt=system_prompt,
             user_context_message=built_prompt.user_context_message,
@@ -1112,15 +1161,28 @@ class ChatCompletionUseCase:
                 "dynamic_sections_used": list(
                     built_prompt.metadata.get("dynamic_sections_used") or ()
                 ),
+                "provider_data_boundary": built_prompt.metadata.get("provider_data_boundary"),
+                "line_count": len(system_prompt.splitlines()),
+                "char_count": len(system_prompt),
                 "slash_command": preparation.slash_metadata if preparation else None,
                 "context_source": context_result.metadata.get("source"),
-                "prompt_tokens_estimated": estimate_text_tokens(system_prompt)
-                + estimate_text_tokens(built_prompt.user_context_message or ""),
+                "prompt_tokens_estimated": final_prompt_tokens,
                 "prompt_build_duration_ms": built_prompt.build_duration_ms,
                 "has_custom_system_prompt": has_custom_system_prompt,
                 "custom_system_prompt_policy": "append_to_dynamic_system_prompt",
             },
         )
+
+    def _supports_parallel_tool_calls(
+        self,
+        request: ChatRequestDTO,
+        tools: list[dict[str, Any]],
+    ) -> bool:
+        if not request.tools_enabled:
+            return False
+        if request.provider == "codex":
+            return True
+        return len(tools) > 1
 
     async def _prepare_messages_for_llm(
         self,

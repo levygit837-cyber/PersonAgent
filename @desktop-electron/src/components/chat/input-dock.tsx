@@ -155,9 +155,12 @@ export function InputDock() {
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-5 pb-5">
-      <div className="flex w-full max-w-[780px] flex-col gap-2">
+      <div className="flex w-full max-w-[780px] flex-col gap-0" data-testid="input-dock-stack">
         <InputTodoDock />
-        <div className="pointer-events-auto w-full overflow-hidden rounded-2xl border border-glass-border/35 bg-card/90 shadow-dock ring-1 ring-primary/10 backdrop-blur-2xl">
+        <div
+          className="personagent-input-composer pointer-events-auto w-full overflow-hidden rounded-2xl border border-glass-border/35 bg-card/90 shadow-dock ring-1 ring-primary/10 backdrop-blur-2xl"
+          data-testid="input-composer"
+        >
           <ComposerAssist
             disabled={disabled}
             nextStepSuggestion={!text.trim() ? nextStepSuggestion : undefined}
@@ -273,7 +276,7 @@ function TodoDockPanel({
   const active = snapshot.todos.find((todo) => todo.status === "in_progress");
   return (
     <section
-      className={`${exiting ? "personagent-todo-exit" : "personagent-todo-rise"} pointer-events-auto overflow-hidden rounded-xl border border-glass-border/40 bg-card/85 shadow-dock ring-1 ring-primary/10 backdrop-blur-2xl`}
+      className={`${exiting ? "personagent-todo-exit" : "personagent-todo-rise"} personagent-input-todo-dock pointer-events-auto overflow-hidden rounded-t-2xl rounded-b-none border border-b-0 border-glass-border/35 bg-card/90 shadow-dock ring-1 ring-primary/10 backdrop-blur-2xl`}
       aria-label="Todo tracker"
       data-testid="input-todo-tracker"
       data-state={exiting ? "exiting" : "visible"}
@@ -281,31 +284,31 @@ function TodoDockPanel({
         if (exiting) onExitComplete();
       }}
     >
-      <div className="flex min-w-0 items-center justify-between gap-3 border-b border-glass-border/25 px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-glass-border/20 px-2.5 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
           <TodoDockStatusDot status={snapshot.status} />
           <div className="min-w-0">
-            <div className="truncate font-mono text-[11px] font-semibold uppercase text-foreground">Todos</div>
-            <div className="truncate font-mono text-[10px] text-muted-foreground">
+            <div className="truncate font-mono text-[10px] font-semibold uppercase text-foreground">Todos</div>
+            <div className="truncate font-mono text-[9px] text-muted-foreground">
               {snapshot.toolName}
               {snapshot.updateCount > 1 ? ` - ${snapshot.updateCount} updates` : ""}
             </div>
           </div>
         </div>
-        <div className="shrink-0 rounded-full border border-glass-border/35 bg-background/45 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+        <div className="shrink-0 rounded-full border border-glass-border/30 bg-background/40 px-1.5 py-0 font-mono text-[9px] leading-4 text-muted-foreground">
           {snapshot.status === "running" || snapshot.status === "queued" ? "updating" : `${completed}/${snapshot.todos.length} done`}
         </div>
       </div>
-      <ul className="max-h-52 overflow-y-auto py-1">
+      <ul className="personagent-input-todo-scroll max-h-24 overflow-y-auto overscroll-contain py-0.5" data-testid="input-todo-scroll">
         {snapshot.todos.map((todo, index) => (
           <li
             key={todo.id || `${todo.content}-${index}`}
-            className="personagent-todo-item grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 border-b border-glass-border/20 px-3 py-1.5 last:border-0"
+            className="personagent-todo-item grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-1.5 border-b border-glass-border/15 px-2.5 py-1 last:border-0"
             style={{ animationDelay: `${Math.min(index * 24, 144)}ms` }}
           >
-            <span className="pt-[7px]">
+            <span className="pt-[5px]">
               <span
-                className={`personagent-todo-dot inline-flex h-2.5 w-2.5 shrink-0 rounded-full ${todo.status === "completed" ? "bg-success" : "bg-warning"}`}
+                className={`personagent-todo-dot inline-flex h-2 w-2 shrink-0 rounded-full ${todo.status === "completed" ? "bg-success" : "bg-warning"}`}
                 data-status={todo.status}
                 aria-label={todoStatusLabel(todo.status)}
               />
@@ -313,14 +316,14 @@ function TodoDockPanel({
             <span
               className={
                 todo.status === "completed"
-                  ? "min-w-0 break-words text-[12px] leading-5 text-muted-foreground/70 line-through decoration-success/50"
-                  : "min-w-0 break-words text-[12px] leading-5 text-foreground/90"
+                  ? "min-w-0 break-words text-[11px] leading-4 text-muted-foreground/70 line-through decoration-success/50"
+                  : "min-w-0 break-words text-[11px] leading-4 text-foreground/90"
               }
             >
               {todo.content}
             </span>
             {active?.id === todo.id ? (
-              <span className="mt-0.5 rounded-full border border-warning/25 px-1.5 py-[1px] font-mono text-[10px] text-warning">active</span>
+              <span className="mt-px rounded-full border border-warning/25 px-1 py-0 font-mono text-[9px] leading-4 text-warning">active</span>
             ) : null}
           </li>
         ))}
@@ -331,10 +334,10 @@ function TodoDockPanel({
 
 function TodoDockStatusDot({ status }: { status: ToolBlockStatus }) {
   if (status === "running" || status === "queued") {
-    return <span className="personagent-spinner h-[7px] w-[7px] shrink-0 text-primary/80" aria-hidden="true" />;
+    return <span className="personagent-spinner h-1.5 w-1.5 shrink-0 text-primary/80" aria-hidden="true" />;
   }
   const color = status === "error" || status === "permission_required" ? "bg-destructive" : "bg-success";
-  return <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${color}`} aria-hidden="true" />;
+  return <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${color}`} aria-hidden="true" />;
 }
 
 function latestTodoSnapshot(messages: ChatMessageUi[], activeAgentId?: string): TodoDockSnapshot | undefined {

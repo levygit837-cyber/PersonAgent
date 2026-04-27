@@ -17,6 +17,7 @@ from personagent.application.workflows.contracts import (
     validate_workflow_document,
 )
 from personagent.domain.models.inference_result import InferenceResult
+from personagent.domain.prompts.prompt import shared_runtime_policy_overlay
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.domain.tools import ToolCall, ToolUseContext
 
@@ -182,7 +183,7 @@ class WorkflowRunner:
         messages: list[dict[str, Any]] = []
         system_prompt = str(
             node.config.get("system_prompt")
-            or "You are an agent node inside a sequential PersonAgent workflow."
+            or default_workflow_agent_system_prompt()
         )
         messages.append({"role": "system", "content": system_prompt})
         instruction = str(
@@ -493,6 +494,14 @@ def _event(
     if output_value is not None:
         payload["output"] = output_value
     return payload
+
+
+def default_workflow_agent_system_prompt() -> str:
+    return (
+        "You are an agent node inside a sequential PersonAgent workflow. "
+        "Follow the node instruction, use previous node output as evidence, and return only the node result.\n\n"
+        f"{shared_runtime_policy_overlay(todo_available=True, parallel_tools_available=True)}"
+    )
 
 
 def _outgoing_edges(document: WorkflowDocument) -> dict[str, list[WorkflowEdge]]:

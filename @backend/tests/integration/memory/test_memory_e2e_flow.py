@@ -72,6 +72,58 @@ class TestMemoryE2EFlow:
     def mock_llm(self):
         return MockLLMBackend()
 
+    def test_memory_extractor_accepts_json_and_legacy_pipe(self, repo, mock_llm):
+        extractor = MemoryExtractor(llm_backend=mock_llm, memory_repository=repo)
+
+        json_memories = extractor._parse_extraction(
+            '{"memories":[{"type":"user","name":"editor_pref","description":"Editor preference","content":"Use vim for quick edits."}]}'
+        )
+        legacy_memories = extractor._parse_extraction(
+            "project | prompt_refactor | Prompt refactor | Keep prompts short | with pipes"
+        )
+
+        assert json_memories == [
+            {
+                "type": MemoryType.USER,
+                "name": "editor_pref",
+                "description": "Editor preference",
+                "content": "Use vim for quick edits.",
+            }
+        ]
+        assert legacy_memories == [
+            {
+                "type": MemoryType.PROJECT,
+                "name": "prompt_refactor",
+                "description": "Prompt refactor",
+                "content": "Keep prompts short | with pipes",
+            }
+        ]
+
+    def test_memory_consolidator_accepts_json_and_legacy_pipe(self, repo, mock_llm):
+        consolidator = MemoryConsolidator(llm_backend=mock_llm, memory_repository=repo)
+
+        json_actions = consolidator._parse_actions(
+            '{"actions":[{"action":"UPDATE","path":"prompts.md","content":"Consolidated prompt notes."}]}'
+        )
+        legacy_actions = consolidator._parse_actions(
+            "CREATE | memory/index.md | New index | with pipe"
+        )
+
+        assert json_actions == [
+            {
+                "action": "UPDATE",
+                "path": "prompts.md",
+                "content": "Consolidated prompt notes.",
+            }
+        ]
+        assert legacy_actions == [
+            {
+                "action": "CREATE",
+                "path": "memory/index.md",
+                "content": "New index | with pipe",
+            }
+        ]
+
     @pytest.mark.asyncio
     async def test_full_lifecycle_single_memory(self, repo, tmp_memory_dir):
         """Testa ciclo completo: write → scan → read → index → delete."""
