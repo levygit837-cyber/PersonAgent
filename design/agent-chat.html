@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Premium Agent Chat</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    @keyframes shimmer {
+      0% { background-position: 220% 0; }
+      100% { background-position: -220% 0; }
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pulse {
+      50% { opacity: .5; }
+    }
+    .shimmer-text {
+      background: linear-gradient(90deg, #71717a 0%, #09090b 50%, #71717a 100%);
+      background-size: 220% 100%;
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+      animation: shimmer 1.8s linear infinite;
+    }
+    .dark .shimmer-text {
+      background: linear-gradient(90deg, #71717a 0%, #ffffff 50%, #71717a 100%);
+      background-size: 220% 100%;
+      background-clip: text;
+      -webkit-background-clip: text;
+    }
+    .spinner {
+      border: 2px solid #d4d4d8;
+      border-top-color: #09090b;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .dark .spinner {
+      border-color: #3f3f46;
+      border-top-color: #ffffff;
+    }
+    .spinner-lg {
+      width: 20px;
+      height: 20px;
+    }
+    .spinner-sm {
+      width: 16px;
+      height: 16px;
+    }
+    .collapsible-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.22s ease-out, opacity 0.22s ease-out;
+      opacity: 0;
+    }
+    .collapsible-content.open {
+      max-height: 1000px;
+      opacity: 1;
+    }
+    .fade-in {
+      animation: fadeIn 0.22s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .slide-in {
+      animation: slideIn 0.22s ease-out;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(-4px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(113,113,122,0.16),_transparent_36%),linear-gradient(to_bottom,_#ffffff,_#f4f4f5)] text-zinc-950 transition-colors duration-300">
+  <div class="mx-auto flex min-h-screen max-w-6xl flex-col px-4 py-6">
+    <!-- Header -->
+    <header class="mb-5 flex items-center justify-between rounded-3xl border border-zinc-200/80 bg-white/70 px-5 py-4 shadow-sm shadow-zinc-950/5 backdrop-blur-xl">
+      <div class="flex items-center gap-3">
+        <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-950 text-white shadow-sm">
+          <i data-lucide="sparkles" class="h-5 w-5"></i>
+        </div>
+        <div>
+          <h1 class="text-base font-semibold tracking-tight">Premium Agent Chat</h1>
+          <p class="text-sm text-zinc-500">Reasoning, ferramentas e execução em tempo real</p>
+        </div>
+      </div>
+      <span class="rounded-full bg-zinc-950 px-3 py-1 text-xs text-white">shadcn style</span>
+    </header>
+
+    <!-- Main Card -->
+    <div class="flex min-h-[760px] flex-1 overflow-hidden rounded-[2rem] border border-zinc-200/80 bg-white/72 shadow-2xl shadow-zinc-950/[0.06] backdrop-blur-xl">
+      <div class="flex w-full flex-col">
+        <!-- Agent Status -->
+        <div id="agent-status" class="hidden sticky top-0 z-20 border-b border-zinc-200/70 bg-white/75 px-4 py-3 backdrop-blur-xl">
+          <div class="mx-auto flex max-w-4xl items-center justify-between rounded-2xl border border-zinc-200/80 bg-white/80 px-4 py-3 shadow-sm shadow-zinc-950/5">
+            <div class="flex items-center gap-3">
+              <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-zinc-950 text-white shadow-sm">
+                <div class="spinner spinner-lg"></div>
+              </div>
+              <div>
+                <div class="text-sm font-semibold tracking-tight">
+                  <span id="status-label" class="shimmer-text">Thinking...</span>
+                </div>
+                <p class="text-xs text-zinc-500">Os agentes estão executando em tempo real</p>
+              </div>
+            </div>
+            <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">Live</span>
+          </div>
+        </div>
+
+        <!-- Chat Area -->
+        <div class="flex-1 overflow-y-auto px-4 py-6">
+          <main class="mx-auto flex max-w-4xl flex-col gap-5">
+            <!-- User Message -->
+            <div class="flex gap-3 justify-end">
+              <div class="max-w-[78%] rounded-3xl px-4 py-3 text-sm leading-6 shadow-sm bg-zinc-950 text-white">
+                Quero uma Chat UI moderna, premium, com Reasoning streamado, auto-colapso e estados visuais para ferramentas Read, Find, Grep e Glob.
+              </div>
+              <div class="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-zinc-200 bg-white text-zinc-700 shadow-sm">
+                <i data-lucide="user" class="h-4 w-4"></i>
+              </div>
+            </div>
+
+            <!-- Agent Response -->
+            <div class="flex gap-3">
+              <div class="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-zinc-950 text-white shadow-sm">
+                <i data-lucide="bot" class="h-4 w-4"></i>
+              </div>
+
+              <div class="w-full max-w-[82%] space-y-3">
+                <!-- Initial Message -->
+                <div id="initial-message" class="rounded-3xl border border-zinc-200 bg-white px-4 py-4 text-sm text-zinc-600 shadow-sm">
+                  Clique em <span class="font-medium text-zinc-950">Run demo</span> para ver o fluxo completo: Thinking, Reasoning, Reading, Searching e resposta final.
+                </div>
+
+                <!-- Reasoning Block -->
+                <div id="reasoning-block" class="hidden overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50/70 shadow-sm shadow-zinc-950/[0.03]">
+                  <button type="button" onclick="toggleCollapsible('reasoning-content')" class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-100/70">
+                    <div class="flex min-w-0 items-center gap-3">
+                      <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-zinc-700 shadow-sm ring-1 ring-zinc-200">
+                        <i data-lucide="brain" class="h-4 w-4"></i>
+                      </div>
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-2 text-sm font-medium text-zinc-950">
+                          <span id="reasoning-label">Reasoning</span>
+                        </div>
+                      </div>
+                    </div>
+                    <i data-lucide="chevron-down" id="reasoning-chevron" class="h-4 w-4 text-zinc-400"></i>
+                  </button>
+                  <div id="reasoning-content" class="collapsible-content open border-t border-zinc-200 px-4 py-3 text-sm leading-6 text-zinc-600">
+                    <div id="reasoning-steps" class="space-y-2"></div>
+                  </div>
+                </div>
+
+                <!-- Read Block -->
+                <div id="read-block" class="hidden overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50/70 shadow-sm shadow-zinc-950/[0.03]">
+                  <button type="button" onclick="toggleCollapsible('read-content')" class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-100/70">
+                    <div class="flex min-w-0 items-center gap-3">
+                      <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-zinc-700 shadow-sm ring-1 ring-zinc-200">
+                        <i data-lucide="file-text" class="h-4 w-4"></i>
+                      </div>
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-2 text-sm font-medium text-zinc-950">
+                          <span id="read-label">Read</span>
+                        </div>
+                      </div>
+                    </div>
+                    <i data-lucide="chevron-down" id="read-chevron" class="h-4 w-4 text-zinc-400"></i>
+                  </button>
+                  <div id="read-content" class="collapsible-content open border-t border-zinc-200 px-4 py-3 text-sm leading-6 text-zinc-600">
+                    <div id="read-logs" class="space-y-2"></div>
+                  </div>
+                </div>
+
+                <!-- Search Block -->
+                <div id="search-block" class="hidden overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50/70 shadow-sm shadow-zinc-950/[0.03]">
+                  <button type="button" onclick="toggleCollapsible('search-content')" class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-100/70">
+                    <div class="flex min-w-0 items-center gap-3">
+                      <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-zinc-700 shadow-sm ring-1 ring-zinc-200">
+                        <i data-lucide="search" class="h-4 w-4"></i>
+                      </div>
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-2 text-sm font-medium text-zinc-950">
+                          <span id="search-label">Find / Grep / Glob</span>
+                        </div>
+                      </div>
+                    </div>
+                    <i data-lucide="chevron-down" id="search-chevron" class="h-4 w-4 text-zinc-400"></i>
+                  </button>
+                  <div id="search-content" class="collapsible-content open border-t border-zinc-200 px-4 py-3 text-sm leading-6 text-zinc-600">
+                    <div id="search-logs" class="space-y-2"></div>
+                  </div>
+                </div>
+
+                <!-- Answer Block -->
+                <div id="answer-block" class="hidden rounded-3xl border border-zinc-200 bg-white px-4 py-4 text-sm leading-6 text-zinc-800 shadow-sm fade-in">
+                  <span id="answer-text"></span>
+                  <span id="answer-cursor" class="hidden ml-1 inline-block h-4 w-1 translate-y-0.5 bg-zinc-900 animate-pulse"></span>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+
+        <!-- Footer Input -->
+        <footer class="border-t border-zinc-200/80 bg-white/80 p-4 backdrop-blur-xl">
+          <div class="mx-auto flex max-w-4xl items-end gap-3 rounded-3xl border border-zinc-200 bg-zinc-50 p-2 shadow-sm">
+            <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-zinc-500 ring-1 ring-zinc-200">
+              <i data-lucide="wrench" class="h-4 w-4"></i>
+            </div>
+            <input
+              id="chat-input"
+              type="text"
+              value="Crie uma UI moderna para Chat com Reasoning e ferramentas colapsáveis"
+              class="min-h-10 flex-1 border-0 bg-transparent px-0 text-sm shadow-none focus:outline-none"
+              placeholder="Digite uma mensagem..."
+            >
+            <button
+              id="run-button"
+              onclick="runDemo()"
+              class="h-10 rounded-2xl bg-zinc-950 px-4 text-white shadow-sm hover:bg-zinc-800 disabled:opacity-70 flex items-center gap-2"
+            >
+              <i data-lucide="send" class="h-4 w-4"></i>
+              <span class="hidden sm:inline">Run demo</span>
+            </button>
+          </div>
+        </footer>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    lucide.createIcons();
+
+    const reasoningSteps = [
+      "Analisando o pedido e separando estados visuais do fluxo de agentes.",
+      "Preparando indicador principal com brilho contínuo durante execução.",
+      "Sincronizando ferramentas Read com contagem incremental de arquivos.",
+      "Agrupando Find, Grep e Glob como operações de busca com auto-colapso.",
+      "Finalizando resposta e preservando o histórico colapsável no chat.",
+    ];
+
+    const finalAnswer = "Implementei uma Chat UI premium com fluxo de Reasoning streamado, spinner principal Thinking..., estados de ferramentas com Reading N Files... e Searching..., além de auto-colapso ao finalizar cada etapa.";
+
+    let timers = [];
+    let phase = 'idle';
+
+    function toggleCollapsible(contentId) {
+      const content = document.getElementById(contentId);
+      content.classList.toggle('open');
+    }
+
+    function updateChevron(chevronId, isOpen) {
+      const chevron = document.getElementById(chevronId);
+      if (isOpen) {
+        chevron.setAttribute('data-lucide', 'chevron-down');
+      } else {
+        chevron.setAttribute('data-lucide', 'chevron-right');
+      }
+      lucide.createIcons();
+    }
+
+    function clearTimers() {
+      timers.forEach(timer => clearTimeout(timer));
+      timers = [];
+    }
+
+    function schedule(callback, delay) {
+      const timer = setTimeout(callback, delay);
+      timers.push(timer);
+    }
+
+    function setPhase(newPhase) {
+      phase = newPhase;
+      updateStatusLabel();
+    }
+
+    function updateStatusLabel() {
+      const statusLabel = document.getElementById('status-label');
+      if (phase === 'read') {
+        statusLabel.textContent = `Reading ${document.getElementById('read-logs').children.length} Files...`;
+      } else if (phase === 'search') {
+        statusLabel.textContent = 'Searching...';
+      } else if (phase === 'reasoning') {
+        statusLabel.textContent = 'Thinking...';
+      } else if (phase === 'answer') {
+        statusLabel.textContent = 'Thinking...';
+      } else {
+        statusLabel.textContent = 'Thinking...';
+      }
+    }
+
+    function addReasoningStep(step) {
+      const container = document.getElementById('reasoning-steps');
+      const div = document.createElement('div');
+      div.className = 'flex gap-3 fade-in';
+      div.innerHTML = `
+        <span class="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-400"></span>
+        <span>${step}</span>
+      `;
+      container.appendChild(div);
+    }
+
+    function addReadLog(log) {
+      const container = document.getElementById('read-logs');
+      const div = document.createElement('div');
+      div.className = 'flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs text-zinc-600 ring-1 ring-zinc-200 slide-in';
+      div.innerHTML = `
+        <i data-lucide="file-text" class="h-3.5 w-3.5 text-zinc-400"></i>
+        <span>${log}</span>
+      `;
+      container.appendChild(div);
+      lucide.createIcons();
+      updateStatusLabel();
+    }
+
+    function addSearchLog(log) {
+      const container = document.getElementById('search-logs');
+      const div = document.createElement('div');
+      div.className = 'flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs text-zinc-600 ring-1 ring-zinc-200 slide-in';
+      div.innerHTML = `
+        <i data-lucide="search" class="h-3.5 w-3.5 text-zinc-400"></i>
+        <span>${log}</span>
+      `;
+      container.appendChild(div);
+      lucide.createIcons();
+    }
+
+    function runDemo() {
+      clearTimers();
+      setPhase('idle');
+
+      // Reset UI
+      document.getElementById('agent-status').classList.remove('hidden');
+      document.getElementById('initial-message').classList.add('hidden');
+      document.getElementById('reasoning-block').classList.remove('hidden');
+      document.getElementById('read-block').classList.add('hidden');
+      document.getElementById('search-block').classList.add('hidden');
+      document.getElementById('answer-block').classList.add('hidden');
+      document.getElementById('reasoning-steps').innerHTML = '';
+      document.getElementById('read-logs').innerHTML = '';
+      document.getElementById('search-logs').innerHTML = '';
+      document.getElementById('answer-text').textContent = '';
+      document.getElementById('answer-cursor').classList.add('hidden');
+      document.getElementById('run-button').disabled = true;
+      document.getElementById('run-button').innerHTML = '<div class="spinner spinner-sm"></div><span class="ml-2 hidden sm:inline">Running</span>';
+
+      // Reasoning phase
+      setPhase('reasoning');
+      reasoningSteps.forEach((step, index) => {
+        schedule(() => addReasoningStep(step), 500 + index * 650);
+      });
+
+      // Read phase
+      schedule(() => {
+        setPhase('read');
+        document.getElementById('read-block').classList.remove('hidden');
+        document.getElementById('read-label').textContent = 'Reading 1 File...';
+        addReadLog('Lendo src/app/chat/page.tsx');
+      }, 4200);
+
+      schedule(() => {
+        document.getElementById('read-label').textContent = 'Reading 2 Files...';
+        addReadLog('Lendo src/components/agent-tools.tsx');
+      }, 5100);
+
+      schedule(() => {
+        document.getElementById('read-label').textContent = 'Reading 3 Files...';
+        addReadLog('Lendo src/components/reasoning-panel.tsx');
+      }, 5900);
+
+      // Search phase
+      schedule(() => {
+        setPhase('search');
+        document.getElementById('search-block').classList.remove('hidden');
+        document.getElementById('search-label').textContent = 'Searching...';
+        addSearchLog('Find: componentes de ferramenta');
+      }, 7100);
+
+      schedule(() => {
+        addSearchLog('Grep: estados de execution / tool_call');
+      }, 7900);
+
+      schedule(() => {
+        addSearchLog('Glob: **/*chat*.tsx');
+      }, 8600);
+
+      // Answer phase
+      schedule(() => {
+        setPhase('answer');
+        document.getElementById('answer-block').classList.remove('hidden');
+        document.getElementById('answer-cursor').classList.remove('hidden');
+        
+        const words = finalAnswer.split(' ');
+        let current = '';
+        words.forEach((word, index) => {
+          schedule(() => {
+            current = `${current}${index === 0 ? '' : ' '}${word}`;
+            document.getElementById('answer-text').textContent = current;
+          }, index * 80);
+        });
+      }, 9600);
+
+      // Done
+      schedule(() => {
+        setPhase('done');
+        document.getElementById('answer-cursor').classList.add('hidden');
+        document.getElementById('agent-status').classList.add('hidden');
+        document.getElementById('run-button').disabled = false;
+        document.getElementById('run-button').innerHTML = '<i data-lucide="send" class="h-4 w-4"></i><span class="ml-2 hidden sm:inline">Run demo</span>';
+        lucide.createIcons();
+
+        // Auto-collapse completed sections
+        setTimeout(() => {
+          document.getElementById('reasoning-content').classList.remove('open');
+          updateChevron('reasoning-chevron', false);
+          document.getElementById('read-content').classList.remove('open');
+          updateChevron('read-chevron', false);
+          document.getElementById('search-content').classList.remove('open');
+          updateChevron('search-chevron', false);
+        }, 650);
+      }, 12500);
+    }
+  </script>
+</body>
+</html>

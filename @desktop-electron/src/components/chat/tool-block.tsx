@@ -1,0 +1,733 @@
+import { useMemo, useState } from "react";
+import type { ToolBlockStatus, ToolBlockUi } from "../../types/chat";
+
+type SearchOutputRow = {
+  kind: "file" | "match" | "line";
+  file?: string;
+  line?: string;
+  text: string;
+};
+
+type WriteOutputRow = {
+  kind: "add" | "remove" | "context" | "meta" | "error";
+  marker: string;
+  text: string;
+};
+
+export function ToolBlock({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
+  const [collapsed, setCollapsed] = useState(block.isCollapsed);
+  const hasDetails = block.content.trim().length > 0;
+  const error = isError(block);
+
+  if (block.name === "Read" || block.name === "read_file") {
+    return <ReadToolEvent block={block} nested={nested} />;
+  }
+
+  if (block.name === "Write") {
+    return <WriteToolEvent block={block} nested={nested} />;
+  }
+
+  if (isSearchTool(block)) {
+    return <SearchToolEvent block={block} nested={nested} />;
+  }
+
+  return (
+    <div className={nested ? "mb-1" : "mb-2"}>
+      <button
+        type="button"
+        disabled={!hasDetails}
+        onClick={() => setCollapsed((value) => !value)}
+        className="flex w-full items-center gap-2 text-left font-mono text-xs"
+      >
+        <StatusDot status={block.status} />
+        <span className={error ? "min-w-0 flex-1 truncate text-destructive" : "min-w-0 flex-1 truncate text-muted-foreground"}>
+          {inlineToolText(block)}
+          {hasDetails ? ` - ${collapsed ? "Show" : "Hide"}` : ""}
+        </span>
+      </button>
+      {hasDetails && !collapsed ? (
+        <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-md border border-border bg-card p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+          {block.content}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
+export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: ToolBlockUi[] }) {
+  const [collapsed, setCollapsed] = useState(true);
+  const hasError = blocks.some(isError);
+  const hasRunning = blocks.some(isRunning);
+  const status: ToolBlockStatus = hasError ? "error" : hasRunning ? "running" : "completed";
+  const hasDetails = blocks.some(toolBlockHasDetails);
+
+  return (
+    <div className="mb-2">
+      <button
+        type="button"
+        className="flex w-fit items-center gap-2 rounded-md px-1.5 py-[2px] -ml-1.5 font-mono text-[11px] transition-colors hover:bg-white/[0.04]"
+        onClick={() => !hasRunning && setCollapsed((value) => !value)}
+      >
+        <StatusDot status={status} />
+        <span className={hasError ? "text-destructive" : hasRunning ? "text-muted-foreground" : "text-muted-foreground hover:text-foreground"}>
+          {groupLabel(kind, blocks, collapsed)}
+        </span>
+      </button>
+      {!hasRunning && hasDetails && !collapsed ? (
+        <div className="ml-4 mt-2">
+          {blocks.map((block) => {
+            if (kind === "read") return <ReadToolEvent key={block.id} block={block} nested />;
+            if (kind === "search") return <SearchToolEvent key={block.id} block={block} nested />;
+            if (kind === "shell") return <ShellToolEvent key={block.id} block={block} nested />;
+            return <GenericCompactToolEvent key={block.id} block={block} nested />;
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ReadToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
+  return (
+    <div className={nested ? "mb-1 flex items-center gap-2" : "mb-2 flex items-center gap-2"}>
+      <StatusDot status={block.status} size={6} />
+      <span className={isError(block) ? "min-w-0 truncate font-mono text-xs text-destructive" : "min-w-0 truncate font-mono text-xs text-muted-foreground"}>
+        {readEventText(block)}
+      </span>
+    </div>
+  );
+}
+
+function SearchToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
+  const [collapsed, setCollapsed] = useState(true);
+  const rows = useMemo(() => (collapsed ? [] : searchOutputRows(block)), [block, collapsed]);
+  const hasOutput = searchHasOutput(block);
+  const summary = searchSummary(block);
+  const preview = searchOutputPreview(block);
+
+  return (
+    <div className={nested ? "mb-2" : "mb-3"}>
+      <div className="flex items-start gap-2">
+        <div className="pt-1">
+          <StatusDot status={block.status} size={6} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className={isError(block) ? "truncate font-mono text-xs text-destructive" : "truncate font-mono text-xs text-muted-foreground"}>
+            {searchEventText(block)}
+          </div>
+          {summary ? <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/70">{summary}</div> : null}
+          {preview ? <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/70">{preview}</div> : null}
+          {hasOutput && !isRunning(block) ? (
+            <button type="button" className="mt-1 font-mono text-[11px] text-primary" onClick={() => setCollapsed((value) => !value)}>
+              Output - {collapsed ? "Show" : "Hide"}
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {hasOutput && !collapsed ? <SearchOutputPanel block={block} rows={rows} /> : null}
+    </div>
+  );
+}
+
+function WriteToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
+  const [collapsed, setCollapsed] = useState(block.isCollapsed);
+  const rows = useMemo(() => (collapsed ? [] : writeOutputRows(block)), [block, collapsed]);
+  const hasOutput = writeHasOutput(block);
+  const stats = writeLineStats(block);
+  const showStats = !isRunning(block) && !isError(block) && (stats.added > 0 || stats.removed > 0);
+
+  return (
+    <div className={nested ? "mb-1" : "mb-2"}>
+      <button
+        type="button"
+        disabled={!hasOutput}
+        className="flex w-full min-w-0 flex-wrap items-center gap-2 text-left font-mono text-xs disabled:cursor-default"
+        onClick={() => hasOutput && setCollapsed((value) => !value)}
+      >
+        <StatusDot status={block.status} />
+        <span className={isError(block) ? "text-destructive" : "text-muted-foreground"}>{writeEventText(block)}</span>
+        {showStats ? (
+          <span className="flex items-center gap-1">
+            {stats.added > 0 ? <span className="font-medium text-success">+{stats.added}</span> : null}
+            {stats.removed > 0 ? <span className="font-medium text-destructive">-{stats.removed}</span> : null}
+          </span>
+        ) : null}
+        {hasOutput ? (
+          <>
+            <span className="text-muted-foreground/70">-</span>
+            <span className="text-primary">{collapsed ? "Show" : "Hide"}</span>
+          </>
+        ) : null}
+      </button>
+      {hasOutput && !collapsed ? <WriteOutputPanel rows={rows} /> : null}
+    </div>
+  );
+}
+
+function ShellToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
+  const [collapsed, setCollapsed] = useState(true);
+  const output = block.content.trimEnd();
+  const hasOutput = output.trim().length > 0;
+  return (
+    <div className={nested ? "mb-2" : "mb-3"}>
+      <div className="flex items-start gap-2">
+        <div className="pt-1">
+          <StatusDot status={block.status} size={6} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className={isError(block) ? "truncate font-mono text-xs text-destructive" : "truncate font-mono text-xs text-muted-foreground"}>
+            {shellCommandText(block)}
+          </div>
+          {shellOutputPreview(output) ? (
+            <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/70">{shellOutputPreview(output)}</div>
+          ) : null}
+          {hasOutput ? (
+            <button type="button" className="mt-1 font-mono text-[11px] text-primary" onClick={() => setCollapsed((value) => !value)}>
+              Output - {collapsed ? "Show" : "Hide"}
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {hasOutput && !collapsed ? (
+        <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-md border border-border bg-card p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+          {output}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
+function WriteOutputPanel({ rows }: { rows: WriteOutputRow[] }) {
+  return (
+    <div className="ml-4 mt-2 max-h-80 overflow-auto rounded-md border border-border bg-card/80 font-mono text-[11px] leading-5">
+      {rows.map((row, index) => (
+        <WriteOutputLine key={`${row.kind}-${index}-${row.text}`} row={row} />
+      ))}
+    </div>
+  );
+}
+
+function WriteOutputLine({ row }: { row: WriteOutputRow }) {
+  const className =
+    row.kind === "add"
+      ? "bg-success/10 text-success"
+      : row.kind === "remove"
+        ? "bg-destructive/10 text-destructive"
+        : row.kind === "meta"
+          ? "bg-secondary/35 text-muted-foreground/70"
+          : row.kind === "error"
+            ? "text-destructive"
+            : "text-muted-foreground";
+
+  return (
+    <div className={`grid grid-cols-[2.25rem_minmax(0,1fr)] border-b border-border/50 py-0.5 last:border-0 ${className}`}>
+      <span className="select-none pr-3 text-right opacity-80">{row.marker}</span>
+      <span className="whitespace-pre-wrap break-words pr-3">{row.text.length > 0 ? row.text : " "}</span>
+    </div>
+  );
+}
+
+function GenericCompactToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
+  return (
+    <div className={nested ? "mb-1 flex items-center gap-2" : "mb-2 flex items-center gap-2"}>
+      <StatusDot status={block.status} size={6} />
+      <span className={isError(block) ? "min-w-0 truncate font-mono text-xs text-destructive" : "min-w-0 truncate font-mono text-xs text-muted-foreground"}>
+        {inlineToolText(block)}
+      </span>
+    </div>
+  );
+}
+
+function SearchOutputPanel({ block, rows }: { block: ToolBlockUi; rows: SearchOutputRow[] }) {
+  const metadata = searchMetadata(block);
+  const fallback = searchOutputText(block);
+
+  return (
+    <div className="ml-4 mt-2 rounded-md border border-border bg-card/80 p-3">
+      {metadata.length > 0 ? (
+        <dl className="grid gap-x-4 gap-y-1 font-mono text-[11px] sm:grid-cols-2">
+          {metadata.map((item) => (
+            <div key={item.label} className="min-w-0">
+              <dt className="text-muted-foreground/60">{item.label}</dt>
+              <dd className="truncate text-muted-foreground">{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {rows.length > 0 ? (
+        <div className={metadata.length > 0 ? "mt-3 max-h-72 overflow-auto font-mono text-[11px] leading-5" : "max-h-72 overflow-auto font-mono text-[11px] leading-5"}>
+          {rows.map((row, index) => (
+            <SearchOutputLine key={`${row.kind}-${index}-${row.text}`} row={row} />
+          ))}
+        </div>
+      ) : fallback.trim() ? (
+        <pre className={metadata.length > 0 ? "mt-3 max-h-72 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5 text-muted-foreground" : "max-h-72 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5 text-muted-foreground"}>
+          {fallback.trimEnd()}
+        </pre>
+      ) : (
+        <div className={metadata.length > 0 ? "mt-3 font-mono text-[11px] text-muted-foreground" : "font-mono text-[11px] text-muted-foreground"}>
+          No output returned.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SearchOutputLine({ row }: { row: SearchOutputRow }) {
+  if (row.kind === "match") {
+    return (
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,2fr)] gap-2 border-b border-border/60 py-1 last:border-0">
+        <span className="truncate text-muted-foreground">{row.file}</span>
+        <span className="text-muted-foreground/60">{row.line}</span>
+        <span className="truncate text-foreground/80">{row.text}</span>
+      </div>
+    );
+  }
+
+  if (row.kind === "file") {
+    return (
+      <div className="border-b border-border/60 py-1 last:border-0">
+        <span className="truncate text-muted-foreground">{row.text}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-b border-border/60 py-1 last:border-0">
+      <span className="whitespace-pre-wrap text-muted-foreground">{row.text}</span>
+    </div>
+  );
+}
+
+function toolBlockHasDetails(block: ToolBlockUi) {
+  if (block.name === "Write") return writeHasOutput(block);
+  if (isSearchTool(block)) return searchHasOutput(block);
+  return block.content.trim().length > 0;
+}
+
+function StatusDot({ status, size = 8 }: { status: ToolBlockStatus; size?: number }) {
+  const running = status === "running" || status === "queued";
+  const color = isErrorStatus(status) ? "bg-destructive" : "bg-success";
+  return running ? (
+    <span className="personagent-spinner shrink-0 text-muted-foreground" style={{ width: size, height: size }} aria-hidden="true" />
+  ) : (
+    <span className={`shrink-0 rounded-full ${color}`} style={{ width: size, height: size }} />
+  );
+}
+
+export function readRunningLabel(count: number) {
+  return `Reading ${count} ${count === 1 ? "File" : "Files"}...`;
+}
+
+export function readCollapsedLabel(count: number) {
+  return `Read ${count} ${count === 1 ? "File" : "Files"} >`;
+}
+
+export function searchRunningLabel() {
+  return "Searching...";
+}
+
+export function searchCollapsedLabel(count: number) {
+  return `Search ${count} ${count === 1 ? "time" : "times"} >`;
+}
+
+function readEventText(block: ToolBlockUi) {
+  const file = fileLabel(block);
+  if (block.status === "permission_required") return `Permission required for Read ${file}`;
+  if (block.status === "error") return `Failed Read ${file}`;
+  if (isRunning(block)) return readRunningLabel(1);
+  const detail = lineDetail(block);
+  return `Read ${file}${detail ? ` - ${detail}` : ""}`;
+}
+
+function searchEventText(block: ToolBlockUi) {
+  if (block.status === "permission_required") return `Permission required for ${searchStaticLabel(block)}`;
+  if (block.status === "error") return `Failed ${searchStaticLabel(block)}`;
+  if (isRunning(block)) return searchRunningLabel();
+  return searchStaticLabel(block);
+}
+
+function writeEventText(block: ToolBlockUi) {
+  const file = writeFileLabel(block);
+  const label = file ? `Write - ${file}` : "Write";
+  if (block.status === "permission_required") return `Permission required for ${label}`;
+  if (block.status === "error") return `Failed ${label}`;
+  if (isRunning(block)) return `${label} running`;
+  return label;
+}
+
+function writeFileLabel(block: ToolBlockUi) {
+  return (
+    stringValue(block.data?.display_path) ??
+    stringValue(block.data?.path) ??
+    (block.path?.trim() ? block.path.trim() : undefined)
+  );
+}
+
+function writeLineStats(block: ToolBlockUi) {
+  const dataAdded = numberValue(block.data?.added_lines);
+  const dataRemoved = numberValue(block.data?.removed_lines);
+  if (typeof dataAdded === "number" || typeof dataRemoved === "number") {
+    return { added: dataAdded ?? 0, removed: dataRemoved ?? 0 };
+  }
+
+  const diff = rawStringValue(block.data?.diff);
+  if (diff?.trim()) return diffLineStats(diff);
+
+  const writtenContent = writeWrittenContent(block);
+  if (typeof writtenContent === "string") {
+    return { added: contentLineCount(writtenContent), removed: 0 };
+  }
+
+  return { added: 0, removed: 0 };
+}
+
+function writeOutputRows(block: ToolBlockUi): WriteOutputRow[] {
+  const diff = rawStringValue(block.data?.diff);
+  if (diff?.trim()) {
+    return diff.split(/\r?\n/).map((line) => writeOutputRowFromDiffLine(line));
+  }
+
+  const writtenContent = writeWrittenContent(block);
+  if (typeof writtenContent === "string") {
+    return contentLines(writtenContent).map((line) => ({ kind: "add", marker: "+", text: line }));
+  }
+
+  if (isError(block) && block.content.trim()) {
+    return block.content.split(/\r?\n/).map((line) => ({ kind: "error", marker: "!", text: line }));
+  }
+
+  return [];
+}
+
+function writeHasOutput(block: ToolBlockUi) {
+  const diff = rawStringValue(block.data?.diff);
+  if (diff?.trim()) return true;
+  const writtenContent = writeWrittenContent(block);
+  if (typeof writtenContent === "string") return writtenContent.length > 0;
+  return isError(block) && hasNonWhitespace(block.content);
+}
+
+function writeOutputRowFromDiffLine(line: string): WriteOutputRow {
+  if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
+    return { kind: "meta", marker: "", text: line };
+  }
+  if (line.startsWith("+")) return { kind: "add", marker: "+", text: line.slice(1) };
+  if (line.startsWith("-")) return { kind: "remove", marker: "-", text: line.slice(1) };
+  if (line.startsWith(" ")) return { kind: "context", marker: "", text: line.slice(1) };
+  return { kind: "context", marker: "", text: line };
+}
+
+function diffLineStats(diff: string) {
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split(/\r?\n/)) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added += 1;
+    if (line.startsWith("-")) removed += 1;
+  }
+  return { added, removed };
+}
+
+function writeWrittenContent(block: ToolBlockUi) {
+  return rawStringValue(block.data?.written_content) ?? rawStringValue(block.data?.new_content);
+}
+
+function contentLines(content: string) {
+  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (normalized === "") return [];
+  const lines = normalized.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+}
+
+function contentLineCount(content: string) {
+  if (content.length === 0) return 0;
+  let count = 1;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content[index] === "\n") count += 1;
+  }
+  return content.endsWith("\n") ? count - 1 : count;
+}
+
+function searchSummary(block: ToolBlockUi) {
+  if (isRunning(block)) return undefined;
+  const data = block.data;
+  const parts: string[] = [];
+  const count = numberValue(data?.matches) ?? numberValue(data?.count);
+  const shown = numberValue(data?.shown);
+
+  if (typeof count === "number") {
+    const label = block.name === "Glob" ? "file" : "match";
+    parts.push(`${count} ${count === 1 ? label : `${label}s`}`);
+  }
+  if (typeof shown === "number" && typeof count === "number" && shown !== count) {
+    parts.push(`showing ${shown}`);
+  }
+  if (data?.truncated === true) parts.push("truncated");
+  if (data?.timed_out === true) parts.push("timed out");
+
+  return parts.join(" - ");
+}
+
+function inlineToolText(block: ToolBlockUi) {
+  const label =
+    block.name === "Grep" || block.name === "search_files"
+      ? searchLabel(block)
+      : block.name === "Glob"
+        ? globLabel(block)
+        : block.name === "WebFetch"
+          ? webFetchLabel(block)
+          : block.name === "LSP"
+            ? lspLabel(block)
+            : block.name === "TodoWrite"
+              ? todoLabel(block)
+              : block.name === "shell"
+                ? shellLabel(block)
+                : block.name === "Task" || block.name.startsWith("Task")
+                  ? taskLabel(block)
+                  : block.title.trim() || block.name;
+
+  if (block.status === "permission_required") return `Permission required for ${label}`;
+  if (block.status === "error") return `Failed ${label}`;
+  if (isRunning(block)) return `${label} running`;
+  return label;
+}
+
+function groupLabel(kind: string, blocks: ToolBlockUi[], collapsed: boolean) {
+  const count = blocks.length;
+  if (kind === "read") return blocks.some(isRunning) ? readRunningLabel(count) : collapsed ? readCollapsedLabel(count) : `Read ${count} ${count === 1 ? "File" : "Files"} Hide`;
+  if (kind === "shell") return `${blocks.some(isRunning) ? "Running" : "Ran"} ${count} ${count === 1 ? "command" : "commands"}`;
+  if (kind === "search") return blocks.some(isRunning) ? searchRunningLabel() : collapsed ? searchCollapsedLabel(count) : `Search ${count} ${count === 1 ? "time" : "times"} Hide`;
+  if (kind === "web") return `Fetched ${count} URLs`;
+  if (kind === "task") return `Updated ${count} tasks`;
+  if (kind === "todo") return `Wrote ${count} todo lists`;
+  if (kind === "lsp") return `Ran ${count} LSP queries`;
+  return `${count} tool calls`;
+}
+
+function isSearchTool(block: ToolBlockUi) {
+  return block.name === "Glob" || block.name === "Grep" || block.name === "search_files" || isSearchShellCommand(block);
+}
+
+export function isSearchShellCommand(block: ToolBlockUi) {
+  if (block.name !== "shell") return false;
+  const command = stringValue(block.data?.command);
+  const base = command ? shellCommandBase(command) : undefined;
+  return base === "find" || base === "grep" || base === "rg";
+}
+
+function searchStaticLabel(block: ToolBlockUi) {
+  if (block.name === "Glob") return globLabel(block);
+  if (block.name === "shell") return shellLabel(block);
+  return searchLabel(block);
+}
+
+function searchLabel(block: ToolBlockUi) {
+  const prefix = block.name === "search_files" ? "Search" : "Grep";
+  const pattern = stringValue(block.data?.pattern);
+  if (pattern) return `${prefix} ${pattern}`;
+  if (block.path) return `${prefix} ${block.path}`;
+  return prefix;
+}
+
+function globLabel(block: ToolBlockUi) {
+  const pattern = stringValue(block.data?.pattern);
+  return pattern ? `Glob ${pattern}` : "Glob";
+}
+
+function webFetchLabel(block: ToolBlockUi) {
+  const url = stringValue(block.data?.final_url) ?? stringValue(block.data?.url);
+  return url ? `Fetch ${url}` : "WebFetch";
+}
+
+function lspLabel(block: ToolBlockUi) {
+  const operation = stringValue(block.data?.operation);
+  return operation ? `LSP ${operation}` : "LSP";
+}
+
+function todoLabel(block: ToolBlockUi) {
+  const todos = block.data?.todos;
+  return Array.isArray(todos) ? `TodoWrite ${todos.length} items` : "TodoWrite";
+}
+
+function taskLabel(block: ToolBlockUi) {
+  const task = block.data?.task;
+  if (task && typeof task === "object" && "title" in task) {
+    const title = stringValue((task as Record<string, unknown>).title);
+    if (title) return `${block.name} ${title}`;
+  }
+  const taskId = stringValue(block.data?.task_id);
+  return taskId ? `${block.name} ${taskId}` : block.name;
+}
+
+function shellLabel(block: ToolBlockUi) {
+  const command = stringValue(block.data?.command);
+  if (!command) return "Shell command";
+  const base = shellCommandBase(command);
+  const args = base ? command.slice(base.length).trim() : "";
+  if (base === "find") return `Find ${args}`;
+  if (base === "grep") return `Grep ${args}`;
+  if (base === "rg") return `Search ${args}`;
+  return `Shell ${command}`;
+}
+
+function searchMetadata(block: ToolBlockUi) {
+  const data = block.data;
+  const items: { label: string; value: string }[] = [];
+  const command = stringValue(data?.command);
+  const pattern = stringValue(data?.pattern);
+  const path = stringValue(data?.display_path) ?? stringValue(data?.path);
+  const count = numberValue(data?.matches) ?? numberValue(data?.count);
+  const shown = numberValue(data?.shown);
+  const returnCode = numberValue(data?.return_code);
+
+  if (command) items.push({ label: "Command", value: command });
+  if (pattern) items.push({ label: "Pattern", value: pattern });
+  if (path) items.push({ label: "Path", value: path });
+  if (typeof count === "number") items.push({ label: block.name === "Glob" ? "Files" : "Matches", value: String(count) });
+  if (typeof shown === "number") items.push({ label: "Shown", value: String(shown) });
+  if (typeof returnCode === "number") items.push({ label: "Return code", value: String(returnCode) });
+  if (data?.truncated === true) items.push({ label: "Truncated", value: "true" });
+  if (data?.timed_out === true) items.push({ label: "Timed out", value: "true" });
+
+  return items;
+}
+
+function searchOutputRows(block: ToolBlockUi): SearchOutputRow[] {
+  const matches = block.data?.matches;
+  if (Array.isArray(matches)) {
+    return matches.map((item) => ({ kind: "file" as const, text: String(item) })).filter((row) => row.text.trim().length > 0);
+  }
+
+  const output = searchOutputText(block);
+  if (!output.trim()) return [];
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0)
+    .map((line) => searchOutputRowFromLine(line, block));
+}
+
+function searchOutputRowFromLine(line: string, block: ToolBlockUi): SearchOutputRow {
+  const parsed = /^(.+?):(\d+):(.*)$/.exec(line);
+  if (parsed) {
+    return {
+      kind: "match",
+      file: parsed[1],
+      line: parsed[2],
+      text: parsed[3].trim(),
+    };
+  }
+
+  const command = stringValue(block.data?.command);
+  const base = command ? shellCommandBase(command) : undefined;
+  if (block.name === "Glob" || base === "find") {
+    return { kind: "file", text: line };
+  }
+
+  return { kind: "line", text: line };
+}
+
+function searchOutputText(block: ToolBlockUi) {
+  return rawStringValue(block.data?.content) ?? block.content;
+}
+
+function searchHasOutput(block: ToolBlockUi) {
+  const matches = block.data?.matches;
+  return (Array.isArray(matches) && matches.length > 0) || hasNonWhitespace(searchOutputText(block));
+}
+
+function searchOutputPreview(block: ToolBlockUi) {
+  const matches = block.data?.matches;
+  const firstLine = firstNonEmptyLine(searchOutputText(block));
+  const first =
+    Array.isArray(matches) && matches.length > 0
+      ? { kind: "file" as const, text: String(matches[0]) }
+      : firstLine
+        ? searchOutputRowFromLine(firstLine, block)
+        : undefined;
+  if (!first) return undefined;
+  const text = first.kind === "match" ? `${first.file}:${first.line} ${first.text}` : first.text;
+  return text.length > 140 ? `${text.slice(0, 139)}...` : text;
+}
+
+function firstNonEmptyLine(output: string) {
+  let start = 0;
+  while (start <= output.length) {
+    const end = output.indexOf("\n", start);
+    const lineEnd = end === -1 ? output.length : end;
+    const line = output.slice(start, lineEnd).trimEnd();
+    if (line.trim().length > 0) return line;
+    if (end === -1) return undefined;
+    start = end + 1;
+  }
+  return undefined;
+}
+
+function lineDetail(block: ToolBlockUi) {
+  const start = block.data?.start_line;
+  const end = block.data?.end_line;
+  const truncated = block.data?.truncated === true;
+  const range = typeof start === "number" && typeof end === "number" && end >= start ? (start === end ? `L${start}` : `L${start}-L${end}`) : undefined;
+  if (!range && !truncated) return undefined;
+  return [range, truncated ? "truncated" : undefined].filter(Boolean).join(" - ");
+}
+
+function fileLabel(block: ToolBlockUi) {
+  if (block.path?.trim()) return block.path.trim();
+  const title = block.title.trim();
+  if (title.startsWith("Read ") && title.length > 5) return title.slice(5);
+  if (title && title !== "Reading file") return title;
+  return "file";
+}
+
+function shellCommandText(block: ToolBlockUi) {
+  const command = stringValue(block.data?.command);
+  const text = command || block.title.trim() || "Shell command";
+  if (block.status === "permission_required") return `Permission required: ${text}`;
+  if (block.status === "error") return `Failed: ${text}`;
+  if (isRunning(block)) return `${text} running`;
+  return text;
+}
+
+function shellOutputPreview(output: string) {
+  const firstLine = output.split("\n").find((line) => line.trim().length > 0)?.trimEnd();
+  if (!firstLine) return undefined;
+  return firstLine.length > 140 ? `${firstLine.slice(0, 139)}...` : firstLine;
+}
+
+function hasNonWhitespace(value: string) {
+  return /\S/.test(value);
+}
+
+function shellCommandBase(command: string) {
+  return /^\s*([^\s]+)/.exec(command)?.[1];
+}
+
+function isError(block: ToolBlockUi) {
+  return isErrorStatus(block.status);
+}
+
+function isErrorStatus(status: ToolBlockStatus) {
+  return status === "error" || status === "permission_required";
+}
+
+function isRunning(block: ToolBlockUi) {
+  return block.status === "running" || block.status === "queued";
+}
+
+function stringValue(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : undefined;
+}
+
+function rawStringValue(value: unknown) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function numberValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return undefined;
+}

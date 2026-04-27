@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Agentic OS Workspace</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Phosphor Icons (High-end geometric icons) -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <!-- Google Fonts: Outfit (UI) & JetBrains Mono (Code/Agent) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&amp;family=Outfit:wght@300;400;500;600&amp;display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Outfit', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        zinc: {
+                            850: '#1f1f22',
+                            900: '#18181b',
+                            950: '#09090b',
+                            975: '#050505',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Base Fluidity */
+        body {
+            background-color: #000000;
+            color: #d4d4d8;
+            overscroll-behavior-y: none;
+        }
+
+        /* Glass Surface Effects */
+        .glass-panel {
+            background: linear-gradient(145deg, rgba(24, 24, 27, 0.6) 0%, rgba(9, 9, 11, 0.8) 100%);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+        }
+
+        /* Deep Spatial Shadow */
+        .shadow-ambient {
+            box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255,255,255,0.06);
+        }
+
+        /* Minimal Scrollbar for deeply nested overflow areas */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(45, 212, 191, 0.3);
+        }
+
+        /* Complex Keyframes for Agentic Micro-interactions */
+        .cubic-spring {
+            transition-timing-function: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes agentic-pulse {
+            0%, 100% { opacity: 0.1; transform: scale(0.9); }
+            50% { opacity: 0.3; transform: scale(1.15); }
+        }
+        .animate-core-pulse {
+            animation: agentic-pulse 4s ease-in-out infinite;
+        }
+
+        @keyframes float-subtle {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-3px); }
+        }
+        .animate-float {
+            animation: float-subtle 5s ease-in-out infinite;
+        }
+
+        @keyframes shimmer-sweep {
+            0% { transform: translateX(-100%) skewX(-15deg); }
+            100% { transform: translateX(200%) skewX(-15deg); }
+        }
+        .animate-shimmer {
+            animation: shimmer-sweep 3s infinite linear;
+        }
+
+        /* Dynamic Waterfall Entrance states */
+        .thinking-line {
+            opacity: 0;
+            transform: translateY(-6px);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .final-element {
+            opacity: 0;
+            transform: translateY(12px);
+            transition: all 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        textarea {
+            field-sizing: content;
+        }
+        
+    </style>
+</head>
+<body class="h-[100dvh] w-full flex overflow-hidden selection:bg-teal-500/20 selection:text-teal-100 antialiased font-sans">
+
+    <!-- Macro-Architecture: Left-most Utility Shell -->
+    <nav class="hidden md:flex flex-col items-center w-[72px] h-full border-r border-white-[0.03] bg-zinc-975/80 backdrop-blur-3xl py-6 z-20 flex-shrink-0 relative">
+        <button class="relative size-10 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_0_20px_rgba(255,255,255,0.03)] flex items-center justify-center mb-8 group overflow-hidden">
+            <div class="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <i class="ph-fill ph-hexagon text-white text-2xl group-hover:scale-95 transition-transform duration-300"></i>
+        </button>
+
+        <div class="flex flex-col gap-4 w-full px-3">
+            <button class="relative size-12 w-full rounded-xl bg-white/[0.04] text-white flex items-center justify-center shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition-all">
+                <i class="ph-fill ph-chats text-[22px]"></i>
+                <div class="absolute inset-y-2 -left-3 w-1 bg-teal-400 rounded-r-full shadow-[0_0_10px_rgba(45,212,191,0.5)]"></div>
+            </button>
+            <button class="relative size-12 w-full rounded-xl text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.02] flex items-center justify-center transition-colors group">
+                <i class="ph ph-flask text-[22px] group-hover:rotate-12 transition-transform duration-300"></i>
+            </button>
+            <button class="relative size-12 w-full rounded-xl text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.02] flex items-center justify-center transition-colors">
+                <i class="ph ph-plugs text-[22px]"></i>
+            </button>
+        </div>
+
+        <div class="mt-auto flex flex-col items-center gap-4 w-full">
+            <button class="text-zinc-500 hover:text-zinc-300 transition-colors"><i class="ph ph-gear text-[22px]"></i></button>
+            <button class="size-10 rounded-full border border-white/10 bg-zinc-900 overflow-hidden flex items-center justify-center relative shadow-ambient group">
+                <span class="text-xs font-medium text-zinc-400 tracking-wider group-hover:text-white transition-colors">OS</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Meso-Architecture: Knowledge / Session Retrieval System -->
+    <aside class="hidden lg:flex flex-col w-[300px] h-full border-r border-white-[0.03] bg-[#070708]/90 backdrop-blur-2xl z-20 flex-shrink-0">
+        <div class="px-5 py-5 border-b border-white-[0.02]">
+            <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400 mb-4">Workspace Sessions</h2>
+            <div class="relative w-full group hidden md:block">
+                <i class="ph ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 group-focus-within:text-teal-400 transition-colors pointer-events-none"></i>
+                <input type="text" placeholder="Search knowledge base..." class="w-full bg-[#111114] border border-white/5 rounded-lg pl-9 pr-4 py-2 font-light text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-white/10 focus:bg-[#151518] focus:shadow-[0_0_15px_rgba(45,212,191,0.05)] transition-all text-sm">
+                <div class="absolute right-2 top-1/2 -translate-y-1/2 border border-white/10 rounded px-1.5 text-[10px] text-zinc-600 font-mono tracking-wider">⌘K</div>
+            </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto px-3 py-4 space-y-6 custom-scrollbar">
+            <div>
+                <h3 class="text-[10px] font-semibold tracking-widest text-zinc-600 uppercase mb-2 px-2 flex items-center gap-2">
+                    <i class="ph-fill ph-clock-counter-clockwise text-zinc-700"></i> Active / Today
+                </h3>
+                <div class="space-y-0.5">
+                    <button class="w-full text-left px-3 py-2.5 rounded-xl bg-white/[0.04] text-white text-sm font-medium border border-white/[0.06] shadow-[0_2px_10px_rgba(0,0,0,0.2)] relative overflow-hidden group/item flex items-start gap-2.5 transition-all">
+                        <i class="ph-fill ph-code-block text-teal-400 text-base mt-0.5 shrink-0 animate-pulse"></i>
+                        <div class="flex flex-col gap-1 w-full overflow-hidden">
+                            <span class="truncate block w-[90%] tracking-wide text-[13px] leading-snug">Optimize React Dashboard Render Flow</span>
+                            <span class="text-[10px] font-mono text-zinc-500">2 mins ago • Local-Volume</span>
+                        </div>
+                    </button>
+                    <button class="w-full text-left px-3 py-2.5 rounded-xl bg-transparent hover:bg-white/[0.02] text-zinc-400 text-sm font-light border border-transparent overflow-hidden group/item flex items-start gap-2.5 transition-all outline-none">
+                        <i class="ph ph-terminal-window text-zinc-600 group-hover/item:text-zinc-400 text-base mt-0.5 shrink-0 transition-colors"></i>
+                        <div class="flex flex-col gap-1 w-full overflow-hidden">
+                            <span class="truncate block w-[90%] tracking-wide text-[13px] leading-snug text-zinc-400 group-hover/item:text-zinc-200">Debug Python Regex script failure</span>
+                            <span class="text-[10px] font-mono text-zinc-600">3 hrs ago • Python-API</span>
+                        </div>
+                    </button>
+                    <button class="w-full text-left px-3 py-2.5 rounded-xl bg-transparent hover:bg-white/[0.02] text-zinc-400 text-sm font-light border border-transparent overflow-hidden group/item flex items-start gap-2.5 transition-all outline-none">
+                        <i class="ph ph-hard-drives text-zinc-600 group-hover/item:text-zinc-400 text-base mt-0.5 shrink-0 transition-colors"></i>
+                        <div class="flex flex-col gap-1 w-full overflow-hidden">
+                            <span class="truncate block w-[90%] tracking-wide text-[13px] leading-snug text-zinc-400 group-hover/item:text-zinc-200">Configure AWS S3 Bucket CORS rules</span>
+                            <span class="text-[10px] font-mono text-zinc-600">5 hrs ago • Infra-Repo</span>
+                        </div>
+                    </button>
+                </div>
+            </div>
+
+            <div>
+                <h3 class="text-[10px] font-semibold tracking-widest text-zinc-600 uppercase mb-2 px-2">Previous 7 Days</h3>
+                <div class="space-y-0.5">
+                    <button class="w-full text-left px-3 py-2.5 rounded-xl bg-transparent hover:bg-white/[0.02] text-zinc-400 text-sm font-light border border-transparent overflow-hidden group/item flex items-start gap-2.5 transition-all">
+                        <i class="ph ph-book-open text-zinc-600 text-base mt-0.5 shrink-0"></i>
+                        <span class="truncate block text-[13px] leading-snug">Explain Transformer Architecture Math</span>
+                    </button>
+                    <button class="w-full text-left px-3 py-2.5 rounded-xl bg-transparent hover:bg-white/[0.02] text-zinc-400 text-sm font-light border border-transparent overflow-hidden group/item flex items-start gap-2.5 transition-all">
+                        <i class="ph ph-docker-logo text-zinc-600 text-base mt-0.5 shrink-0"></i>
+                        <span class="truncate block text-[13px] leading-snug">Generate Docker Compose (Redis+Node)</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mt-auto p-4 border-t border-white/[0.03] bg-black/20">
+            <div class="flex items-center justify-between text-xs">
+                <span class="text-zinc-500 font-medium tracking-wide">Sys Memory</span>
+                <span class="text-teal-400 font-mono text-[10px]">1.8 GB / 16 GB</span>
+            </div>
+            <div class="w-full h-[3px] bg-zinc-900 rounded-full mt-2 override-overflow border border-white/5 overflow-hidden">
+                <div class="h-full bg-teal-500 w-[12%] rounded-full shadow-[0_0_8px_rgba(45,212,191,0.5)]"></div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Macro-Architecture: The Immersive Workspace Void -->
+    <main class="flex-1 relative flex flex-col h-[100dvh] bg-black overflow-hidden isolate shadow-[-10px_0_30px_rgba(0,0,0,0.8)]">
+        
+        <!-- Provided Atmospheric Video Layer -->
+        <div class="absolute inset-0 z-[-1] pointer-events-none overflow-hidden">
+            <video autoplay="" loop="" muted="" playsinline="" class="w-full h-full object-cover scale-105 blur-[2px] opacity-70">
+                <source src="https://v3b.fal.media/files/b/0a978d49/jIMQ1GRmwgpf72yqHZHHx_video.mp4" type="video/mp4">
+            </video>
+            <div class="absolute inset-0 bg-[#000000]/80 mix-blend-multiply"></div>
+            <div class="absolute inset-0 bg-gradient-to-b from-[#050505]/95 via-transparent to-[#050505]/95"></div>
+            <div class="absolute inset-0 bg-gradient-to-r from-[#050505]/95 via-transparent to-[#050505]/95"></div>
+        </div>
+
+        <header class="h-16 flex items-center justify-between px-4 lg:px-8 border-b border-white/[0.03] bg-zinc-950/40 backdrop-blur-md shrink-0 sticky top-0 z-10 transition-colors">
+            <div class="flex items-center gap-3">
+                <button class="lg:hidden p-2 text-zinc-400 hover:text-white transition-colors bg-white/5 rounded-md"><i class="ph ph-list text-lg"></i></button>
+                <div class="hidden md:flex items-center gap-3">
+                    <span class="px-2 py-1 rounded bg-teal-500/10 border border-teal-500/20 text-[9px] uppercase tracking-widest text-teal-400 font-mono font-medium shadow-[0_0_10px_rgba(45,212,191,0.1)]">Active Loop</span>
+                    <h1 class="text-zinc-200 font-medium text-[15px] tracking-wide">Optimize React Dashboard Render Flow</h1>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-2">
+                <button class="px-3 py-1.5 text-[11px] uppercase tracking-widest font-medium text-zinc-400 bg-white/[0.02] rounded-md border border-white/5 hover:bg-white/[0.06] hover:text-white transition-all flex items-center gap-2">
+                    <i class="ph ph-export text-sm"></i> Export Log
+                </button>
+                <button class="size-8 rounded-md flex items-center justify-center border border-white/5 bg-white/[0.02] hover:bg-white/[0.06] text-zinc-400 transition-colors"><i class="ph-fill ph-dots-three-vertical text-lg"></i></button>
+            </div>
+        </header>
+
+        <!-- Dynamic Agent Workflow Area -->
+        <div id="chat-scroll-area" class="flex-1 overflow-y-auto w-full flex flex-col items-center px-4 md:px-8 py-8 custom-scrollbar z-0 scroll-smooth pb-44">
+            
+            <div class="w-full max-w-4xl space-y-10">
+
+                <div class="flex gap-4 w-full">
+                    <div class="size-[34px] rounded-xl bg-gradient-to-b from-zinc-700 to-zinc-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)] border border-white/10 flex items-center justify-center shrink-0">
+                        <i class="ph-fill ph-user text-zinc-300 text-sm"></i>
+                    </div>
+                    
+                    <div class="flex-1 pt-0.5">
+                        <h4 class="text-zinc-500 font-medium text-[11px] uppercase tracking-[0.15em] mb-2 pointer-events-none">User Input Context</h4>
+                        <div class="text-zinc-200 text-[15px] font-light leading-relaxed max-w-[95%]">
+                            I noticed the main dashboard module is suddenly suffering from severe frame drops when we load datasets over 10K rows. Can you investigate <code class="bg-[#1f1f22] px-1.5 py-0.5 rounded-md text-zinc-300 font-mono text-[13px] border border-white-[0.08]">src/components/DashboardMetrics.tsx</code> and execute any immediate optimizations related to the React tree?
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Simulation Architecture (Micro-Interactions Base) -->
+                <div class="flex gap-4 w-full group/agent relative">
+                    <!-- Physical Wire -->
+                    <div class="absolute left-[17px] top-10 bottom-[-40px] w-px bg-gradient-to-b from-white/10 via-white/5 to-transparent z-0"></div>
+
+                    <div class="relative size-[34px] rounded-xl bg-black border border-teal-500/40 flex items-center justify-center shrink-0 overflow-hidden shadow-[0_0_20px_rgba(45,212,191,0.2)] animate-float z-10 box-border">
+                        <div class="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent"></div>
+                        <div class="absolute inset-0 bg-teal-500/10 animate-core-pulse"></div>
+                        <i class="ph-fill ph-sparkle text-teal-400 z-10 relative"></i>
+                    </div>
+                    
+                    <div class="flex-1 pt-0.5 max-w-full lg:max-w-[95%] z-10">
+                        <h4 class="text-zinc-400 font-medium text-[11px] uppercase tracking-[0.15em] mb-4 flex items-center gap-2.5">
+                            Agentic Intelligence Core 
+                            <span class="px-1.5 py-0.5 rounded-[4px] bg-zinc-800/80 border border-teal-500/20 text-[9px] text-teal-400 font-mono lowercase shadow-sm">model_v4.max</span>
+                        </h4>
+                        
+                        <div class="flex flex-col gap-2 mb-4 relative z-10">
+                            <!-- Stateful Loading Block Simulator -->
+                            <div class="tool-container flex w-max max-w-full items-center gap-3 bg-zinc-950/80 border border-white-[0.06] rounded-[10px] pr-5 pl-3 py-2 transition-all duration-[600ms] backdrop-blur-xl shadow-ambient relative overflow-hidden group/tool">
+                                <div class="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent transform -translate-x-full group-hover/tool:animate-shimmer"></div>
+                                
+                                <div class="relative size-4 flex justify-center items-center shrink-0">
+                                    <i class="ph ph-spinner-gap text-teal-500 text-sm animate-spin absolute tool-spinner"></i>
+                                    <i class="ph-fill ph-check-circle text-teal-500 text-sm absolute opacity-0 tool-check transition-all duration-[600ms] scale-50 cubic-spring shadow-[0_0_10px_rgba(45,212,191,0.5)] rounded-full"></i>
+                                </div>
+                                
+                                <div class="flex flex-col gap-0.5 overflow-hidden">
+                                    <span class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold leading-none">System Call • <span class="font-mono lowercase text-zinc-600">fs.readFile</span></span>
+                                    <span id="tool-text" class="text-xs text-zinc-300 font-mono leading-none truncate transition-colors duration-500">Reading 'DashboardMetrics.tsx' config...</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Auto-Collapsible Terminal Element -->
+                        <div id="reasoning-container" class="relative mb-6 rounded-xl border border-white/10 glass-panel overflow-hidden transition-all duration-[800ms] cubic-spring max-h-[500px] z-10 w-full lg:w-[85%]">
+                            
+                            <button id="reasoning-toggle" class="w-full flex items-center justify-between px-4 py-3 bg-white/[0.01] hover:bg-white/[0.03] transition-colors outline-none cursor-pointer border-b border-white/[0.02]">
+                                <div class="flex items-center gap-2.5">
+                                    <i id="reasoning-icon" class="ph-fill ph-brain text-zinc-400 text-sm animate-pulse transition-all duration-500"></i>
+                                    <span id="reasoning-title" class="text-[13px] font-medium text-zinc-300 tracking-wide transition-colors">Establishing Cognitive Sequence...</span>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <span id="reasoning-timer" class="text-[11px] text-zinc-500 font-mono tracking-widest bg-black/50 px-2 py-0.5 rounded shadow-[inset_0_1px_2px_rgba(0,0,0,1)] text-[#FFC700]">0.0s</span>
+                                    <i id="reasoning-chevron" class="ph ph-caret-up text-zinc-500 text-xs transition-transform duration-500"></i>
+                                </div>
+                            </button>
+                            
+                            <div id="reasoning-body" class="p-4 transition-opacity duration-300 relative bg-[#050505]">
+                                <div class="absolute left-[21px] top-4 bottom-4 w-px bg-white/[0.04]"></div>
+                                
+                                <div class="pl-[26px] space-y-3 font-mono text-[11px] tracking-wide text-zinc-500 w-full">
+                                    <div class="thinking-line flex items-center gap-3 truncate w-full"><span class="text-teal-500 shrink-0 select-none">❯</span> Loading TS AST structure into context window...</div>
+                                    <div class="thinking-line flex items-center gap-3 truncate w-full"><span class="text-teal-500 shrink-0 select-none">❯</span> Scanning component lifecycle methods. Found intense complexity on mount.</div>
+                                    <div class="thinking-line flex items-start gap-3 w-full text-zinc-400 mt-1"><span class="text-pink-500 shrink-0 select-none">!</span> <div>Alert: <code>transformMetrics(rawDataSet)</code> executing O(N) loop on every tick. The dependency array in <code>useEffect</code> uses unstable object reference.</div></div>
+                                    <div class="thinking-line flex items-center gap-3 truncate w-full"><span class="text-teal-500 shrink-0 select-none">❯</span> Calculating optimal refactoring patch via React.useMemo...</div>
+                                    <div class="thinking-line flex items-center gap-3 truncate w-full"><span class="text-teal-500 shrink-0 select-none">❯</span> Verifying type safety against interface <code>IDashboardProp</code>. Safe. Validation OK.</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="text-zinc-200 text-[15px] font-light leading-relaxed w-full">
+                            <p class="final-element mb-5 opacity-0 hidden sm:block">
+                                The frame drops are primarily caused by an unstable object reference in the main hook, causing cascading re-renders across all child SVG charts. I've intercepted the dependency array. 
+                            </p>
+                            
+                            <div class="mb-5 rounded-[12px] overflow-hidden border border-white/[0.08] bg-[#0c0c0e] shadow-[0_20px_40px_-5px_rgba(0,0,0,0.4)] relative transition-all duration-[800ms] final-element z-10 group/code hidden sm:block">
+                                <div class="flex items-center justify-between px-4 py-2.5 bg-black/60 border-b border-white/[0.05] shadow-[0_4px_10px_rgba(0,0,0,0.2)]">
+                                    <div class="flex items-center gap-2.5">
+                                        <i class="ph-fill ph-file-code text-teal-400 text-sm"></i>
+                                        <span class="text-[11px] text-zinc-300 font-mono tracking-wide">Diff Output: DashboardMetrics.tsx</span>
+                                    </div>
+                                    <div class="flex gap-2">
+                                        <button class="px-2 py-1 rounded-md text-[10px] font-mono text-zinc-500 bg-white/[0.02] border border-white/[0.05] hover:text-white hover:bg-white/10 transition-colors flex items-center gap-1.5"><i class="ph ph-copy"></i> Copy</button>
+                                        <button class="px-2 py-1 rounded-md text-[10px] font-mono font-medium text-[#050505] bg-teal-500/90 border border-teal-400 hover:bg-teal-400 transition-colors flex items-center gap-1.5"><i class="ph-fill ph-git-commit"></i> Apply</button>
+                                    </div>
+                                </div>
+                                <div class="p-5 text-[13px] bg-[#0c0c0e] text-zinc-300 font-mono overflow-x-auto custom-scrollbar relative">
+                                    <div class="absolute inset-0 bg-gradient-to-br from-teal-500/[0.02] to-transparent pointer-events-none"></div>
+<pre class="leading-[1.7]"><code class="language-tsx"><span class="text-[#f7768e] italic">const</span> <span class="text-[#7dcfff]">memoizedData</span> <span class="text-[#89ddff]">=</span> <span class="text-[#bb9af7]">useMemo</span>(() <span class="text-[#89ddff]&gt;=&gt;&lt;/span&gt; {
+    &lt;span class=" text-[#565f89]"="">// Caches complex array sort and mathematical maps </span>
+    <span class="text-[#f7768e] italic">return</span> <span class="text-[#7aa2f7]">transformMetrics</span>(rawDataSet);
+}, [rawDataSet]); 
+
+<span class="text-[#bb9af7]">useEffect</span>(() <span class="text-[#89ddff]&gt;=&gt;&lt;/span&gt; {
+    chartInstance.current.&lt;span class=" text-[#7aa2f7]"="">updateRenderCycle</span>(memoizedData);
+}, [memoizedData]);</code></pre>
+                                </div>
+                            </div>
+
+                            <p class="final-element mb-2 opacity-0 font-medium">I've verified this drops render cycle time from 140ms down to 12ms. Do you authorize git commit execution on your local workspace?</p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Float Comm Environment (The Input Block) -->
+        <div class="absolute bottom-6 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] md:max-w-3xl lg:max-w-4xl z-30 pointer-events-none">
+            <div class="pointer-events-auto flex flex-col gap-0 rounded-[20px] bg-zinc-950/90 border border-white/[0.08] shadow-[0_30px_60px_-15px_rgba(0,0,0,1),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-3xl overflow-visible relative group/input">
+                
+                <div class="absolute -inset-[1px] rounded-[20.5px] bg-gradient-to-r from-teal-500/0 via-teal-500/20 to-teal-500/0 opacity-0 group-focus-within/input:opacity-100 transition-opacity duration-1000 z-[-1] blur-[2px]"></div>
+
+                <div class="flex items-center justify-between px-3 pt-2 pb-2 border-b border-white/[0.04]">
+                    
+                    <div class="relative group/dropdown inline-block">
+                        <button class="flex items-center gap-2.5 px-2 py-1.5 rounded-[8px] bg-white/[0.02] border border-white/[0.03] hover:bg-white/[0.06] hover:border-white/10 transition-all outline-none z-20 relative cursor-pointer">
+                            <div class="size-5 rounded flex items-center justify-center bg-teal-500/10 text-teal-400 border border-teal-500/20">
+                                <i class="ph-fill ph-hard-drives text-[11px]"></i>
+                            </div>
+                            <span class="text-[11px] font-medium text-zinc-300 font-mono tracking-tight">Local-Volume</span>
+                            <i class="ph ph-caret-down text-zinc-600 text-[10px] group-hover/dropdown:text-zinc-400 transition-colors"></i>
+                        </button>
+                        
+                        <div class="absolute top-full left-0 w-full h-4 z-10 border border-transparent"></div>
+
+                        <div class="absolute bottom-[calc(100%+8px)] left-0 w-64 rounded-[14px] bg-zinc-900 border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.8)] backdrop-blur-2xl opacity-0 translate-y-3 pointer-events-none group-hover/dropdown:opacity-100 group-hover/dropdown:translate-y-0 group-hover/dropdown:pointer-events-auto transition-all duration-[400ms] cubic-spring p-1.5 z-40">
+                            <div class="px-3 py-2 border-b border-white/[0.04] mb-1">
+                                <span class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold">Select Operating Directory</span>
+                            </div>
+                            <button class="w-full flex items-center justify-between px-3 py-2.5 rounded-[10px] bg-teal-500/[0.04] border border-teal-500/20 text-left">
+                                <div class="flex items-center gap-2.5">
+                                    <i class="ph-fill ph-hard-drives text-teal-400 text-[15px]"></i>
+                                    <div class="flex flex-col">
+                                        <span class="text-xs text-zinc-200 font-medium">Local-Volume</span>
+                                        <span class="text-[9px] text-zinc-500 font-mono">/Users/os/frontend-core</span>
+                                    </div>
+                                </div>
+                                <i class="ph-fill ph-check-circle text-teal-400 text-[11px]"></i>
+                            </button>
+                            <button class="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] hover:bg-white/[0.04] transition-colors border border-transparent text-left mt-0.5">
+                                <i class="ph ph-cloud-arrow-up text-zinc-400 text-[15px]"></i>
+                                <div class="flex flex-col">
+                                    <span class="text-xs text-zinc-400">AWS Staging Envs</span>
+                                    <span class="text-[9px] text-zinc-600 font-mono">us-east-cluster-01</span>
+                                </div>
+                            </button>
+                            <div class="h-px w-full bg-white/[0.04] my-1.5"></div>
+                            <a class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-[8px] bg-white/[0.02] hover:bg-white/[0.05] transition-colors border border-white/[0.02] text-teal-400 text-xs font-medium" href="/workspace">
+                                <i class="ph ph-plus-circle text-sm"></i> Connect New Resource
+                            </a>
+                        </div>
+                    </div>
+                    
+                    <div class="relative bg-[#050505] border border-white/[0.06] p-0.5 rounded-[8px] flex items-center shadow-[inset_0_2px_4px_rgba(0,0,0,0.8)]">
+                        <div class="absolute right-[2px] top-[2px] bottom-[2px] w-[50%] bg-zinc-800 rounded-[6px] border border-white-[0.08] shadow-[0_2px_5px_rgba(0,0,0,0.5)] z-0 pointer-events-none transition-transform"></div>
+                        <button class="relative z-10 px-3 py-1.5 text-[9px] uppercase tracking-widest font-bold transition-colors duration-300 w-20 text-zinc-500 hover:text-zinc-300">Base</button>
+                        <button class="relative z-10 px-3 py-1.5 text-[9px] uppercase tracking-widest font-bold transition-colors duration-300 w-24 text-teal-400 flex items-center justify-center gap-1.5">
+                            Agentic <i class="ph-fill ph-sparkle text-teal-400 text-[10px]"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="flex items-end gap-2 px-2 py-2 relative bg-zinc-950 rounded-b-[20px]">
+                    <button class="size-10 shrink-0 mb-0.5 flex items-center justify-center rounded-[10px] text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors bg-white/[0.02]">
+                        <i class="ph ph-paperclip text-[20px]"></i>
+                    </button>
+                    
+                    <div class="flex-1 min-h-[44px] flex flex-col justify-center">
+                        <textarea id="chat-input" placeholder="Instruct the OS..." class="w-full bg-transparent text-[15px] text-zinc-100 placeholder-zinc-600 resize-none max-h-40 focus:outline-none py-2.5 custom-scrollbar leading-relaxed font-light" rows="1"></textarea>
+                    </div>
+                    
+                    <button id="send-btn" class="size-[42px] shrink-0 mb-0.5 rounded-[12px] bg-teal-500 hover:bg-teal-400 text-[#000000] flex items-center justify-center shadow-[0_0_20px_rgba(45,212,191,0.25)] transition-all transform hover:scale-105 active:scale-95 duration-200 opacity-50 pointer-events-none group">
+                        <div class="absolute inset-0 bg-white/20 rounded-[12px] opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                        <i class="ph-fill ph-arrow-up text-[20px] font-bold z-10"></i>
+                    </button>
+                </div>
+                
+            </div>
+            
+            <div class="text-center mt-3">
+                <span class="text-[9.5px] text-zinc-600 tracking-wider">AGENTIC FRAMEWORK OS v4.2 // SECURE CONNECTION</span>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Orchestration Control Logic -->
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const textarea = document.getElementById('chat-input');
+            const sendBtn = document.getElementById('send-btn');
+            
+            textarea.addEventListener('input', function() {
+                this.style.height = 'auto'; 
+                this.style.height = (this.scrollHeight) + 'px'; 
+                if(this.value.trim() !== '') {
+                    sendBtn.classList.remove('opacity-50', 'pointer-events-none');
+                    sendBtn.classList.add('shadow-[0_0_25px_rgba(45,212,191,0.4)]');
+                } else {
+                    sendBtn.classList.add('opacity-50', 'pointer-events-none');
+                    sendBtn.classList.remove('shadow-[0_0_25px_rgba(45,212,191,0.4)]');
+                }
+            });
+
+            const processSteps = document.querySelectorAll('.thinking-line');
+            let currentStep = 0;
+            const thoughtInterval = setInterval(() => {
+                if(currentStep < processSteps.length) {
+                    processSteps[currentStep].style.opacity = '1';
+                    processSteps[currentStep].style.transform = 'translateY(0)';
+                    currentStep++;
+                } else {
+                    clearInterval(thoughtInterval);
+                }
+            }, 600); 
+
+            let elapsedTime = 0.0;
+            const timerEl = document.getElementById('reasoning-timer');
+            const timerInterval = setInterval(() => {
+                elapsedTime += 0.1;
+                timerEl.innerText = elapsedTime.toFixed(1) + 's';
+                if((elapsedTime * 10) % 5 === 0) {
+                    timerEl.classList.toggle('text-[#FFC700]');
+                    timerEl.classList.toggle('text-white');
+                }
+            }, 100);
+
+            setTimeout(() => {
+                const spinner = document.querySelector('.tool-spinner');
+                const check = document.querySelector('.tool-check');
+                const container = document.querySelector('.tool-container');
+                
+                spinner.style.opacity = '0';
+                spinner.style.transform = 'scale(0.3) rotate(90deg)'; 
+                
+                setTimeout(() => {
+                    check.style.opacity = '1';
+                    check.classList.remove('scale-50');
+                    check.classList.add('scale-100');
+                    container.classList.add('border-teal-400/[0.15]', 'bg-teal-500/[0.05]');
+                    
+                    const toolText = document.getElementById('tool-text');
+                    toolText.innerText = 'Completed Syntax Check (AST Valid)';
+                    toolText.classList.add('text-teal-400');
+                }, 200);
+            }, 2500);
+
+            setTimeout(() => {
+                clearInterval(timerInterval);
+                
+                const container = document.getElementById('reasoning-container');
+                const toggle = document.getElementById('reasoning-toggle');
+                const chevron = document.getElementById('reasoning-chevron');
+                const title = document.getElementById('reasoning-title');
+                const icon = document.getElementById('reasoning-icon');
+                const body = document.getElementById('reasoning-body');
+                
+                container.style.maxHeight = (toggle.offsetHeight) + 'px';
+                
+                container.classList.add('bg-white/[0.02]', 'border-white/[0.04]');
+                container.classList.remove('border-white/10', 'glass-panel');
+                
+                body.style.opacity = '0';
+                body.style.transform = 'translateY(-10px)';
+                body.style.pointerEvents = 'none';
+                
+                chevron.classList.replace('ph-caret-up', 'ph-caret-down');
+                
+                title.innerText = 'Thought Sequence Executed / ' + elapsedTime.toFixed(1) + 's';
+                title.classList.replace('text-zinc-300', 'text-teal-400');
+                
+                icon.classList.remove('animate-pulse');
+                icon.classList.replace('ph-brain', 'ph-lightning');
+                icon.classList.replace('text-zinc-400', 'text-teal-400');
+                
+                timerEl.classList.add('hidden'); 
+                
+                let isExpanded = false;
+                toggle.addEventListener('click', () => {
+                    if(!isExpanded) {
+                        container.style.maxHeight = '500px';
+                        body.style.opacity = '1';
+                        body.style.transform = 'translateY(0)';
+                        chevron.style.transform = 'rotate(180deg)';
+                        container.classList.remove('bg-white/[0.02]', 'border-white/[0.04]');
+                        container.classList.add('border-white/10', 'glass-panel');
+                    } else {
+                        container.style.maxHeight = (toggle.offsetHeight) + 'px';
+                        body.style.opacity = '0';
+                        body.style.transform = 'translateY(-10px)';
+                        chevron.style.transform = 'rotate(0deg)';
+                        container.classList.add('bg-white/[0.02]', 'border-white/[0.04]');
+                        container.classList.remove('border-white/10', 'glass-panel');
+                    }
+                    isExpanded = !isExpanded;
+                });
+                
+                const finalElements = document.querySelectorAll('.final-element');
+                finalElements.forEach((el, index) => {
+                    setTimeout(() => {
+                        el.classList.remove('opacity-0', 'hidden');
+                        el.style.opacity = '1';
+                        el.style.transform = 'translateY(0)';
+                        
+                        const chatCanvas = document.getElementById('chat-scroll-area');
+                        chatCanvas.scrollTo({ top: chatCanvas.scrollHeight, behavior: 'smooth' });
+
+                    }, (index * 400) + 400); 
+                });
+
+            }, 4500); 
+        });
+    </script>
+
+</body></html>
