@@ -59,8 +59,21 @@ type TextFlushBuffer = {
   timer?: ReturnType<typeof setTimeout>;
 };
 
+export interface ComposerAnnotation {
+  id: number;
+  fileName: string;
+  filePath: string;
+  displayPath: string;
+  startLine: number;
+  endLine: number;
+  text: string;
+  selectedLines: string;
+  language: string;
+}
+
 interface ChatState {
   messages: ChatMessageUi[];
+  composerAnnotations: ComposerAnnotation[];
   conversationId?: string;
   conversationTitle?: string;
   error?: string;
@@ -74,6 +87,9 @@ interface ChatState {
   nextStepSuggestion?: string;
   liveSessionUsage: SessionUsage;
   liveSubAgentIds: string[];
+  addComposerAnnotation: (annotation: ComposerAnnotation) => void;
+  removeComposerAnnotation: (id: number) => void;
+  clearComposerAnnotations: () => void;
   loadConversation: (id: string, workspaceRoot?: string | null) => Promise<void>;
   startNewConversation: () => void;
   sendMessage: (text: string, systemPrompt?: string) => Promise<void>;
@@ -88,13 +104,27 @@ interface ChatState {
 
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
+  composerAnnotations: [],
   isStreaming: false,
   isFinalizing: false,
   liveSessionUsage: emptySessionUsage(),
   liveSubAgentIds: [],
 
+  addComposerAnnotation: (annotation) => set((state) => ({
+    composerAnnotations: [...state.composerAnnotations.filter((item) => item.id !== annotation.id), annotation],
+  })),
+
+  removeComposerAnnotation: (id) => set((state) => ({
+    composerAnnotations: state.composerAnnotations.filter((annotation) => annotation.id !== id),
+  })),
+
+  clearComposerAnnotations: () => set({ composerAnnotations: [] }),
+
   loadConversation: async (id, workspaceRoot) => {
     if (get().loadingConversationId === id) return;
+    if (get().isStreaming || get().activeAgentId || get().activeController) {
+      get().stopStreaming();
+    }
     set({ loadingConversationId: id, error: undefined });
     try {
       const appStore = useAppStore.getState();
@@ -114,6 +144,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         pendingPlanApproval: undefined,
         pendingToolApproval: undefined,
         nextStepSuggestion: undefined,
+        composerAnnotations: [],
         liveSessionUsage: emptySessionUsage(),
         liveSubAgentIds: [],
         isFinalizing: false,
@@ -136,6 +167,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     get().stopStreaming();
     set({
       messages: [],
+      composerAnnotations: [],
       conversationId: undefined,
       conversationTitle: undefined,
       pendingPlanApproval: undefined,
@@ -749,6 +781,8 @@ function handleTeamEvent(
   set: (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
   get: () => ChatState,
 ) {
+  if (!isActiveTeamEventTarget(get(), agentId)) return;
+
   if (event.error && event.event !== "error") {
     flushTextBuffer(agentId, set);
     set({
@@ -832,7 +866,13 @@ function queueTeamDeltaEvent(
 }
 
 function applyTeamEventToMessage(message: ChatMessageUi, event: TeamRunEvent): ChatMessageUi {
-  let next = message;
+  let next = shouldResetTeamMessageForRun(message, event)
+    ? {
+        ...message,
+        teamRun: undefined,
+        teamEvents: [],
+      }
+    : message;
   if (event.content || event.event !== "agent_delta") {
     next = closeActiveReasoning(next, true);
   }
@@ -845,6 +885,16 @@ function applyTeamEventToMessage(message: ChatMessageUi, event: TeamRunEvent): C
     isStreaming: !isTerminal,
     isReasoningStreaming: false,
   };
+}
+
+function isActiveTeamEventTarget(state: ChatState, agentId: string) {
+  if (state.activeAgentId === agentId) return true;
+  return state.messages.some((message) => message.id === agentId && message.isStreaming);
+}
+
+function shouldResetTeamMessageForRun(message: ChatMessageUi, event: TeamRunEvent) {
+  if (event.event !== "team_run_started" || !event.run_id || !message.teamRun) return false;
+  return !message.teamRun.runId || message.teamRun.runId !== event.run_id;
 }
 
 function isTerminalTeamEvent(event: TeamRunEvent) {

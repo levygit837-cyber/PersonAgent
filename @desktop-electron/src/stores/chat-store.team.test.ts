@@ -240,12 +240,88 @@ describe("Team Mode compact chat store", () => {
     expect(critic?.error).toBe("Agent timed out");
     expect(critic?.logs.some((log) => log.kind === "error" && log.content === "Agent timed out")).toBe(true);
   });
+
+  it("resets stale coordinator state when a new team run starts in the same message", async () => {
+    apiMocks.streamTeamChat.mockImplementation(() =>
+      eventStream([
+        { event: "team_run_started", run_id: "old-run" },
+        {
+          event: "coordinator_started",
+          run_id: "old-run",
+          round: 1,
+          agent_id: "coordinator",
+          agent_name: "Coordinator",
+        },
+        {
+          event: "coordinator_completed",
+          run_id: "old-run",
+          round: 1,
+          agent_id: "coordinator",
+          agent_name: "Coordinator",
+          guidance: { summary: "old session synthesis" },
+        },
+        {
+          event: "team_run_started",
+          run_id: "new-run",
+          team: {
+            id: "team",
+            name: "Team Mode",
+            agents: [teamAgent("analyst", "Analyst", "requirements")],
+            execution_order: ["analyst"],
+            max_rounds: 1,
+            vote_every_rounds: 2,
+            consensus_threshold: 0.75,
+          },
+        },
+        { event: "team_run_completed", run_id: "new-run" },
+      ]),
+    );
+
+    await useChatStore.getState().sendMessage("Start a clean team run");
+
+    const agentMessage = useChatStore.getState().messages.find((message) => message.role === "agent");
+    expect(agentMessage?.teamRun?.runId).toBe("new-run");
+    expect(agentMessage?.teamRun?.agents.map((agent) => agent.agentId)).toEqual(["analyst"]);
+    expect(agentMessage?.teamRun?.agents.some((agent) => agent.agentName === "Coordinator")).toBe(false);
+    expect(agentMessage?.teamEvents.some((event) => event.id.includes("old-run"))).toBe(false);
+    expect(agentMessage?.teamEvents.some((event) => event.content === "old session synthesis")).toBe(false);
+  });
+
+  it("ignores stale team events after the active team stream is stopped", async () => {
+    apiMocks.streamTeamChat.mockImplementation(staleTeamEventStream);
+
+    await useChatStore.getState().sendMessage("Stop stale team updates");
+
+    const state = useChatStore.getState();
+    const agentMessage = state.messages.find((message) => message.role === "agent");
+    expect(state.conversationId).toBe("fresh-conversation");
+    expect(agentMessage?.teamRun?.runId).toBe("live-run");
+    expect(agentMessage?.teamRun?.agents.some((agent) => agent.agentName === "Coordinator")).toBe(false);
+    expect(agentMessage?.teamEvents.some((event) => event.id.includes("stale-run"))).toBe(false);
+  });
 });
 
 async function* eventStream(events: TeamRunEvent[]) {
   for (const event of events) {
     yield event;
   }
+}
+
+async function* staleTeamEventStream() {
+  yield {
+    event: "team_run_started",
+    run_id: "live-run",
+    conversation_id: "fresh-conversation",
+  } satisfies TeamRunEvent;
+  useChatStore.getState().stopStreaming();
+  yield {
+    event: "coordinator_started",
+    run_id: "stale-run",
+    conversation_id: "stale-conversation",
+    round: 1,
+    agent_id: "coordinator",
+    agent_name: "Coordinator",
+  } satisfies TeamRunEvent;
 }
 
 function teamAgent(id: string, name: string, role: string) {

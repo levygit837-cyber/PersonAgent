@@ -40,6 +40,25 @@ describe("AgentMessage Team Mode trace", () => {
     expect(screen.getAllByText("Agent output").length).toBeGreaterThan(0);
     expect(screen.queryByText("Fixed placeholder")).not.toBeInTheDocument();
   });
+
+  it("stages Team Mode agent and blackboard card arrivals in sequence", () => {
+    const message = teamModeMessage();
+    message.teamRun?.agents.push({
+      ...message.teamRun.agents[0],
+      agentId: "builder",
+      agentName: "Builder",
+      agentRole: "Implementation",
+      logs: [],
+    });
+
+    const { container } = render(<AgentMessage message={message} />);
+    const cards = container.querySelectorAll(".personagent-team-card-arrival");
+
+    expect(cards).toHaveLength(3);
+    expect((cards[0] as HTMLElement).style.getPropertyValue("--personagent-team-card-delay")).toBe("0ms");
+    expect((cards[1] as HTMLElement).style.getPropertyValue("--personagent-team-card-delay")).toBe("120ms");
+    expect((cards[2] as HTMLElement).style.getPropertyValue("--personagent-team-card-delay")).toBe("240ms");
+  });
 });
 
 function teamModeMessage(): ChatMessageUi {

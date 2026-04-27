@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     llama_ctx_size: int = Field(default=131072, alias="LLAMA_CTX_SIZE")
     llama_n_gpu_layers: int = Field(default=999, alias="LLAMA_N_GPU_LAYERS")
     llama_temperature: float = Field(default=0.7, alias="LLAMA_TEMPERATURE")
-    llama_max_tokens: int = Field(default=16384, alias="LLAMA_MAX_TOKENS")
+    llama_max_tokens: int = Field(default=82000, alias="LLAMA_MAX_TOKENS")
     nvidia_max_tokens: int = Field(default=65536, alias="NVIDIA_MAX_TOKENS")
     vertex_max_tokens: int = Field(default=65536, alias="VERTEX_MAX_TOKENS")
     kimi_max_tokens: int = Field(default=32768, alias="KIMI_MAX_TOKENS")

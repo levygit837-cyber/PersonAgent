@@ -1,5 +1,5 @@
 import ReactMarkdown from "react-markdown";
-import { memo, useState, type ReactElement } from "react";
+import { memo, useState, type CSSProperties, type ReactElement } from "react";
 import { Brain, ChevronRight, Database, Hammer, MessageSquareText } from "lucide-react";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -19,6 +19,8 @@ import type {
 import { ReasoningBlock } from "./reasoning-block";
 import { CompactToolGroupBlock, ToolBlock, isBrowserToolName, isSearchShellCommand, isTodoTool } from "./tool-block";
 import { CodeBlock } from "./code-block";
+
+const TEAM_CARD_ARRIVAL_STAGGER_MS = 120;
 
 export const AgentMessage = memo(function AgentMessage({ message }: { message: ChatMessageUi }) {
   const hasVisibleAnswerContent = hasVisibleContent(message);
@@ -166,23 +168,32 @@ const TeamModeCompactTrace = memo(function TeamModeCompactTrace({ run }: { run: 
     <section className="mb-4 space-y-2" aria-label="Team Mode execution trace">
       {run.agents.length > 0 ? (
         <div className="space-y-2" aria-label="Agent lanes">
-          {run.agents.map((agent) => (
-            <TeamAgentCard key={agent.agentId} agent={agent} />
+          {run.agents.map((agent, index) => (
+            <TeamAgentCard key={agent.agentId} agent={agent} sequenceIndex={index} />
           ))}
         </div>
       ) : null}
-      <TeamBlackboardCard blackboard={run.blackboard} runStatus={run.status} />
+      <TeamBlackboardCard blackboard={run.blackboard} runStatus={run.status} sequenceIndex={run.agents.length} />
     </section>
   );
 });
 
-const TeamAgentCard = memo(function TeamAgentCard({ agent }: { agent: TeamAgentTraceUi }) {
+const TeamAgentCard = memo(function TeamAgentCard({
+  agent,
+  sequenceIndex,
+}: {
+  agent: TeamAgentTraceUi;
+  sequenceIndex: number;
+}) {
   const [open, setOpen] = useState(false);
   const status = effectiveAgentStatus(agent);
   const summary = compactAgentSummary(agent);
   const previewLogs = visibleAgentLogs(agent).slice(-2);
   return (
-    <section className="overflow-hidden rounded-lg border border-glass-border/45 bg-card/45 shadow-soft">
+    <section
+      className="personagent-team-card-arrival overflow-hidden rounded-lg border border-glass-border/45 bg-card/45 shadow-soft"
+      style={teamCardArrivalStyle(sequenceIndex)}
+    >
       <button
         type="button"
         className="flex w-full min-w-0 cursor-pointer items-center justify-between gap-2 px-2.5 py-2 text-left"
@@ -207,7 +218,7 @@ const TeamAgentCard = memo(function TeamAgentCard({ agent }: { agent: TeamAgentT
         {previewLogs.length > 0 ? (
           <div className="space-y-1">
             {previewLogs.map((log) => (
-              <AgentLogPreview key={log.id} log={log} />
+              <AgentLogPreview key={log.id} log={log} revealThinkingContent={!isPrivateThinkingLog(agent, log)} />
             ))}
           </div>
         ) : (
@@ -227,16 +238,22 @@ const TeamAgentCard = memo(function TeamAgentCard({ agent }: { agent: TeamAgentT
 const TeamBlackboardCard = memo(function TeamBlackboardCard({
   blackboard,
   runStatus,
+  sequenceIndex,
 }: {
   blackboard: TeamBlackboardTraceUi;
   runStatus: TeamCompactStatus;
+  sequenceIndex: number;
 }) {
   const [open, setOpen] = useState(false);
   const status = runStatus === "running" ? "running" : blackboard.status;
   const claims = blackboard.claims.slice(-6).reverse();
   const coverage = blackboard.coverage.slice(0, 4);
   return (
-    <section className="overflow-hidden rounded-lg border border-glass-border/50 bg-card/40 shadow-soft" aria-label="Blackboard compact snapshot">
+    <section
+      className="personagent-team-card-arrival overflow-hidden rounded-lg border border-glass-border/50 bg-card/40 shadow-soft"
+      style={teamCardArrivalStyle(sequenceIndex)}
+      aria-label="Blackboard compact snapshot"
+    >
       <button
         type="button"
         className="flex w-full min-w-0 cursor-pointer items-center justify-between gap-3 px-2.5 py-2.5 text-left"
@@ -288,6 +305,12 @@ const TeamBlackboardCard = memo(function TeamBlackboardCard({
   );
 });
 
+function teamCardArrivalStyle(sequenceIndex: number) {
+  return {
+    "--personagent-team-card-delay": `${sequenceIndex * TEAM_CARD_ARRIVAL_STAGGER_MS}ms`,
+  } as CSSProperties & Record<"--personagent-team-card-delay", string>;
+}
+
 function AgentLogTimeline({ agent, running }: { agent: TeamAgentTraceUi; running: boolean }) {
   const logs = visibleAgentLogs(agent);
   return (
@@ -327,8 +350,14 @@ function AgentLogTimeline({ agent, running }: { agent: TeamAgentTraceUi; running
   );
 }
 
-function AgentLogPreview({ log }: { log: TeamAgentLogUi }) {
-  const preview = agentLogPreview(log);
+function AgentLogPreview({
+  log,
+  revealThinkingContent,
+}: {
+  log: TeamAgentLogUi;
+  revealThinkingContent: boolean;
+}) {
+  const preview = agentLogPreview(log, revealThinkingContent);
   return (
     <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
       <span className="shrink-0 uppercase text-primary">{agentLogKindLabel(log.kind)}</span>
@@ -400,9 +429,17 @@ function isVisibleAgentLog(log: TeamAgentLogUi) {
   return Boolean(log.content?.trim() || log.title.trim());
 }
 
-function agentLogPreview(log: TeamAgentLogUi) {
-  if (log.kind === "thinking") return log.title;
+function agentLogPreview(log: TeamAgentLogUi, revealThinkingContent = true) {
+  if (log.kind === "thinking" && !revealThinkingContent) {
+    return log.phase ? formatPhaseLabel(log.phase) : "working";
+  }
   return (log.content?.trim() || log.title).replace(/\s+/g, " ");
+}
+
+function isPrivateThinkingLog(agent: TeamAgentTraceUi, log: TeamAgentLogUi) {
+  if (log.kind !== "thinking") return false;
+  const privateThinking = agent.thinking.trim();
+  return Boolean(privateThinking && log.content?.trim() === privateThinking);
 }
 
 function formatPhaseLabel(phase: string) {

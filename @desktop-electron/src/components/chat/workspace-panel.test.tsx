@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listWorkspaceFiles } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
@@ -7,6 +7,7 @@ import { WorkspacePanel } from "./workspace-panel";
 
 vi.mock("../../api/client", () => ({
   listWorkspaceFiles: vi.fn(),
+  readWorkspaceFile: vi.fn(),
 }));
 
 const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
@@ -65,6 +66,27 @@ describe("WorkspacePanel", () => {
 
     expect(await screen.findByText("A listagem recebida não pertence ao workspace ativo.")).toBeInTheDocument();
     expect(screen.queryByText("webpilot.ts")).not.toBeInTheDocument();
+  });
+
+  it("opens a workspace file when a file row is clicked", async () => {
+    const onOpenFile = vi.fn();
+    listWorkspaceFilesMock.mockResolvedValue([
+      { name: "hello.py", isDirectory: false, path: "/workspaces/Eval/hello.py" },
+    ]);
+
+    render(
+      <TooltipProvider>
+        <WorkspacePanel visible workspaceRoot="/workspaces/Eval" onClose={() => undefined} onOpenFile={onOpenFile} />
+      </TooltipProvider>,
+    );
+
+    fireEvent.click(await screen.findByText("hello.py"));
+
+    expect(onOpenFile).toHaveBeenCalledWith({
+      name: "hello.py",
+      isDirectory: false,
+      path: "/workspaces/Eval/hello.py",
+    });
   });
 });
 

@@ -22,6 +22,7 @@ vi.mock("../../api/client", () => ({
   listChatCommands: vi.fn().mockResolvedValue([]),
   listWorkspaceFiles: vi.fn().mockResolvedValue([]),
   listModels: vi.fn().mockResolvedValue([]),
+  readWorkspaceFile: vi.fn().mockResolvedValue({ path: "/tmp/personagent/README.md", name: "README.md", content: "# README" }),
   rejectTool: vi.fn(),
   resolveBackendUrl: vi.fn().mockResolvedValue("http://localhost:8000"),
   streamChatCompletion: vi.fn(),
