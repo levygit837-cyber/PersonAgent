@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronRight, FolderOpen, LayoutGrid, PanelRight } from "lucide-react";
+import { type DirEntry } from "../../lib/workspace-files";
 import { InputDock } from "./input-dock";
+import { FileViewerPanel, type WorkspaceFileTab } from "./file-viewer-panel";
 import { MessageFeed } from "./message-feed";
 import { SessionPanel } from "./session-panel";
 import { WorkspacePanel } from "./workspace-panel";
@@ -10,13 +12,24 @@ import { useChatStore } from "../../stores/chat-store";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
+const FILE_VIEWER_TRANSITION_MS = 300;
+
 export function ChatWorkspace() {
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false);
+  const [fileTabs, setFileTabs] = useState<WorkspaceFileTab[]>([]);
+  const [activeFilePath, setActiveFilePath] = useState<string | undefined>();
+  const [renderedFileTabs, setRenderedFileTabs] = useState<WorkspaceFileTab[]>([]);
+  const [renderedActiveFilePath, setRenderedActiveFilePath] = useState<string | undefined>();
   const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
   const conversationTitle = useChatStore((state) => state.conversationTitle);
   const folderLabel = selectedWorkspace ? workspaceName(selectedWorkspace) : "Folder";
   const sessionLabel = conversationTitle || "Session Name";
+  const activeFilePaths = useMemo(() => new Set(fileTabs.map((tab) => tab.path)), [fileTabs]);
+  const fileViewerOpen = fileTabs.length > 0;
+  const fileViewerMounted = fileViewerOpen || renderedFileTabs.length > 0;
+  const visibleFileTabs = fileViewerOpen ? fileTabs : renderedFileTabs;
+  const visibleActiveFilePath = fileViewerOpen ? activeFilePath : renderedActiveFilePath;
 
   useEffect(() => {
     const chatStore = useChatStore.getState();
@@ -25,7 +38,55 @@ export function ChatWorkspace() {
     if (currentConvId && !appStore.conversationBelongsToWorkspace(currentConvId)) {
       chatStore.startNewConversation();
     }
+    setFileTabs([]);
+    setActiveFilePath(undefined);
+    setRenderedFileTabs([]);
+    setRenderedActiveFilePath(undefined);
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    if (fileTabs.length > 0) {
+      setRenderedFileTabs(fileTabs);
+      setRenderedActiveFilePath(activeFilePath ?? fileTabs[0]?.path);
+      return;
+    }
+
+    if (renderedFileTabs.length === 0) return;
+
+    const timeout = window.setTimeout(() => {
+      setRenderedFileTabs([]);
+      setRenderedActiveFilePath(undefined);
+    }, FILE_VIEWER_TRANSITION_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [activeFilePath, fileTabs, renderedFileTabs.length]);
+
+  const openWorkspaceFile = (entry: DirEntry) => {
+    if (entry.isDirectory) return;
+    setWorkspacePanelOpen(true);
+    setFileTabs((current) => {
+      if (current.some((tab) => tab.path === entry.path)) return current;
+      return [...current, { name: entry.name, path: entry.path }];
+    });
+    setActiveFilePath(entry.path);
+  };
+
+  const closeFileTab = (path: string) => {
+    setFileTabs((current) => {
+      const index = current.findIndex((tab) => tab.path === path);
+      if (index === -1) return current;
+      const next = current.filter((tab) => tab.path !== path);
+      if (activeFilePath === path) {
+        setActiveFilePath(next[Math.max(0, index - 1)]?.path ?? next[0]?.path);
+      }
+      return next;
+    });
+  };
+
+  const closeFileViewer = () => {
+    setFileTabs([]);
+    setActiveFilePath(undefined);
+  };
 
   return (
     <section className="relative flex h-full min-w-0 flex-col overflow-hidden bg-background">
@@ -73,6 +134,27 @@ export function ChatWorkspace() {
           <InputDock />
         </div>
         <div
+          data-testid="file-viewer-shell"
+          aria-hidden={!fileViewerOpen}
+          className={
+            fileViewerOpen
+              ? "h-full w-[min(720px,calc(100vw-420px))] shrink-0 translate-x-0 overflow-visible opacity-100 transition-[width,opacity,transform] duration-300 ease-out"
+              : "pointer-events-none h-full w-0 shrink-0 translate-x-6 overflow-hidden opacity-0 transition-[width,opacity,transform] duration-300 ease-out"
+          }
+        >
+          {fileViewerMounted ? (
+            <FileViewerPanel
+              tabs={visibleFileTabs}
+              activePath={visibleActiveFilePath}
+              workspaceRoot={selectedWorkspace}
+              onOpenFile={openWorkspaceFile}
+              onSelectTab={setActiveFilePath}
+              onCloseTab={closeFileTab}
+              onClose={closeFileViewer}
+            />
+          ) : null}
+        </div>
+        <div
           data-testid="workspace-panel-shell"
           aria-hidden={!workspacePanelOpen}
           className={
@@ -81,7 +163,14 @@ export function ChatWorkspace() {
               : "pointer-events-none h-full w-0 shrink-0 translate-x-6 overflow-hidden border-l-0 border-glass-border/25 opacity-0 transition-[width,opacity,transform] duration-300 ease-out"
           }
         >
-          <WorkspacePanel key={selectedWorkspace || "no-workspace"} visible={workspacePanelOpen} onClose={() => setWorkspacePanelOpen(false)} workspaceRoot={selectedWorkspace} />
+          <WorkspacePanel
+            key={selectedWorkspace || "no-workspace"}
+            visible={workspacePanelOpen}
+            onClose={() => setWorkspacePanelOpen(false)}
+            onOpenFile={openWorkspaceFile}
+            activeFilePaths={activeFilePaths}
+            workspaceRoot={selectedWorkspace}
+          />
         </div>
         <div
           data-testid="session-panel-shell"

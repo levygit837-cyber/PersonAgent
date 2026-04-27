@@ -21,6 +21,8 @@ vi.mock("../../api/client", () => ({
   streamTeamChat: vi.fn(),
 }));
 
+const originalSendMessage = useChatStore.getState().sendMessage;
+
 describe("InputDock", () => {
   const listModelsMock = vi.mocked(listModels);
   const listChatCommandsMock = vi.mocked(listChatCommands);
@@ -49,7 +51,9 @@ describe("InputDock", () => {
       teamMode: false,
     });
     useChatStore.setState({
+      sendMessage: originalSendMessage,
       messages: [],
+      composerAnnotations: [],
       isStreaming: false,
       isFinalizing: false,
       conversationId: undefined,
@@ -301,6 +305,77 @@ describe("InputDock", () => {
     );
 
     expect(screen.getByText("Run focused tests")).toBeInTheDocument();
+  });
+
+  it("shows composer annotation chips and sends them with the main chat text", () => {
+    const sendMessage = vi.fn();
+    useChatStore.setState({
+      sendMessage,
+      composerAnnotations: [
+        {
+          id: 1,
+          fileName: "AGENTS.md",
+          displayPath: "AGENTS.md",
+          filePath: "/home/levybonito/Projetos/MindFlow/AGENTS.md",
+          startLine: 8,
+          endLine: 24,
+          text: "Rewrite this guidance",
+          selectedLines: "8: old guidance\n9: more guidance",
+          language: "markdown",
+        },
+      ],
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("composer-annotations")).toBeInTheDocument();
+    expect(screen.getByText("@Annotation#1")).toBeInTheDocument();
+    expect(screen.getByText("AGENTS.md")).toBeInTheDocument();
+    expect(screen.getByText("L8-24")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(/ask the local agent/i), {
+      target: { value: "Apply with a concise tone" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.stringContaining("@Annotation#1"));
+    expect(sendMessage).toHaveBeenCalledWith(expect.stringContaining("Annotation:\nRewrite this guidance"));
+    expect(sendMessage).toHaveBeenCalledWith(expect.stringContaining("Selected lines:\n```markdown\n8: old guidance"));
+    expect(sendMessage).toHaveBeenCalledWith(expect.stringContaining("Request:\nApply with a concise tone"));
+    expect(useChatStore.getState().composerAnnotations).toEqual([]);
+  });
+
+  it("lets the user remove a composer annotation before sending", () => {
+    useChatStore.setState({
+      composerAnnotations: [
+        {
+          id: 2,
+          fileName: "README.md",
+          displayPath: "README.md",
+          filePath: "/workspace/README.md",
+          startLine: 3,
+          endLine: 5,
+          text: "Remove this paragraph",
+          selectedLines: "3: old",
+          language: "markdown",
+        },
+      ],
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Remover @Annotation#2" }));
+
+    expect(screen.queryByTestId("composer-annotations")).not.toBeInTheDocument();
+    expect(useChatStore.getState().composerAnnotations).toEqual([]);
   });
 
   it("keeps the composer usable while a completed turn is finalizing", () => {

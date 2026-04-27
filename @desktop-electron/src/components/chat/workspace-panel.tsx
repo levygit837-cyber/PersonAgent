@@ -8,26 +8,23 @@ import {
   LayoutGrid,
   PanelRightClose,
 } from "lucide-react";
-import { listWorkspaceFiles } from "../../api/client";
-import { workspaceName } from "../../lib/utils";
+import {
+  isCurrentWorkspaceRequest,
+  isHidden,
+  isPathInside,
+  normalizeDirectoryEntries,
+  readWorkspaceDirectory,
+  updateTreeNode,
+  WORKSPACE_MISMATCH_ERROR,
+  type DirEntry,
+  type TreeNodeState,
+} from "../../lib/workspace-files";
+import { cn, workspaceName } from "../../lib/utils";
 import { useAppStore } from "../../stores/app-store";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
-interface DirEntry {
-  name: string;
-  isDirectory: boolean;
-  path: string;
-}
-
-interface TreeNodeState {
-  entry: DirEntry;
-  children?: TreeNodeState[];
-  loading?: boolean;
-}
-
 const DEVICON_BASE = "https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons";
-const WORKSPACE_MISMATCH_ERROR = "A listagem recebida não pertence ao workspace ativo.";
 
 const EXT_TO_LANG: Record<string, string> = {
   ts: "typescript",
@@ -164,20 +161,11 @@ function getFileIconUrl(filename: string): string | null {
   return `${DEVICON_BASE}/${lang}/${lang}-original.svg`;
 }
 
-function isHidden(name: string): boolean {
-  return name.startsWith(".") && name !== ".gitignore" && name !== ".dockerignore" && name !== ".eslintrc" && name !== ".prettierrc" && name !== ".gitattributes";
-}
-
-async function readDirectory(dirPath: string, baseUrl: string, workspaceRoot?: string): Promise<DirEntry[]> {
-  if (window.personAgent?.fs?.readDir) {
-    return window.personAgent.fs.readDir(dirPath, workspaceRoot);
-  }
-  return listWorkspaceFiles(baseUrl, dirPath, workspaceRoot);
-}
-
 interface WorkspacePanelProps {
   visible: boolean;
   onClose: () => void;
+  onOpenFile?: (entry: DirEntry) => void;
+  activeFilePaths?: Set<string>;
   workspaceRoot?: string;
 }
 
@@ -185,7 +173,7 @@ function useWorkspaceBaseUrl() {
   return useAppStore((state) => state.baseUrl);
 }
 
-export function WorkspacePanel({ visible, onClose, workspaceRoot }: WorkspacePanelProps) {
+export function WorkspacePanel({ visible, onClose, onOpenFile, activeFilePaths, workspaceRoot }: WorkspacePanelProps) {
   const [tree, setTree] = useState<TreeNodeState[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -199,7 +187,7 @@ export function WorkspacePanel({ visible, onClose, workspaceRoot }: WorkspacePan
   }, [workspaceRoot]);
 
   const loadDir = useCallback(async (path: string, activeWorkspace: string): Promise<TreeNodeState[]> => {
-    const entries = await readDirectory(path, baseUrl, activeWorkspace);
+    const entries = await readWorkspaceDirectory(baseUrl, path, activeWorkspace);
     const visibleEntries = normalizeDirectoryEntries(entries, path, activeWorkspace).filter((e) => !isHidden(e.name));
     visibleEntries.sort((a, b) => {
       if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
@@ -313,7 +301,15 @@ export function WorkspacePanel({ visible, onClose, workspaceRoot }: WorkspacePan
         ) : (
           <ul className="space-y-0.5">
             {tree.map((node) => (
-              <TreeNodeItem key={node.entry.path} node={node} expanded={expanded} onToggle={toggleExpand} depth={0} />
+              <TreeNodeItem
+                key={node.entry.path}
+                node={node}
+                expanded={expanded}
+                onOpenFile={onOpenFile}
+                onToggle={toggleExpand}
+                activeFilePaths={activeFilePaths}
+                depth={0}
+              />
             ))}
           </ul>
         )}
@@ -325,17 +321,22 @@ export function WorkspacePanel({ visible, onClose, workspaceRoot }: WorkspacePan
 function TreeNodeItem({
   node,
   expanded,
+  onOpenFile,
   onToggle,
+  activeFilePaths,
   depth,
 }: {
   node: TreeNodeState;
   expanded: Set<string>;
+  onOpenFile?: (entry: DirEntry) => void;
   onToggle: (node: TreeNodeState) => void;
+  activeFilePaths?: Set<string>;
   depth: number;
 }) {
   const isExpanded = expanded.has(node.entry.path);
   const isDir = node.entry.isDirectory;
   const paddingLeft = depth * 14 + 4;
+  const isActiveFile = !isDir && activeFilePaths?.has(node.entry.path);
 
   const iconUrl = !isDir ? getFileIconUrl(node.entry.name) : null;
 
@@ -343,8 +344,12 @@ function TreeNodeItem({
     <li>
       <button
         type="button"
-        onClick={() => isDir && onToggle(node)}
-        className="group flex w-full min-w-0 items-center gap-1 rounded-lg px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/60"
+        onClick={() => (isDir ? onToggle(node) : onOpenFile?.(node.entry))}
+        aria-current={isActiveFile ? "page" : undefined}
+        className={cn(
+          "group flex w-full min-w-0 items-center gap-1 rounded-lg px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/60",
+          isActiveFile && "bg-accent/70 text-accent-foreground",
+        )}
         style={{ paddingLeft: `${paddingLeft}px` }}
       >
         {isDir ? (
@@ -377,7 +382,15 @@ function TreeNodeItem({
       {isDir && isExpanded && node.children ? (
         <ul className="space-y-0.5">
           {node.children.map((child) => (
-            <TreeNodeItem key={child.entry.path} node={child} expanded={expanded} onToggle={onToggle} depth={depth + 1} />
+            <TreeNodeItem
+              key={child.entry.path}
+              node={child}
+              expanded={expanded}
+              onOpenFile={onOpenFile}
+              onToggle={onToggle}
+              activeFilePaths={activeFilePaths}
+              depth={depth + 1}
+            />
           ))}
         </ul>
       ) : null}
@@ -407,68 +420,4 @@ function EmptyState({ text }: { text: string }) {
       <span>{text}</span>
     </div>
   );
-}
-
-function normalizeDirectoryEntries(entries: DirEntry[], requestedPath: string, workspaceRoot: string): DirEntry[] {
-  if (!Array.isArray(entries)) {
-    throw new Error("Resposta inválida ao listar o workspace.");
-  }
-
-  const normalized: DirEntry[] = [];
-  for (const entry of entries) {
-    if (!isDirEntry(entry) || !isPathInside(entry.path, workspaceRoot) || !isPathInside(entry.path, requestedPath)) {
-      throw new Error(WORKSPACE_MISMATCH_ERROR);
-    }
-    normalized.push({
-      name: entry.name.trim(),
-      isDirectory: entry.isDirectory,
-      path: entry.path.trim(),
-    });
-  }
-  return normalized;
-}
-
-function isDirEntry(value: unknown): value is DirEntry {
-  if (!value || typeof value !== "object") return false;
-  const entry = value as Partial<DirEntry>;
-  return typeof entry.name === "string" && entry.name.trim().length > 0
-    && typeof entry.path === "string" && entry.path.trim().length > 0
-    && typeof entry.isDirectory === "boolean";
-}
-
-function normalizePath(path: string) {
-  const normalized = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
-  return normalized || "/";
-}
-
-function isPathInside(path: string, root: string) {
-  const normalizedPath = normalizePath(path);
-  const normalizedRoot = normalizePath(root);
-  if (normalizedRoot === "/") return normalizedPath.startsWith("/");
-  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
-}
-
-function isCurrentWorkspaceRequest(
-  currentVersion: number,
-  requestVersion: number,
-  currentWorkspace: string | undefined,
-  requestWorkspace: string,
-) {
-  return currentVersion === requestVersion && currentWorkspace === requestWorkspace;
-}
-
-function updateTreeNode(
-  nodes: TreeNodeState[],
-  path: string,
-  updater: (node: TreeNodeState) => TreeNodeState
-): TreeNodeState[] {
-  return nodes.map((node) => {
-    if (node.entry.path === path) {
-      return updater(node);
-    }
-    if (node.children) {
-      return { ...node, children: updateTreeNode(node.children, path, updater) };
-    }
-    return node;
-  });
 }

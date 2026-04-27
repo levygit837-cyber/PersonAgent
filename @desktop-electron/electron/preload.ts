@@ -19,6 +19,8 @@ const api = {
   fs: {
     readDir: (dirPath: string, workspaceRoot?: string) =>
       ipcRenderer.invoke("fs:read-dir", dirPath, workspaceRoot) as Promise<Array<{ name: string; isDirectory: boolean; path: string }>>,
+    readFile: (filePath: string, workspaceRoot?: string) =>
+      ipcRenderer.invoke("fs:read-file", filePath, workspaceRoot) as Promise<string>,
   },
 };
 

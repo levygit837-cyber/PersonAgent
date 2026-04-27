@@ -78,6 +78,12 @@ export function listWorkspaceFiles(baseUrl: string, dirPath: string, workspaceRo
   return requestJson<Array<{ name: string; isDirectory: boolean; path: string }>>(baseUrl, `/workspace/files?${params.toString()}`);
 }
 
+export function readWorkspaceFile(baseUrl: string, filePath: string, workspaceRoot?: string | null) {
+  const params = new URLSearchParams({ path: filePath });
+  if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
+  return requestJson<{ path: string; name: string; content: string }>(baseUrl, `/workspace/file?${params.toString()}`);
+}
+
 export function getSessionProjectDetail(
   baseUrl: string,
   conversationId: string,
