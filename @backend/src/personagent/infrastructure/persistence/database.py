@@ -1,5 +1,6 @@
 """Configuração do banco de dados PostgreSQL com SQLAlchemy async."""
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -11,6 +12,7 @@ from sqlalchemy.orm import declarative_base
 from personagent.infrastructure.config.settings import get_settings
 
 Base = declarative_base()
+logger = structlog.get_logger(__name__)
 
 _settings = get_settings()
 
@@ -45,6 +47,15 @@ TEAM_MODE_SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_team_memory_snapshots_updated_at ON team_memory_snapshots(updated_at DESC)",
 )
 
+OPTIONAL_OPERATIONAL_MEMORY_SCHEMA_STATEMENTS = (
+    "CREATE EXTENSION IF NOT EXISTS vector",
+)
+
+OPERATIONAL_MEMORY_SCHEMA_STATEMENTS = (
+    "ALTER TABLE memory_events DROP CONSTRAINT IF EXISTS memory_events_conversation_id_fkey",
+    "ALTER TABLE memory_decisions DROP CONSTRAINT IF EXISTS memory_decisions_conversation_id_fkey",
+)
+
 
 async def get_db_session() -> AsyncSession:
     """Retorna uma nova sessão de banco de dados."""
@@ -58,7 +69,20 @@ async def init_db() -> None:
     # Ensure ORM models are registered in Base.metadata before create_all runs.
     from personagent.infrastructure.persistence import models as _models  # noqa: F401
 
+    for statement in OPTIONAL_OPERATIONAL_MEMORY_SCHEMA_STATEMENTS:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(statement))
+        except Exception as exc:
+            logger.warning(
+                "optional_operational_memory_schema_failed",
+                statement=statement,
+                error=str(exc),
+            )
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         for statement in TEAM_MODE_SCHEMA_STATEMENTS:
+            await conn.execute(text(statement))
+        for statement in OPERATIONAL_MEMORY_SCHEMA_STATEMENTS:
             await conn.execute(text(statement))

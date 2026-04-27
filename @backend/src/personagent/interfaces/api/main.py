@@ -12,7 +12,15 @@ from personagent.application.workflows.scheduler import get_scheduler
 from personagent.application.workflows.store import SqlAlchemyWorkflowStore
 from personagent.infrastructure.config.settings import get_settings
 from personagent.infrastructure.persistence.database import AsyncSessionLocal, init_db
-from personagent.interfaces.api.routes import chat, conversations, lab, memory, sessions, workflows, workspace
+from personagent.interfaces.api.routes import (
+    chat,
+    conversations,
+    lab,
+    memory,
+    sessions,
+    workflows,
+    workspace,
+)
 from personagent.interfaces.config.di_container import get_container
 
 logger = structlog.get_logger(__name__)
@@ -148,11 +156,13 @@ def create_app() -> FastAPI:
     async def health_check() -> dict:
         """Endpoint de health check."""
         container = get_container()
-        llm_health = await container.get_llm_backend().health_check()
+        default_provider = "llama" if settings.llama_auto_start else "nvidia"
+        llm_health = await container.get_llm_backend(default_provider).health_check()
         return {
             "status": "healthy",
             "app": settings.app_name,
             "version": settings.app_version,
+            "llm_provider": default_provider,
             "llm_backend": llm_health,
         }
 

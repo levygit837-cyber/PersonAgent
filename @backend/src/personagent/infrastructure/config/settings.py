@@ -265,6 +265,56 @@ class Settings(BaseSettings):
     memory_recall_max_tokens: int = Field(default=256, alias="MEMORY_RECALL_MAX_TOKENS")
     memory_extract_max_turns: int = Field(default=5, alias="MEMORY_EXTRACT_MAX_TURNS")
     memory_extract_max_tokens: int = Field(default=2048, alias="MEMORY_EXTRACT_MAX_TOKENS")
+    operational_memory_enabled: bool = Field(default=True, alias="OPERATIONAL_MEMORY_ENABLED")
+    operational_memory_capture_tools_enabled: bool = Field(
+        default=True,
+        alias="OPERATIONAL_MEMORY_CAPTURE_TOOLS_ENABLED",
+    )
+    operational_memory_recall_enabled: bool = Field(
+        default=True,
+        alias="OPERATIONAL_MEMORY_RECALL_ENABLED",
+    )
+    operational_memory_embedding_enabled: bool = Field(
+        default=True,
+        alias="OPERATIONAL_MEMORY_EMBEDDING_ENABLED",
+    )
+    operational_memory_max_capture_chars: int = Field(
+        default=24_000,
+        alias="OPERATIONAL_MEMORY_MAX_CAPTURE_CHARS",
+    )
+    operational_memory_chunk_max_chars: int = Field(
+        default=4_000,
+        alias="OPERATIONAL_MEMORY_CHUNK_MAX_CHARS",
+    )
+    operational_memory_recall_top_k: int = Field(
+        default=6,
+        alias="OPERATIONAL_MEMORY_RECALL_TOP_K",
+    )
+    operational_memory_hot_cache_size: int = Field(
+        default=100,
+        alias="OPERATIONAL_MEMORY_HOT_CACHE_SIZE",
+    )
+    embedding_server_url: str = Field(
+        default="http://localhost:8081/v1",
+        alias="EMBEDDING_SERVER_URL",
+    )
+    embedding_server_api_key: str = Field(default="local", alias="EMBEDDING_SERVER_API_KEY")
+    embedding_model: str = Field(
+        default="Qwen3-Embedding-8B-Q4_K_M.gguf",
+        alias="EMBEDDING_MODEL",
+    )
+    embedding_model_path: str = Field(
+        default="/home/levybonito/.lmstudio/models/Qwen/Qwen3-Embedding-8B-GGUF",
+        alias="EMBEDDING_MODEL_PATH",
+    )
+    embedding_dimensions: int = Field(default=4096, alias="EMBEDDING_DIMENSIONS")
+    embedding_timeout_seconds: float = Field(default=60.0, alias="EMBEDDING_TIMEOUT_SECONDS")
+    embedding_auto_start: bool = Field(default=False, alias="EMBEDDING_AUTO_START")
+    embedding_port: int = Field(default=8081, alias="EMBEDDING_PORT")
+    embedding_ctx_size: int = Field(default=8192, alias="EMBEDDING_CTX_SIZE")
+    embedding_n_gpu_layers: int = Field(default=999, alias="EMBEDDING_N_GPU_LAYERS")
+    embedding_threads: int = Field(default=6, alias="EMBEDDING_THREADS")
+    embedding_parallel: int = Field(default=1, alias="EMBEDDING_PARALLEL")
 
     # --- LightPanda Browser ---
     lightpanda_enabled: bool = Field(default=True, alias="LIGHTPANDA_ENABLED")

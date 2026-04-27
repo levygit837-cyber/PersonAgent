@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from personagent.application.services import (
     NextStepSuggestionService,
+    OperationalMemoryService,
     SessionMemoryService,
     SessionTitleService,
 )
@@ -23,7 +24,10 @@ from personagent.infrastructure.llm.codex_subscription_adapter import CodexSubsc
 from personagent.infrastructure.llm.kimi_coding_adapter import KimiCodingAdapter
 from personagent.infrastructure.llm.llama_cpp_adapter import LlamaCppAdapter
 from personagent.infrastructure.llm.nvidia_nim_adapter import NvidiaNimAdapter
-from personagent.infrastructure.llm.process_manager import LlamaServerProcessManager
+from personagent.infrastructure.llm.process_manager import (
+    EmbeddingServerProcessManager,
+    LlamaServerProcessManager,
+)
 from personagent.infrastructure.llm.vertex_ai_adapter import VertexAiAdapter
 from personagent.infrastructure.persistence.context import InMemoryContextRepository
 from personagent.infrastructure.persistence.database import AsyncSessionLocal
@@ -66,6 +70,7 @@ class DIContainer:
         self._settings = get_settings()
         self._llm_backends: dict[str, LLMBackendRepository] = {}
         self._process_manager: LlamaServerProcessManager | None = None
+        self._embedding_process_manager: EmbeddingServerProcessManager | None = None
         self._lightpanda_browser_worker: LightPandaBrowserWorker | None = None
         self._tool_registry: ToolRegistry | None = None
         self._tool_runtime_config: ToolRuntimeConfig | None = None
@@ -73,6 +78,9 @@ class DIContainer:
         self._prompt_context_analyzers: dict[int, PromptContextAnalyzer] = {}
         self._context_repository: InMemoryContextRepository | None = None
         self._session_title_service: SessionTitleService | None = None
+        self._embedding_adapter = None
+        self._operational_memory_repository = None
+        self._operational_memory_service: OperationalMemoryService | None = None
 
     @property
     def settings(self):
@@ -153,6 +161,12 @@ class DIContainer:
         if self._process_manager is None:
             self._process_manager = LlamaServerProcessManager()
         return self._process_manager
+
+    def get_embedding_process_manager(self) -> EmbeddingServerProcessManager:
+        """Retorna o gerenciador do servidor local de embeddings."""
+        if self._embedding_process_manager is None:
+            self._embedding_process_manager = EmbeddingServerProcessManager()
+        return self._embedding_process_manager
 
     def get_tool_registry(self) -> ToolRegistry:
         """Retorna o registry de ferramentas locais (singleton)."""
@@ -305,6 +319,53 @@ class DIContainer:
             recall_selector=self.create_memory_recall_selector(llm_backend),
         )
 
+    def get_embedding_adapter(self):
+        """Retorna o adapter do modelo local de embeddings."""
+        if not self._settings.operational_memory_embedding_enabled:
+            return None
+        if self._embedding_adapter is None:
+            from personagent.infrastructure.llm.embedding_adapter import (
+                OpenAICompatibleEmbeddingAdapter,
+            )
+
+            self._embedding_adapter = OpenAICompatibleEmbeddingAdapter(
+                base_url=self._settings.embedding_server_url,
+                api_key=self._settings.embedding_server_api_key,
+                model=self._settings.embedding_model,
+                timeout=self._settings.embedding_timeout_seconds,
+                dimensions=self._settings.embedding_dimensions,
+            )
+        return self._embedding_adapter
+
+    def get_operational_memory_repository(self):
+        """Retorna o repositório PostgreSQL de memória operacional."""
+        if self._operational_memory_repository is None:
+            from personagent.infrastructure.persistence.operational_memory_repository import (
+                OperationalMemoryRepository,
+            )
+
+            self._operational_memory_repository = OperationalMemoryRepository(AsyncSessionLocal)
+        return self._operational_memory_repository
+
+    def get_operational_memory_service(self) -> OperationalMemoryService | None:
+        """Retorna o serviço RAG operacional, se habilitado."""
+        if not self._settings.operational_memory_enabled:
+            return None
+        if self._operational_memory_service is None:
+            self._operational_memory_service = OperationalMemoryService(
+                repository=self.get_operational_memory_repository(),
+                embedding_adapter=self.get_embedding_adapter(),
+                embedding_model=self._settings.embedding_model,
+                embeddings_enabled=self._settings.operational_memory_embedding_enabled,
+                recall_enabled=self._settings.operational_memory_recall_enabled,
+                capture_tools_enabled=self._settings.operational_memory_capture_tools_enabled,
+                max_capture_chars=self._settings.operational_memory_max_capture_chars,
+                chunk_max_chars=self._settings.operational_memory_chunk_max_chars,
+                recall_top_k=self._settings.operational_memory_recall_top_k,
+                hot_cache_size=self._settings.operational_memory_hot_cache_size,
+            )
+        return self._operational_memory_service
+
     def create_extract_memory_worker(self):
         """Cria o worker de extração de memórias."""
         from contextlib import asynccontextmanager
@@ -404,6 +465,11 @@ class DIContainer:
             if close is not None:
                 await close()
         self._llm_backends.clear()
+        if self._embedding_adapter is not None:
+            close = getattr(self._embedding_adapter, "close", None)
+            if close is not None:
+                await close()
+            self._embedding_adapter = None
 
     async def close_browser_workers(self) -> None:
         """Close browser workers initialized by tools."""
@@ -444,12 +510,21 @@ async def lifespan() -> AsyncGenerator[DIContainer, None]:
             print("⚠️  Aviso: Não foi possível iniciar o llama-server automaticamente.")
             print("   Certifique-se de que o servidor está rodando manualmente.")
 
+    if settings.embedding_auto_start:
+        embedding_pm = container.get_embedding_process_manager()
+        started = await embedding_pm.start()
+        if not started:
+            print("⚠️  Aviso: Não foi possível iniciar o embedding server automaticamente.")
+            print("   Execute manualmente: ./@llama/scripts/start-embedding-server.sh")
+
     try:
         yield container
     finally:
         # Encerra o llama-server
         if container._process_manager:
             container._process_manager.stop()
+        if container._embedding_process_manager:
+            container._embedding_process_manager.stop()
         # Fecha os adapters LLM
         await container.close_llm_backends()
         await container.close_browser_workers()
