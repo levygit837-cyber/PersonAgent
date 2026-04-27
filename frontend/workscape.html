@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PersonAgent - Workscape</title>
+    
+    <!-- Fonts: Inter for UI, JetBrains Mono for Code/Technical Data -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        base: '#09090b',
+                        surface: '#0e0e11',
+                        surface2: '#141418',
+                        border: 'rgba(255, 255, 255, 0.05)',
+                        borderStrong: 'rgba(255, 255, 255, 0.1)',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <style>
+        /* Deep Architecture: Custom Scrollbars for structural pane mimicry */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            border: 2px solid #09090b;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        /* Hide scrollbar for clean sidebars but keep scroll functionality */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* Micro-Animations & Core Aesthetics */
+        .thinking-shimmer {
+            background: linear-gradient(90deg, #52525b 0%, #e4e4e7 50%, #52525b 100%);
+            background-size: 200% auto;
+            color: transparent;
+            -webkit-background-clip: text;
+            background-clip: text;
+            animation: shimmer 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes shimmer {
+            0% { background-position: -200% center; }
+            100% { background-position: 200% center; }
+        }
+
+        .spin-slow {
+            animation: spin 3s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        /* Input Bar Blur Fixes for nested elements */
+        .glass-dock {
+            background: linear-gradient(to bottom, rgba(14, 14, 17, 0.7), rgba(9, 9, 11, 0.85));
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+        }
+
+        /* Text area auto-resize visual mimicry */
+        textarea:focus {
+            outline: none;
+        }
+
+        /* Subtle glow for active agent elements */
+        .agent-glow {
+            box-shadow: 0 0 40px rgba(255, 255, 255, 0.03);
+        }
+    </style>
+</head>
+<body class="bg-base text-zinc-300 h-screen w-screen overflow-hidden flex selection:bg-zinc-800 selection:text-zinc-100">
+
+    <!-- MACRO-ARCHITECTURE: PANE 1 - History & Sessions (Left Sidebar) -->
+    <aside class="w-[260px] h-full flex-shrink-0 flex flex-col border-r border-border bg-surface relative z-20">
+        <!-- Header -->
+        <div class="h-14 flex items-center justify-between px-4 border-b border-border">
+            <div class="flex items-center gap-2 text-zinc-100 font-medium">
+                <div class="w-5 h-5 rounded flex items-center justify-center bg-zinc-800 text-xs">
+                    <i class="ph-fill ph-terminal-window text-zinc-300"></i>
+                </div>
+                <!-- Subtly styled app name -->
+                <span class="tracking-tight text-[13px]">PersonAgent<span class="text-zinc-600">.local</span></span>
+            </div>
+            <button class="text-zinc-500 hover:text-zinc-200 transition-colors">
+                <i class="ph ph-magnifying-glass text-lg"></i>
+            </button>
+        </div>
+
+        <!-- New Chat Button -->
+        <div class="p-3 border-b border-border">
+            <button class="w-full flex items-center justify-between bg-zinc-800/40 hover:bg-zinc-800/80 border border-borderStrong text-left px-3 py-2 rounded-lg transition-all text-sm group">
+                <span class="text-zinc-300 group-hover:text-zinc-100">New Session</span>
+                <i class="ph ph-plus text-zinc-500 group-hover:text-zinc-300"></i>
+            </button>
+        </div>
+
+        <!-- Chat List Engine -->
+        <div class="flex-1 overflow-y-auto no-scrollbar py-2 text-[13px]">
+            <!-- Group: Today -->
+            <div class="px-3 py-2">
+                <h3 class="text-[10px] uppercase tracking-wider text-zinc-600 font-semibold mb-2 px-1">Active Context</h3>
+                <div class="flex flex-col gap-[2px]">
+                    <button class="w-full flex items-center gap-3 px-2 py-1.5 bg-zinc-800/60 rounded-md text-zinc-200 text-left cursor-default">
+                        <i class="ph ph-chats text-zinc-500"></i>
+                        <span class="truncate block">Refactor Navigation.tsx</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Group: Previous -->
+            <div class="px-3 py-2 mt-2">
+                <h3 class="text-[10px] uppercase tracking-wider text-zinc-600 font-semibold mb-2 px-1">Previous Work</h3>
+                <div class="flex flex-col gap-[2px]">
+                    <button class="w-full flex items-center gap-3 px-2 py-1.5 hover:bg-zinc-800/30 rounded-md text-zinc-400 hover:text-zinc-300 text-left transition-colors">
+                        <i class="ph ph-code text-zinc-600"></i>
+                        <span class="truncate block">Docker container logs parsing</span>
+                    </button>
+                    <button class="w-full flex items-center gap-3 px-2 py-1.5 hover:bg-zinc-800/30 rounded-md text-zinc-400 hover:text-zinc-300 text-left transition-colors">
+                        <i class="ph ph-terminal text-zinc-600"></i>
+                        <span class="truncate block">Setup rust toolchain</span>
+                    </button>
+                    <button class="w-full flex items-center gap-3 px-2 py-1.5 hover:bg-zinc-800/30 rounded-md text-zinc-400 hover:text-zinc-300 text-left transition-colors">
+                        <i class="ph ph-bug text-zinc-600"></i>
+                        <span class="truncate block">Debug OAuth callback</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Bottom Settings/Profile -->
+        <div class="h-14 border-t border-border flex items-center px-4 justify-between bg-surface">
+            <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full bg-emerald-500/80 shadow-[0_0_8px_rgba(16,185,129,0.4)]"></div>
+                <span class="text-xs text-zinc-400 font-mono">Engine: Idle</span>
+            </div>
+            <button class="text-zinc-500 hover:text-zinc-300 transition-colors">
+                <i class="ph ph-gear-six text-lg"></i>
+            </button>
+        </div>
+    </aside>
+
+    <!-- MACRO-ARCHITECTURE: PANE 2 - Main Cognitive Space (Center Chat) -->
+    <main class="flex-1 flex flex-col relative min-w-0 z-10 bg-base shadow-[inset_0_40px_80px_rgba(0,0,0,0.5)]">
+        
+        <!-- Center Header -->
+        <header class="h-14 flex items-center justify-between px-6 border-b border-border bg-base/80 backdrop-blur-sm absolute top-0 w-full z-30">
+            <div class="flex items-center gap-3">
+                <div class="flex items-center gap-2 bg-surface border border-border rounded-md px-2 py-1 cursor-pointer hover:bg-surface2 transition-colors">
+                    <i class="ph-fill ph-cpu text-zinc-400 text-xs"></i>
+                    <span class="text-xs font-medium text-zinc-300">Llama-3-70B-Instruct</span>
+                    <i class="ph ph-caret-down text-zinc-600 text-xs"></i>
+                </div>
+                <div class="h-4 w-px bg-border"></div>
+                <span class="text-xs text-zinc-500 font-mono flex items-center gap-1">
+                    <i class="ph ph-memory"></i> 14.2 GB VRAM
+                </span>
+            </div>
+
+            <!-- Context Panel Toggle -->
+            <button class="flex items-center gap-2 text-zinc-400 hover:text-zinc-100 bg-surface border border-border px-3 py-1.5 rounded-md text-xs transition-colors">
+                <i class="ph-fill ph-sidebar-simple text-sm"></i>
+                Context Tree
+            </button>
+        </header>
+
+        <!-- Message Feed Area -->
+        <div class="flex-1 overflow-y-auto pt-24 pb-48 px-4 md:px-12 xl:px-32 flex flex-col gap-8 scroll-smooth">
+            
+            <!-- Date Splitter -->
+            <div class="flex items-center justify-center relative w-full mb-4">
+                <div class="absolute h-px w-full bg-gradient-to-r from-transparent via-borderStrong to-transparent"></div>
+                <span class="bg-base px-3 text-[10px] uppercase tracking-widest text-zinc-600 font-medium relative z-10">Today, 10:42 AM</span>
+            </div>
+
+            <!-- MESO-ARCHITECTURE: User Message -->
+            <div class="flex flex-col gap-1 w-full max-w-3xl mx-auto">
+                <div class="flex items-center gap-2 text-zinc-500 text-xs font-medium uppercase tracking-wider mb-1 pl-1">
+                    <i class="ph-fill ph-user-circle"></i> User
+                </div>
+                <div class="text-[15px] leading-relaxed text-zinc-200 pl-5 pr-4">
+                    Review <code class="bg-zinc-800/80 text-zinc-300 border border-zinc-700/50 px-1.5 py-0.5 rounded font-mono text-[13px]">src/components/Navigation.tsx</code>. The mobile menu animation is dropping frames on iOS when sliding in from the left. Check the transition timings and DOM layout thrashing. Implement a fix and show me the diff.
+                </div>
+            </div>
+
+            <!-- MESO-ARCHITECTURE: Agent Response with Codex-like Tool Grouping -->
+            <div class="flex flex-col gap-3 w-full max-w-3xl mx-auto">
+                <div class="flex items-center gap-2 text-zinc-300 text-xs font-medium uppercase tracking-wider mb-1 pl-1">
+                    <i class="ph-fill ph-robot"></i> PersonAgent
+                </div>
+
+                <!-- Codex-style Structured Tool Call Block -->
+                <div class="ml-5 border border-borderStrong rounded-xl bg-surface/50 overflow-hidden shadow-sm">
+                    <!-- Block Header (Collapsible style) -->
+                    <div class="px-4 py-2.5 bg-surface border-b border-borderStrong flex items-center justify-between group cursor-pointer hover:bg-surface2 transition-colors">
+                        <div class="flex items-center gap-3">
+                            <i class="ph ph-terminal-window text-zinc-500"></i>
+                            <span class="text-xs font-medium text-zinc-300">System Integration Sequence</span>
+                            <span class="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 text-[10px] font-mono border border-border">3 calls</span>
+                        </div>
+                        <i class="ph ph-caret-up text-zinc-600 group-hover:text-zinc-400"></i>
+                    </div>
+                    
+                    <!-- Inside Tool Block: Sequential Process Steps -->
+                    <div class="p-4 grid gap-4 font-mono text-[12px]">
+                        
+                        <!-- Tool 1: Success -->
+                        <div class="flex items-start gap-3 relative">
+                            <!-- timeline connector -->
+                            <div class="absolute left-[7px] top-4 w-px h-full bg-border"></div>
+                            
+                            <div class="mt-0.5 w-4 h-4 rounded-full bg-base border border-emerald-500/30 flex items-center justify-center relative z-10">
+                                <i class="ph-bold ph-check text-[10px] text-emerald-500"></i>
+                            </div>
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-zinc-300">fs.cwd</span>
+                                    <span class="text-zinc-500">()</span>
+                                </div>
+                                <div class="mt-1.5 px-3 py-2 bg-base border border-border rounded-md text-zinc-400">
+                                    <span class="text-zinc-600">&gt;</span> /Users/dev/workspace/frontend-app
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tool 2: Success -->
+                        <div class="flex items-start gap-3 relative">
+                            <div class="absolute left-[7px] top-4 w-px h-[calc(100%+16px)] bg-border"></div>
+                            
+                            <div class="mt-0.5 w-4 h-4 rounded-full bg-base border border-emerald-500/30 flex items-center justify-center relative z-10">
+                                <i class="ph-bold ph-check text-[10px] text-emerald-500"></i>
+                            </div>
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-zinc-300">workspace.readFile</span>
+                                    <span class="text-zinc-500">({ path: <span class="text-amber-200/80">'src/components/Navigation.tsx'</span> })</span>
+                                </div>
+                                <div class="mt-1 flex items-center gap-2 text-[11px] text-zinc-500">
+                                    <i class="ph-fill ph-file-code"></i> Read 284 lines (6.2kb)
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tool 3: In Progress (Active State) -->
+                        <div class="flex items-start gap-3 relative">
+                            <div class="mt-0.5 w-4 h-4 rounded-full bg-base border border-zinc-500/50 flex items-center justify-center relative z-10">
+                                <i class="ph-bold ph-circle-notch text-[10px] text-zinc-300 spin-slow"></i>
+                            </div>
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-zinc-300">ast.analyze</span>
+                                    <span class="text-zinc-500">({ target: <span class="text-amber-200/80">'CSSTransitions'</span> })</span>
+                                </div>
+                                <div class="mt-1.5 px-3 py-2 bg-base border border-zinc-500/20 rounded-md text-zinc-300/70 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)]">
+                                    Parsing component lifecycle methods and CSS modules...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Text Streaming/Thinking State -->
+                <div class="ml-5 mt-2 pl-2 border-l-2 border-zinc-800">
+                    <span class="text-[15px] font-medium tracking-wide thinking-shimmer">Analyzing DOM layout thrashing...</span>
+                </div>
+
+            </div>
+            
+            <!-- Spacer to push content above floating dock -->
+            <div class="h-12 w-full"></div>
+        </div>
+
+        <!-- Float Input Dock (Bottom Center) -->
+        <div class="absolute bottom-6 w-full px-6 flex justify-center z-40 pointer-events-none">
+            <div class="pointer-events-auto w-full max-w-[700px] glass-dock rounded-2xl border border-borderStrong shadow-[0_20px_60px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden transition-all duration-300 focus-within:border-zinc-600 focus-within:shadow-[0_20px_60px_rgba(0,0,0,0.8),0_0_0_1px_rgba(255,255,255,0.1)]">
+                
+                <!-- Tiny context indicator -->
+                <div class="px-4 py-1.5 bg-zinc-900/50 border-b border-border flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
+                    <i class="ph-fill ph-folder"></i>
+                    <span>/Users/dev/workspace/frontend-app</span>
+                </div>
+
+                <!-- Input Row -->
+                <div class="flex items-end px-3 py-3 gap-2">
+                    <button class="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50 rounded-lg transition-colors flex-shrink-0">
+                        <i class="ph ph-plus text-lg"></i>
+                    </button>
+                    
+                    <textarea 
+                        rows="1" 
+                        placeholder="Message PersonAgent... (Type '/' for tools)"
+                        class="flex-1 max-h-48 resize-none bg-transparent text-[15px] text-zinc-200 placeholder-zinc-500 py-2 no-scrollbar font-sans"
+                        style="min-height: 40px;"
+                    ></textarea>
+                    
+                    <!-- Action Buttons -->
+                    <div class="flex items-center gap-1 pr-1 pb-1 flex-shrink-0">
+                        <button class="p-1.5 text-zinc-500 hover:text-zinc-300 rounded transition-colors" title="Toggle Voice">
+                            <i class="ph ph-microphone text-lg"></i>
+                        </button>
+                        <button class="w-8 h-8 flex items-center justify-center bg-zinc-100 text-zinc-900 rounded-lg hover:bg-white transition-transform active:scale-95 shadow-[0_0_15px_rgba(255,255,255,0.1)]">
+                            <i class="ph-bold ph-arrow-up text-sm"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- MACRO-ARCHITECTURE: PANE 3 - Right Context Sidebar (Usually collapsed, shown here to display structural depth) -->
+    <aside class="w-[320px] h-full flex-shrink-0 flex flex-col border-l border-border bg-surface2 relative z-20 shadow-[-20px_0_40px_rgba(0,0,0,0.3)]">
+        
+        <!-- Header -->
+        <div class="h-14 flex items-center justify-between px-4 border-b border-border bg-surface">
+            <span class="text-xs font-semibold text-zinc-300 uppercase tracking-wider">Workspace</span>
+            <div class="flex items-center gap-1">
+                <button class="p-1 text-zinc-500 hover:text-zinc-300 rounded"><i class="ph ph-arrows-out-simple"></i></button>
+                <button class="p-1 text-zinc-500 hover:text-zinc-300 rounded"><i class="ph ph-x"></i></button>
+            </div>
+        </div>
+
+        <!-- Section Tabs -->
+        <div class="flex items-center border-b border-border bg-surface px-2">
+            <button class="px-3 py-2 text-xs font-medium text-zinc-200 border-b-2 border-zinc-400">Files</button>
+            <button class="px-3 py-2 text-xs font-medium text-zinc-600 hover:text-zinc-400 border-b-2 border-transparent">Changes</button>
+            <button class="px-3 py-2 text-xs font-medium text-zinc-600 hover:text-zinc-400 border-b-2 border-transparent">Terminal</button>
+        </div>
+
+        <!-- Side Panel Scrollable Content -->
+        <div class="flex-1 overflow-y-auto no-scrollbar pb-6 flex flex-col">
+            
+            <!-- Directory Tree -->
+            <div class="p-2 font-mono text-[12px]">
+                <!-- Folder Root -->
+                <div class="flex items-center gap-2 py-1 px-2 text-zinc-300 hover:bg-white/5 rounded cursor-pointer">
+                    <i class="ph-fill ph-caret-down text-zinc-500 text-[10px]"></i>
+                    <i class="ph-fill ph-folder-open text-amber-500/80"></i>
+                    <span>src</span>
+                </div>
+                
+                <!-- Expanded Content -->
+                <div class="ml-4 pl-2 border-l border-borderStrong flex flex-col mt-0.5">
+                    <!-- Folder -->
+                    <div class="flex items-center gap-2 py-1 px-2 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 rounded cursor-pointer">
+                        <i class="ph-fill ph-caret-right text-zinc-600 text-[10px]"></i>
+                        <i class="ph-fill ph-folder text-amber-500/60"></i>
+                        <span>assets</span>
+                    </div>
+                    
+                    <!-- Folder Expanded -->
+                    <div class="flex items-center gap-2 py-1 px-2 text-zinc-300 hover:bg-white/5 rounded cursor-pointer mt-0.5">
+                        <i class="ph-fill ph-caret-down text-zinc-500 text-[10px]"></i>
+                        <i class="ph-fill ph-folder-open text-amber-500/80"></i>
+                        <span>components</span>
+                    </div>
+                    
+                    <!-- Deep Files -->
+                    <div class="ml-4 pl-2 border-l border-borderStrong flex flex-col mt-0.5">
+                        <div class="flex items-center gap-2 py-1.5 px-2 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 rounded cursor-pointer">
+                            <i class="ph-fill ph-file-ts text-zinc-400"></i>
+                            <span>Layout.tsx</span>
+                        </div>
+                        <!-- Active File -->
+                        <div class="flex items-center justify-between py-1.5 px-2 bg-zinc-500/10 border border-zinc-500/20 text-zinc-100 rounded cursor-pointer relative group">
+                            <div class="flex items-center gap-2">
+                                <i class="ph-fill ph-file-ts text-zinc-300"></i>
+                                <span>Navigation.tsx</span>
+                            </div>
+                            <span class="text-[9px] text-zinc-300/60 font-sans tracking-wide group-hover:opacity-100 opacity-0 transition-opacity">IN CONTEXT</span>
+                        </div>
+                        <div class="flex items-center gap-2 py-1.5 px-2 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 rounded cursor-pointer">
+                            <i class="ph-fill ph-file-css text-zinc-400"></i>
+                            <span>nav.module.css</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mini Terminal Viewer / Live Context Inspector -->
+            <div class="mt-4 border-t border-border bg-base h-48 flex flex-col">
+                <div class="px-3 py-1.5 border-b border-border flex items-center justify-between bg-surface">
+                    <span class="text-[10px] uppercase text-zinc-500 font-bold tracking-wider">Live Diff Preview</span>
+                    <button class="text-[10px] text-zinc-500 hover:text-zinc-300"><i class="ph ph-arrows-out-simple"></i></button>
+                </div>
+                <!-- Diff Mockup -->
+                <div class="flex-1 overflow-auto p-2 font-mono text-[11px] leading-relaxed select-text">
+                    <div class="text-zinc-500 mb-1">@@ -142,6 +142,8 @@</div>
+                    
+                    <!-- Context lines -->
+                    <div class="flex items-start">
+                        <div class="w-6 flex-shrink-0 text-zinc-600 text-right pr-2 select-none">142</div>
+                        <div class="flex-1 text-zinc-400">&nbsp;&nbsp;const [isOpen, setIsOpen] = useState(false);</div>
+                    </div>
+                    
+                    <!-- Removed line -->
+                    <div class="flex items-start bg-rose-500/10 border-l border-rose-500/30">
+                        <div class="w-6 flex-shrink-0 text-rose-500/50 text-right pr-2 select-none">143</div>
+                        <div class="flex-1 text-rose-200/80"><span class="text-rose-500">-</span>&nbsp;&nbsp;const transitionClass = "transition-all duration-300";</div>
+                    </div>
+
+                    <!-- Added lines -->
+                    <div class="flex items-start bg-emerald-500/10 border-l border-emerald-500/30">
+                        <div class="w-6 flex-shrink-0 text-emerald-500/50 text-right pr-2 select-none">143</div>
+                        <div class="flex-1 text-emerald-200/80"><span class="text-emerald-500">+</span>&nbsp;&nbsp;const transitionClass = `transform transition-transform</div>
+                    </div>
+                    <div class="flex items-start bg-emerald-500/10 border-l border-emerald-500/30">
+                        <div class="w-6 flex-shrink-0 text-emerald-500/50 text-right pr-2 select-none">144</div>
+                        <div class="flex-1 text-emerald-200/80"><span class="text-emerald-500">+</span>&nbsp;&nbsp;&nbsp;&nbsp;duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]</div>
+                    </div>
+                    <div class="flex items-start bg-emerald-500/10 border-l border-emerald-500/30">
+                        <div class="w-6 flex-shrink-0 text-emerald-500/50 text-right pr-2 select-none">145</div>
+                        <div class="flex-1 text-emerald-200/80"><span class="text-emerald-500">+</span>&nbsp;&nbsp;&nbsp;&nbsp;will-change-transform`;</div>
+                    </div>
+
+                    <div class="flex items-start mt-1">
+                        <div class="w-6 flex-shrink-0 text-zinc-600 text-right pr-2 select-none">146</div>
+                        <div class="flex-1 text-zinc-400">&nbsp;</div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </aside>
+
+</body>
+</html>

@@ -1,0 +1,399 @@
+export type ModelProvider = "llama" | "nvidia" | "vertex";
+
+export type ReasoningPreset = "low" | "medium" | "high" | "xhigh" | "max";
+export type PromptMode = "auto" | "writing" | "exploring" | "research";
+
+export const reasoningPresets: Array<{
+  value: ReasoningPreset;
+  label: string;
+  tokenBudget: number;
+}> = [
+  { value: "low", label: "Low", tokenBudget: 2048 },
+  { value: "medium", label: "Medium", tokenBudget: 4082 },
+  { value: "high", label: "High", tokenBudget: 8192 },
+  { value: "xhigh", label: "xHigh", tokenBudget: 16382 },
+  { value: "max", label: "Max", tokenBudget: 32768 },
+];
+
+export function reasoningTokenBudget(preset: ReasoningPreset) {
+  return reasoningPresets.find((item) => item.value === preset)?.tokenBudget ?? 2048;
+}
+
+export interface LlmModel {
+  id: string;
+  name: string;
+  provider: ModelProvider;
+  context_length?: number;
+  capabilities?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export const localModel: LlmModel = {
+  id: "local-model",
+  name: "Local model",
+  provider: "llama",
+};
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export type PersistedMessageRole = "system" | "user" | "assistant" | "tool";
+
+export interface PersistedMessage {
+  id?: string;
+  role: PersistedMessageRole;
+  content: string;
+  reasoning_content?: string;
+  timestamp?: string;
+  tool_call_id?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface GeneratedImage {
+  mime_type: string;
+  data: string;
+  alt?: string;
+}
+
+export interface ConversationDetail {
+  id: string;
+  title: string;
+  messages: PersistedMessage[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatRequestPayload {
+  conversation_id?: string;
+  message: string;
+  system_prompt?: string;
+  stream: true;
+  temperature: number;
+  max_tokens: number;
+  provider: ModelProvider;
+  model: string;
+  prompt_mode: PromptMode;
+  reasoning_level: ReasoningPreset;
+  reasoning_budget_tokens: number;
+  workspace_root?: string;
+  tool_context?: {
+    workspace_root: string;
+    cwd: string;
+    allowed_roots: string[];
+  };
+}
+
+export interface ChatCommandInfo {
+  name: string;
+  slash_name: string;
+  description: string;
+  argument_hint?: string | null;
+  source: "command" | "skill" | string;
+  path: string;
+  user_invocable: boolean;
+}
+
+export interface TeamAgent {
+  id: string;
+  name: string;
+  role: string;
+  system_prompt: string;
+  temperature: number;
+  max_tokens: number;
+  tools_enabled: boolean;
+}
+
+export interface TeamConfig {
+  id: string;
+  name: string;
+  agents: TeamAgent[];
+  execution_order: string[];
+  max_rounds: number;
+  vote_every_rounds: number;
+  consensus_threshold: number;
+}
+
+export interface TeamVote {
+  agent_id: string;
+  agent_name: string;
+  approve: boolean;
+  confidence: number;
+  blocker?: string;
+  critical_blocker?: boolean;
+  final_points?: string;
+}
+
+export interface TeamConsensus {
+  approvals: number;
+  required: number;
+  threshold: number;
+  critical_blocker?: boolean;
+  round?: number;
+}
+
+export interface TeamRunEvent {
+  event:
+    | "team_run_started"
+    | "round_started"
+    | "agent_turn_started"
+    | "agent_delta"
+    | "agent_turn_completed"
+    | "vote_started"
+    | "agent_vote"
+    | "consensus_reached"
+    | "final_delta"
+    | "team_run_completed"
+    | "team_consensus_failed"
+    | "team_run_cancelled"
+    | "error";
+  run_id?: string;
+  conversation_id?: string;
+  title?: string;
+  team?: TeamConfig;
+  round?: number;
+  agent_id?: string;
+  agent_name?: string;
+  agent_role?: string;
+  content?: string;
+  reasoning_content?: string;
+  digest?: string;
+  approve?: boolean;
+  confidence?: number;
+  blocker?: string;
+  critical_blocker?: boolean;
+  final_points?: string;
+  consensus?: TeamConsensus;
+  final_output?: string;
+  reason?: string;
+  error?: string;
+  status?: number;
+  created_at?: string;
+  started_at?: string;
+  completed_at?: string;
+  duration_ms?: number;
+  first_token_ms?: number;
+}
+
+export interface TeamTraceEventUi {
+  id: string;
+  kind:
+    | "run"
+    | "round"
+    | "turn"
+    | "vote"
+    | "consensus"
+    | "failed"
+    | "cancelled";
+  title: string;
+  detail?: string;
+  round?: number;
+  agentId?: string;
+  agentName?: string;
+  status?: "running" | "completed" | "approved" | "rejected" | "failed" | "cancelled";
+  content?: string;
+}
+
+export interface StreamChunk {
+  event?: string;
+  conversation_id?: string;
+  title?: string;
+  approval_id?: string;
+  plan_id?: string;
+  plan_content?: string;
+  plan_status?: string;
+  plan_active?: boolean;
+  feedback?: string | null;
+  cancelled?: boolean;
+  content?: string;
+  reasoning_content?: string;
+  finish_reason?: string;
+  model?: string;
+  provider?: string;
+  usage?: Record<string, unknown>;
+  images?: GeneratedImage[];
+  is_thinking?: boolean;
+  error?: string;
+  status?: number;
+  tool_call_id?: string;
+  tool_name?: string;
+  tool_status?: string;
+  tool_message?: string;
+  tool_result?: string;
+  tool_error?: string;
+  tool_input?: Record<string, unknown>;
+  tool_data?: Record<string, unknown>;
+  tool_approval?: ToolApprovalPayload;
+  tool_calls?: unknown;
+  next_step_suggestion?: string | null;
+}
+
+export interface PlanApprovalUi {
+  conversationId: string;
+  approvalId: string;
+  planId: string;
+  planContent: string;
+  planStatus: string;
+  feedback?: string | null;
+}
+
+export interface PlanDecisionResponse {
+  event?: string;
+  conversation_id: string;
+  approval_id?: string | null;
+  plan_id?: string | null;
+  plan_content?: string;
+  plan_status?: string;
+  plan_active?: boolean;
+  feedback?: string | null;
+  cancelled?: boolean;
+  injected_message?: string;
+  suggested_message?: string;
+}
+
+export interface ToolApprovalPayload {
+  approval_id: string;
+  status: string;
+  tool_call_id: string;
+  tool_name: string;
+  arguments?: Record<string, unknown>;
+  message?: string;
+}
+
+export interface ToolApprovalUi {
+  conversationId: string;
+  approvalId: string;
+  toolCallId: string;
+  toolName: string;
+  toolInput?: Record<string, unknown>;
+  message?: string;
+}
+
+export type MessageRoleUi = "user" | "agent" | "tool";
+export type ToolBlockStatus = "queued" | "running" | "completed" | "error" | "permission_required";
+export type ChatMessagePartKind = "reasoning" | "content" | "tool" | "image";
+
+export interface ChatMessagePartUi {
+  kind: ChatMessagePartKind;
+  id: string;
+  content?: string;
+  image?: GeneratedImage;
+  reasoningBlockId?: string;
+  toolBlockId?: string;
+}
+
+export interface ReasoningBlockUi {
+  id: string;
+  content: string;
+  isStreaming: boolean;
+}
+
+export interface ToolBlockUi {
+  id: string;
+  name: string;
+  status: ToolBlockStatus;
+  title: string;
+  message: string;
+  content: string;
+  path?: string;
+  data?: Record<string, unknown>;
+  isCollapsed: boolean;
+}
+
+export interface ChatMessageUi {
+  id: string;
+  role: MessageRoleUi;
+  label: string;
+  content: string;
+  reasoning: string;
+  reasoningBlocks: ReasoningBlockUi[];
+  toolBlocks: ToolBlockUi[];
+  teamEvents: TeamTraceEventUi[];
+  parts: ChatMessagePartUi[];
+  isStreaming: boolean;
+  isReasoningStreaming: boolean;
+}
+
+export function buildChatRequest(input: {
+  conversationId?: string;
+  message: string;
+  provider: ModelProvider;
+  model: string;
+  reasoningPreset: ReasoningPreset;
+  workspaceRoot?: string | null;
+  systemPrompt?: string;
+  promptMode?: PromptMode;
+}): ChatRequestPayload {
+  const trimmedWorkspace = input.workspaceRoot?.trim();
+  const payload: ChatRequestPayload = {
+    message: input.message.trim(),
+    stream: true,
+    temperature: 0.7,
+    max_tokens: 65536,
+    provider: input.provider,
+    model: input.model,
+    prompt_mode: input.promptMode ?? "auto",
+    reasoning_level: input.reasoningPreset,
+    reasoning_budget_tokens: reasoningTokenBudget(input.reasoningPreset),
+  };
+
+  if (input.conversationId) payload.conversation_id = input.conversationId;
+  if (input.systemPrompt) payload.system_prompt = input.systemPrompt;
+  if (trimmedWorkspace) {
+    payload.workspace_root = trimmedWorkspace;
+    payload.tool_context = {
+      workspace_root: trimmedWorkspace,
+      cwd: trimmedWorkspace,
+      allowed_roots: [trimmedWorkspace],
+    };
+  }
+
+  return payload;
+}
+
+export function buildTeamRunStart(input: {
+  conversationId?: string;
+  message: string;
+  provider: ModelProvider;
+  model: string;
+  reasoningPreset: ReasoningPreset;
+  workspaceRoot?: string | null;
+  systemPrompt?: string;
+  teamId?: string;
+  teamConfig?: TeamConfig;
+}) {
+  return {
+    type: "team.run.start",
+    ...buildChatRequest(input),
+    team_id: input.teamId ?? "default-4",
+    team_config: input.teamConfig,
+  };
+}
+
+export function isToolEvent(chunk: StreamChunk) {
+  return (
+    chunk.event === "tool_call_started" ||
+    chunk.event === "tool_progress" ||
+    chunk.event === "tool_result" ||
+    chunk.event === "tool_error" ||
+    chunk.event === "permission_required" ||
+    chunk.event === "tool_group_started" ||
+    chunk.event === "tool_group_finished"
+  );
+}
+
+export function isToolGroupEvent(chunk: StreamChunk) {
+  return chunk.event === "tool_group_started" || chunk.event === "tool_group_finished";
+}
+
+export function parseToolStatus(value?: string): ToolBlockStatus {
+  if (value === "completed") return "completed";
+  if (value === "error") return "error";
+  if (value === "permission_required") return "permission_required";
+  if (value === "running") return "running";
+  return "queued";
+}

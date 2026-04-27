@@ -1,0 +1,62 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: personagent-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-personagent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-personagent_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-personagent}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./@backend/src/personagent/infrastructure/persistence/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-personagent} -d ${POSTGRES_DB:-personagent}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - personagent-network
+
+  lightpanda:
+    image: lightpanda/browser:nightly
+    container_name: personagent-lightpanda
+    entrypoint: ["lightpanda"]
+    command:
+      [
+        "serve",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9222",
+        "--advertise-host",
+        "${LIGHTPANDA_ADVERTISE_HOST:-127.0.0.1}",
+        "--timeout",
+        "${LIGHTPANDA_CDP_TIMEOUT_SECONDS:-300}",
+        "--cdp-max-connections",
+        "${LIGHTPANDA_CDP_MAX_CONNECTIONS:-64}",
+      ]
+    ports:
+      - "127.0.0.1:${LIGHTPANDA_PORT:-9222}:9222"
+    restart: unless-stopped
+    networks:
+      - personagent-network
+
+  # Futuro: Redis para cache de sessões
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: personagent-redis
+  #   ports:
+  #     - "6379:6379"
+  #   networks:
+  #     - personagent-network
+
+volumes:
+  postgres_data:
+
+networks:
+  personagent-network:
+    driver: bridge
