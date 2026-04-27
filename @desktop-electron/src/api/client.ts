@@ -71,6 +71,12 @@ export function getSessionPanel(baseUrl: string, conversationId: string, workspa
   return requestJson<SessionPanelSnapshot>(baseUrl, `/sessions/${conversationId}/panel${suffix}`);
 }
 
+export function listWorkspaceFiles(baseUrl: string, dirPath: string, workspaceRoot?: string | null) {
+  const params = new URLSearchParams({ path: dirPath });
+  if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
+  return requestJson<Array<{ name: string; isDirectory: boolean; path: string }>>(baseUrl, `/workspace/files?${params.toString()}`);
+}
+
 export function getSessionProjectDetail(
   baseUrl: string,
   conversationId: string,

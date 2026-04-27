@@ -34,9 +34,13 @@ class TeamConfig:
     name: str
     agents: tuple[TeamAgentConfig, ...]
     execution_order: tuple[str, ...]
+    coordinator: TeamAgentConfig
     max_rounds: int = 3
-    vote_every_rounds: int = 1
+    vote_every_rounds: int = 2
     consensus_threshold: float = 0.75
+    force_final_vote: bool = True
+    blackboard_mode: str = "hybrid"
+    tool_policy: str = "guarded_autonomy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,13 +58,15 @@ class TeamChatRequest:
     reasoning_budget_tokens: int | None = None
     workspace_root: str | None = None
     tool_context: dict[str, Any] = field(default_factory=dict)
+    allowed_tools: list[str] | None = None
+    max_tool_iterations: int | None = None
 
 
 def default_team_config() -> TeamConfig:
     """Return the built-in 4-agent team preset."""
 
     agents = (
-        TeamAgentConfig(
+            TeamAgentConfig(
             id="analyst",
             name="Analyst",
             role="Analysis",
@@ -69,6 +75,7 @@ def default_team_config() -> TeamConfig:
                 "missing context, and the strongest direct answer path. Be concise and factual."
             ),
             temperature=0.2,
+            tools_enabled=True,
         ),
         TeamAgentConfig(
             id="critic",
@@ -79,6 +86,7 @@ def default_team_config() -> TeamConfig:
                 "failure modes, and point out what would make the answer unsafe or incomplete."
             ),
             temperature=0.25,
+            tools_enabled=True,
         ),
         TeamAgentConfig(
             id="builder",
@@ -89,6 +97,7 @@ def default_team_config() -> TeamConfig:
                 "usable answer or implementation direction while respecting prior critiques."
             ),
             temperature=0.25,
+            tools_enabled=True,
         ),
         TeamAgentConfig(
             id="reviewer",
@@ -99,13 +108,26 @@ def default_team_config() -> TeamConfig:
                 "and whether the team is ready to synthesize a final answer."
             ),
             temperature=0.2,
+            tools_enabled=True,
         ),
+    )
+    coordinator = TeamAgentConfig(
+        id="coordinator",
+        name="Coordinator",
+        role="Final Synthesis",
+        system_prompt=(
+            "You are the Coordinator in a PersonAgent team. Synthesize the final report "
+            "from the blackboard, votes, evidence, blockers, and decisions. Do not vote."
+        ),
+        temperature=0.2,
+        max_tokens=4096,
     )
     return TeamConfig(
         id=DEFAULT_TEAM_ID,
         name="Default 4-agent team",
         agents=agents,
         execution_order=tuple(agent.id for agent in agents),
+        coordinator=coordinator,
     )
 
 
@@ -124,9 +146,13 @@ def parse_team_config(team_id: str | None = None, raw: dict[str, Any] | None = N
         name=str(raw.get("name") or "Custom team").strip() or "Custom team",
         agents=agents,
         execution_order=execution_order,
+        coordinator=_parse_agent(raw.get("coordinator") or _default_coordinator_payload()),
         max_rounds=int(raw.get("max_rounds", 3)),
-        vote_every_rounds=int(raw.get("vote_every_rounds", 1)),
+        vote_every_rounds=int(raw.get("vote_every_rounds", 2)),
         consensus_threshold=float(raw.get("consensus_threshold", 0.75)),
+        force_final_vote=bool(raw.get("force_final_vote", True)),
+        blackboard_mode=str(raw.get("blackboard_mode", "hybrid") or "hybrid"),
+        tool_policy=str(raw.get("tool_policy", "guarded_autonomy") or "guarded_autonomy"),
     )
     validate_team_config(config)
     return config
@@ -151,9 +177,21 @@ def serialize_team_config(config: TeamConfig) -> dict[str, Any]:
             for agent in config.agents
         ],
         "execution_order": list(config.execution_order),
+        "coordinator": {
+            "id": config.coordinator.id,
+            "name": config.coordinator.name,
+            "role": config.coordinator.role,
+            "system_prompt": config.coordinator.system_prompt,
+            "temperature": config.coordinator.temperature,
+            "max_tokens": config.coordinator.max_tokens,
+            "tools_enabled": config.coordinator.tools_enabled,
+        },
         "max_rounds": config.max_rounds,
         "vote_every_rounds": config.vote_every_rounds,
         "consensus_threshold": config.consensus_threshold,
+        "force_final_vote": config.force_final_vote,
+        "blackboard_mode": config.blackboard_mode,
+        "tool_policy": config.tool_policy,
     }
 
 
@@ -180,6 +218,12 @@ def validate_team_config(config: TeamConfig) -> None:
         raise TeamValidationError("vote_every_rounds must be at least 1")
     if config.consensus_threshold < 0.5 or config.consensus_threshold > 1.0:
         raise TeamValidationError("consensus_threshold must be between 0.5 and 1.0")
+    if config.coordinator.id in set(ids):
+        raise TeamValidationError("coordinator id must not duplicate a team agent id")
+    if config.blackboard_mode != "hybrid":
+        raise TeamValidationError("blackboard_mode must be hybrid")
+    if config.tool_policy != "guarded_autonomy":
+        raise TeamValidationError("tool_policy must be guarded_autonomy")
     for agent in config.agents:
         if not agent.name.strip():
             raise TeamValidationError("team agents must have names")
@@ -189,6 +233,16 @@ def validate_team_config(config: TeamConfig) -> None:
             raise TeamValidationError("agent temperature must be between 0 and 2")
         if agent.max_tokens < 1:
             raise TeamValidationError("agent max_tokens must be positive")
+    if not config.coordinator.id.strip():
+        raise TeamValidationError("coordinator must have an id")
+    if not config.coordinator.name.strip():
+        raise TeamValidationError("coordinator must have a name")
+    if not config.coordinator.role.strip():
+        raise TeamValidationError("coordinator must have a role")
+    if config.coordinator.temperature < 0 or config.coordinator.temperature > 2:
+        raise TeamValidationError("coordinator temperature must be between 0 and 2")
+    if config.coordinator.max_tokens < 1:
+        raise TeamValidationError("coordinator max_tokens must be positive")
 
 
 def _parse_agent(raw: Any) -> TeamAgentConfig:
@@ -210,3 +264,16 @@ def _required_list(raw: dict[str, Any], key: str) -> list[Any]:
     if not isinstance(value, list) or not value:
         raise TeamValidationError(f"{key} must be a non-empty list")
     return value
+
+
+def _default_coordinator_payload() -> dict[str, Any]:
+    coordinator = default_team_config().coordinator
+    return {
+        "id": coordinator.id,
+        "name": coordinator.name,
+        "role": coordinator.role,
+        "system_prompt": coordinator.system_prompt,
+        "temperature": coordinator.temperature,
+        "max_tokens": coordinator.max_tokens,
+        "tools_enabled": coordinator.tools_enabled,
+    }

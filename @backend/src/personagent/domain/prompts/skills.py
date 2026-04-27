@@ -65,10 +65,16 @@ def discover_skills(
     workspace_root: str | Path | None = None,
     cwd: str | Path | None = None,
     extra_roots: tuple[str | Path, ...] = (),
+    include_global: bool = True,
 ) -> list[SkillDefinition]:
     """Discover local skills using PersonAgent and Codex-compatible roots."""
 
-    roots = skill_roots(workspace_root=workspace_root, cwd=cwd, extra_roots=extra_roots)
+    roots = skill_roots(
+        workspace_root=workspace_root,
+        cwd=cwd,
+        extra_roots=extra_roots,
+        include_global=include_global,
+    )
     skills: dict[str, SkillDefinition] = {}
     for root in roots:
         for path in _iter_skill_files(root):
@@ -84,6 +90,7 @@ def find_skill(
     workspace_root: str | Path | None = None,
     cwd: str | Path | None = None,
     extra_roots: tuple[str | Path, ...] = (),
+    include_global: bool = True,
 ) -> SkillDefinition | None:
     """Find a skill by frontmatter name or directory name."""
 
@@ -95,6 +102,7 @@ def find_skill(
         workspace_root=workspace_root,
         cwd=cwd,
         extra_roots=extra_roots,
+        include_global=include_global,
     ):
         candidate_keys = {
             _normalize_skill_invocation(skill.name).lower(),
@@ -111,6 +119,7 @@ def skill_roots(
     workspace_root: str | Path | None = None,
     cwd: str | Path | None = None,
     extra_roots: tuple[str | Path, ...] = (),
+    include_global: bool = True,
 ) -> tuple[Path, ...]:
     roots: list[Path] = []
     if workspace_root:
@@ -118,12 +127,13 @@ def skill_roots(
     if cwd:
         roots.append(Path(cwd).expanduser() / ".personagent" / "skills")
     roots.extend(Path(root).expanduser() for root in extra_roots)
-    roots.extend(
-        [
-            Path.home() / ".personagent" / "skills",
-            Path.home() / ".codex" / "skills",
-        ]
-    )
+    if include_global:
+        roots.extend(
+            [
+                Path.home() / ".personagent" / "skills",
+                Path.home() / ".codex" / "skills",
+            ]
+        )
     seen: set[Path] = set()
     unique: list[Path] = []
     for root in roots:

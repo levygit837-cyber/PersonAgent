@@ -1,6 +1,7 @@
 import { ArrowUp, ChevronDown, ChevronRight, Command, Plus, Sparkles, Square, UsersRound } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listChatCommands, listModels } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
@@ -22,6 +23,7 @@ type ModelOption = {
   provider: ModelProvider;
   label: string;
   group: string;
+  contextLength?: number;
 };
 
 const curatedHostedModels: ModelOption[] = [
@@ -131,6 +133,7 @@ export function InputDock() {
             className="min-h-10 min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/80 disabled:opacity-60"
           />
           <ModelReasoningSelector enabled={!disabled} />
+          <ContextWindowIndicator />
           <Button
             size="icon"
             variant={isStreaming ? "destructive" : text.trim() ? "default" : "secondary"}
@@ -228,7 +231,27 @@ function FeatureMenu({ enabled }: { enabled: boolean }) {
   const teamMode = useAppStore((state) => state.teamMode);
   const setTeamMode = useAppStore((state) => state.setTeamMode);
   const agentsBranchRef = useRef<HTMLDivElement | null>(null);
+  const agentsCloseTimerRef = useRef<number | null>(null);
   const [agentsOpen, setAgentsOpen] = useState(false);
+  const clearAgentsCloseTimer = () => {
+    if (agentsCloseTimerRef.current) {
+      window.clearTimeout(agentsCloseTimerRef.current);
+      agentsCloseTimerRef.current = null;
+    }
+  };
+  const openAgents = () => {
+    clearAgentsCloseTimer();
+    setAgentsOpen(true);
+  };
+  const scheduleAgentsClose = () => {
+    clearAgentsCloseTimer();
+    agentsCloseTimerRef.current = window.setTimeout(() => {
+      setAgentsOpen(false);
+      agentsCloseTimerRef.current = null;
+    }, 180);
+  };
+
+  useEffect(() => clearAgentsCloseTimer, []);
 
   return (
     <DropdownMenu>
@@ -253,12 +276,12 @@ function FeatureMenu({ enabled }: { enabled: boolean }) {
         <div
           ref={agentsBranchRef}
           className="personagent-feature-branch relative"
-          onPointerEnter={() => setAgentsOpen(true)}
-          onPointerLeave={() => setAgentsOpen(false)}
-          onFocus={() => setAgentsOpen(true)}
+          onPointerEnter={openAgents}
+          onPointerLeave={scheduleAgentsClose}
+          onFocus={openAgents}
           onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-              setAgentsOpen(false);
+              scheduleAgentsClose();
             }
           }}
         >
@@ -457,6 +480,7 @@ function toModelOption(model: LlmModel, fallbackProvider: ModelProvider): ModelO
     provider,
     label: formatModelLabel(model.name || id),
     group: modelGroup(id, provider),
+    contextLength: model.context_length,
   };
 }
 
@@ -522,6 +546,109 @@ function formatModelLabel(value: string) {
     .replace(/\b([0-9]+)k\b/gi, "$1K")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function ContextWindowIndicator() {
+  const baseUrl = useAppStore((state) => state.baseUrl);
+  const provider = useAppStore((state) => state.provider);
+  const selectedModelId = useAppStore((state) => state.selectedModelId);
+  const messages = useChatStore((state) => state.messages);
+  const liveSessionUsage = useChatStore((state) => state.liveSessionUsage);
+
+  const localModels = useQuery({
+    queryKey: ["models", baseUrl, "llama"],
+    queryFn: () => listModels(baseUrl, "llama"),
+    enabled: Boolean(baseUrl),
+    staleTime: 60_000,
+  });
+  const hostedModels = useQuery({
+    queryKey: ["models", baseUrl, "nvidia"],
+    queryFn: () => listModels(baseUrl, "nvidia"),
+    enabled: Boolean(baseUrl),
+    staleTime: 60_000,
+  });
+  const vertexModels = useQuery({
+    queryKey: ["models", baseUrl, "vertex"],
+    queryFn: () => listModels(baseUrl, "vertex"),
+    enabled: Boolean(baseUrl),
+    staleTime: 60_000,
+  });
+
+  const modelOptions = buildModelOptions(localModels.data, hostedModels.data, vertexModels.data);
+  const selectedOption =
+    modelOptions.find((item) => item.provider === provider && item.id === selectedModelId) ??
+    modelOptions.find((item) => item.id === selectedModelId);
+
+  const contextLength = selectedOption?.contextLength ?? 131072; // 128K default
+
+  const usedTokens = useMemo(() => {
+    const fromMessages = messages.reduce((acc, msg) => {
+      const contentTokens = msg.content ? Math.max(1, Math.ceil(msg.content.length / 4)) : 0;
+      const reasoningTokens = msg.reasoning ? Math.max(1, Math.ceil(msg.reasoning.length / 4)) : 0;
+      return acc + contentTokens + reasoningTokens;
+    }, 0);
+    const fromLive = liveSessionUsage.agent_output_tokens.value + liveSessionUsage.thinking_output_tokens.value;
+    // Use the larger estimate to account for streaming content not yet flushed into messages
+    return Math.max(fromMessages, fromLive);
+  }, [messages, liveSessionUsage]);
+
+  const totalK = Math.round(contextLength / 1024);
+  const usedK = Math.ceil(usedTokens / 1024);
+  const usageRatio = Math.min(1, usedTokens / contextLength);
+  const remainingPct = Math.max(0, Math.min(100, Math.round((1 - usageRatio) * 100)));
+
+  const radius = 8;
+  const circumference = 2 * Math.PI * radius;
+  const dashOffset = circumference * (1 - usageRatio);
+
+  let color = "text-emerald-400";
+  if (usageRatio > 0.9) color = "text-red-400";
+  else if (usageRatio > 0.7) color = "text-amber-400";
+  else if (usageRatio > 0.5) color = "text-yellow-400";
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex h-10 w-10 shrink-0 cursor-default items-center justify-center rounded-xl hover:bg-glass/60">
+            <svg width="20" height="20" viewBox="0 0 20 20" className="-rotate-90">
+              <circle
+                cx="10"
+                cy="10"
+                r={radius}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                className="text-muted-foreground/20"
+              />
+              <circle
+                cx="10"
+                cy="10"
+                r={radius}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeDasharray={circumference}
+                strokeDashoffset={dashOffset}
+                className={color}
+              />
+            </svg>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="center" className="text-center">
+          <div className="leading-relaxed">
+            <div className="text-[11px] text-muted-foreground">
+              {remainingPct}%
+            </div>
+            <div className="text-[11px] font-medium text-foreground">
+              {usedK}K/{totalK}K Contexto
+            </div>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
 }
 
 function formatVendorLabel(value: string) {

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listChatCommands, listModels } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
@@ -43,6 +43,10 @@ describe("InputDock", () => {
     });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("keeps the old status chips out of the composer", () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -74,6 +78,32 @@ describe("InputDock", () => {
 
     expect(useAppStore.getState().teamMode).toBe(true);
     expect(teamsItem).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("keeps the agents submenu clickable while the pointer crosses the hover gap", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: /system features/i }));
+
+    const agentsItem = screen.getByRole("menuitem", { name: /agentes/i });
+    const agentsBranch = agentsItem.parentElement;
+    expect(agentsBranch).not.toBeNull();
+    fireEvent.pointerEnter(agentsBranch!);
+
+    const teamsItem = await screen.findByRole("menuitemcheckbox", { name: /teams/i });
+    vi.useFakeTimers();
+    fireEvent.pointerLeave(agentsBranch!);
+    fireEvent.click(teamsItem);
+
+    expect(useAppStore.getState().teamMode).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(180);
+    });
   });
 
   it("shows every hosted model returned by the backend catalog", async () => {

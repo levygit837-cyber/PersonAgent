@@ -97,20 +97,29 @@ TOOL_PROMPTS: dict[str, str] = {
     ),
     "BrowserSearch": (
         "Run multiple targeted queries for research. Search results are leads, not evidence; open "
-        "relevant sources before synthesizing."
+        "relevant sources before synthesizing. For multi-source research, issue independent "
+        "BrowserSearch calls in the same tool turn when possible, then continue with BrowserOpen "
+        "instead of merely saying you will open sources."
     ),
     "BrowserOpen": (
-        "Open a known URL or a result from the latest BrowserSearch. Verify the final URL and page "
-        "state before extracting content."
+        "Open a known URL or a result from BrowserSearch. Keep the returned page_id/window_id when "
+        "comparing multiple sources, and verify the final URL before extracting content. If you "
+        "have only a search_id, BrowserOpen can use it by itself to open that search's first result."
+    ),
+    "BrowserListTabs": (
+        "List opened browser pages/tabs in the current conversation. Use it during long or multi-query "
+        "research to recover page_id/window_id values and avoid extracting the wrong source."
     ),
     "BrowserExtractContent": (
-        "Extract structured readable content from the current page or a URL. Use include_links when "
-        "links may reveal deeper documentation, changelogs, pricing, downloads, or examples. The "
-        "tool caches page content for chunked reading."
+        "Extract structured readable content from a URL, page_id/window_id, or the last BrowserOpen "
+        "page. Use include_links when links may reveal deeper documentation, changelogs, pricing, "
+        "downloads, or examples. The tool caches page content for chunked reading."
     ),
     "BrowserReadContentChunk": (
-        "Read cached page chunks after BrowserExtractContent. Use chunks instead of dumping long "
-        "pages into context, and inspect links/buttons returned in the chunk index when relevant."
+        "Read cached page chunks after BrowserExtractContent. Use chunk_count to read multiple "
+        "consecutive chunks when needed. Chunks are bounded by chunk_size/content_chars metadata; "
+        "links are intentionally omitted unless include_links is needed and the backend did not "
+        "suppress them as navigation noise."
     ),
     "BrowserGetHtml": (
         "Use raw HTML only when rendered text is insufficient, such as hidden metadata, script data, "
@@ -150,11 +159,12 @@ TOOL_PROMPTS: dict[str, str] = {
         "navigation when text search alone is insufficient."
     ),
     "EnterPlanMode": (
-        "Enter plan mode when the user asks for a plan or when implementation needs explicit approval "
-        "before changes. Do not continue writing after requesting approval."
+        "Use EnterPlanMode only when the user explicitly asks for a plan, a planning-only response, "
+        "or an approval-gated plan. Do not use it for ordinary implementation, web research, short "
+        "tasks, or because a task has multiple steps; proceed with tools directly."
     ),
     "ExitPlanMode": (
-        "Exit plan mode only with a concrete plan that can be approved or rejected. Include steps, "
-        "scope, and validation."
+        "Use ExitPlanMode only after EnterPlanMode is already active and the requested plan is ready "
+        "for approval. Do not use it as a generic approval request for normal tool use."
     ),
 }

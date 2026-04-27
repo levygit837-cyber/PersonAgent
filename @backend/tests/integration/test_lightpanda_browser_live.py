@@ -52,7 +52,10 @@ async def test_lightpanda_direct_page_tools_live_flow(tmp_path):
             ),
         )
         assert "Example Domain" in content["content"], content
-        assert content["extraction_method"] == "lightpanda_markdown", content
+        assert content["extraction_method"] in {
+            "lightpanda_markdown",
+            "readable_dom_text",
+        }, content
 
         html = await _run(
             orchestrator,

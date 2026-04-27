@@ -272,6 +272,15 @@ class ToolOrchestrator:
                 is_error=True,
             )
 
+        result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        if "max_result_size_chars" not in result_metadata:
+            result = replace(
+                result,
+                metadata={
+                    **result_metadata,
+                    "max_result_size_chars": tool.definition.max_result_size_chars,
+                },
+            )
         result = self._cap_result(result, context)
         if result.is_error:
             event_name = (
@@ -298,7 +307,12 @@ class ToolOrchestrator:
             return "Fetching..."
         if tool_name == "BrowserSearch":
             return "Searching..."
-        if tool_name in {"BrowserOpen", "BrowserExtractContent", "BrowserGetHtml"}:
+        if tool_name in {
+            "BrowserOpen",
+            "BrowserListTabs",
+            "BrowserExtractContent",
+            "BrowserGetHtml",
+        }:
             return "Browsing..."
         return "Running tool..."
 

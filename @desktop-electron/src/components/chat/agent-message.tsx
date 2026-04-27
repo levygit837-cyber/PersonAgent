@@ -25,7 +25,7 @@ export const AgentMessage = memo(function AgentMessage({ message }: { message: C
   const showExecutionStatus = message.isStreaming && !hasRenderableProgress(message);
 
   return (
-    <article className="mb-9">
+    <article className="mb-9 min-w-0 max-w-full">
       <div className="mb-3 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-primary">PersonAgent</div>
       {showExecutionStatus ? <ChatExecutionStatus /> : null}
       {hasLegacyThinking ? (
@@ -52,7 +52,7 @@ export const AgentMessage = memo(function AgentMessage({ message }: { message: C
       ) : null}
       {message.teamEvents.length > 0 ? <TeamTrace events={message.teamEvents} /> : null}
       {body.length > 0 ? (
-        <div className="space-y-3">{body}</div>
+        <div className="min-w-0 max-w-full space-y-3">{body}</div>
       ) : null}
     </article>
   );
@@ -172,7 +172,7 @@ const TeamTraceEvent = memo(function TeamTraceEvent({ event }: { event: TeamTrac
           {isRunning ? (
             <div className="whitespace-pre-wrap break-words">{content}</div>
           ) : (
-            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks, remarkBreakTags]}>{content}</ReactMarkdown>
           )}
         </div>
       ) : null}
@@ -184,6 +184,12 @@ function teamStatusLabel(event: TeamTraceEventUi) {
   if (event.kind === "round") return "Round";
   if (event.kind === "vote") return event.status === "approved" ? "Approve" : event.status === "rejected" ? "Block" : "Vote";
   if (event.kind === "consensus") return "Consensus";
+  if (event.kind === "blackboard") return "Board";
+  if (event.kind === "tool") return "Tool";
+  if (event.kind === "debate") return "Debate";
+  if (event.kind === "coordinator") {
+    return event.title.toLowerCase().includes("planning") || event.status !== "completed" ? "Coord" : "Final";
+  }
   if (event.kind === "failed") return "Failed";
   if (event.kind === "cancelled") return "Stopped";
   if (event.kind === "turn") return event.status === "completed" ? "Done" : "Turn";
@@ -259,10 +265,44 @@ export const MarkdownContent = memo(function MarkdownContent({
   isStreaming?: boolean;
 }) {
   return (
-    <div className="prose prose-invert max-w-none text-[15px] leading-7 prose-p:my-2 prose-code:rounded prose-code:bg-secondary prose-code:px-1 prose-code:py-0.5 prose-code:text-foreground prose-a:text-primary">
+    <div className="markdown-content prose prose-invert min-w-0 max-w-full overflow-hidden text-[15px] leading-7 prose-p:my-2 prose-code:rounded prose-code:bg-secondary prose-code:px-1 prose-code:py-0.5 prose-code:text-foreground prose-a:text-primary">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkBreakTags]}
         components={{
+          p: ({ children }) => <p className="my-2 min-w-0 break-words">{children}</p>,
+          a: ({ children, ...props }) => (
+            <a {...props} className="break-words text-primary">
+              {children}
+            </a>
+          ),
+          ul: ({ children }) => <ul className="my-3 list-disc space-y-1 pl-5">{children}</ul>,
+          ol: ({ children }) => <ol className="my-3 list-decimal space-y-1 pl-5">{children}</ol>,
+          li: ({ children }) => <li className="min-w-0 break-words pl-1">{children}</li>,
+          blockquote: ({ children }) => (
+            <blockquote className="my-3 border-l border-glass-border/50 pl-4 text-muted-foreground">
+              {children}
+            </blockquote>
+          ),
+          table: ({ children }) => (
+            <div className="not-prose my-4 w-full max-w-full overflow-x-auto rounded-xl border border-glass-border/35 bg-card/45 shadow-soft">
+              <table className="w-max min-w-full border-collapse text-left text-[13px] leading-6">
+                {children}
+              </table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-secondary/55 text-foreground">{children}</thead>,
+          tbody: ({ children }) => <tbody className="divide-y divide-glass-border/35">{children}</tbody>,
+          tr: ({ children }) => <tr className="align-top">{children}</tr>,
+          th: ({ children }) => (
+            <th className="min-w-[9rem] max-w-[18rem] border-b border-glass-border/45 px-3 py-2 align-top font-semibold text-foreground">
+              <div className="whitespace-normal break-words">{children}</div>
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="min-w-[9rem] max-w-[18rem] px-3 py-2 align-top text-foreground/90">
+              <div className="whitespace-normal break-words">{children}</div>
+            </td>
+          ),
           pre: ({ node, children, ...props }: any) => {
             // Check if this is a code block (has code child with className)
             const codeElement = node?.children?.[0];
@@ -284,7 +324,14 @@ export const MarkdownContent = memo(function MarkdownContent({
             }
             
             // Fallback for pre elements that aren't code blocks
-            return <pre {...props}>{children}</pre>;
+            return (
+              <pre
+                {...props}
+                className="not-prose my-3 max-w-full overflow-x-auto rounded-xl border border-glass-border/35 bg-card/80 p-3 text-[12px] leading-5"
+              >
+                {children}
+              </pre>
+            );
           },
           code: ({ node, className, children, ...props }: any) => {
             // Inline code (not inside pre)
@@ -292,7 +339,11 @@ export const MarkdownContent = memo(function MarkdownContent({
             const isInline = !match;
             
             if (isInline) {
-              return <code className={className} {...props}>{children}</code>;
+              return (
+                <code className={`${className ?? ""} break-words`} {...props}>
+                  {children}
+                </code>
+              );
             }
             
             // Code block content - let the pre component handle it
@@ -305,3 +356,56 @@ export const MarkdownContent = memo(function MarkdownContent({
     </div>
   );
 });
+
+type MarkdownNode = {
+  type?: string;
+  value?: string;
+  children?: MarkdownNode[];
+};
+
+function remarkBreakTags() {
+  return (tree: MarkdownNode) => transformBreakTags(tree);
+}
+
+function transformBreakTags(node: MarkdownNode) {
+  if (!node.children) return;
+  const nextChildren: MarkdownNode[] = [];
+
+  for (const child of node.children) {
+    if (child.type === "html" && isBreakTag(child.value)) {
+      nextChildren.push({ type: "break" });
+      continue;
+    }
+
+    if (child.type === "text" && child.value && hasBreakTag(child.value)) {
+      nextChildren.push(...splitBreakTagText(child.value));
+      continue;
+    }
+
+    transformBreakTags(child);
+    nextChildren.push(child);
+  }
+
+  node.children = nextChildren;
+}
+
+function splitBreakTagText(value: string): MarkdownNode[] {
+  const nodes: MarkdownNode[] = [];
+  let cursor = 0;
+  for (const match of value.matchAll(/<br\s*\/?>/gi)) {
+    const index = match.index ?? 0;
+    if (index > cursor) nodes.push({ type: "text", value: value.slice(cursor, index) });
+    nodes.push({ type: "break" });
+    cursor = index + match[0].length;
+  }
+  if (cursor < value.length) nodes.push({ type: "text", value: value.slice(cursor) });
+  return nodes;
+}
+
+function isBreakTag(value?: string) {
+  return Boolean(value && /^<br\s*\/?>$/i.test(value.trim()));
+}
+
+function hasBreakTag(value: string) {
+  return /<br\s*\/?>/i.test(value);
+}

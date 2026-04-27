@@ -42,12 +42,16 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
         base_url: str = "http://localhost:8080/v1",
         api_key: str = "local",
         timeout: float = 120.0,
+        stream_read_timeout: float = 0.0,
         default_max_tokens: int = 65536,
         reasoning: str = "off",
         reasoning_budget: int = 2048,
+        ctx_size: int = 131072,
     ):
         self.base_url = base_url.rstrip("/")
+        self.ctx_size = ctx_size
         self.timeout = timeout
+        self.stream_read_timeout = stream_read_timeout
         self.default_max_tokens = default_max_tokens
         self.reasoning = reasoning.lower()
         self.reasoning_budget = reasoning_budget
@@ -58,13 +62,19 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
         }
         self._client: httpx.AsyncClient | None = None
 
+    def _get_timeout(self) -> httpx.Timeout:
+        """Monta o timeout do httpx respeitando stream_read_timeout."""
+        if self.stream_read_timeout and self.stream_read_timeout > 0:
+            return httpx.Timeout(self.timeout, read=self.stream_read_timeout)
+        return httpx.Timeout(self.timeout)
+
     async def _get_client(self) -> httpx.AsyncClient:
         """Retorna ou cria o cliente HTTP assíncrono."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers=self.headers,
-                timeout=self.timeout,
+                timeout=self._get_timeout(),
             )
         return self._client
 
@@ -214,7 +224,13 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
             response = await client.get("/models", timeout=10.0)
             response.raise_for_status()
             data = response.json()
-            return data if isinstance(data, dict) else {}
+            if not isinstance(data, dict):
+                return {}
+            # Injeta context_length real do servidor nos modelos
+            for model in data.get("data", []):
+                if isinstance(model, dict) and "context_length" not in model:
+                    model["context_length"] = self.ctx_size
+            return data
         except Exception as exc:
             logger.warning("model_info_failed", error=str(exc))
             return {}
@@ -239,11 +255,33 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
             "stream": stream,
         }
         effective_max_tokens = max_tokens if max_tokens > 0 else self.default_max_tokens
+        # Clamp para evitar valores absurdos vindos do frontend em modelo local
+        if effective_max_tokens > self.default_max_tokens:
+            logger.warning(
+                "max_tokens_clamped",
+                requested=effective_max_tokens,
+                clamped=self.default_max_tokens,
+            )
+            effective_max_tokens = self.default_max_tokens
         if effective_max_tokens > 0:
             payload["max_tokens"] = effective_max_tokens
 
         chat_template_kwargs = dict(extra.get("chat_template_kwargs") or {})
         request_reasoning_budget = extra.get("reasoning_budget_tokens")
+        request_reasoning_level = extra.get("reasoning_level")
+
+        # Mapeia reasoning_level para budget se necessário
+        if request_reasoning_budget is None and request_reasoning_level is not None:
+            level_to_budget = {
+                "low": 2048,
+                "medium": 4082,
+                "high": 8192,
+                "xhigh": 16382,
+                "max": 32768,
+            }
+            level = str(request_reasoning_level).strip().lower()
+            request_reasoning_budget = level_to_budget.get(level)
+
         if request_reasoning_budget is not None:
             chat_template_kwargs["enable_thinking"] = True
             payload["thinking_budget_tokens"] = int(request_reasoning_budget)

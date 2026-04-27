@@ -1,0 +1,1074 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PersonAgent Team Mode Trace Prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --background: 0 0% 3.8%;
+      --foreground: 36 14% 92%;
+      --card: 0 0% 6.2%;
+      --popover: 0 0% 7.2%;
+      --primary: 24 88% 62%;
+      --secondary: 0 0% 10%;
+      --muted: 0 0% 10.5%;
+      --muted-foreground: 35 7% 58%;
+      --accent: 24 13% 12%;
+      --destructive: 3 70% 60%;
+      --success: 145 45% 52%;
+      --warning: 34 78% 62%;
+      --glass-border: 28 8% 13%;
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 14px;
+      --feed-width: 820px;
+      --dock-width: 780px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      min-height: 100%;
+      margin: 0;
+    }
+
+    body {
+      overflow-x: hidden;
+      background:
+        linear-gradient(hsl(var(--glass-border) / 0.16) 1px, transparent 1px),
+        linear-gradient(90deg, hsl(var(--glass-border) / 0.16) 1px, transparent 1px),
+        hsl(var(--background));
+      background-size: 32px 32px;
+      background-position: center;
+      color: hsl(var(--foreground));
+      font-family: Inter, Geist, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+      cursor: pointer;
+    }
+
+    code,
+    pre,
+    .mono {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 64px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      border-right: 1px solid hsl(var(--glass-border) / 0.6);
+      background: hsl(var(--background) / 0.82);
+      padding: 14px 10px;
+    }
+
+    .sidebar-mark {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      margin: 0 auto 22px;
+      border: 1px solid hsl(var(--primary) / 0.28);
+      border-radius: var(--radius-lg);
+      background: hsl(var(--primary) / 0.14);
+      color: hsl(var(--primary));
+      font-weight: 700;
+    }
+
+    .sidebar-dot {
+      width: 34px;
+      height: 34px;
+      margin: 8px auto;
+      border: 1px solid hsl(var(--glass-border) / 0.7);
+      border-radius: var(--radius-md);
+      background: hsl(var(--card) / 0.62);
+    }
+
+    .main {
+      min-width: 0;
+      padding: 18px 22px 108px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      max-width: var(--feed-width);
+      margin: 0 auto 28px;
+    }
+
+    .topbar-title {
+      min-width: 0;
+    }
+
+    .topbar-kicker,
+    .message-label,
+    .agent-label,
+    .eyebrow {
+      font-size: 11px;
+      font-weight: 650;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .topbar-kicker,
+    .message-label,
+    .eyebrow {
+      color: hsl(var(--primary));
+    }
+
+    .topbar h1 {
+      margin: 2px 0 0;
+      font-size: 15px;
+      font-weight: 620;
+    }
+
+    .topbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .icon-button,
+    .segmented button {
+      border: 1px solid hsl(var(--glass-border) / 0.7);
+      background: hsl(var(--card) / 0.72);
+      color: hsl(var(--muted-foreground));
+      transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+    }
+
+    .icon-button {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: var(--radius-md);
+    }
+
+    .segmented {
+      display: flex;
+      overflow: hidden;
+      border: 1px solid hsl(var(--glass-border) / 0.7);
+      border-radius: var(--radius-md);
+      background: hsl(var(--card) / 0.52);
+    }
+
+    .segmented button {
+      min-width: 80px;
+      height: 32px;
+      border: 0;
+      border-right: 1px solid hsl(var(--glass-border) / 0.6);
+      border-radius: 0;
+      font-size: 12px;
+    }
+
+    .segmented button:last-child {
+      border-right: 0;
+    }
+
+    .segmented button.active {
+      background: hsl(var(--primary) / 0.14);
+      color: hsl(var(--foreground));
+    }
+
+    .feed {
+      max-width: var(--feed-width);
+      margin: 0 auto;
+    }
+
+    .user-message,
+    .agent-message {
+      margin-bottom: 34px;
+    }
+
+    .user-message {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .user-stack {
+      max-width: min(720px, 100%);
+      text-align: left;
+    }
+
+    .message-label {
+      margin-bottom: 8px;
+      color: hsl(var(--muted-foreground));
+    }
+
+    .user-copy {
+      max-width: 680px;
+      border: 1px solid hsl(var(--glass-border) / 0.55);
+      border-radius: var(--radius-lg);
+      background: hsl(var(--accent) / 0.72);
+      padding: 14px 15px;
+      font-size: 15px;
+      line-height: 1.65;
+    }
+
+    .agent-label {
+      margin-bottom: 12px;
+      color: hsl(var(--primary));
+    }
+
+    .team-trace {
+      margin-bottom: 18px;
+      border-left: 1px solid hsl(var(--glass-border) / 0.72);
+      padding-left: 13px;
+    }
+
+    .team-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 13px;
+    }
+
+    .team-title {
+      min-width: 0;
+    }
+
+    .team-title h2 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .team-title p {
+      margin: 3px 0 0;
+      color: hsl(var(--muted-foreground));
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .run-meta {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 24px;
+      border: 1px solid hsl(var(--glass-border) / 0.65);
+      border-radius: 999px;
+      background: hsl(var(--card) / 0.72);
+      padding: 0 9px;
+      color: hsl(var(--muted-foreground));
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .pill strong {
+      color: hsl(var(--foreground));
+      font-weight: 600;
+    }
+
+    .phase-strip {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 6px;
+      margin: 0 0 12px;
+    }
+
+    .phase {
+      min-width: 0;
+      border: 1px solid hsl(var(--glass-border) / 0.55);
+      border-radius: var(--radius-md);
+      background: hsl(var(--card) / 0.42);
+      padding: 8px 9px;
+    }
+
+    .phase .label {
+      color: hsl(var(--muted-foreground));
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .phase .value {
+      margin-top: 3px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      font-weight: 560;
+    }
+
+    .phase.active {
+      border-color: hsl(var(--primary) / 0.42);
+      background: hsl(var(--primary) / 0.09);
+    }
+
+    .agent-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .agent-lane {
+      min-width: 0;
+      border: 1px solid hsl(var(--glass-border) / 0.58);
+      border-radius: var(--radius-md);
+      background: hsl(var(--card) / 0.54);
+      transition: border-color 140ms ease, background 140ms ease;
+    }
+
+    .agent-lane[data-state="thinking"] {
+      border-color: hsl(var(--primary) / 0.34);
+      background: hsl(var(--accent) / 0.56);
+    }
+
+    .lane-button {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border: 0;
+      border-radius: var(--radius-md);
+      background: transparent;
+      padding: 10px;
+      text-align: left;
+    }
+
+    .lane-identity {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .avatar {
+      display: grid;
+      width: 26px;
+      height: 26px;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 1px solid hsl(var(--glass-border) / 0.72);
+      border-radius: var(--radius-sm);
+      background: hsl(var(--background) / 0.7);
+      color: hsl(var(--foreground));
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .lane-name {
+      min-width: 0;
+    }
+
+    .lane-name strong,
+    .blackboard-title strong {
+      display: block;
+      overflow: hidden;
+      color: hsl(var(--foreground));
+      font-size: 13px;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .lane-name span {
+      display: block;
+      overflow: hidden;
+      margin-top: 1px;
+      color: hsl(var(--muted-foreground));
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      position: relative;
+      width: 8px;
+      height: 8px;
+      flex: 0 0 auto;
+      border-radius: 999px;
+      background: hsl(var(--muted-foreground));
+    }
+
+    .status-dot.thinking,
+    .status-dot.running {
+      background: hsl(var(--primary));
+    }
+
+    .status-dot.thinking::after,
+    .status-dot.running::after {
+      content: "";
+      position: absolute;
+      inset: -4px;
+      border: 1px solid hsl(var(--primary) / 0.44);
+      border-radius: inherit;
+      animation: ping 1.5s ease-out infinite;
+    }
+
+    .status-dot.done {
+      background: hsl(var(--success));
+    }
+
+    .status-dot.warn {
+      background: hsl(var(--warning));
+    }
+
+    .lane-body {
+      display: none;
+      border-top: 1px solid hsl(var(--glass-border) / 0.5);
+      padding: 0 10px 10px;
+    }
+
+    .agent-lane.expanded .lane-body {
+      display: block;
+    }
+
+    .thinking-snippet {
+      margin-top: 9px;
+      border-left: 1px solid hsl(var(--glass-border) / 0.76);
+      padding-left: 10px;
+      color: hsl(var(--muted-foreground));
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .activity-list {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .activity {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 7px;
+      color: hsl(var(--muted-foreground));
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .activity span:last-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .blackboard {
+      border: 1px solid hsl(var(--glass-border) / 0.62);
+      border-radius: var(--radius-md);
+      background: hsl(var(--card) / 0.36);
+      margin-bottom: 10px;
+    }
+
+    .blackboard-button {
+      display: flex;
+      width: 100%;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      border: 0;
+      background: transparent;
+      padding: 10px 11px;
+      text-align: left;
+    }
+
+    .blackboard-title {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .blackboard-title span {
+      color: hsl(var(--muted-foreground));
+      font-size: 11px;
+    }
+
+    .board-metrics {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .board-body {
+      display: none;
+      grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr);
+      gap: 10px;
+      border-top: 1px solid hsl(var(--glass-border) / 0.5);
+      padding: 10px 11px 11px;
+    }
+
+    .blackboard.expanded .board-body {
+      display: grid;
+    }
+
+    .claim-list,
+    .coverage-list {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .claim,
+    .coverage-item {
+      min-width: 0;
+      border: 1px solid hsl(var(--glass-border) / 0.5);
+      border-radius: var(--radius-sm);
+      background: hsl(var(--background) / 0.4);
+      padding: 8px 9px;
+    }
+
+    .claim-top,
+    .coverage-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .claim-type,
+    .coverage-top span {
+      color: hsl(var(--primary));
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .claim-agent {
+      color: hsl(var(--muted-foreground));
+      font-size: 10px;
+    }
+
+    .claim p,
+    .coverage-item p {
+      margin: 0;
+      color: hsl(var(--muted-foreground));
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .coordinator-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      border: 1px solid hsl(var(--primary) / 0.25);
+      border-radius: var(--radius-md);
+      background: hsl(var(--primary) / 0.07);
+      padding: 10px 11px;
+      margin-bottom: 16px;
+    }
+
+    .coordinator-row .copy {
+      min-width: 0;
+    }
+
+    .coordinator-row strong {
+      display: block;
+      margin-bottom: 3px;
+      font-size: 13px;
+    }
+
+    .coordinator-row p {
+      margin: 0;
+      color: hsl(var(--muted-foreground));
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .answer {
+      max-width: 760px;
+      font-size: 15px;
+      line-height: 1.75;
+    }
+
+    .answer h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      font-weight: 650;
+    }
+
+    .answer p {
+      margin: 0 0 12px;
+      color: hsl(var(--foreground) / 0.88);
+    }
+
+    .answer ul {
+      margin: 0;
+      padding-left: 20px;
+      color: hsl(var(--foreground) / 0.86);
+    }
+
+    .answer li {
+      margin: 5px 0;
+    }
+
+    .dock {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      left: calc(64px + 22px);
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .dock-inner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      max-width: var(--dock-width);
+      min-height: 62px;
+      margin: 0 auto;
+      border: 1px solid hsl(var(--glass-border) / 0.72);
+      border-radius: var(--radius-lg);
+      background: hsl(var(--background) / 0.86);
+      box-shadow: 0 20px 60px hsl(0 0% 0% / 0.38);
+      padding: 9px 10px;
+      pointer-events: auto;
+      backdrop-filter: blur(18px);
+    }
+
+    .dock input {
+      min-width: 0;
+      flex: 1;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: hsl(var(--foreground));
+      font-size: 14px;
+    }
+
+    .dock input::placeholder {
+      color: hsl(var(--muted-foreground));
+    }
+
+    .send {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border: 1px solid hsl(var(--primary) / 0.55);
+      border-radius: var(--radius-md);
+      background: hsl(var(--primary));
+      color: hsl(0 0% 5%);
+      font-weight: 800;
+    }
+
+    .glyph {
+      display: inline-grid;
+      width: 16px;
+      height: 16px;
+      place-items: center;
+      flex: 0 0 auto;
+      color: hsl(var(--muted-foreground));
+      font-size: 12px;
+    }
+
+    .compact-only {
+      display: none;
+    }
+
+    body[data-density="compact"] .agent-grid {
+      grid-template-columns: 1fr;
+    }
+
+    body[data-density="compact"] .agent-lane:not(.expanded) .lane-button {
+      padding: 8px 10px;
+    }
+
+    body[data-density="compact"] .compact-only {
+      display: inline;
+    }
+
+    body[data-density="expanded"] .agent-lane .lane-body,
+    body[data-density="expanded"] .blackboard .board-body {
+      display: block;
+    }
+
+    body[data-density="expanded"] .board-body {
+      display: grid;
+    }
+
+    body[data-density="expanded"] .agent-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    @keyframes ping {
+      0% {
+        opacity: 0.55;
+        transform: scale(0.7);
+      }
+      80%,
+      100% {
+        opacity: 0;
+        transform: scale(1.5);
+      }
+    }
+
+    @media (max-width: 900px) {
+      .app-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .main {
+        padding: 16px 14px 104px;
+      }
+
+      .agent-grid,
+      body[data-density="expanded"] .agent-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .phase-strip {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .board-body,
+      .blackboard.expanded .board-body,
+      body[data-density="expanded"] .board-body {
+        grid-template-columns: 1fr;
+      }
+
+      .dock {
+        left: 14px;
+        right: 14px;
+        bottom: 14px;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .topbar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .topbar-actions,
+      .run-meta,
+      .board-metrics {
+        justify-content: flex-start;
+      }
+
+      .phase-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .segmented {
+        width: 100%;
+      }
+
+      .segmented button {
+        flex: 1;
+        min-width: 0;
+      }
+    }
+  </style>
+</head>
+<body data-density="balanced">
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Navigation mock">
+      <div class="sidebar-mark mono">PA</div>
+      <div class="sidebar-dot"></div>
+      <div class="sidebar-dot"></div>
+      <div class="sidebar-dot"></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title">
+          <div class="topbar-kicker mono">Design Prototype</div>
+          <h1>Team Mode trace inside the current chat</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="segmented mono" aria-label="Density controls">
+            <button type="button" data-density-button="compact">Compact</button>
+            <button type="button" class="active" data-density-button="balanced">Balanced</button>
+            <button type="button" data-density-button="expanded">Expanded</button>
+          </div>
+          <button class="icon-button" type="button" aria-label="Toggle blackboard" title="Toggle blackboard" data-toggle-board>BB</button>
+        </div>
+      </header>
+
+      <section class="feed" aria-label="Chat preview">
+        <article class="user-message">
+          <div class="user-stack">
+            <div class="message-label mono">User</div>
+            <div class="user-copy">
+              Analise a arquitetura do Team Mode, rode ferramentas de leitura, identifique riscos e entregue uma resposta final clara.
+            </div>
+          </div>
+        </article>
+
+        <article class="agent-message">
+          <div class="agent-label mono">PersonAgent</div>
+
+          <section class="team-trace" aria-label="Team Mode execution trace">
+            <div class="team-head">
+              <div class="team-title">
+                <div class="eyebrow mono">Team Mode</div>
+                <h2>4 agents thinking independently, one Coordinator synthesizing</h2>
+                <p>Default view shows state, focus, tools, and deltas. Raw thinking stays available per agent without flooding the final answer.</p>
+              </div>
+              <div class="run-meta mono" aria-label="Run metrics">
+                <span class="pill"><span class="status-dot thinking"></span><strong>Live</strong></span>
+                <span class="pill">round <strong>1/2</strong></span>
+                <span class="pill">coverage <strong>82%</strong></span>
+                <span class="pill">votes <strong>deferred</strong></span>
+              </div>
+            </div>
+
+            <div class="phase-strip" aria-label="Execution phases">
+              <div class="phase active">
+                <div class="label mono">Phase</div>
+                <div class="value">Independent</div>
+              </div>
+              <div class="phase">
+                <div class="label mono">Next</div>
+                <div class="value">Blackboard</div>
+              </div>
+              <div class="phase">
+                <div class="label mono">Debate</div>
+                <div class="value">On gaps only</div>
+              </div>
+              <div class="phase">
+                <div class="label mono">Vote</div>
+                <div class="value">If blocker</div>
+              </div>
+              <div class="phase">
+                <div class="label mono">Final</div>
+                <div class="value">Coordinator</div>
+              </div>
+            </div>
+
+            <div class="agent-grid" aria-label="Agent lanes">
+              <section class="agent-lane expanded" data-state="thinking">
+                <button class="lane-button" type="button" data-toggle-lane>
+                  <span class="lane-identity">
+                    <span class="avatar mono">A</span>
+                    <span class="lane-name">
+                      <strong>Analyst</strong>
+                      <span>requirements and constraints</span>
+                    </span>
+                  </span>
+                  <span class="status-dot thinking" aria-label="thinking"></span>
+                </button>
+                <div class="lane-body">
+                  <div class="thinking-snippet mono">
+                    Thinking: split the request into architecture, latency, tool policy and final answer contract.
+                  </div>
+                  <div class="activity-list mono">
+                    <div class="activity"><span class="status-dot done"></span><span>claim: Team Mode needs compact phase telemetry</span></div>
+                    <div class="activity"><span class="status-dot running"></span><span>thinking: identify missing constraints</span></div>
+                    <div class="activity"><span class="status-dot done"></span><span>delta published to Blackboard</span></div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="agent-lane" data-state="thinking">
+                <button class="lane-button" type="button" data-toggle-lane>
+                  <span class="lane-identity">
+                    <span class="avatar mono">C</span>
+                    <span class="lane-name">
+                      <strong>Critic</strong>
+                      <span>risks and blockers</span>
+                    </span>
+                  </span>
+                  <span class="status-dot thinking" aria-label="thinking"></span>
+                </button>
+                <div class="lane-body">
+                  <div class="thinking-snippet mono">
+                    Thinking: expose where cooperation can fail: duplicate claims, invalid votes, tool mutation risk.
+                  </div>
+                  <div class="activity-list mono">
+                    <div class="activity"><span class="status-dot done"></span><span>risk: excessive trace can bury final answer</span></div>
+                    <div class="activity"><span class="status-dot warn"></span><span>blocker candidate downgraded to caveat</span></div>
+                    <div class="activity"><span class="status-dot running"></span><span>reviewing coherence score</span></div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="agent-lane" data-state="thinking">
+                <button class="lane-button" type="button" data-toggle-lane>
+                  <span class="lane-identity">
+                    <span class="avatar mono">B</span>
+                    <span class="lane-name">
+                      <strong>Builder</strong>
+                      <span>implementation path</span>
+                    </span>
+                  </span>
+                  <span class="status-dot thinking" aria-label="thinking"></span>
+                </button>
+                <div class="lane-body">
+                  <div class="thinking-snippet mono">
+                    Thinking: use compact tool rows, one action line per call, detailed output collapsed.
+                  </div>
+                  <div class="activity-list mono">
+                    <div class="activity"><span class="status-dot running"></span><span>Read @backend/src/.../orchestrator.py</span></div>
+                    <div class="activity"><span class="status-dot done"></span><span>tool_result: safe read completed</span></div>
+                    <div class="activity"><span class="status-dot warn"></span><span>proposal: mutation requires approval</span></div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="agent-lane" data-state="done">
+                <button class="lane-button" type="button" data-toggle-lane>
+                  <span class="lane-identity">
+                    <span class="avatar mono">R</span>
+                    <span class="lane-name">
+                      <strong>Reviewer</strong>
+                      <span>coverage and final readiness</span>
+                    </span>
+                  </span>
+                  <span class="status-dot done" aria-label="completed"></span>
+                </button>
+                <div class="lane-body">
+                  <div class="thinking-snippet mono">
+                    Thinking: final answer should cite accepted claims, not every raw thought.
+                  </div>
+                  <div class="activity-list mono">
+                    <div class="activity"><span class="status-dot done"></span><span>coverage: 4/5 areas complete</span></div>
+                    <div class="activity"><span class="status-dot done"></span><span>duplicate check: no repeated claims</span></div>
+                    <div class="activity"><span class="status-dot done"></span><span>ready for Coordinator if tool audit completes</span></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <section class="blackboard expanded" aria-label="Blackboard compact snapshot">
+              <button class="blackboard-button" type="button" data-toggle-board>
+                <span class="blackboard-title">
+                  <span class="status-dot running"></span>
+                  <span>
+                    <strong>Blackboard compact snapshot</strong>
+                    <span class="mono">claims, evidence, risks, tools, coverage</span>
+                  </span>
+                </span>
+                <span class="board-metrics mono">
+                  <span class="pill">claims <strong>12</strong></span>
+                  <span class="pill">duplicates <strong>1</strong></span>
+                  <span class="pill">conflicts <strong>2</strong></span>
+                  <span class="pill">coherency <strong>0.84</strong></span>
+                </span>
+              </button>
+              <div class="board-body">
+                <ul class="claim-list">
+                  <li class="claim">
+                    <div class="claim-top mono"><span class="claim-type">decision</span><span class="claim-agent">Coordinator</span></div>
+                    <p>Do not stream every token from every agent into the final message; group by agent lane and publish deltas.</p>
+                  </li>
+                  <li class="claim">
+                    <div class="claim-top mono"><span class="claim-type">evidence</span><span class="claim-agent">Builder</span></div>
+                    <p>Read tools completed autonomously; mutating Write remains a proposal until Coordinator approval.</p>
+                  </li>
+                  <li class="claim">
+                    <div class="claim-top mono"><span class="claim-type">risk</span><span class="claim-agent">Critic</span></div>
+                    <p>Showing all thinking at once can overwhelm the feed; default should reveal summaries with expandable raw traces.</p>
+                  </li>
+                </ul>
+                <ul class="coverage-list">
+                  <li class="coverage-item">
+                    <div class="coverage-top mono"><span>Coverage</span><span>4/5</span></div>
+                    <p>Architecture, risks, tools and final answer are covered. Latency budget remains open.</p>
+                  </li>
+                  <li class="coverage-item">
+                    <div class="coverage-top mono"><span>Next action</span><span>Debate</span></div>
+                    <p>Debate only the latency gap; skip repeated summaries and proceed to final vote if no blocker remains.</p>
+                  </li>
+                </ul>
+              </div>
+            </section>
+
+            <div class="coordinator-row">
+              <span class="avatar mono">CO</span>
+              <div class="copy">
+                <strong>Coordinator is synthesizing</strong>
+                <p>Using accepted claims, compact tool audit and coverage matrix. Raw agent thinking remains accessible above, but the final answer stays clean.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="answer" aria-label="Final answer preview">
+            <h3>Resposta final</h3>
+            <p>
+              A proposta pragmaticamente mais clara é tratar Team Mode como um bloco de execução dentro da resposta do PersonAgent, não como quatro mensagens completas competindo no feed.
+            </p>
+            <ul>
+              <li>Quatro lanes mostram quem está pensando, usando ferramenta, publicando claim ou aguardando o Coordinator.</li>
+              <li>Thinking aparece por agente, mas fica resumido e expansível para não poluir a tela.</li>
+              <li>Blackboard mostra deltas e cobertura em uma área compacta, sem virar a resposta final.</li>
+              <li>O Coordinator permanece como a voz final: ele sintetiza e mantém a resposta legível.</li>
+            </ul>
+          </section>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <div class="dock" aria-label="Composer mock">
+    <div class="dock-inner">
+      <span class="glyph mono">+</span>
+      <input aria-label="Prompt" value="Ask the local agent..." />
+      <button class="send" type="button" aria-label="Send">↑</button>
+    </div>
+  </div>
+
+  <script>
+    const body = document.body;
+    const densityButtons = document.querySelectorAll("[data-density-button]");
+    const board = document.querySelector(".blackboard");
+
+    densityButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const density = button.getAttribute("data-density-button");
+        body.setAttribute("data-density", density);
+        densityButtons.forEach((item) => item.classList.toggle("active", item === button));
+      });
+    });
+
+    document.querySelectorAll("[data-toggle-lane]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const lane = button.closest(".agent-lane");
+        if (!lane) return;
+        lane.classList.toggle("expanded");
+      });
+    });
+
+    document.querySelectorAll("[data-toggle-board]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (!board) return;
+        board.classList.toggle("expanded");
+      });
+    });
+  </script>
+</body>
+</html>

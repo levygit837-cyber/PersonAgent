@@ -1,11 +1,15 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { AgentMessage, compactToolKindFor } from "./agent-message";
 import { ReasoningBlock } from "./reasoning-block";
 import { ToolBlock } from "./tool-block";
 import type { ChatMessageUi, ToolBlockUi } from "../../types/chat";
 
 describe("chat rendering", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   it("groups consecutive read events into a compact block", () => {
     const message: ChatMessageUi = {
       id: "agent",
@@ -226,6 +230,42 @@ describe("chat rendering", () => {
     expect(screen.getByText("Reviewer approved")).toBeInTheDocument();
   });
 
+  it("renders Team Mode blackboard and coordinator trace events", () => {
+    const message = baseAgentMessage({
+      isStreaming: true,
+      teamEvents: [
+        {
+          id: "run-1-blackboard-1",
+          kind: "blackboard",
+          title: "Analyst published",
+          detail: "independent_round #1",
+          status: "completed",
+          content: "Initial decision",
+        },
+        {
+          id: "run-1-debate-2",
+          kind: "debate",
+          title: "Debate round 2",
+          detail: "Blackboard review",
+          status: "running",
+        },
+        {
+          id: "run-1-coordinator",
+          kind: "coordinator",
+          title: "Coordinator",
+          detail: "Final synthesis",
+          status: "running",
+        },
+      ],
+    });
+
+    render(<AgentMessage message={message} />);
+    expect(screen.getByText("Analyst published")).toBeInTheDocument();
+    expect(screen.getByText("Initial decision")).toBeInTheDocument();
+    expect(screen.getByText("Debate round 2")).toBeInTheDocument();
+    expect(screen.getByText("Coordinator")).toBeInTheDocument();
+  });
+
   it("hides the agent execution status when not streaming", () => {
     const message = baseAgentMessage({ isStreaming: false });
     render(<AgentMessage message={message} />);
@@ -408,6 +448,126 @@ describe("chat rendering", () => {
     expect(screen.getByText("find src -name '*.ts'")).toBeInTheDocument();
     expect(screen.getAllByText("src/app.ts").length).toBeGreaterThan(0);
     expect(screen.getByText("src/chat.ts")).toBeInTheDocument();
+  });
+
+  it("persists output visibility across future tool calls", () => {
+    const first = render(
+      <ToolBlock
+        block={toolBlock({
+          name: "Write",
+          title: "Write",
+          content: "Wrote first.py",
+          path: "first.py",
+          data: {
+            type: "file_write",
+            display_path: "first.py",
+            written_content: "alpha\n",
+          },
+          isCollapsed: true,
+        })}
+      />,
+    );
+
+    expect(screen.queryByText("alpha")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Show"));
+    expect(screen.getByText("alpha")).toBeInTheDocument();
+    first.unmount();
+
+    const second = render(
+      <ToolBlock
+        block={toolBlock({
+          name: "Grep",
+          title: "Grep PersonAgent",
+          content: "src/app.ts:1:PersonAgent",
+          data: {
+            type: "search_results",
+            pattern: "PersonAgent",
+            matches: 1,
+            shown: 1,
+            content: "src/app.ts:1:PersonAgent",
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Output - Hide")).toBeInTheDocument();
+    expect(screen.getByText("Pattern")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Output - Hide"));
+    expect(screen.queryByText("Pattern")).not.toBeInTheDocument();
+    second.unmount();
+
+    render(
+      <ToolBlock
+        block={toolBlock({
+          name: "Write",
+          title: "Write",
+          content: "Wrote next.py",
+          path: "next.py",
+          data: {
+            type: "file_write",
+            display_path: "next.py",
+            written_content: "beta\n",
+          },
+          isCollapsed: false,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Show")).toBeInTheDocument();
+    expect(screen.queryByText("beta")).not.toBeInTheDocument();
+  });
+
+  it("applies persisted visibility to grouped generic tool outputs", () => {
+    const setup = render(
+      <ToolBlock
+        block={toolBlock({
+          name: "Write",
+          title: "Write",
+          content: "Wrote first.py",
+          path: "first.py",
+          data: {
+            type: "file_write",
+            display_path: "first.py",
+            written_content: "alpha\n",
+          },
+          isCollapsed: true,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Show"));
+    setup.unmount();
+
+    render(
+      <AgentMessage
+        message={baseAgentMessage({
+          toolBlocks: [
+            toolBlock({
+              id: "fetch_1",
+              name: "WebFetch",
+              title: "WebFetch",
+              content: "first page",
+              data: { url: "https://one.example" },
+            }),
+            toolBlock({
+              id: "fetch_2",
+              name: "WebFetch",
+              title: "WebFetch",
+              content: "second page",
+              data: { url: "https://two.example" },
+            }),
+          ],
+          parts: [
+            { kind: "tool", id: "part_fetch_1", toolBlockId: "fetch_1" },
+            { kind: "tool", id: "part_fetch_2", toolBlockId: "fetch_2" },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Fetched 2 URLs")).toBeInTheDocument();
+    expect(screen.getByText("first page")).toBeInTheDocument();
+    expect(screen.getByText("second page")).toBeInTheDocument();
   });
 
   it("renders generated images inline without markdown conversion", () => {

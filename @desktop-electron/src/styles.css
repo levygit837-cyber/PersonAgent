@@ -158,6 +158,15 @@ pre,
   overflow: visible;
 }
 
+.personagent-feature-branch::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 100%;
+  top: 0;
+  width: 10px;
+}
+
 .personagent-feature-submenu-panel {
   opacity: 0;
   pointer-events: none;

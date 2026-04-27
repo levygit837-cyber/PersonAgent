@@ -13,6 +13,7 @@ from personagent.application.use_cases.chat_completion import ChatCompletionUseC
 from personagent.application.use_cases.context import BuildContextUseCase
 from personagent.domain.models.conversation import Conversation, Message, Role
 from personagent.domain.models.inference_result import InferenceResult, StreamChunk
+from personagent.domain.prompts.services import PromptContextAnalyzer
 from personagent.domain.repositories.conversation_repository import ConversationRepository
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.domain.tools import (
@@ -156,6 +157,44 @@ async def test_orchestrator_streams_progress_before_result(tmp_path):
     ]
 
     assert events == ["tool_call_started", "tool_progress", "tool_result"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_applies_tool_definition_result_limit(tmp_path):
+    async def handler(args, context, call):
+        return ToolResult(
+            tool_call_id=call.id,
+            tool_name="limited_read",
+            content="x" * 100,
+        )
+
+    tool = build_tool(
+        definition=ToolDefinition(
+            name="limited_read",
+            description="Limited read",
+            input_schema={"type": "object", "properties": {}},
+            max_result_size_chars=12,
+        ),
+        handler=handler,
+    )
+    orchestrator = ToolOrchestrator(
+        ToolRegistry([tool]),
+        ToolRuntimeConfig.from_values(workspace_root=tmp_path),
+    )
+
+    events = [
+        event
+        async for event in orchestrator.execute(
+            [ToolCall(id="call_limited", name="limited_read", arguments={})],
+            _tool_context(tmp_path),
+        )
+    ]
+
+    result = events[-1].result
+    assert result is not None
+    assert result.metadata["truncated"] is True
+    assert result.metadata["max_result_size_chars"] == 12
+    assert result.content == "x" * 12 + "\n[Output truncated.]"
 
 
 @pytest.mark.asyncio
@@ -461,6 +500,33 @@ async def test_chat_uses_dynamic_prompt_and_user_context_reminder(tmp_path):
     assert messages[1]["role"] == "user"
     assert "<system-reminder>" in messages[1]["content"]
     assert "Project instruction from persona." in messages[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_local_llama_auto_prompt_mode_skips_llm_prompt_analysis(tmp_path):
+    llm = CapturingLLM()
+    use_case = ChatCompletionUseCase(
+        conversation_repo=MemoryConversationRepository(),
+        llm_backend=llm,
+        prompt_context_analyzer=PromptContextAnalyzer(llm),
+        build_context_use_case=BuildContextUseCase(
+            workspace_root=tmp_path,
+            context_repository=InMemoryContextRepository(),
+        ),
+    )
+
+    await use_case.execute(
+        ChatRequestDTO(
+            message="Ola",
+            provider="llama",
+            model="local-model",
+            prompt_mode="auto",
+            tools_enabled=False,
+        )
+    )
+
+    assert len(llm.calls) == 1
+    assert "# Exploring Mode" in llm.calls[0]["messages"][0]["content"]
 
 
 @pytest.mark.asyncio

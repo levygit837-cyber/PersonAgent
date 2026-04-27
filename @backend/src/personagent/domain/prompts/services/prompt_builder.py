@@ -75,6 +75,7 @@ class PromptBuilder:
         skill_inventory: list[SkillDefinition] | None = None,
         session_memory: str | None = None,
         runtime_reminders: list[str] | None = None,
+        relevant_memories: list[str] | None = None,
     ) -> BuiltSystemPrompt:
         """Monta o system prompt completo.
 
@@ -117,6 +118,8 @@ class PromptBuilder:
         agent_sections += self._skill_sections(skill_inventory)
         if session_memory and session_memory.strip():
             agent_sections += (self._session_memory_section(session_memory),)
+        if relevant_memories:
+            agent_sections += (self._relevant_memories_section(relevant_memories),)
         surfaces_used = self._surfaces_used(
             active_surfaces=active_surfaces,
             profile=profile,
@@ -125,6 +128,7 @@ class PromptBuilder:
             skill_inventory=skill_inventory,
             session_memory=session_memory,
             runtime_reminders=runtime_reminders,
+            relevant_memories=relevant_memories,
         )
 
         # Cria SystemPromptParts
@@ -197,6 +201,7 @@ class PromptBuilder:
         skill_inventory: list[SkillDefinition] | None,
         session_memory: str | None,
         runtime_reminders: list[str] | None,
+        relevant_memories: list[str] | None,
     ) -> list[str]:
         """Return the actual prompt surfaces present in this built prompt."""
 
@@ -225,6 +230,8 @@ class PromptBuilder:
         if any(item.strip() for item in runtime_reminders or []):
             add("slash")
             add("reminder")
+        if relevant_memories and any(m.strip() for m in relevant_memories):
+            add("relevant_memory")
         return names
 
     async def _resolve_sections(
@@ -416,6 +423,24 @@ class PromptBuilder:
 
         return SystemPromptSection("session_memory", render, cache_break=True)
 
+    def _relevant_memories_section(self, memories: list[str]) -> SystemPromptSection:
+        def render() -> str:
+            lines = [
+                "# Relevant Memories",
+                "",
+                "The following memories were selected as relevant to the current query. "
+                "Use them as context, but the user's latest request still defines the immediate task.",
+                "",
+            ]
+            for i, memory in enumerate(memories, 1):
+                if memory.strip():
+                    lines.append(f"## Memory {i}")
+                    lines.append(memory.strip())
+                    lines.append("")
+            return "\n".join(lines)
+
+        return SystemPromptSection("relevant_memories", render, cache_break=True)
+
     def build_user_context_message(
         self,
         context: UserContext,
@@ -487,6 +512,10 @@ class PromptBuilder:
             for memory_file in context.memory_files:
                 lines.append(f"\n# {memory_file.path}")
                 lines.append(memory_file.content)
+
+        if context.has_long_term_memory:
+            lines.append("\nLong-Term Memory Index:")
+            lines.append(context.long_term_memory_index or "")
 
         return "\n".join(lines)
 

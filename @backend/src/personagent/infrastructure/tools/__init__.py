@@ -3,6 +3,7 @@
 from personagent.infrastructure.tools.browser_tools import (
     create_browser_extract_content_tool,
     create_browser_get_html_tool,
+    create_browser_list_tabs_tool,
     create_browser_open_tool,
     create_browser_read_content_chunk_tool,
     create_browser_search_tool,
@@ -46,6 +47,7 @@ __all__ = [
     "classify_read_only_shell",
     "create_browser_extract_content_tool",
     "create_browser_get_html_tool",
+    "create_browser_list_tabs_tool",
     "create_browser_open_tool",
     "create_browser_read_content_chunk_tool",
     "create_browser_search_tool",

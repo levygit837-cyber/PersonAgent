@@ -60,7 +60,7 @@ export function CodeBlock({ children, className, node, filePath, isStreaming = f
   };
 
   return (
-    <div className="code-block-wrapper not-prose my-3 overflow-hidden rounded-2xl border border-glass-border/35 bg-card/90 shadow-soft">
+    <div className="code-block-wrapper not-prose my-3 w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-glass-border/35 bg-card/90 shadow-soft">
       {/* Header */}
       <div className="code-block-header flex items-center justify-between border-b border-glass-border/25 bg-glass/45 px-3 py-2">
         <div className="flex items-center gap-2">
@@ -83,7 +83,7 @@ export function CodeBlock({ children, className, node, filePath, isStreaming = f
         className="code-block-body relative overflow-x-auto"
         style={effectiveCollapsed ? { maxHeight: MAX_HEIGHT } : undefined}
       >
-        <table className="w-full border-collapse" style={{ tableLayout: "auto" }}>
+        <table className="w-max min-w-full border-collapse" style={{ tableLayout: "auto" }}>
           <tbody>
             {highlightedLines.map((lineHtml, i) => (
               <tr key={i} className="code-block-row hover:bg-glass/35">
