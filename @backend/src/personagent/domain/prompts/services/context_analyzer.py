@@ -83,7 +83,7 @@ class PromptContextAnalyzer:
                     },
                 ],
                 temperature=0,
-                max_tokens=1024,
+                max_tokens=4096,
                 stream=False,
                 tools=None,
                 tool_choice=None,
@@ -133,7 +133,7 @@ def _profile_from_json(content: str) -> PromptProfile:
     payload = _extract_json_object(content)
     primary = str(payload.get("primary_mode") or "").strip().lower()
     if primary not in _VALID_CONCRETE_MODES:
-        raise ValueError("invalid primary_mode")
+        primary = "exploring"
     secondary: list[ConcretePromptMode] = []
     raw_secondary = payload.get("secondary_modes") or []
     if isinstance(raw_secondary, list):

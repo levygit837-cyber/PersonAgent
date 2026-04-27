@@ -7,9 +7,11 @@ import pytest
 
 from personagent.domain.tools import ToolCall, ToolExecutionStatus, ToolUseContext
 from personagent.infrastructure.browser import (
+    BrowserSearchResult,
     LightPandaBrowserWorker,
     normalize_lightpanda_cdp_endpoint,
 )
+from personagent.infrastructure.browser.lightpanda import _BrowserSession
 from personagent.infrastructure.tools import create_browser_tools
 from personagent.interfaces.config.di_container import DIContainer
 
@@ -77,6 +79,44 @@ async def test_lightpanda_worker_uses_connector_after_reset():
 
     assert first is not second
     assert endpoints == ["ws://127.0.0.1:9222", "ws://127.0.0.1:9222"]
+
+
+@pytest.mark.asyncio
+async def test_lightpanda_worker_keeps_recent_search_cache_after_session_reset():
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222")
+    conversation_id = "conversation-a"
+    session = _BrowserSession(browser=FakeBrowser(), context=FakeContext(), page=FakePage())
+    worker._sessions[conversation_id] = session
+    snapshot = worker._cache_search_results(
+        conversation_id=conversation_id,
+        query="langchain framework",
+        search_url="https://search.yahoo.com/search?p=langchain+framework",
+        results=[
+            BrowserSearchResult(
+                index=5,
+                title="LangChain docs",
+                url="https://python.langchain.com/docs/",
+                snippet="Docs",
+            )
+        ],
+    )
+
+    await worker._reset_browser()
+    empty_session = _BrowserSession(
+        browser=FakeBrowser(),
+        context=FakeContext(),
+        page=FakePage(),
+    )
+
+    target_url, matched_search_id = worker._result_url(
+        conversation_id,
+        empty_session,
+        5,
+    )
+
+    assert worker._sessions == {}
+    assert target_url == "https://python.langchain.com/docs/"
+    assert matched_search_id == snapshot.search_id
 
 
 @pytest.mark.asyncio
@@ -192,7 +232,7 @@ class FakeBrowserWorker:
             "results": session["results"][:max_results],
         }
 
-    async def open(self, *, conversation_id: str, url=None, result_index=None):
+    async def open(self, *, conversation_id: str, url=None, result_index=None, search_id=None):
         session = self.sessions.setdefault(conversation_id, {})
         target = url or session["results"][int(result_index) - 1]["url"]
         session["opened"] = target
@@ -231,5 +271,18 @@ class FakeBrowserWorker:
 
 
 class FakeBrowser:
+    async def close(self):
+        return None
+
+
+class FakeContext:
+    async def close(self):
+        return None
+
+
+class FakePage:
+    def is_closed(self):
+        return False
+
     async def close(self):
         return None

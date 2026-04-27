@@ -102,10 +102,15 @@ class PostgresConversationRepository(ConversationRepository):
         orm.metadata_ = conversation.metadata
 
         result = await self._session.execute(
-            select(MessageORM).where(MessageORM.conversation_id == conversation.id)
+            select(
+                MessageORM.id,
+                MessageORM.timestamp,
+                MessageORM.role,
+                MessageORM.tool_call_id,
+            ).where(MessageORM.conversation_id == conversation.id)
         )
         existing_by_key = {
-            self._message_key_from_orm(message): message for message in result.scalars().all()
+            (row.timestamp, row.role, row.tool_call_id or ""): row.id for row in result
         }
         incoming_keys = set()
 
@@ -117,7 +122,7 @@ class PostgresConversationRepository(ConversationRepository):
             self._session.add(self._message_orm(conversation.id, msg))
 
         stale_ids = [
-            message.id for key, message in existing_by_key.items() if key not in incoming_keys
+            message_id for key, message_id in existing_by_key.items() if key not in incoming_keys
         ]
         if stale_ids:
             await self._session.execute(delete(MessageORM).where(MessageORM.id.in_(stale_ids)))

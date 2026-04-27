@@ -160,7 +160,7 @@ class DIContainer:
 
     def create_session_memory_service(
         self,
-        llm_backend: LLMBackendRepository,
+        llm_backend: LLMBackendRepository | None = None,
     ) -> SessionMemoryService:
         return SessionMemoryService(llm_backend)
 

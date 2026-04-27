@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -19,6 +20,7 @@ logger = structlog.get_logger(__name__)
 Connector = Callable[[str], Awaitable[Any]]
 
 _DEFAULT_SEARCH_BASE_URL = "https://search.yahoo.com/search"
+_MAX_CACHED_SEARCHES_PER_CONVERSATION = 8
 
 
 class BrowserError(RuntimeError):
@@ -68,6 +70,18 @@ class BrowserSearchResult:
             "url": self.url,
             "snippet": self.snippet,
         }
+
+
+@dataclass(slots=True)
+class BrowserSearchSnapshot:
+    """Recent search results kept independently from the live browser page."""
+
+    search_id: str
+    query: str
+    search_url: str
+    provider: str
+    results: list[BrowserSearchResult]
+    created_at: float = field(default_factory=time.monotonic)
 
 
 @dataclass(slots=True)
@@ -163,6 +177,8 @@ class LightPandaBrowserWorker:
         self._lock = asyncio.Lock()
         self._playwright: Any | None = None
         self._sessions: dict[str, _BrowserSession] = {}
+        self._search_cache: dict[str, list[BrowserSearchSnapshot]] = {}
+        self._current_url_cache: dict[str, str] = {}
 
     async def warmup(self) -> bool:
         """Best-effort startup connection. Failures are logged, not raised."""
@@ -185,6 +201,8 @@ class LightPandaBrowserWorker:
                 with suppress(Exception):
                     await self._playwright.stop()
                 self._playwright = None
+            self._search_cache.clear()
+            self._current_url_cache.clear()
 
     @property
     def search_provider_label(self) -> str:
@@ -208,7 +226,8 @@ class LightPandaBrowserWorker:
         search_url = self.search_url(query, max_results=max_results)
         await self._goto(session, search_url)
         await self._raise_if_search_blocked(session.page)
-        extracted = await session.page.evaluate(
+        extracted = await self._evaluate_page(
+            session.page,
             _search_results_script(self.search_provider),
             {"maxResults": max_results},
         )
@@ -222,15 +241,27 @@ class LightPandaBrowserWorker:
             for index, item in enumerate(extracted or [])
             if isinstance(item, dict) and item.get("title") and item.get("url")
         ][:max_results]
-        session.search_results = results
+        snapshot = self._cache_search_results(
+            conversation_id=conversation_id,
+            query=query,
+            search_url=search_url,
+            results=results,
+        )
+        session.search_results = self._copy_search_results(snapshot.results)
         session.current_url = str(getattr(session.page, "url", search_url) or search_url)
+        self._remember_current_url(conversation_id, session.current_url)
         session.touch()
         return {
             "type": "browser_search",
             "provider": self.search_provider,
             "query": query,
             "search_url": search_url,
-            "results": [result.to_dict() for result in results],
+            "search_id": snapshot.search_id,
+            "cached_search_count": len(self._search_cache.get(conversation_id, [])),
+            "results": [
+                {**result.to_dict(), "search_id": snapshot.search_id}
+                for result in snapshot.results
+            ],
         }
 
     async def open(
@@ -239,13 +270,20 @@ class LightPandaBrowserWorker:
         conversation_id: str,
         url: str | None = None,
         result_index: int | None = None,
+        search_id: str | None = None,
     ) -> dict[str, Any]:
         """Open a URL or one of the last search results."""
 
         session = await self._get_session(conversation_id)
         target_url = url
+        matched_search_id = None
         if target_url is None and result_index is not None:
-            target_url = self._result_url(session, result_index)
+            target_url, matched_search_id = self._result_url(
+                conversation_id,
+                session,
+                result_index,
+                search_id=search_id,
+            )
         if target_url is None:
             raise BrowserError("BrowserOpen requires url or result_index.")
         await self._goto(session, target_url)
@@ -253,12 +291,14 @@ class LightPandaBrowserWorker:
         title = await self._safe_title(session.page)
         final_url = str(getattr(session.page, "url", target_url) or target_url)
         session.current_url = final_url
+        self._remember_current_url(conversation_id, final_url)
         session.touch()
         return {
             "type": "browser_open",
             "url": target_url,
             "final_url": final_url,
             "title": title,
+            "search_id": matched_search_id,
         }
 
     async def extract_content(
@@ -274,6 +314,8 @@ class LightPandaBrowserWorker:
         session = await self._get_session(conversation_id)
         if url:
             await self._goto(session, url)
+        elif self._should_restore_current_page(session):
+            await self._goto(session, str(session.current_url))
         await self._raise_if_search_blocked(session.page)
         title = await self._safe_title(session.page)
         final_url = str(getattr(session.page, "url", url or "") or url or "")
@@ -284,6 +326,7 @@ class LightPandaBrowserWorker:
         links = await self._extract_links(session.page) if include_links else []
         buttons = await self._extract_buttons(session.page)
         session.current_url = final_url
+        self._remember_current_url(conversation_id, final_url)
         session.touch()
         return {
             "type": "browser_extract_content",
@@ -308,6 +351,8 @@ class LightPandaBrowserWorker:
         session = await self._get_session(conversation_id)
         if url:
             await self._goto(session, url)
+        elif self._should_restore_current_page(session):
+            await self._goto(session, str(session.current_url))
         await self._raise_if_search_blocked(session.page)
         title = await self._safe_title(session.page)
         final_url = str(getattr(session.page, "url", url or "") or url or "")
@@ -316,6 +361,7 @@ class LightPandaBrowserWorker:
         if truncated:
             html = html[:max_chars].rstrip()
         session.current_url = final_url
+        self._remember_current_url(conversation_id, final_url)
         session.touch()
         return {
             "type": "browser_get_html",
@@ -377,9 +423,20 @@ class LightPandaBrowserWorker:
                 if callable(is_connected):
                     browser_connected = bool(is_connected())
                 if browser_connected and not session.page.is_closed():
+                    cached_results = self._latest_cached_search_results(conversation_id)
+                    if cached_results:
+                        session.search_results = cached_results
+                    else:
+                        session.search_results = []
+                    session.current_url = (
+                        session.current_url or self._current_url_cache.get(conversation_id)
+                    )
                     session.touch()
                     return session
             except Exception:
+                await self._close_session(conversation_id, session)
+                session = None
+            if session is not None:
                 await self._close_session(conversation_id, session)
 
         browser = await self._connect_browser()
@@ -387,7 +444,13 @@ class LightPandaBrowserWorker:
             context = await browser.new_context()
             page = await context.new_page()
             page.set_default_timeout(self.timeout_ms)
-            session = _BrowserSession(browser=browser, context=context, page=page)
+            session = _BrowserSession(
+                browser=browser,
+                context=context,
+                page=page,
+                search_results=self._latest_cached_search_results(conversation_id),
+                current_url=self._current_url_cache.get(conversation_id),
+            )
             self._sessions[conversation_id] = session
             await self._enforce_session_limit()
             return session
@@ -412,17 +475,23 @@ class LightPandaBrowserWorker:
     async def _connect_browser(self) -> Any:
         if not self.enabled:
             raise BrowserUnavailableError("LightPanda browser tools are disabled.")
-        endpoint = await self._resolve_endpoint()
-        try:
-            if self._connector is not None:
-                return await self._connector(endpoint)
-            return await self._connect_with_playwright(endpoint)
-        except Exception as exc:
-            raise BrowserUnavailableError(
-                "Browser CDP endpoint is unavailable. Start LightPanda with "
-                "`docker compose up -d lightpanda` or start Chrome/Chromium with "
-                "`--remote-debugging-port=9222`, then verify /json/version."
-            ) from exc
+        last_error: Exception | None = None
+        for attempt in range(3):
+            endpoint = await self._resolve_endpoint()
+            try:
+                if self._connector is not None:
+                    return await self._connector(endpoint)
+                return await self._connect_with_playwright(endpoint)
+            except Exception as exc:
+                last_error = exc
+                if attempt == 2:
+                    break
+                await asyncio.sleep(0.25 * (attempt + 1))
+        raise BrowserUnavailableError(
+            "Browser CDP endpoint is unavailable. Start LightPanda with "
+            "`docker compose up -d lightpanda` or start Chrome/Chromium with "
+            "`--remote-debugging-port=9222`, then verify /json/version."
+        ) from last_error
 
     async def _connect_with_playwright(self, endpoint: str) -> Any:
         try:
@@ -466,12 +535,43 @@ class LightPandaBrowserWorker:
                 ) from exc
             raise BrowserUnavailableError(f"LightPanda navigation failed for {url}: {exc}") from exc
 
+    async def _evaluate_page(
+        self,
+        page: Any,
+        script: str,
+        arg: Any | None = None,
+    ) -> Any:
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                if arg is None:
+                    return await page.evaluate(script)
+                return await page.evaluate(script, arg)
+            except Exception as exc:
+                last_error = exc
+                message = str(exc)
+                if "Execution context was destroyed" not in message:
+                    raise
+                if attempt == 2:
+                    break
+                with suppress(Exception):
+                    await page.wait_for_load_state(
+                        "domcontentloaded",
+                        timeout=min(self.timeout_ms, 5_000),
+                    )
+                with suppress(Exception):
+                    await page.wait_for_timeout(250)
+        if last_error is not None:
+            raise last_error
+        return None
+
     async def _markdown_or_text(self, session: _BrowserSession) -> tuple[str, str]:
         markdown = await self._lightpanda_markdown(session)
         if markdown:
             return markdown.strip(), "lightpanda_markdown"
         text = str(
-            await session.page.evaluate(
+            await self._evaluate_page(
+                session.page,
                 "() => (document.body && (document.body.innerText || document.body.textContent)) "
                 "|| document.documentElement.textContent || ''"
             )
@@ -548,7 +648,8 @@ class LightPandaBrowserWorker:
                         await client.send("Target.closeTarget", {"targetId": target_id})
 
     async def _extract_links(self, page: Any) -> list[dict[str, str]]:
-        links = await page.evaluate(
+        links = await self._evaluate_page(
+            page,
             """() => {
               const seen = new Set();
               return Array.from(document.querySelectorAll('a[href]')).map((a) => {
@@ -569,7 +670,8 @@ class LightPandaBrowserWorker:
         ]
 
     async def _extract_buttons(self, page: Any) -> list[dict[str, str]]:
-        buttons = await page.evaluate(
+        buttons = await self._evaluate_page(
+            page,
             """() => {
               return Array.from(document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]')).map((el) => {
                 const text = (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
@@ -607,7 +709,8 @@ class LightPandaBrowserWorker:
         raw_sample = ""
         with suppress(Exception):
             raw_sample = str(
-                await page.evaluate(
+                await self._evaluate_page(
+                    page,
                     "() => ((document.body && (document.body.innerText || document.body.textContent)) "
                     "|| '').slice(0, 3000)"
                 )
@@ -645,7 +748,8 @@ class LightPandaBrowserWorker:
         raw_sample = ""
         with suppress(Exception):
             raw_sample = str(
-                await page.evaluate(
+                await self._evaluate_page(
+                    page,
                     "() => ((document.body && (document.body.innerText || document.body.textContent)) "
                     "|| '').slice(0, 3000)"
                 )
@@ -683,7 +787,8 @@ class LightPandaBrowserWorker:
         raw_sample = ""
         with suppress(Exception):
             raw_sample = str(
-                await page.evaluate(
+                await self._evaluate_page(
+                    page,
                     "() => ((document.body && (document.body.innerText || document.body.textContent)) "
                     "|| '').slice(0, 3000)"
                 )
@@ -715,10 +820,90 @@ class LightPandaBrowserWorker:
         await self._raise_if_bing_blocked(page)
         await self._raise_if_yahoo_blocked(page)
 
-    def _result_url(self, session: _BrowserSession, result_index: int) -> str:
+    def _cache_search_results(
+        self,
+        *,
+        conversation_id: str,
+        query: str,
+        search_url: str,
+        results: list[BrowserSearchResult],
+    ) -> BrowserSearchSnapshot:
+        raw_id = f"{conversation_id}\n{query}\n{search_url}\n{time.monotonic_ns()}"
+        search_id = f"search_{hashlib.sha256(raw_id.encode()).hexdigest()[:12]}"
+        snapshot = BrowserSearchSnapshot(
+            search_id=search_id,
+            query=query,
+            search_url=search_url,
+            provider=self.search_provider,
+            results=self._copy_search_results(results),
+        )
+        snapshots = self._search_cache.setdefault(conversation_id, [])
+        snapshots.insert(0, snapshot)
+        del snapshots[_MAX_CACHED_SEARCHES_PER_CONVERSATION:]
+        return snapshot
+
+    def _latest_cached_search_results(self, conversation_id: str) -> list[BrowserSearchResult]:
+        snapshots = self._search_cache.get(conversation_id) or []
+        if not snapshots:
+            return []
+        return self._copy_search_results(snapshots[0].results)
+
+    def _copy_search_results(
+        self,
+        results: list[BrowserSearchResult],
+    ) -> list[BrowserSearchResult]:
+        return [
+            BrowserSearchResult(
+                index=result.index,
+                title=result.title,
+                url=result.url,
+                snippet=result.snippet,
+            )
+            for result in results
+        ]
+
+    def _remember_current_url(self, conversation_id: str, url: str | None) -> None:
+        if not url or url == "about:blank":
+            return
+        self._current_url_cache[conversation_id] = url
+
+    def _should_restore_current_page(self, session: _BrowserSession) -> bool:
+        current_url = str(session.current_url or "")
+        if not current_url.startswith(("http://", "https://")):
+            return False
+        page_url = str(getattr(session.page, "url", "") or "")
+        return not page_url or page_url == "about:blank"
+
+    def _result_url(
+        self,
+        conversation_id: str,
+        session: _BrowserSession,
+        result_index: int,
+        *,
+        search_id: str | None = None,
+    ) -> tuple[str, str | None]:
+        if search_id:
+            for snapshot in self._search_cache.get(conversation_id, []):
+                if snapshot.search_id != search_id:
+                    continue
+                for result in snapshot.results:
+                    if result.index == result_index:
+                        return result.url, snapshot.search_id
+                raise BrowserError(
+                    f"No browser search result with index {result_index} in search_id {search_id}."
+                )
+            raise BrowserError(
+                f"No cached browser search with search_id {search_id}. Run BrowserSearch first."
+            )
+
+        for snapshot in self._search_cache.get(conversation_id, []):
+            for result in snapshot.results:
+                if result.index == result_index:
+                    return result.url, snapshot.search_id
+
         for result in session.search_results:
             if result.index == result_index:
-                return result.url
+                return result.url, None
         raise BrowserError(
             f"No browser search result with index {result_index}. Run BrowserSearch first."
         )
@@ -732,6 +917,21 @@ class LightPandaBrowserWorker:
         ]
         for conversation_id in expired:
             await self._close_session(conversation_id, self._sessions[conversation_id])
+        self._cleanup_search_cache(now)
+
+    def _cleanup_search_cache(self, now: float) -> None:
+        for conversation_id, snapshots in list(self._search_cache.items()):
+            fresh = [
+                snapshot
+                for snapshot in snapshots
+                if now - snapshot.created_at <= self.session_ttl_seconds
+            ][:_MAX_CACHED_SEARCHES_PER_CONVERSATION]
+            if fresh:
+                self._search_cache[conversation_id] = fresh
+            else:
+                self._search_cache.pop(conversation_id, None)
+                if conversation_id not in self._sessions:
+                    self._current_url_cache.pop(conversation_id, None)
 
     async def _enforce_session_limit(self) -> None:
         while len(self._sessions) > self.max_sessions:

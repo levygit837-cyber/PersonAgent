@@ -89,3 +89,10 @@ def test_lightpanda_settings_defaults():
     assert settings.lightpanda_search_base_url == "https://search.yahoo.com/search"
     assert settings.lightpanda_session_ttl_seconds == 900
     assert settings.lightpanda_max_sessions == 32
+
+
+def test_chat_post_turn_llm_services_default_off():
+    settings = Settings()
+
+    assert settings.chat_next_step_suggestions_enabled is False
+    assert settings.chat_session_memory_updates_enabled is False

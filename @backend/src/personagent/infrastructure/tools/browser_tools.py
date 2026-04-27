@@ -116,10 +116,15 @@ def create_browser_open_tool(worker: LightPandaBrowserWorker) -> Tool:
     ) -> ToolPermissionResult | None:
         url = arguments.get("url")
         result_index = arguments.get("result_index")
+        search_id = arguments.get("search_id")
         has_url = isinstance(url, str) and bool(url.strip())
         has_index = _is_int(result_index)
         if has_url == has_index:
             return _deny("BrowserOpen requires exactly one of 'url' or 'result_index'.")
+        if search_id is not None and not isinstance(search_id, str):
+            return _deny("BrowserOpen search_id must be a string when provided.")
+        if has_url and isinstance(search_id, str) and search_id.strip():
+            return _deny("BrowserOpen search_id can only be used with result_index.")
         if has_url:
             return validate_web_url(str(url), context)
         if int(result_index) < 1:
@@ -131,18 +136,25 @@ def create_browser_open_tool(worker: LightPandaBrowserWorker) -> Tool:
     ) -> ToolResult:
         url = arguments.get("url")
         result_index = arguments.get("result_index")
+        search_id = arguments.get("search_id")
         await _progress(
             context,
             call,
             "Opening page with LightPanda...",
-            {"url": url, "result_index": result_index},
+            {"url": url, "result_index": result_index, "search_id": search_id},
         )
         try:
             target_url = str(url).strip() if isinstance(url, str) and url.strip() else None
+            target_search_id = (
+                str(search_id).strip()
+                if isinstance(search_id, str) and search_id.strip()
+                else None
+            )
             data = await worker.open(
                 conversation_id=context.conversation_id,
                 url=target_url,
                 result_index=int(result_index) if _is_int(result_index) else None,
+                search_id=target_search_id,
             )
             final_validation = validate_web_url(str(data.get("final_url") or ""), context)
             if final_validation is not None:
@@ -157,8 +169,8 @@ def create_browser_open_tool(worker: LightPandaBrowserWorker) -> Tool:
         definition=ToolDefinition(
             name="BrowserOpen",
             description=(
-                "Open a URL or a 1-based result_index from the last BrowserSearch in the "
-                "same chat conversation."
+                "Open a URL or a 1-based result_index from recent cached BrowserSearch "
+                "results in the same chat conversation."
             ),
             input_schema={
                 "type": "object",
@@ -167,7 +179,11 @@ def create_browser_open_tool(worker: LightPandaBrowserWorker) -> Tool:
                     "result_index": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "1-based index from the last BrowserSearch result list.",
+                        "description": "1-based index from a recent BrowserSearch result list.",
+                    },
+                    "search_id": {
+                        "type": "string",
+                        "description": "Optional search_id returned by BrowserSearch to disambiguate cached recent searches.",
                     },
                 },
                 "additionalProperties": False,

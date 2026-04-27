@@ -125,6 +125,7 @@ class ChatCompletionUseCase:
 
         tool_context = self._build_tool_context(request, conversation) if tools else None
         result = InferenceResult(content="")
+        seen_tool_call_ids: set[str] = set()
 
         try:
             max_iterations = self._max_tool_iterations(request)
@@ -150,9 +151,22 @@ class ChatCompletionUseCase:
                 )
 
                 assistant_msg = self._assistant_message_from_result(result)
+                if assistant_msg.tool_calls:
+                    assistant_msg = Message(
+                        role=assistant_msg.role,
+                        content=assistant_msg.content,
+                        timestamp=assistant_msg.timestamp,
+                        tool_calls=self._unique_tool_call_ids(
+                            assistant_msg.tool_calls,
+                            seen_tool_call_ids,
+                            iteration,
+                        ),
+                        tool_call_id=assistant_msg.tool_call_id,
+                        metadata=assistant_msg.metadata,
+                    )
                 conversation.add_message(assistant_msg)
 
-                tool_calls = self._parse_tool_calls(result.tool_calls)
+                tool_calls = self._parse_tool_calls(assistant_msg.tool_calls)
                 if not tool_calls or not tool_context:
                     break
 
@@ -228,6 +242,7 @@ class ChatCompletionUseCase:
         final_usage = None
         final_model = request.model
         final_provider = request.provider
+        seen_tool_call_ids: set[str] = set()
 
         try:
             max_iterations = self._max_tool_iterations(request)
@@ -282,7 +297,12 @@ class ChatCompletionUseCase:
                     if chunk.images:
                         assistant_images.extend(chunk.images)
                     if chunk.tool_calls:
-                        assistant_tool_calls = chunk.tool_calls
+                        assistant_tool_calls = self._unique_tool_call_ids(
+                            chunk.tool_calls,
+                            seen_tool_call_ids,
+                            iteration,
+                        )
+                        assistant_finish_reason = "tool_calls"
                     assistant_metadata.update(
                         {
                             key: value
@@ -291,8 +311,17 @@ class ChatCompletionUseCase:
                         }
                     )
                     if chunk.finish_reason:
-                        assistant_finish_reason = chunk.finish_reason
-                        final_finish_reason = chunk.finish_reason
+                        internal_tool_stop = (
+                            assistant_tool_calls is not None
+                            and chunk.finish_reason != "tool_calls"
+                            and not chunk.content
+                            and not chunk.reasoning_content
+                            and not chunk.images
+                        )
+                        if not internal_tool_stop:
+                            assistant_finish_reason = chunk.finish_reason
+                            if chunk.finish_reason != "tool_calls":
+                                final_finish_reason = chunk.finish_reason
                     if chunk.usage:
                         assistant_usage = chunk.usage
                         final_usage = chunk.usage
@@ -303,8 +332,9 @@ class ChatCompletionUseCase:
                     assistant_provider = str(chunk_metadata.get("provider") or request.provider)
                     final_model = assistant_model
                     final_provider = assistant_provider
-                    forwarded_finish_reason = (
-                        chunk.finish_reason if chunk.finish_reason != "tool_calls" else None
+                    forwarded_finish_reason = self._forwarded_finish_reason(
+                        chunk,
+                        has_pending_tool_calls=assistant_tool_calls is not None,
                     )
                     if (
                         chunk.content
@@ -581,6 +611,55 @@ class ChatCompletionUseCase:
             return []
         calls = [ToolCall.from_openai(call) for call in tool_calls]
         return [call for call in calls if call.id and call.name]
+
+    def _unique_tool_call_ids(
+        self,
+        tool_calls: list[dict[str, Any]],
+        seen_ids: set[str],
+        iteration: int,
+    ) -> list[dict[str, Any]]:
+        """Keep provider-emitted tool ids stable enough for UI and tool responses."""
+        unique_calls: list[dict[str, Any]] = []
+        for index, tool_call in enumerate(tool_calls):
+            original_id = str(tool_call.get("id") or "").strip()
+            candidate = original_id or f"tool-call-{iteration}-{index}"
+            if candidate in seen_ids:
+                base = candidate
+                suffix = 2
+                candidate = f"{base}-{iteration}-{index}"
+                while candidate in seen_ids:
+                    suffix += 1
+                    candidate = f"{base}-{iteration}-{index}-{suffix}"
+            seen_ids.add(candidate)
+            if candidate == original_id:
+                unique_calls.append(tool_call)
+                continue
+            next_call = dict(tool_call)
+            next_call["id"] = candidate
+            extra = next_call.get("extra_content")
+            next_extra = dict(extra) if isinstance(extra, dict) else {}
+            next_extra["original_tool_call_id"] = original_id or None
+            next_call["extra_content"] = next_extra
+            unique_calls.append(next_call)
+        return unique_calls
+
+    def _forwarded_finish_reason(
+        self,
+        chunk: StreamChunk,
+        *,
+        has_pending_tool_calls: bool,
+    ) -> str | None:
+        if chunk.finish_reason == "tool_calls":
+            return None
+        if (
+            has_pending_tool_calls
+            and chunk.finish_reason
+            and not chunk.content
+            and not chunk.reasoning_content
+            and not chunk.images
+        ):
+            return None
+        return chunk.finish_reason
 
     def _prepare_prompt_surfaces(
         self,
