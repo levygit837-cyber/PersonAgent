@@ -47,7 +47,7 @@ describe("Sidebar", () => {
     vi.unstubAllGlobals();
   });
 
-  it("groups chats by workspace folder", async () => {
+  it("shows four recent sessions by default and reveals the rest in a dropdown", async () => {
     renderSidebar();
 
     expect(screen.getByText("New Chat")).toBeInTheDocument();
@@ -58,6 +58,19 @@ describe("Sidebar", () => {
     expect(await screen.findByText("other-project")).toBeInTheDocument();
 
     expect(screen.getByText("Debug Session")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /other-project/i }));
+
+    for (const title of ["Long History 1", "Long History 2", "Long History 3", "Long History 4"]) {
+      expect(await screen.findByText(title)).toBeInTheDocument();
+    }
+
+    expect(screen.queryByText("Long History 5")).not.toBeInTheDocument();
+    const moreSessionsButton = screen.getByRole("button", { name: /mostrar mais sessões/i });
+    expect(moreSessionsButton).toBeInTheDocument();
+
+    fireEvent.pointerDown(moreSessionsButton);
+    expect(await screen.findByText("Long History 5")).toBeInTheDocument();
 
     expect(screen.getByTestId("session-history-list")).toHaveClass("overflow-y-auto");
   });

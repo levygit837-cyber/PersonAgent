@@ -98,7 +98,7 @@ export function InputDock() {
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-5 pb-5">
-      <div className="pointer-events-auto w-full max-w-[780px] overflow-hidden rounded-lg border border-border bg-card/95 shadow-dock backdrop-blur-xl">
+      <div className="pointer-events-auto w-full max-w-[780px] overflow-hidden rounded-2xl border border-glass-border/35 bg-card/90 shadow-dock ring-1 ring-primary/10 backdrop-blur-2xl">
         <ComposerAssist
           disabled={disabled}
           nextStepSuggestion={!text.trim() ? nextStepSuggestion : undefined}
@@ -113,7 +113,7 @@ export function InputDock() {
             requestAnimationFrame(() => textareaRef.current?.focus());
           }}
         />
-        <div className="flex items-end gap-2 px-2 py-2 sm:gap-2.5 sm:px-2.5">
+        <div className="flex items-end gap-2 px-2.5 py-2.5 sm:gap-2.5 sm:px-3">
           <FeatureMenu enabled={!disabled} />
           <textarea
             ref={textareaRef}
@@ -128,7 +128,7 @@ export function InputDock() {
                 submit();
               }
             }}
-            className="min-h-10 min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
+            className="min-h-10 min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/80 disabled:opacity-60"
           />
           <ModelReasoningSelector enabled={!disabled} />
           <Button
@@ -137,7 +137,7 @@ export function InputDock() {
             disabled={!isStreaming && !text.trim()}
             onClick={submit}
             aria-label={isStreaming ? "Stop" : "Send"}
-            className="h-10 w-10"
+            className="h-10 w-10 rounded-xl"
           >
             {isStreaming ? <Square className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
           </Button>
@@ -166,8 +166,8 @@ function ComposerAssist({
   if (slashToken !== null) {
     if (commands.length === 0) return null;
     return (
-      <div className="border-b border-border/70 px-2 py-1.5">
-        <div className="max-h-44 overflow-y-auto rounded-md bg-popover p-1 text-popover-foreground">
+      <div className="border-b border-glass-border/25 px-2 py-1.5">
+        <div className="max-h-44 overflow-y-auto rounded-xl bg-background/70 p-1 text-popover-foreground">
           {commands.slice(0, 6).map((command) => (
             <button
               key={`${command.source}:${command.slash_name}`}
@@ -176,7 +176,7 @@ function ComposerAssist({
                 event.preventDefault();
                 onPickCommand(command);
               }}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-glass/80 hover:text-accent-foreground"
             >
               <Command className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1">
@@ -193,14 +193,14 @@ function ComposerAssist({
   }
   if (!nextStepSuggestion) return null;
   return (
-    <div className="border-b border-border/70 px-2 py-1.5">
+    <div className="border-b border-glass-border/25 px-2 py-1.5">
       <button
         type="button"
         onMouseDown={(event) => {
           event.preventDefault();
           onPickSuggestion(nextStepSuggestion);
         }}
-        className="flex max-w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+        className="flex max-w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-glass/80 hover:text-accent-foreground"
       >
         <Sparkles className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">{nextStepSuggestion}</span>
@@ -239,7 +239,7 @@ function FeatureMenu({ enabled }: { enabled: boolean }) {
           disabled={!enabled}
           aria-label="System features"
           title="System features"
-          className="h-10 w-10 shrink-0 text-muted-foreground hover:text-foreground"
+          className="h-10 w-10 shrink-0 rounded-xl text-muted-foreground hover:text-foreground"
         >
           <Plus className="h-4 w-4" />
         </Button>
@@ -283,8 +283,8 @@ function FeatureMenu({ enabled }: { enabled: boolean }) {
           <div
             aria-hidden={!agentsOpen}
             className={[
-              "personagent-feature-submenu-panel absolute bottom-0 left-[calc(100%+8px)] z-50 w-52 rounded-md border",
-              "border-border bg-popover p-1 text-popover-foreground shadow-xl",
+              "personagent-feature-submenu-panel absolute bottom-0 left-[calc(100%+8px)] z-50 w-52 rounded-xl border",
+              "border-glass-border/35 bg-popover/95 p-1 text-popover-foreground shadow-floating backdrop-blur-xl",
               agentsOpen ? "is-open" : "",
             ].join(" ")}
           >
@@ -305,12 +305,12 @@ function FeatureMenu({ enabled }: { enabled: boolean }) {
                 aria-hidden="true"
                 className={[
                   "relative h-4 w-7 shrink-0 rounded-full transition-colors",
-                  teamMode ? "bg-blue-500" : "bg-muted-foreground/35",
+                  teamMode ? "bg-primary" : "bg-muted-foreground/[0.35]",
                 ].join(" ")}
               >
                 <span
                   className={[
-                    "absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
+                    "absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-foreground shadow-sm transition-transform",
                     teamMode ? "translate-x-3.5" : "translate-x-0",
                   ].join(" ")}
                 />
@@ -369,13 +369,13 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
           size="default"
           disabled={!enabled}
           aria-label="Model and reasoning"
-          className="h-10 min-w-[112px] max-w-[180px] shrink-0 justify-between gap-2 px-3 text-xs sm:max-w-[220px]"
+          className="h-10 min-w-[112px] max-w-[180px] shrink-0 justify-between gap-2 rounded-xl border-glass-border/35 bg-background/[0.45] px-3 text-xs shadow-soft hover:border-glass-border/50 hover:bg-glass/80 sm:max-w-[220px]"
         >
           <span className="truncate">{selectedOption.label}</span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="end" className="personagent-dropdown-fade w-72">
+      <DropdownMenuContent side="top" align="end" className="personagent-dropdown-fade w-72 rounded-2xl">
         <DropdownMenuLabel>Reasoning</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={preset} onValueChange={(value) => setReasoningPreset(value as ReasoningPreset)}>
           {reasoningPresets.map((item) => (

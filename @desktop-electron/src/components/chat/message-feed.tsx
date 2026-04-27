@@ -89,7 +89,7 @@ export function MessageFeed() {
 
 function ErrorBanner({ message }: { message: string }) {
   return (
-    <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+    <div className="mb-4 rounded-xl border border-destructive/25 bg-destructive/10 px-3 py-2 text-sm text-destructive shadow-soft">
       {message}
     </div>
   );

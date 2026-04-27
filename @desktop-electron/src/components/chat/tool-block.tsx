@@ -46,7 +46,7 @@ export function ToolBlock({ block, nested = false }: { block: ToolBlockUi; neste
         </span>
       </button>
       {hasDetails && !collapsed ? (
-        <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-md border border-border bg-card p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+        <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 p-3 font-mono text-[11px] leading-5 text-muted-foreground shadow-soft">
           {block.content}
         </pre>
       ) : null}
@@ -65,7 +65,7 @@ export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: 
     <div className="mb-2">
       <button
         type="button"
-        className="flex w-fit items-center gap-2 rounded-md px-1.5 py-[2px] -ml-1.5 font-mono text-[11px] transition-colors hover:bg-white/[0.04]"
+        className="flex w-fit items-center gap-2 rounded-lg px-1.5 py-[2px] -ml-1.5 font-mono text-[11px] transition-colors hover:bg-glass/70"
         onClick={() => !hasRunning && setCollapsed((value) => !value)}
       >
         <StatusDot status={status} />
@@ -189,7 +189,7 @@ function ShellToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?
         </div>
       </div>
       {hasOutput && !collapsed ? (
-        <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-md border border-border bg-card p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+        <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 p-3 font-mono text-[11px] leading-5 text-muted-foreground shadow-soft">
           {output}
         </pre>
       ) : null}
@@ -199,7 +199,7 @@ function ShellToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?
 
 function WriteOutputPanel({ rows }: { rows: WriteOutputRow[] }) {
   return (
-    <div className="ml-4 mt-2 max-h-80 overflow-auto rounded-md border border-border bg-card/80 font-mono text-[11px] leading-5">
+    <div className="ml-4 mt-2 max-h-80 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 font-mono text-[11px] leading-5 shadow-soft">
       {rows.map((row, index) => (
         <WriteOutputLine key={`${row.kind}-${index}-${row.text}`} row={row} />
       ))}
@@ -214,13 +214,13 @@ function WriteOutputLine({ row }: { row: WriteOutputRow }) {
       : row.kind === "remove"
         ? "bg-destructive/10 text-destructive"
         : row.kind === "meta"
-          ? "bg-secondary/35 text-muted-foreground/70"
+          ? "bg-secondary/[0.35] text-muted-foreground/70"
           : row.kind === "error"
             ? "text-destructive"
             : "text-muted-foreground";
 
   return (
-    <div className={`grid grid-cols-[2.25rem_minmax(0,1fr)] border-b border-border/50 py-0.5 last:border-0 ${className}`}>
+    <div className={`grid grid-cols-[2.25rem_minmax(0,1fr)] border-b border-glass-border/25 py-0.5 last:border-0 ${className}`}>
       <span className="select-none pr-3 text-right opacity-80">{row.marker}</span>
       <span className="whitespace-pre-wrap break-words pr-3">{row.text.length > 0 ? row.text : " "}</span>
     </div>
@@ -243,7 +243,7 @@ function SearchOutputPanel({ block, rows }: { block: ToolBlockUi; rows: SearchOu
   const fallback = searchOutputText(block);
 
   return (
-    <div className="ml-4 mt-2 rounded-md border border-border bg-card/80 p-3">
+    <div className="ml-4 mt-2 rounded-xl border border-glass-border/35 bg-card/80 p-3 shadow-soft">
       {metadata.length > 0 ? (
         <dl className="grid gap-x-4 gap-y-1 font-mono text-[11px] sm:grid-cols-2">
           {metadata.map((item) => (
@@ -276,7 +276,7 @@ function SearchOutputPanel({ block, rows }: { block: ToolBlockUi; rows: SearchOu
 function SearchOutputLine({ row }: { row: SearchOutputRow }) {
   if (row.kind === "match") {
     return (
-      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,2fr)] gap-2 border-b border-border/60 py-1 last:border-0">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,2fr)] gap-2 border-b border-glass-border/25 py-1 last:border-0">
         <span className="truncate text-muted-foreground">{row.file}</span>
         <span className="text-muted-foreground/60">{row.line}</span>
         <span className="truncate text-foreground/80">{row.text}</span>
@@ -286,14 +286,14 @@ function SearchOutputLine({ row }: { row: SearchOutputRow }) {
 
   if (row.kind === "file") {
     return (
-      <div className="border-b border-border/60 py-1 last:border-0">
+      <div className="border-b border-glass-border/25 py-1 last:border-0">
         <span className="truncate text-muted-foreground">{row.text}</span>
       </div>
     );
   }
 
   return (
-    <div className="border-b border-border/60 py-1 last:border-0">
+    <div className="border-b border-glass-border/25 py-1 last:border-0">
       <span className="whitespace-pre-wrap text-muted-foreground">{row.text}</span>
     </div>
   );

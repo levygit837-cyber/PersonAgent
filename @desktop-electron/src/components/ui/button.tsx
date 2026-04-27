@@ -4,17 +4,17 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-45",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-[background-color,border-color,color,box-shadow,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25 disabled:pointer-events-none disabled:opacity-45 active:scale-[0.985]",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/85",
+        default: "bg-primary text-primary-foreground shadow-soft hover:bg-primary/90",
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-        outline: "border border-border bg-background/20 text-foreground hover:bg-accent hover:text-accent-foreground",
-        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "text-muted-foreground hover:bg-accent hover:text-foreground",
-        subtle: "border border-border/70 bg-card/70 text-muted-foreground hover:bg-accent hover:text-foreground",
-        command: "border border-border bg-card/80 text-foreground shadow-sm hover:bg-accent",
+        outline: "border border-glass-border/35 bg-background/[0.35] text-foreground shadow-soft hover:border-glass-border/50 hover:bg-glass/80 hover:text-accent-foreground",
+        secondary: "bg-secondary/80 text-secondary-foreground shadow-soft hover:bg-secondary",
+        ghost: "text-muted-foreground hover:bg-glass/80 hover:text-foreground",
+        subtle: "border border-glass-border/35 bg-card/70 text-muted-foreground shadow-soft hover:border-glass-border/50 hover:bg-glass/80 hover:text-foreground",
+        command: "border border-glass-border/35 bg-card/80 text-foreground shadow-soft hover:border-glass-border/50 hover:bg-glass/80",
       },
       size: {
         default: "h-9 px-3.5",
