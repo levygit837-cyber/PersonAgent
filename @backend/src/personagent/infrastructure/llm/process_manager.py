@@ -265,6 +265,24 @@ class LlamaServerProcessManager:
 class EmbeddingServerProcessManager(LlamaServerProcessManager):
     """Gerencia um llama-server dedicado para embeddings."""
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._target_ctx_size = int(self._settings.embedding_ctx_size)
+        self._actual_ctx_size: int | None = None
+        self._fallback_used = False
+        self._startup_error: str | None = None
+
+    def runtime_status(self) -> dict[str, Any]:
+        """Expose embedding runtime context size and fallback visibility."""
+
+        return {
+            "target_ctx_size": self._target_ctx_size,
+            "actual_ctx_size": self._actual_ctx_size,
+            "fallback_used": self._fallback_used,
+            "startup_error": self._startup_error,
+            "managed_process_running": self.is_running,
+        }
+
     def find_model(self) -> str | None:
         model_path = Path(self._settings.embedding_model_path).expanduser()
         if model_path.is_file():
@@ -285,19 +303,85 @@ class EmbeddingServerProcessManager(LlamaServerProcessManager):
                 "embedding_server_already_available",
                 url=self._settings.embedding_server_url,
             )
+            self._actual_ctx_size = None
+            self._fallback_used = False
+            self._startup_error = None
             return True
 
         binary = self.find_binary()
         if not binary:
             logger.error("embedding_server_binary_not_found")
+            self._startup_error = "embedding_server_binary_not_found"
             return False
 
         model = self.find_model()
         if not model:
             logger.error("embedding_model_not_found", path=self._settings.embedding_model_path)
+            self._startup_error = "embedding_model_not_found"
             return False
 
-        cmd = [
+        last_error: str | None = None
+        for ctx_size in self._ctx_size_attempts():
+            logger.info(
+                "starting_embedding_server",
+                binary=binary,
+                model=model,
+                port=self._settings.embedding_port,
+                target_ctx_size=self._target_ctx_size,
+                ctx_size=ctx_size,
+                parallel=self._settings.embedding_parallel,
+            )
+            try:
+                self._process = subprocess.Popen(
+                    self._build_embedding_command(binary, model, ctx_size),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    preexec_fn=os.setsid,
+                )
+                log_task = asyncio.create_task(self._log_output())
+                started = await self._wait_for_startup(timeout=90.0)
+                if started:
+                    self._actual_ctx_size = ctx_size
+                    self._fallback_used = ctx_size != self._target_ctx_size
+                    self._startup_error = None
+                    logger.info(
+                        "embedding_server_started",
+                        pid=self._process.pid,
+                        ctx_size=ctx_size,
+                        fallback_used=self._fallback_used,
+                    )
+                    return True
+                last_error = "embedding_server_startup_timeout"
+                if not self.is_running:
+                    last_error = "embedding_server_process_died_during_startup"
+                logger.error(last_error, ctx_size=ctx_size)
+                log_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await log_task
+                self.stop()
+            except Exception as exc:
+                last_error = str(exc)
+                logger.error("embedding_server_start_failed", error=last_error, ctx_size=ctx_size)
+                self.stop()
+        self._actual_ctx_size = None
+        self._fallback_used = False
+        self._startup_error = last_error or "embedding_server_start_failed"
+        return False
+
+    def _ctx_size_attempts(self) -> list[int]:
+        attempts = [self._target_ctx_size, 24_576, 16_384, 8_192]
+        unique: list[int] = []
+        for value in attempts:
+            if value <= 0 or value in unique:
+                continue
+            if value > self._target_ctx_size and self._target_ctx_size > 0:
+                continue
+            unique.append(value)
+        return unique or [8_192]
+
+    def _build_embedding_command(self, binary: str, model: str, ctx_size: int) -> list[str]:
+        return [
             binary,
             "-m",
             model,
@@ -306,7 +390,7 @@ class EmbeddingServerProcessManager(LlamaServerProcessManager):
             "--port",
             str(self._settings.embedding_port),
             "--ctx-size",
-            str(self._settings.embedding_ctx_size),
+            str(ctx_size),
             "--n-gpu-layers",
             str(self._settings.embedding_n_gpu_layers),
             "--threads",
@@ -317,36 +401,6 @@ class EmbeddingServerProcessManager(LlamaServerProcessManager):
             "--pooling",
             "last",
         ]
-
-        logger.info(
-            "starting_embedding_server",
-            binary=binary,
-            model=model,
-            port=self._settings.embedding_port,
-            ctx_size=self._settings.embedding_ctx_size,
-            parallel=self._settings.embedding_parallel,
-        )
-        try:
-            self._process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                preexec_fn=os.setsid,
-            )
-            log_task = asyncio.create_task(self._log_output())
-            started = await self._wait_for_startup(timeout=90.0)
-            if started:
-                logger.info("embedding_server_started", pid=self._process.pid)
-                return True
-            if self.is_running:
-                logger.error("embedding_server_startup_timeout")
-            log_task.cancel()
-            self.stop()
-            return False
-        except Exception as exc:
-            logger.error("embedding_server_start_failed", error=str(exc))
-        return False
 
     async def _wait_for_startup(self, timeout: float = 90.0) -> bool:
         import httpx

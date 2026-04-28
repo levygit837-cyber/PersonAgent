@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getConversation } from "../api/client";
+import { getConversation, streamChatCompletion } from "../api/client";
 import { emptySessionUsage } from "../types/chat";
 import { useAppStore } from "./app-store";
 import { useChatStore } from "./chat-store";
 
 const apiMocks = vi.hoisted(() => ({
   getConversation: vi.fn(),
+  streamChatCompletion: vi.fn(),
 }));
 
 vi.mock("../api/client", () => ({
@@ -15,7 +16,7 @@ vi.mock("../api/client", () => ({
   getConversation: apiMocks.getConversation,
   rejectTool: vi.fn(),
   streamApproveTool: vi.fn(),
-  streamChatCompletion: vi.fn(),
+  streamChatCompletion: apiMocks.streamChatCompletion,
   streamTeamChat: vi.fn(),
 }));
 
@@ -24,6 +25,7 @@ describe("chat workspace routing", () => {
     window.localStorage.clear();
     delete window.personAgent;
     apiMocks.getConversation.mockReset();
+    apiMocks.streamChatCompletion.mockReset();
     apiMocks.getConversation.mockResolvedValue({
       id: "conversation-eval",
       title: "Eval Session",
@@ -59,6 +61,60 @@ describe("chat workspace routing", () => {
       liveSessionUsage: emptySessionUsage(),
       liveSubAgentIds: [],
     });
+  });
+
+  it("runs /clear locally instead of sending it to the model", async () => {
+    useChatStore.setState({
+      conversationId: "conversation-eval",
+      messages: [
+        {
+          id: "user-1",
+          role: "user",
+          label: "You",
+          content: "old",
+          reasoning: "",
+          reasoningBlocks: [],
+          toolBlocks: [],
+          teamEvents: [],
+          parts: [],
+          isStreaming: false,
+          isReasoningStreaming: false,
+        },
+      ],
+    });
+
+    await useChatStore.getState().sendMessage("/clear");
+
+    expect(vi.mocked(streamChatCompletion)).not.toHaveBeenCalled();
+    expect(useChatStore.getState().messages).toEqual([]);
+    expect(useChatStore.getState().conversationId).toBeUndefined();
+  });
+
+  it("runs model and effort commands locally with a command response", async () => {
+    await useChatStore.getState().sendMessage("/effort high");
+    await useChatStore.getState().sendMessage("/model codex:gpt-5.5");
+
+    expect(useAppStore.getState().reasoningPreset).toBe("high");
+    expect(useAppStore.getState().provider).toBe("codex");
+    expect(useAppStore.getState().selectedModelId).toBe("gpt-5.5");
+    expect(vi.mocked(streamChatCompletion)).not.toHaveBeenCalled();
+    expect(useChatStore.getState().messages.some((message) => message.content.includes("Reasoning effort changed"))).toBe(true);
+    expect(useChatStore.getState().messages.some((message) => message.content.includes("Model changed"))).toBe(true);
+  });
+
+  it("opens the skills workspace locally", async () => {
+    await useChatStore.getState().sendMessage("/skills");
+
+    expect(useAppStore.getState().section).toBe("skills");
+    expect(vi.mocked(streamChatCompletion)).not.toHaveBeenCalled();
+  });
+
+  it("forwards model-visible built-in commands to the chat stream", async () => {
+    apiMocks.streamChatCompletion.mockImplementation(() => emptyStream());
+
+    await useChatStore.getState().sendMessage("/plan inspect this change");
+
+    expect(vi.mocked(streamChatCompletion)).toHaveBeenCalled();
   });
 
   it("switches the active workspace before loading a mapped conversation", async () => {
@@ -130,3 +186,7 @@ describe("chat workspace routing", () => {
     expect(useChatStore.getState().conversationId).toBe("conversation-eval");
   });
 });
+
+async function* emptyStream() {
+  return;
+}

@@ -76,6 +76,16 @@ OPERATIONAL_MEMORY_SCHEMA_STATEMENTS = (
     USING hnsw (((subvector(embedding, 1, 2000))::vector(2000)) vector_cosine_ops)
     WITH (m = 16, ef_construction = 64)
     """,
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_project_created ON memory_structured_items(project_slug, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_project_type ON memory_structured_items(project_slug, item_type)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_project_latest ON memory_structured_items(project_slug, is_latest)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_conversation ON memory_structured_items(conversation_id)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_session ON memory_structured_items(session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_workspace ON memory_structured_items(workspace_root)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_source_type ON memory_structured_items(source_type)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_primary_path ON memory_structured_items(primary_path)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_source_chunk ON memory_structured_items(source_chunk_id)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_hash ON memory_structured_items(content_hash)",
 )
 
 

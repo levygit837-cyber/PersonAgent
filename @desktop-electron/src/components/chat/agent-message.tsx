@@ -23,6 +23,10 @@ import { CodeBlock } from "./code-block";
 const TEAM_CARD_ARRIVAL_STAGGER_MS = 120;
 
 export const AgentMessage = memo(function AgentMessage({ message }: { message: ChatMessageUi }) {
+  if (!message.isStreaming && !hasRenderableProgress(message)) {
+    return null;
+  }
+
   const hasVisibleAnswerContent = hasVisibleContent(message);
   const body = message.parts.length > 0 ? orderedParts(message) : legacyBody(message);
   const hasLegacyThinking = message.parts.length === 0 && (message.reasoning || message.isReasoningStreaming);

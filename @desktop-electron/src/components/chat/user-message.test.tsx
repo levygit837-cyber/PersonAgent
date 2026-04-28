@@ -4,6 +4,53 @@ import type { ChatMessageUi } from "../../types/chat";
 import { UserMessage } from "./user-message";
 
 describe("UserMessage", () => {
+  it("renders structured context attachments without raw selected lines", () => {
+    render(
+      <UserMessage
+        message={message("Apply with a concise tone", {
+          context_attachments: [
+            {
+              type: "viewer_annotation",
+              label: "@Annotation#1",
+              display_path: "src/app.ts",
+              start_line: 8,
+              end_line: 24,
+              text: "Rewrite this guidance",
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("@Annotation#1")).toBeInTheDocument();
+    expect(screen.getByText("src/app.ts")).toBeInTheDocument();
+    expect(screen.getByText("L8-24")).toBeInTheDocument();
+    expect(screen.getByText("Apply with a concise tone")).toBeInTheDocument();
+    expect(screen.queryByText(/Selected lines/i)).not.toBeInTheDocument();
+  });
+
+  it("renders @ skill attachments with invocation context", () => {
+    render(
+      <UserMessage
+        message={message("Use @skill:debug-root-cause", {
+          context_attachments: [
+            {
+              type: "skill",
+              label: "@skill:debug-root-cause",
+              invocation_name: "debug-root-cause",
+              slash_name: "/debug-root-cause",
+              display_path: ".personagent/skills/debug-root-cause/SKILL.md",
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("@skill:debug-root-cause")).toBeInTheDocument();
+    expect(screen.getByText("/debug-root-cause")).toBeInTheDocument();
+    expect(screen.getByText(".personagent/skills/debug-root-cause/SKILL.md")).toBeInTheDocument();
+  });
+
   it("highlights annotation messages with file and line references", () => {
     render(
       <UserMessage
@@ -65,7 +112,7 @@ describe("UserMessage", () => {
   });
 });
 
-function message(content: string): ChatMessageUi {
+function message(content: string, metadata?: Record<string, unknown>): ChatMessageUi {
   return {
     id: "message-1",
     role: "user",
@@ -78,5 +125,6 @@ function message(content: string): ChatMessageUi {
     parts: [],
     isStreaming: false,
     isReasoningStreaming: false,
+    metadata,
   };
 }

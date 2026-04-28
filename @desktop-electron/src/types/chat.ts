@@ -1,4 +1,4 @@
-export type ModelProvider = "llama" | "nvidia" | "vertex" | "kimi" | "codex";
+export type ModelProvider = "llama" | "nvidia" | "deepseek" | "vertex" | "kimi" | "codex";
 
 export type ReasoningPreset = "low" | "medium" | "high" | "xhigh" | "max";
 export type PromptMode = "auto" | "writing" | "exploring" | "research";
@@ -112,6 +112,47 @@ export interface ChatRequestPayload {
     cwd: string;
     allowed_roots: string[];
   };
+  context_attachments?: ContextAttachment[];
+}
+
+export type ContextAttachmentType =
+  | "file_range"
+  | "file"
+  | "directory"
+  | "skill"
+  | "mcp_resource"
+  | "terminal_output"
+  | "viewer_annotation"
+  | "command_context";
+
+export interface ContextAttachment {
+  type: ContextAttachmentType;
+  id?: string | number;
+  label?: string;
+  file_name?: string;
+  file_path?: string;
+  display_path?: string;
+  start_line?: number;
+  end_line?: number;
+  language?: string;
+  text?: string;
+  shell?: string;
+  content?: string;
+  content_preview?: string;
+  content_char_count?: number;
+  directory_path?: string;
+  entry_count?: number;
+  name?: string;
+  invocation_name?: string;
+  slash_name?: string;
+  description?: string;
+  path?: string;
+  source?: string;
+  server?: string;
+  uri?: string;
+  command?: string;
+  truncated?: boolean;
+  [key: string]: unknown;
 }
 
 export interface ChatCommandInfo {
@@ -122,6 +163,8 @@ export interface ChatCommandInfo {
   source: "command" | "skill" | string;
   path: string;
   user_invocable: boolean;
+  should_query?: boolean;
+  ui_action?: string | null;
 }
 
 export interface SkillSummary {
@@ -612,6 +655,7 @@ export interface ChatMessageUi {
   parts: ChatMessagePartUi[];
   isStreaming: boolean;
   isReasoningStreaming: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 export function emptySessionUsage(): SessionUsage {
@@ -636,6 +680,7 @@ export function buildChatRequest(input: {
   workspaceRoot?: string | null;
   systemPrompt?: string;
   promptMode?: PromptMode;
+  contextAttachments?: ContextAttachment[];
 }): ChatRequestPayload {
   const trimmedWorkspace = input.workspaceRoot?.trim();
   const reasoningPreset =
@@ -656,6 +701,7 @@ export function buildChatRequest(input: {
 
   if (input.conversationId) payload.conversation_id = input.conversationId;
   if (input.systemPrompt) payload.system_prompt = input.systemPrompt;
+  if (input.contextAttachments?.length) payload.context_attachments = input.contextAttachments;
   if (trimmedWorkspace) {
     payload.workspace_root = trimmedWorkspace;
     payload.tool_context = {
@@ -676,6 +722,7 @@ export function buildTeamRunStart(input: {
   reasoningPreset: ReasoningPreset;
   workspaceRoot?: string | null;
   systemPrompt?: string;
+  contextAttachments?: ContextAttachment[];
   teamId?: string;
   teamConfig?: TeamConfig;
 }) {

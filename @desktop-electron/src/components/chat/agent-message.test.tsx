@@ -27,6 +27,19 @@ describe("MarkdownContent", () => {
 });
 
 describe("AgentMessage Team Mode trace", () => {
+  it("does not render persisted empty assistant shells", () => {
+    render(<AgentMessage message={emptyPersistedAgentMessage()} />);
+
+    expect(screen.queryByText("PersonAgent")).not.toBeInTheDocument();
+  });
+
+  it("keeps the live streaming shell visible before the first chunk", () => {
+    render(<AgentMessage message={{ ...emptyPersistedAgentMessage(), isStreaming: true }} />);
+
+    expect(screen.getByText("PersonAgent")).toBeInTheDocument();
+    expect(screen.getByText("Thinking...")).toBeInTheDocument();
+  });
+
   it("shows real agent thinking/output content instead of fixed empty Thinking placeholders", () => {
     render(<AgentMessage message={teamModeMessage()} />);
 
@@ -60,6 +73,22 @@ describe("AgentMessage Team Mode trace", () => {
     expect((cards[2] as HTMLElement).style.getPropertyValue("--personagent-team-card-delay")).toBe("240ms");
   });
 });
+
+function emptyPersistedAgentMessage(): ChatMessageUi {
+  return {
+    id: "empty-agent",
+    role: "agent",
+    label: "PersonAgent",
+    content: "",
+    reasoning: "",
+    reasoningBlocks: [],
+    toolBlocks: [],
+    teamEvents: [],
+    parts: [],
+    isStreaming: false,
+    isReasoningStreaming: false,
+  };
+}
 
 function teamModeMessage(): ChatMessageUi {
   return {

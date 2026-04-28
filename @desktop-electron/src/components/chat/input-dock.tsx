@@ -1,12 +1,12 @@
-import { ArrowUp, Brain, ChevronDown, ChevronRight, Command, LogOut, Plus, Sparkles, Square, Terminal, UsersRound, X } from "lucide-react";
+import { ArrowUp, BookOpen, Brain, ChevronDown, ChevronRight, Command, FileText, Folder, LogOut, Plus, Sparkles, Square, Terminal, UsersRound, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
-import { getCodexAuthStatus, listChatCommands, listModels, logoutCodex } from "../../api/client";
+import { getCodexAuthStatus, listChatCommands, listModels, listSkills, listWorkspaceMentions, logoutCodex, type WorkspaceMentionSuggestion } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore, type ComposerAnnotation } from "../../stores/chat-store";
-import { useTerminalStore } from "../../stores/terminal-store";
-import { localModel, reasoningPresets, type ChatCommandInfo, type ChatMessageUi, type LlmModel, type ModelProvider, type ReasoningPreset, type ToolBlockStatus, type ToolBlockUi } from "../../types/chat";
+import { useTerminalStore, type TerminalSnippet } from "../../stores/terminal-store";
+import { localModel, reasoningPresets, type ChatCommandInfo, type ChatMessageUi, type ContextAttachment, type LlmModel, type ModelProvider, type ReasoningPreset, type SkillSummary, type ToolBlockStatus, type ToolBlockUi } from "../../types/chat";
 import { BranchSwitcherButton } from "../git/branch-switcher-button";
 import { Button } from "../ui/button";
 import { isTodoTool, todoItems, type TodoItem } from "./tool-block";
@@ -29,6 +29,41 @@ type ModelOption = {
   contextLength?: number;
 };
 
+type ComposerMentionKind = "file" | "directory" | "skill";
+
+type ComposerMention = {
+  id: string;
+  type: ComposerMentionKind;
+  label: string;
+  token: string;
+  displayPath: string;
+  fileName?: string;
+  filePath?: string;
+  directoryPath?: string;
+  name?: string;
+  invocationName?: string;
+  slashName?: string;
+  description?: string;
+  path?: string;
+  source?: string;
+};
+
+type MentionTrigger = {
+  start: number;
+  end: number;
+  query: string;
+};
+
+type MentionSuggestion = {
+  id: string;
+  type: ComposerMentionKind;
+  primary: string;
+  secondary: string;
+  token: string;
+  mention: ComposerMention;
+  score: number;
+};
+
 const curatedHostedModels: ModelOption[] = [
   { id: "kimi-for-coding", provider: "kimi", label: "Kimi K2.6", group: "Kimi Code", contextLength: 262144 },
   { id: "gpt-5.5", provider: "codex", label: "GPT-5.5", group: "ChatGPT Subscription", contextLength: 272000 },
@@ -37,6 +72,8 @@ const curatedHostedModels: ModelOption[] = [
   { id: "qwen/qwen3-coder-480b-a35b-instruct", provider: "nvidia", label: "Qwen3 Coder 480B", group: "Qwen" },
   { id: "minimaxai/minimax-m2.5", provider: "nvidia", label: "Minimax M2.5", group: "Minimax" },
   { id: "moonshotai/kimi-k2.5", provider: "nvidia", label: "Kimi K2.5", group: "Moonshot" },
+  { id: "deepseek-v4-flash", provider: "deepseek", label: "DeepSeek V4 Flash", group: "DeepSeek" },
+  { id: "deepseek-v4-pro", provider: "deepseek", label: "DeepSeek V4 Pro", group: "DeepSeek" },
   { id: "deepseek-ai/deepseek-v4-flash", provider: "nvidia", label: "DeepSeek V4 Flash", group: "DeepSeek" },
   { id: "deepseek-ai/deepseek-v4-pro", provider: "nvidia", label: "DeepSeek V4 Pro", group: "DeepSeek" },
   { id: "gemini-3.1-pro-preview", provider: "vertex", label: "Gemini 3.1 Pro", group: "Google Vertex" },
@@ -118,6 +155,10 @@ function ProviderIcon({ group, className }: { group: string; className?: string 
 
 export function InputDock() {
   const [text, setText] = useState("");
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const [selectedMentions, setSelectedMentions] = useState<ComposerMention[]>([]);
+  const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
+  const [dismissedMentionKey, setDismissedMentionKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const sendMessage = useChatStore((state) => state.sendMessage);
   const stopStreaming = useChatStore((state) => state.stopStreaming);
@@ -133,14 +174,44 @@ export function InputDock() {
   const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
   const disabled = isStreaming;
   const slashToken = slashTokenFromText(text);
+  const mentionTrigger = mentionTriggerFromText(text, cursorPosition);
+  const mentionKey = mentionTrigger ? `${mentionTrigger.start}:${mentionTrigger.end}:${mentionTrigger.query}:${text}` : null;
+  const mentionOpen = Boolean(mentionTrigger && mentionKey !== dismissedMentionKey);
   const slashCommands = useQuery({
     queryKey: ["chat-commands", baseUrl, selectedWorkspace],
     queryFn: () => listChatCommands(baseUrl, selectedWorkspace),
     enabled: !disabled && Boolean(baseUrl) && slashToken !== null,
     staleTime: 30_000,
   });
+  const workspaceMentionSuggestions = useQuery({
+    queryKey: ["workspace-mentions", baseUrl, selectedWorkspace, mentionTrigger?.query ?? ""],
+    queryFn: () => listWorkspaceMentions(baseUrl, mentionTrigger?.query ?? "", selectedWorkspace || ""),
+    enabled: !disabled && mentionOpen && Boolean(baseUrl) && Boolean(selectedWorkspace),
+    staleTime: 5_000,
+  });
+  const skillMentionSuggestions = useQuery({
+    queryKey: ["skills", baseUrl, selectedWorkspace, "mention"],
+    queryFn: () => listSkills(baseUrl, selectedWorkspace),
+    enabled: !disabled && mentionOpen && Boolean(baseUrl),
+    staleTime: 30_000,
+  });
   const commandMatches = filterSlashCommands(slashCommands.data ?? [], slashToken);
-  const canSend = Boolean(text.trim()) || composerAnnotations.length > 0 || Boolean(pendingSnippet);
+  const mentionSuggestions = useMemo(
+    () => buildMentionSuggestions(
+      workspaceMentionSuggestions.data ?? [],
+      skillMentionSuggestions.data ?? [],
+      mentionTrigger?.query ?? "",
+    ),
+    [mentionTrigger?.query, skillMentionSuggestions.data, workspaceMentionSuggestions.data],
+  );
+  const visibleMentionSuggestions = mentionOpen ? mentionSuggestions : [];
+  const canSend = Boolean(text.trim()) || selectedMentions.length > 0 || composerAnnotations.length > 0 || Boolean(pendingSnippet);
+
+  const syncCursorPosition = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    setCursorPosition(el.selectionStart ?? el.value.length);
+  };
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -149,18 +220,50 @@ export function InputDock() {
     el.style.height = `${Math.min(el.scrollHeight, 148)}px`;
   }, [text]);
 
-  // Inject terminal snippet prefix when pending snippet arrives
   useEffect(() => {
     if (!pendingSnippet) return;
-    const el = textareaRef.current;
-    if (!el) return;
-    const prefix = "@terminal:bash ";
-    setText((prev) => {
-      if (prev.startsWith(prefix)) return prev;
-      return prev ? `${prefix}${prev}` : prefix;
-    });
-    requestAnimationFrame(() => el.focus());
+    requestAnimationFrame(() => textareaRef.current?.focus());
   }, [snippetNonce, pendingSnippet?.id]);
+
+  useEffect(() => {
+    setSelectedMentionIndex(0);
+  }, [mentionTrigger?.query, mentionOpen]);
+
+  useEffect(() => {
+    if (dismissedMentionKey && dismissedMentionKey !== mentionKey) {
+      setDismissedMentionKey(null);
+    }
+  }, [dismissedMentionKey, mentionKey]);
+
+  useEffect(() => {
+    setSelectedMentions((mentions) => mentions.filter((mention) => text.includes(mention.token)));
+  }, [text]);
+
+  const pickMentionSuggestion = (suggestion: MentionSuggestion) => {
+    if (!mentionTrigger) return;
+    const before = text.slice(0, mentionTrigger.start);
+    const after = text.slice(mentionTrigger.end);
+    const replacement = `${suggestion.token} `;
+    const nextText = `${before}${replacement}${after}`;
+    const nextCursor = before.length + replacement.length;
+    setText(nextText);
+    setSelectedMentions((mentions) => {
+      const withoutDuplicate = mentions.filter((mention) => mention.id !== suggestion.mention.id);
+      return [...withoutDuplicate, suggestion.mention];
+    });
+    setDismissedMentionKey(null);
+    setCursorPosition(nextCursor);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  };
+
+  const removeMention = (mention: ComposerMention) => {
+    setSelectedMentions((mentions) => mentions.filter((item) => item.id !== mention.id));
+    setText((current) => current.replace(mention.token, "").replace(/[ \t]{2,}/g, " "));
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
 
   const submit = () => {
     if (isStreaming) {
@@ -169,10 +272,20 @@ export function InputDock() {
       return;
     }
     const value = text.trim();
-    if (!value && composerAnnotations.length === 0 && !pendingSnippet) return;
-    const terminalContent = pendingSnippet?.content ?? "";
-    void sendMessage(formatComposerMessage(value, composerAnnotations, terminalContent));
+    if (!value && selectedMentions.length === 0 && composerAnnotations.length === 0 && !pendingSnippet) return;
+    const { requestAttachments, displayAttachments } = buildComposerContextAttachments(
+      composerAnnotations,
+      pendingSnippet,
+      selectedMentions,
+    );
+    const visibleMessage = value || attachmentOnlyMessage(composerAnnotations, pendingSnippet, selectedMentions);
+    const sendOptions = requestAttachments.length
+      ? { contextAttachments: requestAttachments, displayAttachments }
+      : undefined;
+    void sendMessage(visibleMessage, undefined, sendOptions);
     setText("");
+    setCursorPosition(0);
+    setSelectedMentions([]);
     clearComposerAnnotations();
     clearPendingSnippet();
     requestAnimationFrame(() => textareaRef.current?.focus());
@@ -191,6 +304,8 @@ export function InputDock() {
             nextStepSuggestion={!text.trim() && composerAnnotations.length === 0 ? nextStepSuggestion : undefined}
             slashToken={slashToken}
             commands={commandMatches}
+            mentionSuggestions={visibleMentionSuggestions}
+            selectedMentionIndex={selectedMentionIndex}
             onPickSuggestion={(value) => {
               if (!value.trim()) return;
               void sendMessage(value);
@@ -199,8 +314,10 @@ export function InputDock() {
               setText(`${command.slash_name} `);
               requestAnimationFrame(() => textareaRef.current?.focus());
             }}
+            onPickMention={pickMentionSuggestion}
           />
           <ComposerAnnotationTray annotations={composerAnnotations} onRemove={removeComposerAnnotation} />
+          <ComposerMentionTray mentions={selectedMentions} onRemove={removeMention} />
           <TerminalSnippetTray snippet={pendingSnippet} onRemove={clearPendingSnippet} />
           <div className="flex items-end gap-2 px-2.5 py-2.5 sm:gap-2.5 sm:px-3">
             <FeatureMenu enabled={!disabled} />
@@ -211,8 +328,37 @@ export function InputDock() {
               disabled={disabled}
               rows={1}
               placeholder="Ask the local agent..."
-              onChange={(event) => setText(event.currentTarget.value)}
+              onChange={(event) => {
+                setText(event.currentTarget.value);
+                setCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+              }}
+              onClick={syncCursorPosition}
+              onKeyUp={syncCursorPosition}
+              onSelect={syncCursorPosition}
               onKeyDown={(event) => {
+                if (visibleMentionSuggestions.length > 0) {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setSelectedMentionIndex((index) => (index + 1) % visibleMentionSuggestions.length);
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setSelectedMentionIndex((index) => (index - 1 + visibleMentionSuggestions.length) % visibleMentionSuggestions.length);
+                    return;
+                  }
+                  if (event.key === "Tab" || event.key === "Enter") {
+                    event.preventDefault();
+                    const suggestion = visibleMentionSuggestions[selectedMentionIndex] ?? visibleMentionSuggestions[0];
+                    if (suggestion) pickMentionSuggestion(suggestion);
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setDismissedMentionKey(mentionKey);
+                    return;
+                  }
+                }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   submit();
@@ -312,6 +458,49 @@ function ComposerAnnotationTray({
             size="iconSm"
             aria-label={`Remove @Annotation#${annotation.id}`}
             onClick={() => onRemove(annotation.id)}
+            className="h-6 w-6 shrink-0 rounded-lg opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+          >
+            <X className="h-3 w-3" />
+          </Button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ComposerMentionTray({
+  mentions,
+  onRemove,
+}: {
+  mentions: ComposerMention[];
+  onRemove: (mention: ComposerMention) => void;
+}) {
+  if (mentions.length === 0) return null;
+
+  return (
+    <div
+      data-testid="composer-mentions"
+      className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto border-b border-glass-border/20 px-3 py-2"
+    >
+      {mentions.map((mention) => (
+        <div
+          key={mention.id}
+          className="group flex min-w-0 max-w-full items-center gap-2 rounded-xl border border-primary/25 bg-primary/10 px-2.5 py-1.5 text-left ring-1 ring-primary/10"
+          title={mention.displayPath}
+        >
+          <MentionSuggestionIcon type={mention.type} />
+          <span className="shrink-0 rounded-md bg-primary/15 px-2 py-1 font-mono text-[11px] font-semibold text-primary">
+            {mention.label}
+          </span>
+          <span className="min-w-0 truncate rounded-md bg-background/45 px-2 py-1 font-mono text-[11px] text-foreground/90">
+            {mention.displayPath}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="iconSm"
+            aria-label={`Remove ${mention.label}`}
+            onClick={() => onRemove(mention)}
             className="h-6 w-6 shrink-0 rounded-lg opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
           >
             <X className="h-3 w-3" />
@@ -488,17 +677,52 @@ function ComposerAssist({
   nextStepSuggestion,
   slashToken,
   commands,
+  mentionSuggestions,
+  selectedMentionIndex,
   onPickSuggestion,
   onPickCommand,
+  onPickMention,
 }: {
   disabled: boolean;
   nextStepSuggestion?: string;
   slashToken: string | null;
   commands: ChatCommandInfo[];
+  mentionSuggestions: MentionSuggestion[];
+  selectedMentionIndex: number;
   onPickSuggestion: (value: string) => void;
   onPickCommand: (command: ChatCommandInfo) => void;
+  onPickMention: (suggestion: MentionSuggestion) => void;
 }) {
   if (disabled) return null;
+  if (mentionSuggestions.length > 0) {
+    return (
+      <div className="border-b border-glass-border/25 px-2 py-1.5">
+        <div className="max-h-52 overflow-y-auto rounded-xl bg-background/70 p-1 text-popover-foreground">
+          {mentionSuggestions.slice(0, 8).map((suggestion, index) => (
+            <button
+              key={suggestion.id}
+              type="button"
+              data-selected={index === selectedMentionIndex}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                onPickMention(suggestion);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-glass/80 hover:text-accent-foreground data-[selected=true]:bg-glass/80 data-[selected=true]:text-accent-foreground"
+            >
+              <MentionSuggestionIcon type={suggestion.type} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{suggestion.primary}</span>
+                <span className="block truncate text-muted-foreground">{suggestion.secondary}</span>
+              </span>
+              <span className="shrink-0 rounded-md border border-glass-border/35 bg-background/50 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                {suggestion.type}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
   if (slashToken !== null) {
     if (commands.length === 0) return null;
     return (
@@ -520,6 +744,9 @@ function ComposerAssist({
                 <span className="block truncate text-muted-foreground">
                   {command.argument_hint || command.description || command.source}
                 </span>
+              </span>
+              <span className="shrink-0 rounded-md border border-glass-border/35 bg-background/50 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                {command.should_query === false ? "local" : "model"}
               </span>
             </button>
           ))}
@@ -545,6 +772,12 @@ function ComposerAssist({
   );
 }
 
+function MentionSuggestionIcon({ type }: { type: ComposerMentionKind }) {
+  if (type === "directory") return <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
+  if (type === "skill") return <BookOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
+  return <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
+}
+
 function slashTokenFromText(value: string) {
   const trimmed = value.trimStart();
   if (!trimmed.startsWith("/") || trimmed.includes("\n")) return null;
@@ -558,6 +791,115 @@ function filterSlashCommands(commands: ChatCommandInfo[], slashToken: string | n
   return commands
     .filter((command) => command.user_invocable && command.slash_name.toLowerCase().startsWith(normalized))
     .sort((left, right) => left.slash_name.localeCompare(right.slash_name));
+}
+
+function mentionTriggerFromText(value: string, cursor: number): MentionTrigger | null {
+  const beforeCursor = value.slice(0, cursor);
+  const quoted = beforeCursor.match(/(^|\s)@"([^"]*)$/);
+  if (quoted && quoted.index !== undefined) {
+    return {
+      start: quoted.index + (quoted[1]?.length ?? 0),
+      end: cursor,
+      query: quoted[2] ?? "",
+    };
+  }
+  const regular = beforeCursor.match(/(^|\s)@([^\s"]*)$/);
+  if (!regular || regular.index === undefined) return null;
+  return {
+    start: regular.index + (regular[1]?.length ?? 0),
+    end: cursor,
+    query: regular[2] ?? "",
+  };
+}
+
+function buildMentionSuggestions(
+  workspaceSuggestions: WorkspaceMentionSuggestion[],
+  skills: SkillSummary[],
+  query: string,
+): MentionSuggestion[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  const skillQuery = normalizedQuery.startsWith("skill:")
+    ? normalizedQuery.slice("skill:".length)
+    : normalizedQuery;
+  const includeWorkspace = !normalizedQuery.startsWith("skill:");
+  const includeSkills = normalizedQuery.startsWith("skill:")
+    || normalizedQuery === ""
+    || "skill".startsWith(normalizedQuery)
+    || skills.some((skill) => skill.invocation_name.toLowerCase().includes(normalizedQuery));
+
+  const fileItems = includeWorkspace
+    ? workspaceSuggestions.map((item) => mentionSuggestionFromWorkspace(item))
+    : [];
+  const skillItems = includeSkills
+    ? skills
+      .filter((skill) => skill.enabled)
+      .filter((skill) => {
+        if (!skillQuery) return true;
+        const haystack = `${skill.invocation_name} ${skill.name} ${skill.description}`.toLowerCase();
+        return haystack.includes(skillQuery);
+      })
+      .slice(0, 20)
+      .map((skill, index) => mentionSuggestionFromSkill(skill, index))
+    : [];
+
+  return [...fileItems, ...skillItems]
+    .sort((left, right) => left.score - right.score || left.primary.localeCompare(right.primary))
+    .slice(0, 12);
+}
+
+function mentionSuggestionFromWorkspace(item: WorkspaceMentionSuggestion): MentionSuggestion {
+  const token = mentionTokenForPath(item.display_path);
+  const label = item.is_directory ? "@Directory" : "@File";
+  const mention: ComposerMention = {
+    id: `${item.type}:${item.path}`,
+    type: item.is_directory ? "directory" : "file",
+    label,
+    token,
+    displayPath: item.display_path,
+    fileName: item.is_directory ? undefined : item.name,
+    filePath: item.is_directory ? undefined : item.path,
+    directoryPath: item.is_directory ? item.path : undefined,
+  };
+  return {
+    id: mention.id,
+    type: mention.type,
+    primary: item.display_path,
+    secondary: item.is_directory ? "Directory" : "File",
+    token,
+    mention,
+    score: item.score,
+  };
+}
+
+function mentionSuggestionFromSkill(skill: SkillSummary, index: number): MentionSuggestion {
+  const token = `@skill:${skill.invocation_name}`;
+  const mention: ComposerMention = {
+    id: `skill:${skill.invocation_name}`,
+    type: "skill",
+    label: token,
+    token,
+    displayPath: skill.path,
+    name: skill.name,
+    invocationName: skill.invocation_name,
+    slashName: skill.slash_name,
+    description: skill.description,
+    path: skill.path,
+    source: skill.source,
+  };
+  return {
+    id: mention.id,
+    type: "skill",
+    primary: token,
+    secondary: skill.description || skill.name,
+    token,
+    mention,
+    score: 2.5 + index * 0.01,
+  };
+}
+
+function mentionTokenForPath(displayPath: string) {
+  const normalized = displayPath.replace(/"/g, '\\"');
+  return /\s/.test(displayPath) ? `@"${normalized}"` : `@${normalized}`;
 }
 
 function FeatureMenu({ enabled }: { enabled: boolean }) {
@@ -701,6 +1043,12 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
     enabled: enabled && Boolean(baseUrl),
     staleTime: 60_000,
   });
+  const deepSeekModels = useQuery({
+    queryKey: ["models", baseUrl, "deepseek"],
+    queryFn: () => listModels(baseUrl, "deepseek"),
+    enabled: enabled && Boolean(baseUrl),
+    staleTime: 60_000,
+  });
   const vertexModels = useQuery({
     queryKey: ["models", baseUrl, "vertex"],
     queryFn: () => listModels(baseUrl, "vertex"),
@@ -728,6 +1076,7 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
   const modelOptions = buildModelOptions(
     localModels.data,
     hostedModels.data,
+    deepSeekModels.data,
     vertexModels.data,
     kimiModels.data,
     codexModels.data,
@@ -843,6 +1192,7 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
 function buildModelOptions(
   localModels?: LlmModel[],
   hostedModels?: LlmModel[],
+  deepSeekModels?: LlmModel[],
   vertexModels?: LlmModel[],
   kimiModels?: LlmModel[],
   codexModels?: LlmModel[],
@@ -860,6 +1210,9 @@ function buildModelOptions(
   }
   for (const model of hostedModels ?? []) {
     add(toModelOption(model, "nvidia"));
+  }
+  for (const model of deepSeekModels ?? []) {
+    add(toModelOption(model, "deepseek"));
   }
   for (const model of vertexModels ?? []) {
     add(toModelOption(model, "vertex"));
@@ -910,6 +1263,7 @@ function modelGroup(id: string, provider: ModelProvider) {
   if (provider === "kimi") return "Kimi Code";
   if (provider === "codex") return "ChatGPT Subscription";
   if (provider === "vertex") return "Google Vertex";
+  if (provider === "deepseek") return "DeepSeek";
   if (normalized.startsWith("openai/") || normalized.startsWith("gpt-")) return "OpenAI";
   if (normalized.startsWith("qwen/")) return "Qwen";
   if (normalized.startsWith("minimax") || normalized.startsWith("minimaxai/")) return "Minimax";
@@ -937,6 +1291,8 @@ function formatModelLabel(value: string) {
     "qwen/qwen3-coder-480b-a35b-instruct": "Qwen3 Coder 480B",
     "minimaxai/minimax-m2.5": "Minimax M2.5",
     "moonshotai/kimi-k2.5": "Kimi K2.5",
+    "deepseek-v4-flash": "DeepSeek V4 Flash",
+    "deepseek-v4-pro": "DeepSeek V4 Pro",
     "deepseek-ai/deepseek-v4-flash": "DeepSeek V4 Flash",
     "deepseek-ai/deepseek-v4-pro": "DeepSeek V4 Pro",
     "nvidia/nemotron-3-nano-30b-a3b": "Nemotron 3 Nano 30B",
@@ -992,6 +1348,12 @@ function ContextWindowIndicator() {
     enabled: Boolean(baseUrl),
     staleTime: 60_000,
   });
+  const deepSeekModels = useQuery({
+    queryKey: ["models", baseUrl, "deepseek"],
+    queryFn: () => listModels(baseUrl, "deepseek"),
+    enabled: Boolean(baseUrl),
+    staleTime: 60_000,
+  });
   const vertexModels = useQuery({
     queryKey: ["models", baseUrl, "vertex"],
     queryFn: () => listModels(baseUrl, "vertex"),
@@ -1014,6 +1376,7 @@ function ContextWindowIndicator() {
   const modelOptions = buildModelOptions(
     localModels.data,
     hostedModels.data,
+    deepSeekModels.data,
     vertexModels.data,
     kimiModels.data,
     codexModels.data,
@@ -1114,44 +1477,95 @@ function formatVendorLabel(value: string) {
     .trim();
 }
 
-function formatComposerMessage(text: string, annotations: ComposerAnnotation[], terminalContent?: string) {
-  const blocks: string[] = [];
+function buildComposerContextAttachments(
+  annotations: ComposerAnnotation[],
+  terminalSnippet: TerminalSnippet | null,
+  mentions: ComposerMention[] = [],
+) {
+  const mentionAttachments: ContextAttachment[] = mentions.map((mention) => contextAttachmentFromMention(mention));
+  const annotationAttachments: ContextAttachment[] = annotations.map((annotation) => ({
+    type: "viewer_annotation",
+    id: annotation.id,
+    label: `@Annotation#${annotation.id}`,
+    file_name: annotation.fileName,
+    file_path: annotation.filePath,
+    display_path: annotation.displayPath,
+    start_line: annotation.startLine,
+    end_line: annotation.endLine,
+    language: annotation.language,
+    text: annotation.text,
+  }));
+  const requestAttachments: ContextAttachment[] = [...mentionAttachments, ...annotationAttachments];
+  const displayAttachments: ContextAttachment[] = [...requestAttachments];
 
-  if (annotations.length > 0) {
-    const annotationBlocks = annotations.map((annotation) => {
-      const fenceLanguage = annotation.language === "plaintext" ? "" : annotation.language;
-      return [
-        `@Annotation#${annotation.id}`,
-        `File: ${annotation.displayPath}`,
-        `Path: ${annotation.filePath}`,
-        `Lines: ${formatLineRange(annotation.startLine, annotation.endLine)}`,
-        "",
-        "Annotation:",
-        annotation.text,
-        "",
-        "Selected lines:",
-        `\`\`\`${fenceLanguage}`,
-        annotation.selectedLines,
-        "```",
-      ].join("\n");
+  if (terminalSnippet?.content) {
+    requestAttachments.push({
+      type: "terminal_output",
+      id: terminalSnippet.id,
+      label: "@terminal:bash",
+      shell: "bash",
+      content: terminalSnippet.content,
     });
-    blocks.push(annotationBlocks.join("\n\n"));
+    displayAttachments.push({
+      type: "terminal_output",
+      id: terminalSnippet.id,
+      label: "@terminal:bash",
+      shell: "bash",
+      content_preview: terminalSnippet.content.slice(0, 160).replace(/\s+/g, " ").trim(),
+      content_char_count: terminalSnippet.content.length,
+    });
   }
 
-  if (terminalContent) {
-    blocks.push([
-      "@terminal:bash",
-      "",
-      "Terminal output:",
-      "```bash",
-      terminalContent,
-      "```",
-    ].join("\n"));
+  return { requestAttachments, displayAttachments };
+}
+
+function contextAttachmentFromMention(mention: ComposerMention): ContextAttachment {
+  if (mention.type === "directory") {
+    return {
+      type: "directory",
+      id: mention.id,
+      label: mention.label,
+      directory_path: mention.directoryPath,
+      display_path: mention.displayPath,
+    };
   }
+  if (mention.type === "skill") {
+    return {
+      type: "skill",
+      id: mention.id,
+      label: mention.label,
+      name: mention.name,
+      invocation_name: mention.invocationName,
+      slash_name: mention.slashName,
+      description: mention.description,
+      path: mention.path,
+      display_path: mention.displayPath,
+      source: mention.source,
+    };
+  }
+  return {
+    type: "file",
+    id: mention.id,
+    label: mention.label,
+    file_name: mention.fileName,
+    file_path: mention.filePath,
+    display_path: mention.displayPath,
+  };
+}
 
-  if (blocks.length === 0) return text;
-
-  return `${blocks.join("\n\n")}\n\nRequest:\n${text.trim()}`;
+function attachmentOnlyMessage(
+  annotations: ComposerAnnotation[],
+  terminalSnippet: TerminalSnippet | null,
+  mentions: ComposerMention[] = [],
+) {
+  const annotationText = annotations
+    .map((annotation) => annotation.text.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  if (annotationText) return annotationText;
+  if (terminalSnippet) return "Use the attached terminal output.";
+  if (mentions.length > 0) return "Use the selected @ references.";
+  return "Use the attached context.";
 }
 
 function formatLineRange(start: number, end: number) {

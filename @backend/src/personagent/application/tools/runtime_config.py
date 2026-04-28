@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_MAX_TOOL_ITERATIONS = 8
-MAX_TOOL_ITERATIONS_HARD_CAP = 20
+MAX_TOOL_ITERATIONS_HARD_CAP = 60
 
 
 @dataclass(frozen=True, slots=True)

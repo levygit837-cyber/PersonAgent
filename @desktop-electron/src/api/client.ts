@@ -88,6 +88,25 @@ export function readWorkspaceFile(baseUrl: string, filePath: string, workspaceRo
   return requestJson<{ path: string; name: string; content: string }>(baseUrl, `/workspace/file?${params.toString()}`);
 }
 
+export interface WorkspaceMentionSuggestion {
+  type: "file" | "directory";
+  name: string;
+  path: string;
+  display_path: string;
+  is_directory: boolean;
+  score: number;
+}
+
+export function listWorkspaceMentions(
+  baseUrl: string,
+  query: string,
+  workspaceRoot: string,
+  limit = 40,
+) {
+  const params = new URLSearchParams({ q: query, workspace_root: workspaceRoot, limit: String(limit) });
+  return requestJson<WorkspaceMentionSuggestion[]>(baseUrl, `/workspace/mentions?${params.toString()}`);
+}
+
 export function getSessionProjectDetail(
   baseUrl: string,
   conversationId: string,
@@ -189,12 +208,94 @@ export interface GitBranchInfo {
   upstream?: string | null;
   last_commit_iso?: string | null;
   last_commit_subject?: string | null;
+  worktree_path?: string | null;
+  checked_out_elsewhere?: boolean;
 }
 
 export interface GitBranchesResponse {
   is_repo: boolean;
   current: string;
   branches: GitBranchInfo[];
+}
+
+export interface GitRecentAction {
+  id: string;
+  type: "commit" | "push" | "pr" | "action" | string;
+  title: string;
+  subtitle?: string | null;
+  timestamp?: string | null;
+  url?: string | null;
+}
+
+export interface GitRecentActionsResponse {
+  is_repo: boolean;
+  actions: GitRecentAction[];
+  errors: string[];
+}
+
+export interface WorkspaceProject {
+  name: string;
+  path: string;
+  is_repo: boolean;
+}
+
+export type PullRequestStatus = "needs_review" | "approved" | "merged" | "refused";
+export type PullRequestCommentKind = "human_review" | "ai_review" | "status";
+export type PullRequestCommentSource = "human" | "ai" | "system";
+
+export interface PullRequestComment {
+  id: string;
+  kind: PullRequestCommentKind;
+  source: PullRequestCommentSource;
+  author: string;
+  body: string;
+  createdAt?: string | null;
+  url?: string | null;
+  status?: PullRequestStatus | null;
+}
+
+export interface PullRequestFileChange {
+  id: string;
+  path: string;
+  changeType: "modified" | "added" | "renamed" | "deleted";
+  additions: number;
+  deletions: number;
+  summary: string;
+  lines: Array<{ number: string; kind: "context" | "add" | "delete"; content: string }>;
+}
+
+export interface PullRequestSummary {
+  id: string;
+  project: string;
+  projectPath: string;
+  number: number;
+  title: string;
+  author: string;
+  branch: string;
+  baseBranch: string;
+  updated: string;
+  updatedAt?: string | null;
+  url?: string | null;
+  status: PullRequestStatus;
+  statusLabel: string;
+  risk: "Low" | "Medium" | "High";
+  checkSummary: string;
+  description: string;
+  labels: string[];
+  commentsCount: number;
+  comments: PullRequestComment[];
+  files: PullRequestFileChange[];
+  isMine: boolean;
+  isFlagged: boolean;
+  reviewDecision?: string | null;
+  mergeState?: string | null;
+}
+
+export interface GitPullRequestsResponse {
+  is_repo: boolean;
+  viewerLogin?: string | null;
+  pullRequests: PullRequestSummary[];
+  errors: string[];
 }
 
 export function getGitStatus(baseUrl: string, workspaceRoot?: string | null) {
@@ -211,6 +312,29 @@ export function listGitBranches(baseUrl: string, workspaceRoot?: string | null) 
   return requestJson<GitBranchesResponse>(baseUrl, `/workspace/git-branches${suffix}`);
 }
 
+export function getGitRecentActions(baseUrl: string, workspaceRoot?: string | null) {
+  const params = new URLSearchParams();
+  if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<GitRecentActionsResponse>(baseUrl, `/workspace/git-recent-actions${suffix}`);
+}
+
+export function listWorkspaceProjects(baseUrl: string) {
+  return requestJson<{ projects: WorkspaceProject[] }>(baseUrl, "/workspace/projects");
+}
+
+export function listGitPullRequests(baseUrl: string, workspaceRoot?: string | null) {
+  const params = new URLSearchParams();
+  if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<GitPullRequestsResponse>(baseUrl, `/workspace/git-pull-requests${suffix}`);
+}
+
+export function generateGitCommitMessage(baseUrl: string, workspaceRoot: string) {
+  const params = new URLSearchParams({ workspace_root: workspaceRoot });
+  return requestJson<{ message: string }>(baseUrl, `/workspace/git-commit-message?${params.toString()}`);
+}
+
 export function gitCreateBranch(baseUrl: string, workspaceRoot: string, name: string) {
   return requestJson<{ success: boolean; branch: string; output?: string }>(baseUrl, "/workspace/git-branches", {
     method: "POST",
@@ -225,15 +349,15 @@ export function gitCheckoutBranch(baseUrl: string, workspaceRoot: string, name: 
   });
 }
 
-export function gitCommit(baseUrl: string, workspaceRoot: string, message: string) {
-  return requestJson<{ success: boolean; output?: string }>(baseUrl, "/workspace/git-commit", {
+export function gitCommit(baseUrl: string, workspaceRoot: string, message: string, autoGenerateMessage = false) {
+  return requestJson<{ success: boolean; output?: string; message?: string; sha?: string | null; short_sha?: string | null }>(baseUrl, "/workspace/git-commit", {
     method: "POST",
-    body: JSON.stringify({ workspace_root: workspaceRoot, message }),
+    body: JSON.stringify({ workspace_root: workspaceRoot, message, auto_generate_message: autoGenerateMessage }),
   });
 }
 
 export function gitPush(baseUrl: string, workspaceRoot: string) {
-  return requestJson<{ success: boolean; output?: string }>(baseUrl, "/workspace/git-push", {
+  return requestJson<{ success: boolean; output?: string; branch?: string; upstream?: string }>(baseUrl, "/workspace/git-push", {
     method: "POST",
     body: JSON.stringify({ workspace_root: workspaceRoot }),
   });
@@ -244,6 +368,31 @@ export function gitOpenPr(baseUrl: string, workspaceRoot: string) {
     method: "POST",
     body: JSON.stringify({ workspace_root: workspaceRoot }),
   });
+}
+
+export function gitCreatePullRequestComment(
+  baseUrl: string,
+  input: {
+    workspaceRoot: string;
+    number: number;
+    body: string;
+    kind: PullRequestCommentKind;
+    status?: PullRequestStatus | null;
+  },
+) {
+  return requestJson<{ success: boolean; output?: string; url?: string | null }>(
+    baseUrl,
+    `/workspace/git-pull-requests/${input.number}/comments`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        workspace_root: input.workspaceRoot,
+        body: input.body,
+        kind: input.kind,
+        status: input.status ?? null,
+      }),
+    },
+  );
 }
 
 function normalizeModel(item: unknown, provider: ModelProvider): LlmModel {

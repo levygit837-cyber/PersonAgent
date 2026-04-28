@@ -38,6 +38,34 @@ describe("chat request contracts", () => {
     expect(request.reasoning_budget_tokens).toBe(16382);
   });
 
+  it("serializes structured context attachments separately from the visible message", () => {
+    const request = buildChatRequest({
+      message: "Review this selection",
+      provider: "llama",
+      model: "local-model",
+      reasoningPreset: "medium",
+      contextAttachments: [
+        {
+          type: "viewer_annotation",
+          file_path: "/tmp/personagent/src/app.ts",
+          display_path: "src/app.ts",
+          start_line: 10,
+          end_line: 12,
+          text: "Check this code",
+        },
+      ],
+    });
+
+    expect(request.message).toBe("Review this selection");
+    expect(request.context_attachments).toEqual([
+      expect.objectContaining({
+        type: "viewer_annotation",
+        display_path: "src/app.ts",
+        start_line: 10,
+      }),
+    ]);
+  });
+
   it("serializes Team Mode runs over the chat request contract", () => {
     const request = buildTeamRunStart({
       conversationId: "conversation-1",

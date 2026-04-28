@@ -8,10 +8,15 @@ from personagent.domain.memory.models.operational import (
     ExecutionMemory,
     FileChunk,
     MemoryChunk,
+    MemoryContextBudget,
     MemoryEmbedding,
     MemoryEvent,
     OperationalMemoryEventType,
+    OperationalMemoryFilter,
     RecallFinding,
+    StructuredMemoryItem,
+    StructuredMemoryPackage,
+    StructuredMemoryType,
 )
 
 __all__ = [
@@ -21,9 +26,14 @@ __all__ = [
     "EmbeddingStatus",
     "ExecutionMemory",
     "FileChunk",
+    "MemoryContextBudget",
     "MemoryChunk",
     "MemoryEmbedding",
     "MemoryEvent",
+    "OperationalMemoryFilter",
     "OperationalMemoryEventType",
     "RecallFinding",
+    "StructuredMemoryItem",
+    "StructuredMemoryPackage",
+    "StructuredMemoryType",
 ]

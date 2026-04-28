@@ -52,6 +52,18 @@ class DecisionStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class StructuredMemoryType(StrEnum):
+    """Prompt-facing operational memory layers."""
+
+    FACT = "fact"
+    DECISION = "decision"
+    LATEST_STATE = "latest_state"
+    SESSION_SUMMARY = "session_summary"
+    ERROR_SOLUTION = "error_solution"
+    FILE_STATE = "file_state"
+    COMMAND_RESULT = "command_result"
+
+
 @dataclass(slots=True)
 class MemoryEvent:
     """Raw operational event captured during an agent turn."""
@@ -190,3 +202,160 @@ class RecallFinding:
     event_types: list[str] = field(default_factory=list)
     created_at: datetime | None = None
 
+
+@dataclass(slots=True)
+class OperationalMemoryFilter:
+    """Filters applied before operational-memory ANN/recent retrieval."""
+
+    conversation_id: str | None = None
+    session_id: str | None = None
+    workspace_root: str | None = None
+    source_types: list[str] = field(default_factory=list)
+    file_paths: list[str] = field(default_factory=list)
+    created_after: datetime | None = None
+    created_before: datetime | None = None
+    latest_only: bool = False
+    active_only: bool = True
+    include_raw_chunks: bool = False
+    semantic_candidate_limit: int = 80
+    recent_candidate_limit: int = 40
+
+    @classmethod
+    def from_mapping(cls, filters: dict[str, Any] | None) -> OperationalMemoryFilter:
+        data = filters or {}
+        return cls(
+            conversation_id=_string_or_none(data.get("conversation_id")),
+            session_id=_string_or_none(data.get("session_id")),
+            workspace_root=_string_or_none(data.get("workspace_root")),
+            source_types=_string_list(data.get("source_types") or data.get("source_type")),
+            file_paths=_string_list(data.get("file_paths") or data.get("file_path")),
+            created_after=_datetime_or_none(data.get("created_after")),
+            created_before=_datetime_or_none(data.get("created_before")),
+            latest_only=bool(data.get("latest_only", False)),
+            active_only=bool(data.get("active_only", True)),
+            include_raw_chunks=bool(data.get("include_raw_chunks", False)),
+            semantic_candidate_limit=max(1, int(data.get("semantic_candidate_limit") or 80)),
+            recent_candidate_limit=max(0, int(data.get("recent_candidate_limit") or 40)),
+        )
+
+    def to_log_dict(self) -> dict[str, Any]:
+        return {
+            "conversation_id": self.conversation_id,
+            "session_id": self.session_id,
+            "workspace_root": self.workspace_root,
+            "source_types": list(self.source_types),
+            "file_paths": list(self.file_paths),
+            "created_after": self.created_after.isoformat() if self.created_after else None,
+            "created_before": self.created_before.isoformat() if self.created_before else None,
+            "latest_only": self.latest_only,
+            "active_only": self.active_only,
+            "include_raw_chunks": self.include_raw_chunks,
+            "semantic_candidate_limit": self.semantic_candidate_limit,
+            "recent_candidate_limit": self.recent_candidate_limit,
+        }
+
+
+@dataclass(slots=True)
+class MemoryContextBudget:
+    """Strict prompt budget for operational memory context."""
+
+    total_tokens: int
+    session_summary_tokens: int
+    latest_decision_tokens: int
+    fact_tokens: int
+    evidence_tokens: int
+    evidence_max_chars: int = 350
+
+    @classmethod
+    def for_context_window(
+        cls,
+        context_window_tokens: int,
+        *,
+        total_tokens: int | None = None,
+    ) -> MemoryContextBudget:
+        total = int(total_tokens or min(6_000, max(1_200, context_window_tokens * 0.03)))
+        session = max(1, int(total * 0.25))
+        latest = max(1, int(total * 0.30))
+        fact = max(1, int(total * 0.30))
+        evidence = max(1, total - session - latest - fact)
+        return cls(
+            total_tokens=total,
+            session_summary_tokens=session,
+            latest_decision_tokens=latest,
+            fact_tokens=fact,
+            evidence_tokens=evidence,
+        )
+
+
+@dataclass(slots=True)
+class StructuredMemoryItem:
+    """Structured memory item ready for prompt formatting."""
+
+    type: StructuredMemoryType
+    summary: str
+    evidence: list[str] = field(default_factory=list)
+    paths: list[str] = field(default_factory=list)
+    source_ids: list[str] = field(default_factory=list)
+    event_types: list[str] = field(default_factory=list)
+    score: float = 0.0
+    status: str = "active"
+    created_at: datetime | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def estimated_tokens(self) -> int:
+        text = " ".join([self.summary, *self.evidence, *self.paths, *self.source_ids])
+        return max(1, (len(text) + 3) // 4)
+
+
+@dataclass(slots=True)
+class StructuredMemoryPackage:
+    """Formatted operational memory plus metadata for APIs and prompt telemetry."""
+
+    formatted: str
+    items: list[StructuredMemoryItem]
+    filters_applied: dict[str, Any]
+    budget_used: int
+    budget_tokens: int
+    omitted_count: int
+    latency_ms: int
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "memory_budget_tokens": self.budget_tokens,
+            "memory_budget_used": self.budget_used,
+            "memory_items_injected": len(self.items),
+            "memory_items_omitted": self.omitted_count,
+            "memory_latency_ms": self.latency_ms,
+            "memory_filters_applied": self.filters_applied,
+        }
+
+
+def _string_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _datetime_or_none(value: Any) -> datetime | None:
+    if value is None or isinstance(value, datetime):
+        return value
+    try:
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
+    except (TypeError, ValueError):
+        return None

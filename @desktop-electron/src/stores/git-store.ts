@@ -1,5 +1,21 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getGitStatus, gitCheckoutBranch, gitCommit, gitCreateBranch, gitOpenPr, gitPush, listGitBranches, type GitBranchInfo } from "../api/client";
+import {
+  generateGitCommitMessage,
+  getGitRecentActions,
+  getGitStatus,
+  gitCheckoutBranch,
+  gitCommit,
+  gitCreateBranch,
+  gitCreatePullRequestComment,
+  gitOpenPr,
+  gitPush,
+  listGitBranches,
+  listGitPullRequests,
+  listWorkspaceProjects,
+  type GitBranchInfo,
+  type PullRequestCommentKind,
+  type PullRequestStatus,
+} from "../api/client";
 import { useAppStore } from "./app-store";
 
 const GIT_STATUS_POLL_MS = 15_000;
@@ -30,6 +46,59 @@ export function useGitBranches(enabled: boolean) {
     staleTime: 0,
     gcTime: 0,
     refetchOnWindowFocus: true,
+  });
+}
+
+export function useGitRecentActions(enabled: boolean) {
+  const baseUrl = useAppStore((state) => state.baseUrl);
+  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+
+  return useQuery({
+    queryKey: ["git-recent-actions", baseUrl, workspaceRoot],
+    queryFn: () => getGitRecentActions(baseUrl, workspaceRoot),
+    enabled: enabled && Boolean(baseUrl) && Boolean(workspaceRoot),
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnWindowFocus: true,
+  });
+}
+
+export function useGitPullRequests(enabled: boolean) {
+  const baseUrl = useAppStore((state) => state.baseUrl);
+  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+
+  return useQuery({
+    queryKey: ["git-pull-requests", baseUrl, workspaceRoot],
+    queryFn: () => listGitPullRequests(baseUrl, workspaceRoot),
+    enabled: enabled && Boolean(baseUrl) && Boolean(workspaceRoot),
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnWindowFocus: true,
+  });
+}
+
+export function useWorkspaceProjects(enabled: boolean) {
+  const baseUrl = useAppStore((state) => state.baseUrl);
+
+  return useQuery({
+    queryKey: ["workspace-projects", baseUrl],
+    queryFn: () => listWorkspaceProjects(baseUrl),
+    enabled: enabled && Boolean(baseUrl),
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: true,
+  });
+}
+
+export function useGitGenerateCommitMessage() {
+  const baseUrl = useAppStore((state) => state.baseUrl);
+  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+
+  return useMutation({
+    mutationFn: async () => {
+      if (!workspaceRoot) throw new Error("No workspace selected");
+      return generateGitCommitMessage(baseUrl, workspaceRoot);
+    },
   });
 }
 
@@ -73,12 +142,15 @@ export function useGitCommit() {
   const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
 
   return useMutation({
-    mutationFn: async (message: string) => {
+    mutationFn: async (input: { message: string; autoGenerateMessage?: boolean }) => {
       if (!workspaceRoot) throw new Error("No workspace selected");
-      return gitCommit(baseUrl, workspaceRoot, message);
+      return gitCommit(baseUrl, workspaceRoot, input.message, input.autoGenerateMessage ?? false);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["git-status"] });
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["git-status"] }),
+        queryClient.invalidateQueries({ queryKey: ["git-recent-actions"] }),
+      ]);
     },
   });
 }
@@ -93,8 +165,11 @@ export function useGitPush() {
       if (!workspaceRoot) throw new Error("No workspace selected");
       return gitPush(baseUrl, workspaceRoot);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["git-status"] });
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["git-status"] }),
+        queryClient.invalidateQueries({ queryKey: ["git-recent-actions"] }),
+      ]);
     },
   });
 }
@@ -109,8 +184,41 @@ export function useGitOpenPr() {
       if (!workspaceRoot) throw new Error("No workspace selected");
       return gitOpenPr(baseUrl, workspaceRoot);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["git-status"] });
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["git-status"] }),
+        queryClient.invalidateQueries({ queryKey: ["git-recent-actions"] }),
+      ]);
+    },
+  });
+}
+
+export function useGitCreatePullRequestComment() {
+  const queryClient = useQueryClient();
+  const baseUrl = useAppStore((state) => state.baseUrl);
+  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+
+  return useMutation({
+    mutationFn: async (input: {
+      number: number;
+      body: string;
+      kind: PullRequestCommentKind;
+      status?: PullRequestStatus | null;
+    }) => {
+      if (!workspaceRoot) throw new Error("No workspace selected");
+      return gitCreatePullRequestComment(baseUrl, {
+        workspaceRoot,
+        number: input.number,
+        body: input.body,
+        kind: input.kind,
+        status: input.status ?? null,
+      });
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["git-pull-requests"] }),
+        queryClient.invalidateQueries({ queryKey: ["git-recent-actions"] }),
+      ]);
     },
   });
 }

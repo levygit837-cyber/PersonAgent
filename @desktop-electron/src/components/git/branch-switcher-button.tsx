@@ -2,7 +2,7 @@ import { Check, GitBranch, GitBranchPlus, Loader2, Plus, Search, X } from "lucid
 import { createPortal } from "react-dom";
 import { type CSSProperties, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { errorMessage } from "../../api/errors";
-import { cn } from "../../lib/utils";
+import { cn, compactPath } from "../../lib/utils";
 import { useAppStore } from "../../stores/app-store";
 import { useGitBranches, useGitCheckoutBranch, useGitCreateBranch, useGitStatus } from "../../stores/git-store";
 import type { GitBranchInfo } from "../../api/client";
@@ -142,7 +142,7 @@ export function BranchSwitcherButton({ enabled }: BranchSwitcherButtonProps) {
   }, [mounted, exiting]);
 
   const checkoutBranch = async (branch: GitBranchInfo) => {
-    if (branch.current || isPending) return;
+    if (branch.current || branch.checked_out_elsewhere || isPending) return;
     setOperationError(null);
     setPendingBranch(`${branch.kind}:${branch.name}`);
     try {
@@ -169,7 +169,7 @@ export function BranchSwitcherButton({ enabled }: BranchSwitcherButtonProps) {
     }
   };
 
-  const statusTone = branchStatusTone({
+  const branchNeedsAttention = branchHasPendingWork({
     hasWorkspace,
     loading: statusQuery.isLoading || branchesQuery.isLoading,
     hasRepo: Boolean(branchesQuery.data?.is_repo ?? status?.branch),
@@ -201,7 +201,9 @@ export function BranchSwitcherButton({ enabled }: BranchSwitcherButtonProps) {
               )}
             >
               <GitBranch className="h-4 w-4" />
-              <span className={cn("absolute right-2 top-2 h-1.5 w-1.5 rounded-full ring-2 ring-card", statusTone)} />
+              {branchNeedsAttention ? (
+                <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-warning ring-2 ring-card" />
+              ) : null}
             </Button>
           </TooltipTrigger>
           <TooltipContent>Branches</TooltipContent>
@@ -382,14 +384,20 @@ function BranchRow({
   pending: boolean;
   onSelect: () => void;
 }) {
+  const disabled = branch.current || branch.checked_out_elsewhere || pending;
+  const description = branch.checked_out_elsewhere && branch.worktree_path
+    ? `In use: ${compactPath(branch.worktree_path)}`
+    : branch.last_commit_subject || branch.upstream || (branch.kind === "remote" ? "Remote branch" : "Local branch");
   return (
     <button
       type="button"
-      disabled={branch.current || pending}
+      disabled={disabled}
       onClick={onSelect}
+      title={branch.checked_out_elsewhere && branch.worktree_path ? `Already checked out in ${branch.worktree_path}` : undefined}
       className={cn(
         "flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition-colors",
         branch.current ? "cursor-default text-foreground" : "text-muted-foreground hover:bg-glass/80 hover:text-foreground",
+        branch.checked_out_elsewhere && "cursor-not-allowed opacity-60 hover:bg-transparent hover:text-muted-foreground",
         pending && "opacity-70",
       )}
     >
@@ -405,7 +413,7 @@ function BranchRow({
       <span className="min-w-0 flex-1">
         <span className="block truncate font-medium">{branch.name}</span>
         <span className="block truncate text-[10px] text-muted-foreground/75">
-          {branch.last_commit_subject || branch.upstream || (branch.kind === "remote" ? "Remote branch" : "Local branch")}
+          {description}
         </span>
       </span>
     </button>
@@ -429,17 +437,14 @@ function EmptyBranchState({
   );
 }
 
-function branchStatusTone(input: {
+function branchHasPendingWork(input: {
   hasWorkspace: boolean;
   loading: boolean;
   hasRepo: boolean;
   dirty: boolean;
   ahead: number;
 }) {
-  if (!input.hasWorkspace || input.loading || !input.hasRepo) return "bg-muted-foreground/55";
-  if (input.dirty) return "bg-warning";
-  if (input.ahead > 0) return "bg-primary";
-  return "bg-success";
+  return input.hasWorkspace && !input.loading && input.hasRepo && (input.dirty || input.ahead > 0);
 }
 
 function dedupeBranchOptions(branches: GitBranchInfo[]) {

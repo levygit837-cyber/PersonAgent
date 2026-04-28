@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -79,6 +80,16 @@ class OperationalRecallRequest(BaseModel):
 
     query: str = Field(..., description="Semantic query")
     top_k: int = Field(default=6, ge=1, le=20)
+    conversation_id: str | None = None
+    session_id: str | None = None
+    workspace_root: str | None = None
+    source_types: list[str] = Field(default_factory=list)
+    file_paths: list[str] = Field(default_factory=list)
+    created_after: datetime | None = None
+    created_before: datetime | None = None
+    latest_only: bool = False
+    active_only: bool = True
+    budget_tokens: int | None = Field(default=None, ge=1)
     provider: str | None = None
     model: str | None = None
 
@@ -87,6 +98,7 @@ class OperationalReindexRequest(BaseModel):
     """Request for operational reindexing."""
 
     source: str = Field(default="all", description="all, files, failed_embeddings")
+    limit: int = Field(default=5_000, ge=1, le=50_000)
 
 
 def _validate_memory_name(name: str) -> None:
@@ -137,6 +149,10 @@ async def get_operational_memory_status(
     if service is None:
         return {"project_slug": project_slug, "enabled": False}
     status = await service.status(project_slug)
+    try:
+        status["embedding_runtime"] = container.get_embedding_process_manager().runtime_status()
+    except Exception:
+        logger.warning("embedding_runtime_status_failed", exc_info=True)
     status["enabled"] = True
     return status
 
@@ -151,18 +167,34 @@ async def preview_operational_memory_recall(
     service = container.get_operational_memory_service()
     if service is None:
         raise HTTPException(status_code=404, detail="Operational memory is disabled")
-    formatted = await service.recall_for_prompt(
+    package = await service.recall_package_for_prompt(
         project_slug=project_slug,
         query=request.query,
         provider=request.provider,
         model=request.model,
         top_k=request.top_k,
+        conversation_id=request.conversation_id,
+        session_id=request.session_id,
+        workspace_root=request.workspace_root,
+        source_types=request.source_types,
+        file_paths=request.file_paths,
+        created_after=request.created_after,
+        created_before=request.created_before,
+        latest_only=request.latest_only,
+        active_only=request.active_only,
+        budget_tokens=request.budget_tokens,
     )
     return {
         "project_slug": project_slug,
         "query": request.query,
         "top_k": request.top_k,
-        "formatted": formatted,
+        "formatted": package.formatted,
+        "items": [_structured_memory_item_payload(item) for item in package.items],
+        "filters_applied": package.filters_applied,
+        "budget_used": package.budget_used,
+        "budget_tokens": package.budget_tokens,
+        "omitted_count": package.omitted_count,
+        "latency_ms": package.latency_ms,
     }
 
 
@@ -194,11 +226,28 @@ async def reindex_operational_memory(
     service = container.get_operational_memory_service()
     if service is None:
         raise HTTPException(status_code=404, detail="Operational memory is disabled")
+    result = await service.backfill_structured_memory(project_slug, limit=request.limit)
     return {
         "project_slug": project_slug,
         "status": "accepted",
         "source": request.source,
-        "message": "Real-time indexing is active; batch reindex worker is reserved for v1.1.",
+        "backfill": result,
+        "message": "Structured operational-memory backfill completed for stored raw chunks.",
+    }
+
+
+def _structured_memory_item_payload(item: Any) -> dict[str, Any]:
+    return {
+        "type": item.type.value if hasattr(item.type, "value") else str(item.type),
+        "summary": item.summary,
+        "evidence": item.evidence,
+        "paths": item.paths,
+        "source_ids": item.source_ids,
+        "event_types": item.event_types,
+        "score": item.score,
+        "status": item.status,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "metadata": item.metadata,
     }
 
 

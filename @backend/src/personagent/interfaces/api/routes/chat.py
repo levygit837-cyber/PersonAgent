@@ -44,6 +44,7 @@ from personagent.domain.exceptions import (
     TeamValidationSystemError,
 )
 from personagent.domain.models.conversation import Message, Role
+from personagent.domain.prompts.commands import CommandService
 from personagent.domain.prompts.skills import discover_enabled_skills
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.domain.tools import ToolCall, ToolExecutionStatus
@@ -97,7 +98,7 @@ class ChatRequest(BaseModel):
     max_tokens: int = Field(default=-1, ge=-1)
     provider: str = Field(
         default="llama",
-        description="Inference provider: llama, nvidia, vertex, kimi, or codex",
+        description="Inference provider: llama, nvidia, deepseek, vertex, kimi, or codex",
     )
     model: str = Field(default="local-model", description="Model to use for inference")
     prompt_mode: str = Field(
@@ -134,6 +135,10 @@ class ChatRequest(BaseModel):
         default=None,
         ge=1,
         description="Limit for model -> tools -> model cycles.",
+    )
+    context_attachments: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Structured model-visible context attachments.",
     )
 
 
@@ -179,6 +184,8 @@ class ChatCommandInfo(BaseModel):
     source: str
     path: str
     user_invocable: bool = True
+    should_query: bool = True
+    ui_action: str | None = None
 
 
 class TeamRunStartRequest(ChatRequest):
@@ -249,10 +256,10 @@ def resolve_reasoning_budget(request: ChatRequest) -> int | None:
 def resolve_provider(provider: str) -> str:
     """Normalize and validate the inference provider."""
     normalized = provider.strip().lower()
-    if normalized not in {"llama", "nvidia", "vertex", "kimi", "codex"}:
+    if normalized not in {"llama", "nvidia", "deepseek", "vertex", "kimi", "codex"}:
         raise HTTPException(
             status_code=400,
-            detail="Invalid provider. Use llama, nvidia, vertex, kimi, or codex.",
+            detail="Invalid provider. Use llama, nvidia, deepseek, vertex, kimi, or codex.",
         )
     return normalized
 
@@ -261,6 +268,8 @@ def resolve_model(provider: str, model: str) -> str:
     """Resolve the default model per provider without breaking the existing local default."""
     if provider == "nvidia" and (not model or model == "local-model"):
         return get_container().settings.nvidia_default_model
+    if provider == "deepseek" and (not model or model == "local-model"):
+        return get_container().settings.deepseek_default_model
     if provider == "vertex" and (not model or model == "local-model"):
         return get_container().settings.vertex_default_model
     if provider == "kimi" and (not model or model == "local-model"):
@@ -274,6 +283,10 @@ def resolve_context_window_tokens(container: DIContainer, provider: str) -> int:
     """Resolve the context window used for provider-specific budgeting/compaction."""
     if provider == "kimi":
         return container.settings.kimi_context_window
+    if provider == "deepseek":
+        return container.settings.deepseek_context_window
+    if provider == "vertex":
+        return container.settings.vertex_context_window
     if provider == "codex":
         return container.settings.codex_context_window
     return container.settings.llama_ctx_size
@@ -283,6 +296,8 @@ def resolve_default_output_tokens(container: DIContainer, provider: str) -> int:
     """Resolve the default output budget per provider."""
     if provider == "nvidia":
         return container.settings.nvidia_max_tokens
+    if provider == "deepseek":
+        return container.settings.deepseek_max_tokens
     if provider == "vertex":
         return container.settings.vertex_max_tokens
     if provider == "kimi":
@@ -443,6 +458,11 @@ def _resume_request_from_tool_approval(
             int(resume["max_tool_iterations"])
             if resume.get("max_tool_iterations") is not None
             else None
+        ),
+        context_attachments=(
+            [dict(item) for item in resume["context_attachments"] if isinstance(item, dict)]
+            if isinstance(resume.get("context_attachments"), list)
+            else []
         ),
     )
 
@@ -615,7 +635,7 @@ async def list_teams() -> dict[str, Any]:
 
 @router.get("/models")
 async def list_models(
-    provider: str = Query(default="llama", description="Provider: llama, nvidia, vertex, kimi, or codex"),
+    provider: str = Query(default="llama", description="Provider: llama, nvidia, deepseek, vertex, kimi, or codex"),
     capability: str | None = Query(default=None, description="Capability filter"),
     refresh: bool = Query(default=False, description="Ignore the catalog cache"),
 ) -> dict:
@@ -623,7 +643,7 @@ async def list_models(
     container = get_container()
     resolved_provider = resolve_provider(provider)
     llm_backend = container.get_llm_backend(resolved_provider)
-    if resolved_provider in {"nvidia", "vertex", "kimi", "codex"}:
+    if resolved_provider in {"nvidia", "deepseek", "vertex", "kimi", "codex"}:
         list_provider_models = getattr(llm_backend, "list_models", None)
         if list_provider_models is None:
             raise HTTPException(status_code=500, detail=f"{resolved_provider} provider has no catalog")
@@ -669,6 +689,7 @@ async def list_chat_commands(
     root = workspace_root or resolve_context_workspace_root(ChatRequest(message="placeholder"))
     container = get_container()
     skill_roots = tuple(str(path) for path in container.get_tool_runtime_config().skill_roots)
+    command_service = CommandService(container.create_command_registry())
     commands = [
         ChatCommandInfo(
             name=command.name,
@@ -678,8 +699,23 @@ async def list_chat_commands(
             source="command",
             path=str(command.path),
             user_invocable=True,
+            should_query=not command.disable_model_invocation,
         )
-        for command in container.create_command_registry().list_commands(root)
+        for command in command_service.list_prompt_commands(root)
+    ]
+    builtins = [
+        ChatCommandInfo(
+            name=command.name,
+            slash_name=command.slash_name,
+            description=command.description,
+            argument_hint=command.argument_hint,
+            source="builtin",
+            path=command.path,
+            user_invocable=True,
+            should_query=command.should_query,
+            ui_action=command.ui_action,
+        )
+        for command in command_service.list_builtin_commands()
     ]
     skills = [
         ChatCommandInfo(
@@ -690,6 +726,7 @@ async def list_chat_commands(
             source="skill",
             path=str(skill.path),
             user_invocable=skill.user_invocable,
+            should_query=True,
         )
         for skill in discover_enabled_skills(
             workspace_root=root,
@@ -699,7 +736,7 @@ async def list_chat_commands(
         if skill.user_invocable
     ]
     by_name: dict[str, ChatCommandInfo] = {}
-    for item in [*commands, *skills]:
+    for item in [*commands, *skills, *builtins]:
         by_name.setdefault(item.slash_name, item)
     return sorted(by_name.values(), key=lambda item: item.slash_name)
 
@@ -746,6 +783,7 @@ async def prompt_preview(
         allowed_tools=request.allowed_tools,
         tool_context=resolve_tool_context(request),
         max_tool_iterations=request.max_tool_iterations,
+        context_attachments=request.context_attachments,
     )
 
     try:
@@ -818,6 +856,7 @@ async def chat_completion(
         allowed_tools=request.allowed_tools,
         tool_context=resolve_tool_context(request),
         max_tool_iterations=request.max_tool_iterations,
+        context_attachments=request.context_attachments,
     )
 
     try:
@@ -906,6 +945,7 @@ async def chat_completion_stream(
         allowed_tools=request.allowed_tools,
         tool_context=resolve_tool_context(request),
         max_tool_iterations=request.max_tool_iterations,
+        context_attachments=request.context_attachments,
     )
 
     async def event_generator() -> AsyncIterator[str]:

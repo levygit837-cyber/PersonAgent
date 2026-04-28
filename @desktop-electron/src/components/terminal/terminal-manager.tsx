@@ -5,11 +5,12 @@ import { TerminalView } from "./terminal-view";
 
 interface TerminalPaneProps {
   pane: TerminalPane;
+  showPanelActions: boolean;
 }
 
 const EMPTY_TERMINAL_INSTANCES: TerminalInstance[] = [];
 
-function TerminalPaneComponent({ pane }: TerminalPaneProps) {
+function TerminalPaneComponent({ pane, showPanelActions }: TerminalPaneProps) {
   const instances = useTerminalStore((s) =>
     pane === "left" ? s.leftPane.instances : (s.rightPane?.instances ?? EMPTY_TERMINAL_INSTANCES)
   );
@@ -19,6 +20,9 @@ function TerminalPaneComponent({ pane }: TerminalPaneProps) {
   const addInstance = useTerminalStore((s) => s.addInstance);
   const removeInstance = useTerminalStore((s) => s.removeInstance);
   const setActiveInstance = useTerminalStore((s) => s.setActiveInstance);
+  const splitMode = useTerminalStore((s) => s.splitMode);
+  const toggleSplit = useTerminalStore((s) => s.toggleSplit);
+  const toggleOpen = useTerminalStore((s) => s.toggleOpen);
 
   const hasInstances = instances.length > 0;
 
@@ -68,6 +72,30 @@ function TerminalPaneComponent({ pane }: TerminalPaneProps) {
             <Plus className="h-3.5 w-3.5" />
           </Button>
         </div>
+        {showPanelActions ? (
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <Button
+              variant={splitMode ? "secondary" : "ghost"}
+              size="iconSm"
+              onClick={toggleSplit}
+              className="h-6 w-6 rounded-lg text-muted-foreground hover:text-foreground"
+              aria-label="Split terminal"
+              title="Split terminal"
+            >
+              <Columns2 className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="iconSm"
+              onClick={toggleOpen}
+              className="h-6 w-6 rounded-lg text-muted-foreground hover:text-foreground"
+              aria-label="Close terminal panel"
+              title="Close terminal"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {/* Content */}
@@ -110,32 +138,18 @@ function TerminalPaneComponent({ pane }: TerminalPaneProps) {
 
 export function TerminalManager() {
   const splitMode = useTerminalStore((s) => s.splitMode);
-  const toggleSplit = useTerminalStore((s) => s.toggleSplit);
 
   return (
     <div className="flex h-full flex-col">
-      {/* Global toolbar */}
-      <div className="flex h-7 shrink-0 items-center justify-end gap-1 border-b border-glass-border/25 bg-background/60 px-2">
-        <Button
-          variant={splitMode ? "secondary" : "ghost"}
-          size="iconSm"
-          onClick={toggleSplit}
-          className="h-5 w-5 rounded-md"
-          aria-label="Split terminal"
-        >
-          <Columns2 className="h-3 w-3" />
-        </Button>
-      </div>
-
       {/* Content area */}
       <div className="min-h-0 flex-1">
         {splitMode ? (
           <div className="grid h-full grid-cols-2 divide-x divide-glass-border/25">
-            <TerminalPaneComponent pane="left" />
-            <TerminalPaneComponent pane="right" />
+            <TerminalPaneComponent pane="left" showPanelActions={false} />
+            <TerminalPaneComponent pane="right" showPanelActions />
           </div>
         ) : (
-          <TerminalPaneComponent pane="left" />
+          <TerminalPaneComponent pane="left" showPanelActions />
         )}
       </div>
     </div>

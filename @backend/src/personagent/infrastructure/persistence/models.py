@@ -3,7 +3,7 @@
 import uuid
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
@@ -308,6 +308,46 @@ class MemoryEmbeddingORM(Base):
         Index("idx_memory_embeddings_project", "project_slug"),
         Index("idx_memory_embeddings_chunk", "chunk_id"),
         Index("idx_memory_embeddings_hash", "content_hash"),
+    )
+
+
+class StructuredMemoryItemORM(Base):
+    """Prompt-facing structured operational memory derived from raw chunks."""
+
+    __tablename__ = "memory_structured_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_slug = Column(Text, nullable=False)
+    conversation_id = Column(UUID(as_uuid=True), nullable=True)
+    session_id = Column(String(100), nullable=True)
+    workspace_root = Column(Text, nullable=True)
+    item_type = Column(String(40), nullable=False)
+    status = Column(String(20), nullable=False, default="active")
+    source_type = Column(String(60), nullable=False)
+    source_id = Column(Text, nullable=False)
+    source_chunk_id = Column(UUID(as_uuid=True), ForeignKey("memory_chunks.id", ondelete="CASCADE"), nullable=True)
+    primary_path = Column(Text, nullable=True)
+    summary = Column(Text, nullable=False)
+    evidence = Column(JSONB, nullable=False, default=list)
+    paths = Column(JSONB, nullable=False, default=list)
+    source_ids = Column(JSONB, nullable=False, default=list)
+    metadata_ = Column("metadata", JSONB, nullable=False, default=dict)
+    content_hash = Column(String(64), nullable=False)
+    is_latest = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_memory_structured_project_created", "project_slug", "created_at"),
+        Index("idx_memory_structured_project_type", "project_slug", "item_type"),
+        Index("idx_memory_structured_project_latest", "project_slug", "is_latest"),
+        Index("idx_memory_structured_conversation", "conversation_id"),
+        Index("idx_memory_structured_session", "session_id"),
+        Index("idx_memory_structured_workspace", "workspace_root"),
+        Index("idx_memory_structured_source_type", "source_type"),
+        Index("idx_memory_structured_primary_path", "primary_path"),
+        Index("idx_memory_structured_source_chunk", "source_chunk_id"),
+        Index("idx_memory_structured_hash", "content_hash"),
     )
 
 

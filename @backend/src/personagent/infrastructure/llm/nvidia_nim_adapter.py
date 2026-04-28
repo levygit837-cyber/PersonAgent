@@ -96,6 +96,9 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
         default_model: str = "deepseek-ai/deepseek-v4-flash",
         default_max_tokens: int = DEFAULT_OUTPUT_TOKENS,
         models_cache_ttl_seconds: int = 300,
+        provider_key: str = "nvidia",
+        provider_display_name: str = "NVIDIA NIM",
+        api_key_env_name: str = "NVIDIA_API_KEY",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key.strip()
@@ -104,6 +107,9 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
         self.default_model = default_model
         self.default_max_tokens = default_max_tokens
         self.models_cache_ttl_seconds = models_cache_ttl_seconds
+        self.provider_key = provider_key
+        self.provider_display_name = provider_display_name
+        self.api_key_env_name = api_key_env_name
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -115,7 +121,7 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
 
     async def _get_client(self) -> httpx.AsyncClient:
         if not self.api_key:
-            raise LLMBackendConnectionError("NVIDIA_API_KEY is not configured")
+            raise LLMBackendConnectionError(f"{self.api_key_env_name} is not configured")
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
@@ -156,22 +162,25 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
             response.raise_for_status()
         except httpx.ConnectError as exc:
             raise LLMBackendConnectionError(
-                f"Could not connect to NVIDIA NIM at {self.base_url}"
+                f"Could not connect to {self.provider_display_name} at {self.base_url}"
             ) from exc
         except httpx.TimeoutException as exc:
-            raise LLMBackendTimeoutError(f"Timeout calling NVIDIA NIM ({self.timeout}s)") from exc
+            raise LLMBackendTimeoutError(
+                f"Timeout calling {self.provider_display_name} ({self.timeout}s)"
+            ) from exc
         except httpx.HTTPStatusError as exc:
+            detail = await _response_error_text(exc.response)
             raise provider_http_error(
-                provider="NVIDIA NIM",
+                provider=self.provider_display_name,
                 status_code=exc.response.status_code,
-                detail=exc.response.text[:500] or exc.response.reason_phrase,
+                detail=detail[:500] or exc.response.reason_phrase,
                 retry_after=exc.response.headers.get("retry-after"),
             ) from exc
 
         data = response.json()
         choices = data.get("choices") or []
         if not choices:
-            raise LLMBackendError(f"NVIDIA NIM returned no choices: {data}")
+            raise LLMBackendError(f"{self.provider_display_name} returned no choices: {data}")
 
         choice = choices[0]
         message = choice.get("message", {})
@@ -185,7 +194,7 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
             usage=data.get("usage"),
             model=model,
             tool_calls=message.get("tool_calls"),
-            metadata={"provider": "nvidia", "model": model},
+            metadata={"provider": self.provider_key, "model": model},
         )
 
     async def chat_completion_stream(
@@ -229,7 +238,7 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
                         yield StreamChunk(
                             finish_reason="stop",
                             metadata={
-                                "provider": "nvidia",
+                                "provider": self.provider_key,
                                 "model": payload["model"],
                             },
                         )
@@ -241,7 +250,9 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
                         continue
 
                     if data.get("error"):
-                        raise LLMBackendError(f"NVIDIA NIM stream error: {data['error']}")
+                        raise LLMBackendError(
+                            f"{self.provider_display_name} stream error: {data['error']}"
+                        )
 
                     chunk = self._parse_stream_chunk(
                         data,
@@ -257,34 +268,35 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
 
         except httpx.ConnectError as exc:
             raise LLMBackendConnectionError(
-                f"Could not connect to NVIDIA NIM at {self.base_url}"
+                f"Could not connect to {self.provider_display_name} at {self.base_url}"
             ) from exc
         except httpx.TimeoutException as exc:
             raise LLMBackendTimeoutError(
-                "Timeout streaming from NVIDIA NIM "
+                f"Timeout streaming from {self.provider_display_name} "
                 f"({self._stream_timeout_label()}, model={payload['model']})"
             ) from exc
         except httpx.HTTPStatusError as exc:
+            detail = await _response_error_text(exc.response)
             raise provider_http_error(
-                provider="NVIDIA NIM",
+                provider=self.provider_display_name,
                 status_code=exc.response.status_code,
-                detail=exc.response.text[:500] or exc.response.reason_phrase,
+                detail=detail[:500] or exc.response.reason_phrase,
                 retry_after=exc.response.headers.get("retry-after"),
             ) from exc
 
     async def health_check(self) -> dict[str, Any]:
         if not self.api_key:
-            return {"status": "unhealthy", "error": "NVIDIA_API_KEY is not configured"}
+            return {"status": "unhealthy", "error": f"{self.api_key_env_name} is not configured"}
         try:
             client = await self._get_client()
             response = await client.get("/models", timeout=10.0)
             return {
                 "status": "healthy" if response.status_code == 200 else "unhealthy",
                 "status_code": response.status_code,
-                "provider": "nvidia",
+                "provider": self.provider_key,
             }
         except Exception as exc:
-            return {"status": "unhealthy", "provider": "nvidia", "error": str(exc)}
+            return {"status": "unhealthy", "provider": self.provider_key, "error": str(exc)}
 
     async def get_model_info(self) -> dict[str, Any]:
         return await self.list_models(capability="reasoning_chat")
@@ -299,8 +311,8 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
             return {
                 "object": "list",
                 "data": [],
-                "provider": "nvidia",
-                "error": "NVIDIA_API_KEY is not configured",
+                "provider": self.provider_key,
+                "error": f"{self.api_key_env_name} is not configured",
             }
 
         now = time.monotonic()
@@ -321,11 +333,15 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
             self._models_cache_at = now
             return self._filter_model_response(normalized, capability)
         except Exception as exc:
-            logger.warning("nvidia_model_info_failed", error=str(exc))
+            logger.warning(
+                "provider_model_info_failed",
+                provider=self.provider_key,
+                error=str(exc),
+            )
             return {
                 "object": "list",
                 "data": [],
-                "provider": "nvidia",
+                "provider": self.provider_key,
                 "error": str(exc),
             }
 
@@ -415,7 +431,7 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
         metadata = {}
         if has_signal:
             metadata = {
-                "provider": "nvidia",
+                "provider": self.provider_key,
                 "model": data.get("model") or fallback_model,
             }
 
@@ -443,7 +459,7 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
 
         return {
             "object": "list",
-            "provider": "nvidia",
+            "provider": self.provider_key,
             "data": list(models_by_id.values()),
         }
 
@@ -459,7 +475,7 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
 
         return {
             "id": model_id,
-            "provider": "nvidia",
+            "provider": self.provider_key,
             "label": _model_label(model_id),
             "owned_by": item.get("owned_by") or model_id.split("/", 1)[0],
             "capabilities": capabilities,
@@ -479,7 +495,7 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
             models = [model for model in models if capability in model.get("capabilities", [])]
         return {
             "object": "list",
-            "provider": "nvidia",
+            "provider": self.provider_key,
             "data": models,
         }
 
@@ -562,3 +578,12 @@ def _model_label(model_id: str) -> str:
     return " ".join(
         part.upper() if part.isdigit() else part.capitalize() for part in name.split("-")
     )
+
+
+async def _response_error_text(response: httpx.Response) -> str:
+    try:
+        if not response.is_closed:
+            await response.aread()
+        return response.text
+    except Exception:
+        return response.reason_phrase

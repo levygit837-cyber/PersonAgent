@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 
 from personagent.domain.context.models import SystemContext, UserContext
-from personagent.domain.prompts.commands import CommandRegistry, parse_slash_invocation
+from personagent.domain.prompts.commands import (
+    CommandRegistry,
+    CommandService,
+    parse_slash_invocation,
+)
+from personagent.domain.prompts.context_attachments import resolve_context_attachments
 from personagent.domain.prompts.models import PromptProfile
 from personagent.domain.prompts.services import PromptBuilder
 from personagent.domain.prompts.skills import (
@@ -64,6 +69,108 @@ Review code in $ARGUMENTS.
     assert resolution is not None
     assert resolution.command.name == "review/code"
     assert "Review code in src." in resolution.expanded_prompt
+
+
+def test_command_service_exposes_supported_builtins():
+    service = CommandService()
+    builtins = {command.name: command for command in service.list_builtin_commands()}
+    resolution = service.resolve_builtin("/mcp github:list")
+
+    assert {"plan", "memory", "mcp", "skills", "context", "files", "doctor", "help"} <= set(
+        builtins
+    )
+    assert resolution is not None
+    assert resolution.command.name == "mcp"
+    assert "ReadMcpResourceTool" in resolution.metadata()["allowed_tools"]
+
+
+def test_context_attachments_expand_file_ranges_as_hidden_context(tmp_path):
+    source = tmp_path / "src" / "app.py"
+    source.parent.mkdir()
+    source.write_text("one\nprint('two')\nthree\n", encoding="utf-8")
+
+    result = resolve_context_attachments(
+        [
+            {
+                "type": "viewer_annotation",
+                "file_path": str(source),
+                "display_path": "src/app.py",
+                "start_line": 2,
+                "end_line": 2,
+                "text": "Update this line",
+                "language": "python",
+            }
+        ],
+        workspace_root=tmp_path,
+    )
+
+    assert result.metadata == [
+        {
+            "type": "viewer_annotation",
+            "id": 1,
+            "label": "@Annotation#1",
+            "file_name": "app.py",
+            "file_path": str(source.resolve()),
+            "display_path": "src/app.py",
+            "start_line": 2,
+            "end_line": 2,
+            "language": "python",
+            "text": "Update this line",
+            "truncated": False,
+        }
+    ]
+    assert len(result.reminders) == 1
+    assert "<attached-context type=\"viewer_annotation\">" in result.reminders[0]
+    assert "print('two')" in result.reminders[0]
+
+
+def test_context_attachments_reject_paths_outside_workspace(tmp_path):
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="outside the workspace"):
+        resolve_context_attachments(
+            [{"type": "file", "file_path": str(outside)}],
+            workspace_root=tmp_path,
+        )
+
+
+def test_context_attachments_expand_skill_body_from_backend_inventory(tmp_path):
+    skill_dir = tmp_path / ".personagent" / "skills" / "debug-root-cause"
+    skill_dir.mkdir(parents=True)
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text(
+        """---
+name: Debug Root Cause
+description: Investigate failures end to end
+---
+Follow the live runtime path before patching symptoms.
+""",
+        encoding="utf-8",
+    )
+
+    result = resolve_context_attachments(
+        [{"type": "skill", "invocation_name": "debug-root-cause"}],
+        workspace_root=tmp_path,
+    )
+
+    assert result.metadata == [
+        {
+            "type": "skill",
+            "id": 1,
+            "label": "@skill:debug-root-cause",
+            "name": "Debug Root Cause",
+            "invocation_name": "debug-root-cause",
+            "slash_name": "/debug-root-cause",
+            "description": "Investigate failures end to end",
+            "path": str(skill_file.resolve()),
+            "display_path": ".personagent/skills/debug-root-cause/SKILL.md",
+            "source": "workspace",
+            "truncated": False,
+        }
+    ]
+    assert "<attached-context type=\"skill\">" in result.reminders[0]
+    assert "Follow the live runtime path before patching symptoms." in result.reminders[0]
 
 
 def test_skill_discovery_finds_nested_codex_style_skills(tmp_path):

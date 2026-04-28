@@ -56,6 +56,9 @@ operational_memory:
   chunk_max_chars: 4000
   recall_top_k: 6
   hot_cache_size: 100
+  semantic_candidate_limit: 80
+  recent_candidate_limit: 40
+  context_budget_tokens: 0
 
 embedding:
   server_url: "http://localhost:8081/v1"
@@ -66,7 +69,7 @@ embedding:
   timeout_seconds: 60
   auto_start: true
   port: 8081
-  ctx_size: 8192
+  ctx_size: 32768
   n_gpu_layers: 999
   threads: 6
   parallel: 1
@@ -76,6 +79,7 @@ vertex:
   project_id: ""
   location: "global"
   default_model: "gemini-3.1-flash-lite-preview"
+  context_window: 1048576
   timeout_seconds: 240
   stream_read_timeout_seconds: 0
   models_cache_ttl_seconds: 300

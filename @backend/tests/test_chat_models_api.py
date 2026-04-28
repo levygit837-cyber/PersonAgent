@@ -56,6 +56,36 @@ class FakeVertexBackend:
         }
 
 
+class FakeDeepSeekBackend:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def list_models(self, *, capability=None, refresh=False):
+        self.calls.append({"capability": capability, "refresh": refresh})
+        return {
+            "object": "list",
+            "provider": "deepseek",
+            "data": [
+                {
+                    "id": "deepseek-v4-flash",
+                    "provider": "deepseek",
+                    "label": "DeepSeek V4 Flash",
+                    "capabilities": ["chat", "reasoning_chat"],
+                    "supports_streaming": True,
+                    "supports_reasoning": True,
+                },
+                {
+                    "id": "deepseek-v4-pro",
+                    "provider": "deepseek",
+                    "label": "DeepSeek V4 Pro",
+                    "capabilities": ["chat", "reasoning_chat"],
+                    "supports_streaming": True,
+                    "supports_reasoning": True,
+                },
+            ],
+        }
+
+
 class FakeKimiBackend:
     def __init__(self) -> None:
         self.calls: list[dict] = []
@@ -125,11 +155,13 @@ class FakeContainer:
     def __init__(self) -> None:
         self.settings = SimpleNamespace(
             nvidia_default_model="deepseek-ai/deepseek-v4-flash",
+            deepseek_default_model="deepseek-v4-flash",
             vertex_default_model="gemini-3.1-flash-lite-preview",
             kimi_default_model="kimi-for-coding",
             codex_default_model="gpt-5.5",
         )
         self.nvidia = FakeNvidiaBackend()
+        self.deepseek = FakeDeepSeekBackend()
         self.vertex = FakeVertexBackend()
         self.kimi = FakeKimiBackend()
         self.codex = FakeCodexBackend()
@@ -137,6 +169,8 @@ class FakeContainer:
 
     def get_llm_backend(self, provider="llama"):
         self.requested_provider = provider
+        if provider == "deepseek":
+            return self.deepseek
         if provider == "vertex":
             return self.vertex
         if provider == "kimi":
@@ -251,6 +285,36 @@ async def test_chat_models_routes_to_nvidia_catalog(monkeypatch):
     ]
     assert body["provider"] == "nvidia"
     assert body["data"][0]["supports_reasoning"] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_models_routes_to_deepseek_catalog(monkeypatch):
+    container = FakeContainer()
+    monkeypatch.setattr(chat, "get_container", lambda: container)
+
+    app = FastAPI()
+    app.include_router(chat.router)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/chat/models",
+            params={
+                "provider": "deepseek",
+                "capability": "reasoning_chat",
+                "refresh": "true",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert container.requested_provider == "deepseek"
+    assert container.deepseek.calls == [{"capability": "reasoning_chat", "refresh": True}]
+    assert body["provider"] == "deepseek"
+    assert [item["id"] for item in body["data"]] == [
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+    ]
 
 
 @pytest.mark.asyncio
@@ -379,6 +443,15 @@ def test_resolve_model_uses_nvidia_default_for_legacy_local_model(monkeypatch):
     model = chat.resolve_model("nvidia", "local-model")
 
     assert model == "deepseek-ai/deepseek-v4-flash"
+
+
+def test_resolve_model_uses_deepseek_default_for_legacy_local_model(monkeypatch):
+    container = FakeContainer()
+    monkeypatch.setattr(chat, "get_container", lambda: container)
+
+    model = chat.resolve_model("deepseek", "local-model")
+
+    assert model == "deepseek-v4-flash"
 
 
 def test_resolve_model_uses_vertex_default_for_legacy_local_model(monkeypatch):

@@ -26,6 +26,7 @@ class ChatRequestDTO:
     allowed_tools: list[str] | None = None
     tool_context: dict[str, Any] = field(default_factory=dict)
     max_tool_iterations: int | None = None
+    context_attachments: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

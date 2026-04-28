@@ -11,24 +11,38 @@ import {
 import {
   ArrowLeft,
   ArrowUp,
+  AlertCircle,
   Bot,
   Bug,
   Check,
   ChevronDown,
+  ExternalLink,
   FileCode2,
   Files,
   FolderOpen,
   GitBranch,
+  GitPullRequest,
+  MessageSquare,
   MessageSquarePlus,
   RotateCw,
   Route,
   ScanSearch,
+  Send,
   ShieldAlert,
-  Sparkles,
+  UserRound,
   X,
 } from "lucide-react";
+import type {
+  GitBranchInfo,
+  PullRequestComment,
+  PullRequestCommentKind,
+  PullRequestStatus,
+  PullRequestSummary,
+  WorkspaceProject,
+} from "../../api/client";
 import { cn, workspaceName } from "../../lib/utils";
 import { useAppStore } from "../../stores/app-store";
+import { useGitBranches, useGitCreatePullRequestComment, useGitPullRequests, useWorkspaceProjects } from "../../stores/git-store";
 import { Button } from "../ui/button";
 import {
   DropdownMenu,
@@ -39,9 +53,9 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 
-type PullRequestStatus = "ready" | "flagged" | "blocked";
 type DiffLineKind = "context" | "add" | "delete";
 type ReviewMode = "queue" | "review";
+type QueueFilter = "all" | "mine" | "flagged";
 
 export interface DiffLine {
   number: string;
@@ -49,37 +63,7 @@ export interface DiffLine {
   content: string;
 }
 
-export interface PullRequestFile {
-  id: string;
-  path: string;
-  changeType: "modified" | "added" | "renamed";
-  additions: number;
-  deletions: number;
-  summary: string;
-  aiNote: string;
-  lines: DiffLine[];
-}
-
-export interface PullRequestSummary {
-  id: string;
-  project: string;
-  projectPath: string;
-  number: number;
-  title: string;
-  author: string;
-  branch: string;
-  updated: string;
-  status: PullRequestStatus;
-  statusLabel: string;
-  risk: "Low" | "Medium" | "High";
-  tests: string;
-  description: string;
-  brief: string;
-  focus: string;
-  labels: string[];
-  comments: number;
-  files: PullRequestFile[];
-}
+type PullRequestFile = PullRequestSummary["files"][number];
 
 interface ReviewAgentMessage {
   id: string;
@@ -89,340 +73,70 @@ interface ReviewAgentMessage {
 
 const DND_FILE_MIME = "application/personagent-pr-file";
 
-const mockPullRequests: PullRequestSummary[] = [
-  {
-    id: "pr-84",
-    project: "PersonAgent",
-    projectPath: "/home/levybonito/Projetos/PersonAgent",
-    number: 84,
-    title: "Add context attachments to chat completion",
-    author: "LB",
-    branch: "feature/context-attachments",
-    updated: "18m ago",
-    status: "flagged",
-    statusLabel: "Needs review",
-    risk: "Medium",
-    tests: "8 passing",
-    description:
-      "Carries selected file, terminal snippet and workspace metadata into the backend prompt builder without changing visible chat content.",
-    brief:
-      "The implementation is coherent, but request DTOs and prompt-surface tests need close review because attachment content can silently alter the model context.",
-    focus:
-      "Inspect DTO serialization, backend prompt assembly and whether visible message content remains separated from hidden context attachments.",
-    labels: ["backend", "prompt", "frontend"],
-    comments: 3,
-    files: [
-      {
-        id: "chat-dto",
-        path: "@backend/src/personagent/application/dto/chat_dto.py",
-        changeType: "modified",
-        additions: 42,
-        deletions: 8,
-        summary: "Attachment schema enters the request boundary.",
-        aiNote: "Validate that hidden attachments never get echoed as user-visible assistant content.",
-        lines: [
-          { number: "44", kind: "context", content: "class ChatCompletionRequest(BaseModel):" },
-          { number: "45", kind: "context", content: "    messages: list[ChatMessageDto]" },
-          {
-            number: "46",
-            kind: "add",
-            content: "    context_attachments: list[ContextAttachmentDto] = Field(default_factory=list)",
-          },
-          {
-            number: "47",
-            kind: "add",
-            content: "    display_attachments: list[DisplayAttachmentDto] = Field(default_factory=list)",
-          },
-          { number: "48", kind: "context", content: "    model: str | None = None" },
-          { number: "49", kind: "context", content: "    provider: str | None = None" },
-          { number: "50", kind: "add", content: "    def attachment_count(self) -> int:" },
-          { number: "51", kind: "add", content: "        return len(self.context_attachments)" },
-        ],
-      },
-      {
-        id: "chat-completion",
-        path: "@backend/src/personagent/application/use_cases/chat_completion.py",
-        changeType: "modified",
-        additions: 64,
-        deletions: 22,
-        summary: "Prompt builder receives extra contextual surfaces.",
-        aiNote: "Check token accounting and prompt-surface tracking for every attachment path.",
-        lines: [
-          { number: "118", kind: "context", content: "prompt_context = await self._build_prompt_context(request)" },
-          { number: "119", kind: "delete", content: "messages = self.prompt_builder.build(messages=request.messages)" },
-          { number: "120", kind: "add", content: "messages = self.prompt_builder.build(" },
-          { number: "121", kind: "add", content: "    messages=request.messages," },
-          { number: "122", kind: "add", content: "    context_attachments=request.context_attachments," },
-          { number: "123", kind: "add", content: ")" },
-          { number: "124", kind: "context", content: "return await self.llm_backend.chat_completion(messages)" },
-        ],
-      },
-      {
-        id: "input-dock",
-        path: "@desktop-electron/src/components/chat/input-dock.tsx",
-        changeType: "modified",
-        additions: 71,
-        deletions: 18,
-        summary: "Composer chips attach file and terminal context.",
-        aiNote: "Confirm the composer still clears state after failed and successful sends.",
-        lines: [
-          { number: "198", kind: "context", content: "const canSend = Boolean(text.trim()) || composerAnnotations.length > 0;" },
-          { number: "199", kind: "add", content: "const requestAttachments = buildContextAttachments(composerAnnotations);" },
-          { number: "200", kind: "add", content: "const displayAttachments = buildDisplayAttachments(composerAnnotations);" },
-          { number: "201", kind: "context", content: "void sendMessage(visibleMessage, undefined, {" },
-          { number: "202", kind: "add", content: "  contextAttachments: requestAttachments," },
-          { number: "203", kind: "add", content: "  displayAttachments," },
-          { number: "204", kind: "context", content: "});" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "pr-79",
-    project: "PersonAgent",
-    projectPath: "/home/levybonito/Projetos/PersonAgent",
-    number: 79,
-    title: "Stabilize Git action menu feedback",
-    author: "MA",
-    branch: "fix/git-feedback",
-    updated: "41m ago",
-    status: "ready",
-    statusLabel: "CI passing",
-    risk: "Low",
-    tests: "12 passing",
-    description:
-      "Keeps commit, push and open PR feedback visible inside the git menu while operations refresh repository status.",
-    brief:
-      "Low-risk UI patch. The main check is whether the popover preserves operation feedback while git status refreshes.",
-    focus: "Review disabled states, pending transitions and error display for partial commit-and-push failures.",
-    labels: ["git", "ui"],
-    comments: 0,
-    files: [
-      {
-        id: "git-action-button",
-        path: "@desktop-electron/src/components/git/git-action-button.tsx",
-        changeType: "modified",
-        additions: 92,
-        deletions: 28,
-        summary: "Operation feedback persists inside dropdown.",
-        aiNote: "Make sure successful PR output is not hidden when the dropdown closes.",
-        lines: [
-          { number: "76", kind: "add", content: "const [menuFeedback, setMenuFeedback] = useState<OperationFeedback | null>(null);" },
-          { number: "77", kind: "context", content: "const pushMutation = useGitPush();" },
-          { number: "78", kind: "add", content: "const prMutation = useGitOpenPr();" },
-          { number: "80", kind: "add", content: "const handleOpenPr = async () => {" },
-          { number: "81", kind: "add", content: "  const result = await prMutation.mutateAsync();" },
-          { number: "82", kind: "add", content: "  setMenuFeedback({ kind: 'success', title: 'Pull request ready', detail: result.url });" },
-          { number: "83", kind: "add", content: "};" },
-        ],
-      },
-      {
-        id: "git-store",
-        path: "@desktop-electron/src/stores/git-store.ts",
-        changeType: "modified",
-        additions: 34,
-        deletions: 6,
-        summary: "Adds open PR mutation wiring.",
-        aiNote: "Invalidate status only after the mutation settles to reduce flicker.",
-        lines: [
-          { number: "158", kind: "add", content: "export function useGitOpenPr() {" },
-          { number: "159", kind: "add", content: "  const queryClient = useQueryClient();" },
-          { number: "160", kind: "add", content: "  return useMutation({ mutationFn: openPullRequest });" },
-          { number: "161", kind: "add", content: "}" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "pr-72",
-    project: "PersonAgent",
-    projectPath: "/home/levybonito/Projetos/PersonAgent",
-    number: 72,
-    title: "Backfill unique conversation titles",
-    author: "CA",
-    branch: "feature/title-backfill",
-    updated: "1h ago",
-    status: "blocked",
-    statusLabel: "AI flagged",
-    risk: "High",
-    tests: "5 passing",
-    description:
-      "Adds batch title generation using full transcript summaries and collision repair for duplicated session names.",
-    brief:
-      "The batch flow is useful, but title uniqueness must be deterministic when several sessions summarize to the same phrase.",
-    focus: "Check database transaction boundaries, collision repair order and title backfill retry behavior.",
-    labels: ["sessions", "backend", "migration"],
-    comments: 7,
-    files: [
-      {
-        id: "conversation-model",
-        path: "@backend/src/personagent/domain/models/conversation.py",
-        changeType: "modified",
-        additions: 31,
-        deletions: 9,
-        summary: "Conversation title metadata expanded.",
-        aiNote: "Check if nullable fields stay backward compatible for old rows.",
-        lines: [
-          { number: "22", kind: "context", content: "class ConversationSummary(BaseModel):" },
-          { number: "23", kind: "context", content: "    id: str" },
-          { number: "24", kind: "add", content: "    generated_title: str | None = None" },
-          { number: "25", kind: "add", content: "    title_confidence: float | None = None" },
-          { number: "26", kind: "context", content: "    workspace_root: str | None = None" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "pr-118",
-    project: "WebPilot",
-    projectPath: "/home/levybonito/Projetos/WebPilot",
-    number: 118,
-    title: "Review browser execution flow split",
-    author: "WP",
-    branch: "feature/browser-execution-flow",
-    updated: "24m ago",
-    status: "ready",
-    statusLabel: "Ready",
-    risk: "Medium",
-    tests: "7 passing",
-    description:
-      "Separates browser session orchestration from file upload/download actions so review traces can show each execution boundary.",
-    brief:
-      "The split is visually clear, but the execution state names need a pass because similar browser events can now appear in multiple panels.",
-    focus: "Review naming, file-action grouping and whether the browser trace remains readable after long runs.",
-    labels: ["browser", "workspace", "review"],
-    comments: 2,
-    files: [
-      {
-        id: "webpilot-chat",
-        path: "webpilot/runtime/chat.py",
-        changeType: "modified",
-        additions: 58,
-        deletions: 17,
-        summary: "Chat execution now emits separate browser and file events.",
-        aiNote: "Check that long browser traces still preserve chronological order.",
-        lines: [
-          { number: "88", kind: "context", content: "async def run_chat_turn(request: ChatRequest) -> ChatResult:" },
-          { number: "89", kind: "add", content: "    browser_events = await browser_executor.collect_events(request.session_id)" },
-          { number: "90", kind: "add", content: "    file_events = await file_executor.collect_events(request.session_id)" },
-          { number: "91", kind: "context", content: "    return ChatResult(events=[*browser_events, *file_events])" },
-        ],
-      },
-      {
-        id: "webpilot-engine",
-        path: "webpilot/runtime/execution_engine.py",
-        changeType: "modified",
-        additions: 43,
-        deletions: 12,
-        summary: "Execution engine exposes smaller reviewable phases.",
-        aiNote: "Verify that state transitions cannot skip cleanup after failed browser commands.",
-        lines: [
-          { number: "151", kind: "delete", content: "await self._run_all_steps(context)" },
-          { number: "152", kind: "add", content: "await self._run_browser_steps(context)" },
-          { number: "153", kind: "add", content: "await self._run_file_steps(context)" },
-          { number: "154", kind: "add", content: "await self._finalize_review_trace(context)" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "pr-31",
-    project: "WebPilot",
-    projectPath: "/home/levybonito/Projetos/WebPilot",
-    number: 31,
-    title: "Fix upload artifact previews",
-    author: "WP",
-    branch: "fix/upload-preview",
-    updated: "2h ago",
-    status: "flagged",
-    statusLabel: "Needs review",
-    risk: "Low",
-    tests: "4 passing",
-    description: "Normalizes uploaded artifact names before rendering them in the review surface.",
-    brief: "Small UI/data cleanup. The main thing to verify is that names stay stable after refresh.",
-    focus: "Check filename normalization, duplicate artifact handling and empty upload states.",
-    labels: ["files", "ui"],
-    comments: 1,
-    files: [
-      {
-        id: "webpilot-upload",
-        path: "webpilot/files/upload_file.py",
-        changeType: "modified",
-        additions: 22,
-        deletions: 8,
-        summary: "Upload previews normalize display names.",
-        aiNote: "Look for collisions when two artifacts share the same basename.",
-        lines: [
-          { number: "40", kind: "context", content: "def display_name(path: str) -> str:" },
-          { number: "41", kind: "delete", content: "    return path.split('/')[-1]" },
-          { number: "42", kind: "add", content: "    return normalize_artifact_name(path)" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "pr-46",
-    project: "MindFlow",
-    projectPath: "/home/levybonito/Projetos/MindFlow",
-    number: 46,
-    title: "Unify workflow route decisions",
-    author: "MF",
-    branch: "feature/workflow-route-decisions",
-    updated: "3h ago",
-    status: "ready",
-    statusLabel: "CI passing",
-    risk: "High",
-    tests: "10 passing",
-    description: "Moves route decisions into one runtime contract before tool invocation.",
-    brief: "High-impact runtime change. Review the contract boundaries before approving.",
-    focus: "Check route decision serialization, hook ordering and plugin compatibility.",
-    labels: ["runtime", "workflow", "tools"],
-    comments: 5,
-    files: [
-      {
-        id: "mindflow-route",
-        path: "mindflow/runtime/routes.py",
-        changeType: "modified",
-        additions: 87,
-        deletions: 29,
-        summary: "Route decisions now share one typed object.",
-        aiNote: "Confirm old plugin payloads are still accepted by compatibility shims.",
-        lines: [
-          { number: "67", kind: "add", content: "class WorkflowRouteDecision(BaseModel):" },
-          { number: "68", kind: "add", content: "    agent_id: str" },
-          { number: "69", kind: "add", content: "    tool_policy: ToolPolicy" },
-          { number: "70", kind: "context", content: "    metadata: dict[str, Any] = Field(default_factory=dict)" },
-        ],
-      },
-    ],
-  },
+const COMMENT_OPTIONS: Array<{
+  id: string;
+  label: string;
+  kind: PullRequestCommentKind;
+  status?: PullRequestStatus;
+}> = [
+  { id: "human_review", label: "Human analysis", kind: "human_review" },
+  { id: "ai_review", label: "AI analysis", kind: "ai_review" },
+  { id: "needs_review", label: "Needs review", kind: "status", status: "needs_review" },
+  { id: "merged", label: "Merged", kind: "status", status: "merged" },
+  { id: "refused", label: "Refused", kind: "status", status: "refused" },
 ];
 
 export function OpenPrWorkspace() {
   const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const recentWorkspaces = useAppStore((state) => state.recentWorkspaces);
+  const selectWorkspace = useAppStore((state) => state.selectWorkspace);
   const workspaceProject = selectedWorkspace ? workspaceName(selectedWorkspace) : undefined;
-  const projects = useMemo(() => uniqueProjects(mockPullRequests), []);
-  const initialProject = projects.some((project) => project.name === workspaceProject) ? workspaceProject : projects[0]?.name;
+  const pullRequestsQuery = useGitPullRequests(true);
+  const workspaceProjectsQuery = useWorkspaceProjects(true);
+  const branchesQuery = useGitBranches(Boolean(selectedWorkspace));
+  const createCommentMutation = useGitCreatePullRequestComment();
+  const pullRequests = pullRequestsQuery.data?.pullRequests ?? [];
+  const backendProjects = workspaceProjectsQuery.data?.projects ?? [];
+  const projects = useMemo(
+    () => uniqueProjects(pullRequests, workspaceProject, selectedWorkspace, recentWorkspaces, backendProjects),
+    [backendProjects, pullRequests, recentWorkspaces, selectedWorkspace, workspaceProject],
+  );
+  const selectedProjectPath = selectedWorkspace ?? projects[0]?.path ?? "";
   const [mode, setMode] = useState<ReviewMode>("queue");
-  const [selectedProject, setSelectedProject] = useState(initialProject ?? "");
   const [selectedBranch, setSelectedBranch] = useState("all");
+  const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
+  const [selectedPrId, setSelectedPrId] = useState("");
+  const [detailPr, setDetailPr] = useState<PullRequestSummary | null>(null);
   const filteredPullRequests = useMemo(
     () =>
-      mockPullRequests.filter((pullRequest) => {
-        if (pullRequest.project !== selectedProject) return false;
-        return selectedBranch === "all" || pullRequest.branch === selectedBranch;
+      pullRequests.filter((pullRequest) => {
+        if (selectedProjectPath && pullRequest.projectPath !== selectedProjectPath) return false;
+        if (selectedBranch !== "all" && pullRequest.branch !== selectedBranch) return false;
+        if (queueFilter === "mine") return pullRequest.isMine;
+        if (queueFilter === "flagged") return pullRequest.isFlagged;
+        return true;
       }),
-    [selectedBranch, selectedProject],
+    [pullRequests, queueFilter, selectedBranch, selectedProjectPath],
   );
-  const branchOptions = useMemo(() => uniqueBranches(mockPullRequests, selectedProject), [selectedProject]);
-  const [selectedPrId, setSelectedPrId] = useState(filteredPullRequests[0]?.id ?? "");
+  const branchOptions = useMemo(
+    () => uniqueBranches(pullRequests, selectedProjectPath, branchesQuery.data?.branches ?? []),
+    [branchesQuery.data?.branches, pullRequests, selectedProjectPath],
+  );
   const selectedPr = useMemo(
-    () => filteredPullRequests.find((pullRequest) => pullRequest.id === selectedPrId) ?? filteredPullRequests[0] ?? mockPullRequests[0],
+    () => filteredPullRequests.find((pullRequest) => pullRequest.id === selectedPrId) ?? null,
     [filteredPullRequests, selectedPrId],
   );
-  const firstFileId = selectedPr.files[0]?.id ?? "";
+  const activePr = selectedPr ?? detailPr;
+  const firstFileId = activePr?.files[0]?.id ?? "";
   const [openFileIds, setOpenFileIds] = useState<string[]>(() => (firstFileId ? [firstFileId] : []));
   const [activeFileId, setActiveFileId] = useState(firstFileId);
+
+  useEffect(() => {
+    const firstProjectPath = projects[0]?.path;
+    if (!selectedWorkspace && firstProjectPath) {
+      void selectWorkspace(firstProjectPath);
+    }
+  }, [projects, selectWorkspace, selectedWorkspace]);
 
   useEffect(() => {
     if (branchOptions.length > 0 && selectedBranch !== "all" && !branchOptions.includes(selectedBranch)) {
@@ -431,26 +145,32 @@ export function OpenPrWorkspace() {
   }, [branchOptions, selectedBranch]);
 
   useEffect(() => {
-    if (!filteredPullRequests.some((pullRequest) => pullRequest.id === selectedPrId)) {
-      setSelectedPrId(filteredPullRequests[0]?.id ?? "");
+    if (selectedPrId && !filteredPullRequests.some((pullRequest) => pullRequest.id === selectedPrId)) {
+      setSelectedPrId("");
       setMode("queue");
     }
   }, [filteredPullRequests, selectedPrId]);
 
   useEffect(() => {
-    const nextFirstFileId = selectedPr.files[0]?.id ?? "";
+    if (selectedPr) {
+      setDetailPr(selectedPr);
+    }
+  }, [selectedPr]);
+
+  useEffect(() => {
+    const nextFirstFileId = activePr?.files[0]?.id ?? "";
     setOpenFileIds(nextFirstFileId ? [nextFirstFileId] : []);
     setActiveFileId(nextFirstFileId);
-  }, [selectedPr.id, selectedPr.files]);
+  }, [activePr?.id, activePr?.files]);
 
   const replaceVisibleFile = (fileId: string) => {
-    if (!selectedPr.files.some((file) => file.id === fileId)) return;
+    if (!activePr?.files.some((file) => file.id === fileId)) return;
     setOpenFileIds([fileId]);
     setActiveFileId(fileId);
   };
 
   const addVisibleFile = (fileId: string) => {
-    if (!selectedPr.files.some((file) => file.id === fileId)) return;
+    if (!activePr?.files.some((file) => file.id === fileId)) return;
     setOpenFileIds((current) => (current.includes(fileId) ? current : [...current, fileId]));
     setActiveFileId(fileId);
   };
@@ -471,6 +191,7 @@ export function OpenPrWorkspace() {
   };
 
   const startReview = () => {
+    if (!activePr) return;
     setMode("review");
     if (!openFileIds.length && firstFileId) {
       setOpenFileIds([firstFileId]);
@@ -478,32 +199,53 @@ export function OpenPrWorkspace() {
     }
   };
 
-  const openFiles = selectedPr.files.filter((file) => openFileIds.includes(file.id));
-  const activeFile = selectedPr.files.find((file) => file.id === activeFileId) ?? openFiles[0] ?? selectedPr.files[0];
-  const totals = prTotals(selectedPr);
+  const openFiles = activePr?.files.filter((file) => openFileIds.includes(file.id)) ?? [];
+  const activeFile = activePr?.files.find((file) => file.id === activeFileId) ?? openFiles[0] ?? activePr?.files[0];
+  const totals = activePr ? prTotals(activePr) : { additions: 0, deletions: 0 };
+  const handleSelectPr = (pullRequest: PullRequestSummary) => {
+    setMode("queue");
+    setSelectedPrId((current) => (current === pullRequest.id ? "" : pullRequest.id));
+    setDetailPr(pullRequest);
+  };
+  const handleCreateComment = (input: { number: number; body: string; kind: PullRequestCommentKind; status?: PullRequestStatus | null }) =>
+    createCommentMutation.mutateAsync(input);
 
   return (
     <section className="relative flex h-full min-w-0 flex-col overflow-hidden bg-background" data-testid="open-pr-workspace">
-      {mode === "queue" ? (
+      {mode === "queue" || !activePr ? (
         <PullRequestQueueView
           pullRequests={filteredPullRequests}
+          allPullRequests={pullRequests}
           projects={projects}
           branchOptions={branchOptions}
           selectedPr={selectedPr}
-          selectedProject={selectedProject}
+          detailPr={detailPr}
+          selectedProjectPath={selectedProjectPath}
           selectedBranch={selectedBranch}
+          queueFilter={queueFilter}
           selectedWorkspace={selectedWorkspace}
-          onSelectProject={(project) => {
-            setSelectedProject(project);
+          viewerLogin={pullRequestsQuery.data?.viewerLogin ?? null}
+          loading={pullRequestsQuery.isLoading || pullRequestsQuery.isFetching}
+          errors={pullRequestsQuery.data?.errors ?? (pullRequestsQuery.error ? [pullRequestsQuery.error.message] : [])}
+          onSelectProject={(projectPath) => {
+            void selectWorkspace(projectPath);
             setSelectedBranch("all");
+            setSelectedPrId("");
           }}
           onSelectBranch={setSelectedBranch}
-          onSelectPr={(pullRequest) => setSelectedPrId(pullRequest.id)}
+          onSelectFilter={(filter) => {
+            setQueueFilter(filter);
+            setSelectedPrId("");
+          }}
+          onSelectPr={handleSelectPr}
           onStartReview={startReview}
+          onRefresh={() => void pullRequestsQuery.refetch()}
+          onCreateComment={handleCreateComment}
+          creatingComment={createCommentMutation.isPending}
         />
       ) : (
         <PullRequestReviewView
-          pullRequest={selectedPr}
+          pullRequest={activePr}
           totals={totals}
           activeFileId={activeFileId}
           activeFile={activeFile}
@@ -521,31 +263,54 @@ export function OpenPrWorkspace() {
 
 function PullRequestQueueView({
   pullRequests,
+  allPullRequests,
   projects,
   branchOptions,
   selectedPr,
-  selectedProject,
+  detailPr,
+  selectedProjectPath,
   selectedBranch,
+  queueFilter,
   selectedWorkspace,
+  viewerLogin,
+  loading,
+  errors,
   onSelectProject,
   onSelectBranch,
+  onSelectFilter,
   onSelectPr,
   onStartReview,
+  onRefresh,
+  onCreateComment,
+  creatingComment,
 }: {
   pullRequests: PullRequestSummary[];
+  allPullRequests: PullRequestSummary[];
   projects: Array<{ name: string; path: string }>;
   branchOptions: string[];
-  selectedPr: PullRequestSummary;
-  selectedProject: string;
+  selectedPr: PullRequestSummary | null;
+  detailPr: PullRequestSummary | null;
+  selectedProjectPath: string;
   selectedBranch: string;
+  queueFilter: QueueFilter;
   selectedWorkspace?: string;
+  viewerLogin?: string | null;
+  loading: boolean;
+  errors: string[];
   onSelectProject: (project: string) => void;
   onSelectBranch: (branch: string) => void;
+  onSelectFilter: (filter: QueueFilter) => void;
   onSelectPr: (pullRequest: PullRequestSummary) => void;
   onStartReview: () => void;
+  onRefresh: () => void;
+  onCreateComment: (input: { number: number; body: string; kind: PullRequestCommentKind; status?: PullRequestStatus | null }) => Promise<unknown>;
+  creatingComment: boolean;
 }) {
-  const totals = prTotals(selectedPr);
+  const displayedPr = selectedPr ?? detailPr;
+  const detailOpen = Boolean(selectedPr);
+  const totals = displayedPr ? prTotals(displayedPr) : { additions: 0, deletions: 0 };
   const workspaceLabel = selectedWorkspace ? workspaceName(selectedWorkspace) : "Workspace";
+  const flaggedCount = allPullRequests.filter((pullRequest) => pullRequest.projectPath === selectedProjectPath && pullRequest.isFlagged).length;
 
   return (
     <>
@@ -554,16 +319,16 @@ function PullRequestQueueView({
           <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">Repository Review</div>
           <h1 className="mt-1 text-xl font-semibold tracking-tight text-foreground">Open Pull Requests</h1>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {workspaceLabel} review queue with AI briefings, changed-file signals and merge readiness.
+            {workspaceLabel} review queue with live PR comments, changed files and merge signals.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 max-[760px]:w-full max-[760px]:justify-start">
           <FilterSelect
             label="Project"
             icon={<FolderOpen className="h-3.5 w-3.5" />}
-            value={selectedProject}
+            value={selectedProjectPath}
             onChange={onSelectProject}
-            options={projects.map((project) => ({ value: project.name, label: project.name }))}
+            options={projects.map((project) => ({ value: project.path, label: project.name }))}
           />
           <FilterSelect
             label="Branch"
@@ -576,103 +341,344 @@ function PullRequestQueueView({
             ]}
           />
           <div className="hidden overflow-hidden rounded-xl border border-glass-border/35 bg-card/70 text-xs text-muted-foreground shadow-soft min-[980px]:flex">
-            <button className="bg-primary/10 px-3 py-2 text-foreground" type="button">All</button>
-            <button className="border-l border-glass-border/25 px-3 py-2 hover:bg-glass/80 hover:text-foreground" type="button">Mine</button>
-            <button className="border-l border-glass-border/25 px-3 py-2 hover:bg-glass/80 hover:text-foreground" type="button">Flagged</button>
+            <QueueFilterButton active={queueFilter === "all"} onClick={() => onSelectFilter("all")}>All</QueueFilterButton>
+            <QueueFilterButton active={queueFilter === "mine"} onClick={() => onSelectFilter("mine")} bordered>
+              Mine
+            </QueueFilterButton>
+            <QueueFilterButton active={queueFilter === "flagged"} onClick={() => onSelectFilter("flagged")} bordered>
+              Flagged
+            </QueueFilterButton>
           </div>
-          <Button variant="subtle" size="iconSm" aria-label="Refresh pull requests" className="rounded-xl">
-            <RotateCw className="h-3.5 w-3.5" />
+          <Button variant="subtle" size="iconSm" aria-label="Refresh pull requests" className="rounded-xl" onClick={onRefresh} disabled={loading}>
+            <RotateCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
           </Button>
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(320px,420px)_minmax(0,1fr)] gap-4 overflow-hidden p-5 max-[1040px]:grid-cols-1 max-[1040px]:overflow-auto">
+      <div
+        className={cn(
+          "grid min-h-0 flex-1 overflow-hidden p-5 transition-[grid-template-columns,gap,max-width] duration-300 ease-out max-[1040px]:overflow-auto",
+          detailOpen
+            ? "grid-cols-[minmax(320px,420px)_minmax(0,1fr)] gap-4 max-[1040px]:grid-cols-1"
+            : "mx-auto w-full max-w-[540px] grid-cols-[minmax(0,1fr)_minmax(0,0fr)] gap-0 max-[1040px]:grid-cols-1",
+        )}
+      >
         <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-glass-border/35 bg-card/75 shadow-soft backdrop-blur-xl">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-glass-border/25 px-4 py-3">
             <div>
               <div className="text-sm font-semibold text-foreground">Queue</div>
-              <div className="text-[11px] text-muted-foreground">Ordered by review risk and recency</div>
+              <div className="text-[11px] text-muted-foreground">Ordered by GitHub update time</div>
             </div>
             <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-1 text-[10px] font-semibold text-warning">
-              2 flagged
+              {flaggedCount} flagged
             </span>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
-            {pullRequests.length > 0 ? pullRequests.map((pullRequest) => (
-              <PullRequestCard
-                key={pullRequest.id}
-                pullRequest={pullRequest}
-                active={pullRequest.id === selectedPr.id}
-                onClick={() => onSelectPr(pullRequest)}
+            {loading ? (
+              <QueueState icon={<RotateCw className="h-4 w-4 animate-spin" />} title="Loading pull requests" detail="" />
+            ) : errors.length > 0 ? (
+              <QueueState icon={<AlertCircle className="h-4 w-4" />} title="Pull requests unavailable" detail={errors[0] ?? "GitHub CLI did not return PR data."} />
+            ) : pullRequests.length > 0 ? (
+              pullRequests.map((pullRequest) => (
+                <PullRequestCard
+                  key={pullRequest.id}
+                  pullRequest={pullRequest}
+                  active={pullRequest.id === selectedPr?.id}
+                  onClick={() => onSelectPr(pullRequest)}
+                />
+              ))
+            ) : (
+              <QueueState
+                icon={<GitPullRequest className="h-4 w-4" />}
+                title={queueFilter === "mine" && viewerLogin ? "No pull requests assigned to you" : "No pull requests"}
+                detail={queueFilter === "mine" && !viewerLogin ? "GitHub did not return the current user." : "No PRs match the current project, branch and queue filter."}
               />
-            )) : (
-              <div className="rounded-xl border border-glass-border/30 bg-background/35 p-3 text-xs leading-5 text-muted-foreground">
-                No pull requests for this project and branch.
-              </div>
             )}
           </div>
         </section>
 
-        <section
-          key={selectedPr.id}
-          className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-glass-border/35 bg-card/75 shadow-soft backdrop-blur-xl transition-[opacity,transform] duration-200 ease-out"
-        >
-          <div className="shrink-0 border-b border-glass-border/25 p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
-                  PR #{selectedPr.number} / {selectedPr.branch}
-                </div>
-                <h2 className="mt-2 text-xl font-semibold leading-7 text-foreground">{selectedPr.title}</h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{selectedPr.description}</p>
-              </div>
-              <Button className="shrink-0 rounded-xl" onClick={onStartReview}>
-                <ScanSearch className="h-4 w-4" />
-                Start Review
-              </Button>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <StatusPill status={selectedPr.status}>{selectedPr.statusLabel}</StatusPill>
-              <RiskPill risk={selectedPr.risk} />
-              <span className="rounded-full border border-glass-border/35 bg-background/45 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
-                {selectedPr.tests}
-              </span>
-              {selectedPr.labels.map((label) => (
-                <span key={label} className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
-                  {label}
-                </span>
-              ))}
-            </div>
-            <div className="mt-4 grid grid-cols-4 gap-2 max-[760px]:grid-cols-2">
-              <MetricTile label="Files" value={selectedPr.files.length} />
-              <MetricTile label="Comments" value={selectedPr.comments} />
-              <MetricTile label="Additions" value={`+${totals.additions}`} tone="success" />
-              <MetricTile label="Deletions" value={`-${totals.deletions}`} tone="destructive" />
-            </div>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-5" data-testid="pr-preview-scroll">
-            <BriefCard icon={<Sparkles className="h-4 w-4" />} title="AI brief">
-              {selectedPr.brief}
-            </BriefCard>
-            <BriefCard icon={<Files className="h-4 w-4" />} title="Changed files">
-              <div className="mt-3 flex flex-wrap gap-2">
-                {selectedPr.files.map((file) => (
-                  <span key={file.id} className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">
-                    <FileCode2 className="h-3.5 w-3.5" />
-                    {shortPath(file.path)}
-                  </span>
-                ))}
-              </div>
-            </BriefCard>
-            <BriefCard icon={<ShieldAlert className="h-4 w-4" />} title="Review focus">
-              {selectedPr.focus}
-            </BriefCard>
-          </div>
-        </section>
+        {displayedPr ? (
+          <PullRequestDetailPanel
+            pullRequest={displayedPr}
+            totals={totals}
+            open={detailOpen}
+            onStartReview={onStartReview}
+            onCreateComment={onCreateComment}
+            creatingComment={creatingComment}
+          />
+        ) : null}
       </div>
     </>
   );
 }
+
+function PullRequestDetailPanel({
+  pullRequest,
+  totals,
+  open,
+  onStartReview,
+  onCreateComment,
+  creatingComment,
+}: {
+  pullRequest: PullRequestSummary;
+  totals: { additions: number; deletions: number };
+  open: boolean;
+  onStartReview: () => void;
+  onCreateComment: (input: { number: number; body: string; kind: PullRequestCommentKind; status?: PullRequestStatus | null }) => Promise<unknown>;
+  creatingComment: boolean;
+}) {
+  return (
+    <section
+      key={pullRequest.id}
+      aria-hidden={!open}
+      data-testid="pr-detail-panel"
+      data-open={open ? "true" : "false"}
+      className={cn(
+        "flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-glass-border/35 bg-card/75 shadow-soft backdrop-blur-xl transition-[opacity,transform,max-width] duration-300 ease-out",
+        open ? "max-w-none translate-x-0 opacity-100" : "pointer-events-none max-w-0 translate-x-8 opacity-0",
+      )}
+    >
+      <div className="shrink-0 border-b border-glass-border/25 p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="break-words font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
+              PR #{pullRequest.number} / {pullRequest.branch || "unknown branch"}
+            </div>
+            <h2 className="mt-2 text-xl font-semibold leading-7 text-foreground">{pullRequest.title}</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{pullRequest.description}</p>
+          </div>
+          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            {pullRequest.url ? (
+              <Button asChild variant="subtle" size="iconSm" aria-label="Open pull request in browser" className="rounded-xl">
+                <a href={pullRequest.url} target="_blank" rel="noreferrer">
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </Button>
+            ) : null}
+            <Button className="rounded-xl" onClick={onStartReview}>
+              <ScanSearch className="h-4 w-4" />
+              Start Review
+            </Button>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <StatusPill status={pullRequest.status}>{pullRequest.statusLabel}</StatusPill>
+          <RiskPill risk={pullRequest.risk} />
+          <span className="rounded-full border border-glass-border/35 bg-background/45 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+            {pullRequest.checkSummary}
+          </span>
+          {pullRequest.labels.map((label) => (
+            <span key={label} className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+              {label}
+            </span>
+          ))}
+        </div>
+        <div className="mt-4 grid grid-cols-4 gap-2 max-[760px]:grid-cols-2">
+          <MetricTile label="Files" value={pullRequest.files.length} />
+          <MetricTile label="Comments" value={pullRequest.commentsCount} />
+          <MetricTile label="Additions" value={"+" + totals.additions} tone="success" />
+          <MetricTile label="Deletions" value={"-" + totals.deletions} tone="destructive" />
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-5" data-testid="pr-preview-scroll">
+        <DetailCard icon={<GitPullRequest className="h-4 w-4" />} title="PR context">
+          <div className="mt-3 grid gap-2 text-xs leading-5 text-muted-foreground sm:grid-cols-2">
+            <ContextValue label="Author" value={pullRequest.author} />
+            <ContextValue label="Updated" value={pullRequest.updated} />
+            <ContextValue label="Base" value={pullRequest.baseBranch || "unknown"} />
+            <ContextValue label="Merge" value={pullRequest.mergeState || "unknown"} />
+          </div>
+        </DetailCard>
+        <DetailCard icon={<MessageSquare className="h-4 w-4" />} title="Comments">
+          <PullRequestComments comments={pullRequest.comments} />
+          <PullRequestCommentComposer pullRequest={pullRequest} onCreateComment={onCreateComment} disabled={creatingComment} />
+        </DetailCard>
+        <DetailCard icon={<Files className="h-4 w-4" />} title="Changed files">
+          <div className="mt-3 flex flex-wrap gap-2">
+            {pullRequest.files.length > 0 ? (
+              pullRequest.files.map((file) => (
+                <span key={file.id} className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">
+                  <FileCode2 className="h-3.5 w-3.5" />
+                  {shortPath(file.path)}
+                  <span className="font-mono text-success">+{file.additions}</span>
+                  <span className="font-mono text-destructive">-{file.deletions}</span>
+                </span>
+              ))
+            ) : (
+              <p className="text-xs leading-5 text-muted-foreground">GitHub did not return changed-file metadata for this PR.</p>
+            )}
+          </div>
+        </DetailCard>
+      </div>
+    </section>
+  );
+}
+
+function PullRequestComments({ comments }: { comments: PullRequestComment[] }) {
+  if (comments.length === 0) {
+    return <p className="mt-2 text-xs leading-5 text-muted-foreground">No PR comments yet.</p>;
+  }
+
+  return (
+    <div className="mt-3 space-y-2">
+      {comments.slice(0, 5).map((comment) => (
+        <article key={comment.id} className="rounded-xl border border-glass-border/25 bg-background/35 p-3">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1 font-medium text-foreground">
+              {comment.source === "ai" ? <Bot className="h-3.5 w-3.5 text-primary" /> : <UserRound className="h-3.5 w-3.5" />}
+              {comment.author}
+            </span>
+            <CommentKindPill comment={comment} />
+            {comment.createdAt ? <span>{formatDateTime(comment.createdAt)}</span> : null}
+          </div>
+          <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">{comment.body}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function PullRequestCommentComposer({
+  pullRequest,
+  onCreateComment,
+  disabled,
+}: {
+  pullRequest: PullRequestSummary;
+  onCreateComment: (input: { number: number; body: string; kind: PullRequestCommentKind; status?: PullRequestStatus | null }) => Promise<unknown>;
+  disabled: boolean;
+}) {
+  const [optionId, setOptionId] = useState(COMMENT_OPTIONS[0].id);
+  const [body, setBody] = useState("");
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const selectedOption = COMMENT_OPTIONS.find((option) => option.id === optionId) ?? COMMENT_OPTIONS[0];
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const value = body.trim();
+    if (!value) return;
+    setFeedback(null);
+    try {
+      await onCreateComment({ number: pullRequest.number, body: value, kind: selectedOption.kind, status: selectedOption.status ?? null });
+      setBody("");
+      setFeedback("Comment sent");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Comment failed");
+    }
+  };
+
+  return (
+    <form className="mt-3 rounded-xl border border-glass-border/25 bg-background/30 p-3" onSubmit={submit}>
+      <div className="flex flex-wrap gap-1.5">
+        {COMMENT_OPTIONS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className={cn(
+              "rounded-full border px-2.5 py-1 text-[11px] transition-[background,border-color,color] duration-150",
+              option.id === optionId
+                ? "border-primary/35 bg-primary/10 text-foreground"
+                : "border-glass-border/30 text-muted-foreground hover:bg-glass/80 hover:text-foreground",
+            )}
+            onClick={() => setOptionId(option.id)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={body}
+        rows={3}
+        onChange={(event) => setBody(event.currentTarget.value)}
+        placeholder="Write a PR comment..."
+        className="mt-3 min-h-20 w-full resize-none rounded-xl border border-glass-border/35 bg-background/55 px-3 py-2 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-primary/35 focus:ring-1 focus:ring-primary/20"
+      />
+      <div className="mt-2 flex items-center justify-between gap-3">
+        <span className="min-w-0 text-[11px] text-muted-foreground">{feedback}</span>
+        <Button type="submit" size="xs" className="rounded-xl" disabled={disabled || !body.trim()}>
+          <Send className="h-3.5 w-3.5" />
+          Send comment
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function QueueFilterButton({ children, active, bordered, onClick }: { children: ReactNode; active: boolean; bordered?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "px-3 py-2 hover:bg-glass/80 hover:text-foreground",
+        bordered && "border-l border-glass-border/25",
+        active && "bg-primary/10 text-foreground",
+      )}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+function QueueState({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) {
+  return (
+    <div className="rounded-xl border border-glass-border/30 bg-background/35 p-3 text-xs leading-5 text-muted-foreground">
+      <div className="flex items-center gap-2 font-semibold text-foreground">
+        <span className="text-primary">{icon}</span>
+        {title}
+      </div>
+      {detail ? <p className="mt-1">{detail}</p> : null}
+    </div>
+  );
+}
+
+function ContextValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-glass-border/20 bg-background/30 px-3 py-2">
+      <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{label}</div>
+      <div className="mt-1 break-words text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function CommentKindPill({ comment }: { comment: PullRequestComment }) {
+  const label = comment.kind === "status" && comment.status
+    ? statusText(comment.status)
+    : comment.kind === "ai_review"
+      ? "AI analysis"
+      : "Human analysis";
+
+  return (
+    <span
+      className={cn(
+        "rounded-full border px-2 py-0.5 font-medium",
+        comment.kind === "ai_review" && "border-primary/25 bg-primary/10 text-primary",
+        comment.kind === "human_review" && "border-glass-border/30 bg-muted text-muted-foreground",
+        comment.kind === "status" && "border-warning/25 bg-warning/10 text-warning",
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function statusText(status: PullRequestStatus) {
+  if (status === "approved") return "Approved";
+  if (status === "merged") return "Merged";
+  if (status === "refused") return "Refused";
+  return "Needs review";
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 
 function PullRequestReviewView({
   pullRequest,
@@ -712,7 +718,7 @@ function PullRequestReviewView({
           </div>
           <h1 className="mt-1 text-xl font-semibold tracking-tight text-foreground">{pullRequest.title}</h1>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {pullRequest.files.length} files changed, {pullRequest.comments} review comments, {pullRequest.risk.toLowerCase()} risk.
+            {pullRequest.files.length} files changed, {pullRequest.commentsCount} review comments, {pullRequest.risk.toLowerCase()} risk.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 max-[760px]:w-full max-[760px]:justify-start">
@@ -913,23 +919,26 @@ function DiffCard({
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full table-fixed border-collapse font-mono text-[12px] leading-6">
-          <tbody>
-            {file.lines.map((line, index) => (
-              <tr key={`${file.id}-${line.number}-${index}`} className="border-b border-glass-border/10 last:border-b-0">
-                <td className="w-14 select-none px-3 py-0.5 text-right text-muted-foreground/60">{line.number}</td>
-                <td className={cn("whitespace-pre-wrap break-words px-3 py-0.5 text-foreground/85", diffLineClass(line.kind))}>
-                  {linePrefix(line.kind)} {line.content}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="m-3 rounded-xl border border-warning/25 bg-warning/10 px-3 py-2 text-xs leading-5 text-muted-foreground">
-        <span className="font-semibold text-warning">AI note:</span> {file.aiNote}
-      </div>
+      {file.lines.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full table-fixed border-collapse font-mono text-[12px] leading-6">
+            <tbody>
+              {file.lines.map((line, index) => (
+                <tr key={`${file.id}-${line.number}-${index}`} className="border-b border-glass-border/10 last:border-b-0">
+                  <td className="w-14 select-none px-3 py-0.5 text-right text-muted-foreground/60">{line.number}</td>
+                  <td className={cn("whitespace-pre-wrap break-words px-3 py-0.5 text-foreground/85", diffLineClass(line.kind))}>
+                    {linePrefix(line.kind)} {line.content}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="m-3 rounded-xl border border-glass-border/25 bg-background/35 px-3 py-2 text-xs leading-5 text-muted-foreground">
+          Diff lines are not available from the current GitHub PR metadata.
+        </div>
+      )}
     </article>
   );
 }
@@ -1168,7 +1177,7 @@ function ReviewAgentWindow({
   );
 }
 
-function BriefCard({
+function DetailCard({
   icon,
   title,
   children,
@@ -1224,9 +1233,10 @@ function StatusPill({
     <span
       className={cn(
         "inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-semibold",
-        status === "ready" && "border-success/30 bg-success/10 text-success",
-        status === "flagged" && "border-warning/30 bg-warning/10 text-warning",
-        status === "blocked" && "border-destructive/30 bg-destructive/10 text-destructive",
+        status === "approved" && "border-success/30 bg-success/10 text-success",
+        status === "merged" && "border-success/30 bg-success/10 text-success",
+        status === "needs_review" && "border-warning/30 bg-warning/10 text-warning",
+        status === "refused" && "border-destructive/30 bg-destructive/10 text-destructive",
       )}
     >
       {children}
@@ -1271,20 +1281,47 @@ function prTotals(pullRequest: PullRequestSummary) {
   );
 }
 
-function uniqueProjects(pullRequests: PullRequestSummary[]) {
+function uniqueProjects(
+  pullRequests: PullRequestSummary[],
+  fallbackName?: string,
+  fallbackPath?: string,
+  recentWorkspaces: string[] = [],
+  backendProjects: WorkspaceProject[] = [],
+) {
   const projects = new Map<string, string>();
-  for (const pullRequest of pullRequests) {
-    if (!projects.has(pullRequest.project)) {
-      projects.set(pullRequest.project, pullRequest.projectPath);
+  for (const project of backendProjects) {
+    if (project.path && !projects.has(project.path)) {
+      projects.set(project.path, project.name || workspaceName(project.path));
     }
   }
-  return Array.from(projects, ([name, path]) => ({ name, path }));
+  for (const path of recentWorkspaces) {
+    if (path && !projects.has(path)) {
+      projects.set(path, workspaceName(path));
+    }
+  }
+  if (fallbackPath && !projects.has(fallbackPath)) {
+    projects.set(fallbackPath, fallbackName ?? workspaceName(fallbackPath));
+  }
+  for (const pullRequest of pullRequests) {
+    if (!projects.has(pullRequest.projectPath)) {
+      projects.set(pullRequest.projectPath, pullRequest.project);
+    }
+  }
+  if (projects.size === 0 && fallbackName) {
+    projects.set(fallbackName, fallbackPath ?? fallbackName);
+  }
+  return Array.from(projects, ([path, name]) => ({ name, path }));
 }
 
-function uniqueBranches(pullRequests: PullRequestSummary[], project: string) {
+function uniqueBranches(pullRequests: PullRequestSummary[], projectPath: string, gitBranches: GitBranchInfo[]) {
   const branches = new Set<string>();
+  for (const branch of gitBranches) {
+    if (branch.name && !branch.name.endsWith("/HEAD")) {
+      branches.add(branch.name);
+    }
+  }
   for (const pullRequest of pullRequests) {
-    if (pullRequest.project === project) {
+    if (pullRequest.projectPath === projectPath && pullRequest.branch) {
       branches.add(pullRequest.branch);
     }
   }

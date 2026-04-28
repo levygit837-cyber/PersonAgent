@@ -88,6 +88,28 @@ class Settings(BaseSettings):
         alias="NVIDIA_MODELS_CACHE_TTL_SECONDS",
     )
 
+    # --- DeepSeek official API ---
+    deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
+    deepseek_base_url: str = Field(
+        default="https://api.deepseek.com",
+        alias="DEEPSEEK_BASE_URL",
+    )
+    deepseek_default_model: str = Field(
+        default="deepseek-v4-flash",
+        alias="DEEPSEEK_DEFAULT_MODEL",
+    )
+    deepseek_max_tokens: int = Field(default=65536, alias="DEEPSEEK_MAX_TOKENS")
+    deepseek_context_window: int = Field(default=1_000_000, alias="DEEPSEEK_CONTEXT_WINDOW")
+    deepseek_timeout_seconds: float = Field(default=240.0, alias="DEEPSEEK_TIMEOUT_SECONDS")
+    deepseek_stream_read_timeout_seconds: float = Field(
+        default=0.0,
+        alias="DEEPSEEK_STREAM_READ_TIMEOUT_SECONDS",
+    )
+    deepseek_models_cache_ttl_seconds: int = Field(
+        default=300,
+        alias="DEEPSEEK_MODELS_CACHE_TTL_SECONDS",
+    )
+
     # --- Google Vertex AI ---
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
     vertex_auth_mode: str = Field(default="auto", alias="VERTEX_AUTH_MODE")
@@ -97,6 +119,7 @@ class Settings(BaseSettings):
         default="gemini-3.1-flash-lite-preview",
         alias="VERTEX_DEFAULT_MODEL",
     )
+    vertex_context_window: int = Field(default=1_048_576, alias="VERTEX_CONTEXT_WINDOW")
     vertex_timeout_seconds: float = Field(default=240.0, alias="VERTEX_TIMEOUT_SECONDS")
     vertex_stream_read_timeout_seconds: float = Field(
         default=0.0,
@@ -306,6 +329,18 @@ class Settings(BaseSettings):
         default=100,
         alias="OPERATIONAL_MEMORY_HOT_CACHE_SIZE",
     )
+    operational_memory_semantic_candidate_limit: int = Field(
+        default=80,
+        alias="OPERATIONAL_MEMORY_SEMANTIC_CANDIDATE_LIMIT",
+    )
+    operational_memory_recent_candidate_limit: int = Field(
+        default=40,
+        alias="OPERATIONAL_MEMORY_RECENT_CANDIDATE_LIMIT",
+    )
+    operational_memory_context_budget_tokens: int = Field(
+        default=0,
+        alias="OPERATIONAL_MEMORY_CONTEXT_BUDGET_TOKENS",
+    )
     embedding_server_url: str = Field(
         default="http://localhost:8081/v1",
         alias="EMBEDDING_SERVER_URL",
@@ -323,7 +358,7 @@ class Settings(BaseSettings):
     embedding_timeout_seconds: float = Field(default=60.0, alias="EMBEDDING_TIMEOUT_SECONDS")
     embedding_auto_start: bool = Field(default=False, alias="EMBEDDING_AUTO_START")
     embedding_port: int = Field(default=8081, alias="EMBEDDING_PORT")
-    embedding_ctx_size: int = Field(default=8192, alias="EMBEDDING_CTX_SIZE")
+    embedding_ctx_size: int = Field(default=32768, alias="EMBEDDING_CTX_SIZE")
     embedding_n_gpu_layers: int = Field(default=999, alias="EMBEDDING_N_GPU_LAYERS")
     embedding_threads: int = Field(default=6, alias="EMBEDDING_THREADS")
     embedding_parallel: int = Field(default=1, alias="EMBEDDING_PARALLEL")

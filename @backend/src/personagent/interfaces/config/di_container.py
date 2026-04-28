@@ -20,6 +20,7 @@ from personagent.domain.repositories.llm_backend_repository import LLMBackendRep
 from personagent.infrastructure.browser import LightPandaBrowserWorker
 from personagent.infrastructure.config.settings import get_settings
 from personagent.infrastructure.llm.codex_subscription_adapter import CodexSubscriptionAdapter
+from personagent.infrastructure.llm.deepseek_adapter import DeepSeekAdapter
 from personagent.infrastructure.llm.kimi_coding_adapter import KimiCodingAdapter
 from personagent.infrastructure.llm.llama_cpp_adapter import LlamaCppAdapter
 from personagent.infrastructure.llm.nvidia_nim_adapter import NvidiaNimAdapter
@@ -88,7 +89,7 @@ class DIContainer:
     def get_llm_backend(self, provider: str = "llama") -> LLMBackendRepository:
         """Retorna o adapter do LLM (singleton)."""
         normalized_provider = provider.strip().lower()
-        if normalized_provider not in {"llama", "nvidia", "vertex", "kimi", "codex"}:
+        if normalized_provider not in {"llama", "nvidia", "deepseek", "vertex", "kimi", "codex"}:
             raise ValueError(f"Unsupported LLM provider: {provider}")
 
         if normalized_provider not in self._llm_backends:
@@ -116,6 +117,16 @@ class DIContainer:
                 default_model=self._settings.nvidia_default_model,
                 default_max_tokens=self._settings.nvidia_max_tokens,
                 models_cache_ttl_seconds=self._settings.nvidia_models_cache_ttl_seconds,
+            )
+        if provider == "deepseek":
+            return DeepSeekAdapter(
+                base_url=self._settings.deepseek_base_url,
+                api_key=self._settings.deepseek_api_key,
+                timeout=self._settings.deepseek_timeout_seconds,
+                stream_read_timeout=self._settings.deepseek_stream_read_timeout_seconds,
+                default_model=self._settings.deepseek_default_model,
+                default_max_tokens=self._settings.deepseek_max_tokens,
+                models_cache_ttl_seconds=self._settings.deepseek_models_cache_ttl_seconds,
             )
         if provider == "vertex":
             return VertexAiAdapter(
@@ -365,6 +376,11 @@ class DIContainer:
                 chunk_max_chars=self._settings.operational_memory_chunk_max_chars,
                 recall_top_k=self._settings.operational_memory_recall_top_k,
                 hot_cache_size=self._settings.operational_memory_hot_cache_size,
+                semantic_candidate_limit=(
+                    self._settings.operational_memory_semantic_candidate_limit
+                ),
+                recent_candidate_limit=self._settings.operational_memory_recent_candidate_limit,
+                context_budget_tokens=self._settings.operational_memory_context_budget_tokens,
             )
         return self._operational_memory_service
 

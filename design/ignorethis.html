@@ -1,0 +1,2202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PersonAgent PR Review System</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --radius: 16px;
+      --background: hsl(0 0% 3.8%);
+      --foreground: hsl(36 14% 92%);
+      --card: hsl(0 0% 6.2%);
+      --popover: hsl(0 0% 7.2%);
+      --primary: hsl(24 88% 62%);
+      --primary-soft: hsl(24 88% 62% / 0.14);
+      --secondary: hsl(0 0% 10%);
+      --muted: hsl(0 0% 10.5%);
+      --muted-foreground: hsl(35 7% 58%);
+      --accent: hsl(24 13% 12%);
+      --border: hsl(0 0% 11.5%);
+      --glass: hsl(0 0% 7%);
+      --glass-border: hsl(28 8% 13%);
+      --success: hsl(145 45% 52%);
+      --warning: hsl(34 78% 62%);
+      --destructive: hsl(3 70% 60%);
+      --shadow-soft: 0 10px 28px rgb(0 0 0 / 0.24), inset 0 1px 0 rgb(255 236 214 / 0.014);
+      --shadow-floating: 0 22px 54px rgb(0 0 0 / 0.48), 0 0 0 1px rgb(237 141 78 / 0.022), inset 0 1px 0 rgb(255 236 214 / 0.028);
+      font-family: Inter, Geist, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 55% 115%, hsl(24 88% 62% / 0.08), transparent 38%),
+        radial-gradient(circle at 0% 0%, hsl(36 42% 10% / 0.1), transparent 34%),
+        var(--background);
+      color: var(--foreground);
+      letter-spacing: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+    }
+
+    .mono {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: 36px 1fr;
+      height: 100vh;
+      min-width: 1120px;
+      background: rgb(4 4 6 / 0.72);
+    }
+
+    .titlebar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--glass-border);
+      background: rgb(4 4 6 / 0.86);
+      padding: 0 10px;
+      user-select: none;
+    }
+
+    .app-icon {
+      display: grid;
+      width: 19px;
+      height: 19px;
+      place-items: center;
+      border-radius: 6px;
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-size: 10px;
+      font-weight: 750;
+    }
+
+    .titlebar-name {
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .titlebar-local {
+      color: var(--muted-foreground);
+      font-size: 11px;
+    }
+
+    .window-controls {
+      display: flex;
+      gap: 18px;
+      margin-left: auto;
+      color: hsl(35 7% 48%);
+      font-size: 13px;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      min-height: 0;
+    }
+
+    .sidebar {
+      display: flex;
+      min-height: 0;
+      flex-direction: column;
+      border-right: 1px solid var(--glass-border);
+      background: hsl(0 0% 6.2% / 0.95);
+    }
+
+    .sidebar-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 39px;
+      border-bottom: 1px solid var(--glass-border);
+      padding: 0 10px;
+    }
+
+    .workspace-button {
+      display: flex;
+      min-width: 0;
+      flex: 1;
+      align-items: center;
+      gap: 6px;
+      border-radius: 10px;
+      padding: 5px 6px;
+      color: var(--foreground);
+      font-size: 13px;
+      font-weight: 620;
+      text-align: left;
+    }
+
+    .workspace-button:hover,
+    .nav-item:hover,
+    .icon-button:hover,
+    .file-row:hover,
+    .phase-row:hover {
+      background: hsl(0 0% 7% / 0.82);
+      color: var(--foreground);
+    }
+
+    .chevron {
+      color: var(--muted-foreground);
+      font-size: 12px;
+    }
+
+    .icon-button {
+      display: grid;
+      width: 27px;
+      height: 27px;
+      place-items: center;
+      border-radius: 10px;
+      color: var(--muted-foreground);
+    }
+
+    .sidebar-actions {
+      padding: 8px;
+    }
+
+    .nav-item {
+      position: relative;
+      display: flex;
+      width: 100%;
+      align-items: center;
+      gap: 9px;
+      border-radius: 12px;
+      padding: 7px 8px;
+      color: var(--muted-foreground);
+      font-size: 13px;
+      text-align: left;
+    }
+
+    .nav-item.active {
+      background: var(--accent);
+      color: var(--foreground);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .nav-item.active::before {
+      position: absolute;
+      top: 8px;
+      bottom: 8px;
+      left: 0;
+      width: 2px;
+      border-radius: 999px;
+      background: var(--primary);
+      content: "";
+    }
+
+    .nav-icon {
+      display: grid;
+      width: 15px;
+      height: 15px;
+      place-items: center;
+      color: currentColor;
+      opacity: 0.86;
+    }
+
+    .section-label {
+      margin: 10px 14px 8px;
+      color: hsl(35 7% 54%);
+      font-size: 10px;
+      font-weight: 720;
+      letter-spacing: 0.13em;
+    }
+
+    .empty-chats {
+      padding: 2px 16px;
+      color: var(--muted-foreground);
+      font-size: 12px;
+    }
+
+    .sidebar-spacer {
+      flex: 1;
+    }
+
+    .sidebar-footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 35px;
+      border-top: 1px solid var(--glass-border);
+      padding: 0 14px;
+      color: hsl(35 7% 54%);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.13em;
+    }
+
+    .main {
+      display: grid;
+      grid-template-rows: 39px 1fr;
+      min-width: 0;
+      min-height: 0;
+      background: rgb(4 4 6 / 0.58);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--glass-border);
+      padding: 0 12px;
+    }
+
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted-foreground);
+      font-size: 12px;
+    }
+
+    .breadcrumb strong {
+      color: var(--foreground);
+      font-weight: 620;
+    }
+
+    .view-switch {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      background: hsl(0 0% 6% / 0.72);
+      padding: 3px;
+    }
+
+    .switch-button {
+      border-radius: 9px;
+      padding: 5px 9px;
+      color: var(--muted-foreground);
+      font-size: 12px;
+    }
+
+    .switch-button.active {
+      background: var(--accent);
+      color: var(--foreground);
+    }
+
+    .content {
+      position: relative;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .screen {
+      display: none;
+      height: 100%;
+      min-height: 0;
+      padding: 22px;
+    }
+
+    .screen.active {
+      display: block;
+    }
+
+    .queue-layout {
+      display: grid;
+      grid-template-columns: minmax(500px, 1fr) 390px;
+      gap: 16px;
+      max-width: 1180px;
+      height: 100%;
+      margin: 0 auto;
+    }
+
+    .panel {
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
+      background: hsl(0 0% 6.2% / 0.82);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .queue-panel,
+    .preview-panel,
+    .file-panel,
+    .diff-panel,
+    .review-panel {
+      display: flex;
+      min-height: 0;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--glass-border);
+      padding: 12px 14px;
+      gap: 10px;
+    }
+
+    .panel-title {
+      min-width: 0;
+    }
+
+    .eyebrow {
+      margin-bottom: 3px;
+      color: var(--muted-foreground);
+      font-size: 10px;
+      font-weight: 720;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    h2 {
+      font-size: 14px;
+      line-height: 1.3;
+    }
+
+    h3 {
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    p {
+      color: var(--muted-foreground);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .search-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+      border-bottom: 1px solid var(--glass-border);
+      padding: 10px 14px;
+    }
+
+    .input,
+    .select-like,
+    .textarea {
+      min-width: 0;
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      background: hsl(0 0% 5.5%);
+      color: var(--foreground);
+      outline: none;
+      transition: border-color 140ms ease, background 140ms ease;
+    }
+
+    .input {
+      height: 34px;
+      padding: 0 11px;
+      font-size: 12px;
+    }
+
+    .input:focus,
+    .textarea:focus {
+      border-color: hsl(24 88% 62% / 0.42);
+      background: hsl(0 0% 7%);
+    }
+
+    .select-like {
+      display: flex;
+      align-items: center;
+      height: 34px;
+      padding: 0 10px;
+      color: var(--muted-foreground);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 4px;
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      background: hsl(0 0% 5.8%);
+      padding: 3px;
+    }
+
+    .tab {
+      border-radius: 9px;
+      padding: 6px 9px;
+      color: var(--muted-foreground);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .tab.active {
+      background: var(--accent);
+      color: var(--foreground);
+    }
+
+    .pr-list {
+      min-height: 0;
+      overflow: auto;
+      padding: 8px;
+    }
+
+    .pr-row {
+      position: relative;
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      gap: 10px;
+      width: 100%;
+      border-radius: 14px;
+      padding: 10px 10px;
+      color: var(--foreground);
+      text-align: left;
+    }
+
+    .pr-row + .pr-row {
+      margin-top: 3px;
+    }
+
+    .pr-row:hover {
+      background: hsl(0 0% 7% / 0.88);
+    }
+
+    .pr-row.active {
+      background: var(--accent);
+    }
+
+    .pr-row.active::before {
+      position: absolute;
+      top: 12px;
+      bottom: 12px;
+      left: 0;
+      width: 2px;
+      border-radius: 999px;
+      background: var(--primary);
+      content: "";
+    }
+
+    .avatar {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border: 1px solid hsl(24 88% 62% / 0.22);
+      border-radius: 10px;
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-size: 10px;
+      font-weight: 780;
+    }
+
+    .pr-main {
+      min-width: 0;
+    }
+
+    .pr-title {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 3px;
+    }
+
+    .pr-title strong {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--foreground);
+      font-size: 13px;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .pr-desc {
+      max-width: 590px;
+      overflow: hidden;
+      color: var(--muted-foreground);
+      font-size: 12px;
+      line-height: 1.42;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .pr-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px 8px;
+      margin-top: 7px;
+      color: hsl(35 7% 54%);
+      font-size: 11px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 21px;
+      border: 1px solid var(--glass-border);
+      border-radius: 999px;
+      background: hsl(0 0% 5.5% / 0.8);
+      padding: 0 7px;
+      color: var(--muted-foreground);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .chip.success {
+      border-color: hsl(145 45% 52% / 0.22);
+      color: hsl(145 45% 62%);
+    }
+
+    .chip.warning {
+      border-color: hsl(34 78% 62% / 0.24);
+      color: hsl(34 78% 66%);
+    }
+
+    .chip.primary {
+      border-color: hsl(24 88% 62% / 0.25);
+      background: var(--primary-soft);
+      color: var(--primary);
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: currentColor;
+    }
+
+    .pr-score {
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-end;
+      min-width: 102px;
+    }
+
+    .score-box {
+      display: grid;
+      gap: 4px;
+      justify-items: end;
+      color: var(--muted-foreground);
+      font-size: 11px;
+    }
+
+    .score {
+      color: var(--foreground);
+      font-size: 18px;
+      font-weight: 720;
+    }
+
+    .preview-body,
+    .review-body {
+      min-height: 0;
+      overflow: auto;
+      padding: 14px;
+    }
+
+    .panel-footer {
+      display: flex;
+      justify-content: flex-end;
+      border-top: 1px solid var(--glass-border);
+      padding: 10px 14px;
+      background: hsl(0 0% 5.6% / 0.84);
+    }
+
+    .preview-title {
+      margin-bottom: 12px;
+    }
+
+    .summary-block {
+      border-bottom: 1px solid var(--glass-border);
+      padding: 13px 0;
+    }
+
+    .summary-block:first-child {
+      padding-top: 0;
+    }
+
+    .summary-block:last-child {
+      border-bottom: 0;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 7px;
+      margin-top: 10px;
+    }
+
+    .metric {
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      background: hsl(0 0% 5.5%);
+      padding: 8px;
+    }
+
+    .metric strong {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--foreground);
+      font-size: 15px;
+    }
+
+    .metric span {
+      color: var(--muted-foreground);
+      font-size: 10px;
+    }
+
+    .fact-list {
+      display: grid;
+      gap: 7px;
+      margin-top: 10px;
+    }
+
+    .fact-row {
+      display: grid;
+      grid-template-columns: 86px 1fr;
+      gap: 10px;
+      border-radius: 10px;
+      padding: 7px 8px;
+      background: hsl(0 0% 5.5% / 0.74);
+      font-size: 12px;
+    }
+
+    .fact-row span:first-child {
+      color: hsl(35 7% 54%);
+    }
+
+    .fact-row span:last-child {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--foreground);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-groups {
+      display: grid;
+      gap: 7px;
+      margin-top: 10px;
+    }
+
+    .file-group {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      border-radius: 11px;
+      padding: 8px;
+      background: hsl(0 0% 5.5% / 0.82);
+      font-size: 12px;
+    }
+
+    .file-group span {
+      color: var(--muted-foreground);
+      font-size: 11px;
+    }
+
+    .primary-button,
+    .ghost-button,
+    .done-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 32px;
+      border-radius: 12px;
+      padding: 0 11px;
+      font-size: 12px;
+      font-weight: 620;
+      white-space: nowrap;
+    }
+
+    .primary-button {
+      background: var(--primary);
+      color: hsl(0 0% 5%);
+    }
+
+    .ghost-button,
+    .done-button {
+      border: 1px solid var(--glass-border);
+      background: hsl(0 0% 5.5%);
+      color: var(--foreground);
+    }
+
+    .done-button.done {
+      border-color: hsl(145 45% 52% / 0.24);
+      color: hsl(145 45% 62%);
+    }
+
+    .review-layout {
+      display: grid;
+      grid-template-columns: 282px minmax(430px, 1fr) 282px;
+      gap: 14px;
+      height: 100%;
+      min-height: 0;
+    }
+
+    .review-titlebar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--glass-border);
+      padding: 12px 14px;
+      gap: 12px;
+    }
+
+    .review-titlebar .title-text {
+      min-width: 0;
+    }
+
+    .review-titlebar h1 {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-filter {
+      display: grid;
+      gap: 8px;
+      border-bottom: 1px solid var(--glass-border);
+      padding: 10px;
+    }
+
+    .file-list {
+      min-height: 0;
+      overflow: auto;
+      padding: 8px;
+    }
+
+    .file-section {
+      margin: 12px 6px 6px;
+      color: hsl(35 7% 54%);
+      font-size: 10px;
+      font-weight: 720;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .file-row {
+      display: grid;
+      grid-template-columns: 12px 12px 1fr auto;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      border-radius: 12px;
+      padding: 8px 7px;
+      color: var(--muted-foreground);
+      text-align: left;
+    }
+
+    .file-row[draggable="true"] {
+      cursor: grab;
+    }
+
+    .file-row.dragging {
+      opacity: 0.46;
+    }
+
+    .file-row.active {
+      background: var(--accent);
+      color: var(--foreground);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: hsl(35 7% 38%);
+    }
+
+    .status-dot.progress {
+      background: var(--primary);
+    }
+
+    .status-dot.done {
+      background: var(--success);
+    }
+
+    .file-name {
+      min-width: 0;
+      overflow: hidden;
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-lines {
+      color: hsl(35 7% 54%);
+      font-size: 10px;
+    }
+
+    .drag-grip {
+      color: hsl(35 7% 42%);
+      font-size: 11px;
+      letter-spacing: -0.08em;
+    }
+
+    .diff-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--glass-border);
+      padding: 10px 12px;
+      gap: 10px;
+    }
+
+    .diff-path {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      color: var(--foreground);
+      font-size: 12px;
+      font-weight: 620;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .diff-body {
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+    }
+
+    .diff-body.drop-ready .code-card,
+    .diff-body.drop-ready .natural-card {
+      border-color: hsl(24 88% 62% / 0.38);
+      background: hsl(24 13% 8% / 0.92);
+    }
+
+    .code-card {
+      overflow: hidden;
+      border: 1px solid var(--glass-border);
+      border-radius: 14px;
+      background: hsl(0 0% 4.6%);
+    }
+
+    .code-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(220px, 0.78fr);
+      gap: 14px;
+      align-items: center;
+      border-bottom: 1px solid var(--glass-border);
+      padding: 8px 10px;
+      color: var(--muted-foreground);
+      font-size: 11px;
+    }
+
+    .code-line {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      min-height: 26px;
+      border-bottom: 1px solid hsl(28 8% 13% / 0.42);
+      font-size: 12px;
+      line-height: 26px;
+    }
+
+    .code-line:last-child {
+      border-bottom: 0;
+    }
+
+    .line-no {
+      border-right: 1px solid hsl(28 8% 13% / 0.52);
+      color: hsl(35 7% 42%);
+      text-align: right;
+      padding-right: 9px;
+      user-select: none;
+    }
+
+    .line-code {
+      overflow: hidden;
+      padding: 0 10px;
+      color: hsl(36 14% 84%);
+      white-space: pre;
+    }
+
+    .code-line.add {
+      background: hsl(145 45% 52% / 0.08);
+    }
+
+    .code-line.add .line-code {
+      color: hsl(145 45% 70%);
+    }
+
+    .code-line.del {
+      background: hsl(3 70% 60% / 0.08);
+    }
+
+    .code-line.del .line-code {
+      color: hsl(3 70% 73%);
+    }
+
+    .natural-card,
+    .pinned-context {
+      margin-top: 12px;
+      border: 1px solid var(--glass-border);
+      border-radius: 14px;
+      background: hsl(0 0% 5.2% / 0.9);
+      overflow: visible;
+    }
+
+    .natural-head,
+    .pinned-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid var(--glass-border);
+      padding: 9px 10px;
+    }
+
+    .analysis-list {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+    }
+
+    .analysis-item {
+      border-radius: 12px;
+      background: hsl(0 0% 4.6% / 0.82);
+      padding: 9px;
+    }
+
+    .analysis-item strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+
+    .analysis-item p {
+      margin-bottom: 7px;
+    }
+
+    .line-ref {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid hsl(24 88% 62% / 0.26);
+      border-radius: 999px;
+      background: var(--primary-soft);
+      padding: 2px 7px;
+      color: var(--primary);
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .line-preview {
+      position: absolute;
+      left: 0;
+      bottom: calc(100% + 8px);
+      z-index: 30;
+      display: none;
+      width: min(420px, 62vw);
+      border: 1px solid hsl(24 88% 62% / 0.24);
+      border-radius: 12px;
+      background: hsl(0 0% 4.6%);
+      box-shadow: var(--shadow-floating);
+      padding: 9px;
+      color: hsl(36 14% 84%);
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+
+    .line-ref:hover .line-preview {
+      display: block;
+    }
+
+    .pinned-list {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+    }
+
+    .pinned-empty {
+      color: var(--muted-foreground);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .context-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 10px;
+      border-radius: 12px;
+      background: hsl(0 0% 4.6% / 0.86);
+      padding: 9px;
+    }
+
+    .context-card strong {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .context-card span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted-foreground);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .section-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 12px;
+      border: 1px solid var(--glass-border);
+      border-radius: 14px;
+      background: hsl(0 0% 5.5% / 0.86);
+      padding: 10px;
+      gap: 10px;
+    }
+
+    .phase-list {
+      display: grid;
+      gap: 7px;
+    }
+
+    .phase-row {
+      display: grid;
+      grid-template-columns: 18px 1fr auto;
+      align-items: start;
+      gap: 8px;
+      border-radius: 12px;
+      padding: 8px;
+      color: var(--muted-foreground);
+      text-align: left;
+    }
+
+    .phase-row.active {
+      background: var(--accent);
+      color: var(--foreground);
+    }
+
+    .phase-number {
+      display: grid;
+      width: 18px;
+      height: 18px;
+      place-items: center;
+      border: 1px solid var(--glass-border);
+      border-radius: 999px;
+      font-size: 10px;
+    }
+
+    .phase-row.done .phase-number {
+      border-color: hsl(145 45% 52% / 0.28);
+      background: hsl(145 45% 52% / 0.12);
+      color: hsl(145 45% 66%);
+    }
+
+    .phase-copy strong {
+      display: block;
+      margin-bottom: 2px;
+      color: currentColor;
+      font-size: 12px;
+    }
+
+    .phase-copy span {
+      display: block;
+      color: var(--muted-foreground);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .review-note {
+      display: grid;
+      gap: 7px;
+      border-top: 1px solid var(--glass-border);
+      margin-top: 12px;
+      padding-top: 12px;
+    }
+
+    .note-item {
+      border-radius: 12px;
+      background: hsl(0 0% 5.5%);
+      padding: 9px;
+    }
+
+    .note-item strong {
+      display: block;
+      margin-bottom: 3px;
+      font-size: 12px;
+    }
+
+    .agent-dock {
+      position: absolute;
+      right: 24px;
+      bottom: 24px;
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .agent-panel {
+      display: none;
+      width: 390px;
+      border: 1px solid hsl(24 88% 62% / 0.18);
+      border-radius: 18px;
+      background: hsl(0 0% 6.2% / 0.96);
+      box-shadow: var(--shadow-floating);
+      pointer-events: auto;
+      overflow: hidden;
+    }
+
+    .agent-panel.open {
+      display: block;
+      animation: panel-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .agent-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--glass-border);
+      padding: 10px 12px;
+    }
+
+    .agent-suggestions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 10px 12px 0;
+    }
+
+    .suggestion {
+      border: 1px solid var(--glass-border);
+      border-radius: 999px;
+      padding: 6px 8px;
+      color: var(--muted-foreground);
+      font-size: 11px;
+    }
+
+    .suggestion:hover {
+      border-color: hsl(24 88% 62% / 0.34);
+      color: var(--foreground);
+    }
+
+    .agent-input-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      padding: 10px 12px 12px;
+    }
+
+    .textarea {
+      min-height: 44px;
+      max-height: 100px;
+      resize: vertical;
+      padding: 9px 10px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .agent-button {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      border: 1px solid hsl(24 88% 62% / 0.24);
+      border-radius: 999px;
+      background: hsl(0 0% 6.2% / 0.94);
+      box-shadow: var(--shadow-floating);
+      padding: 0 12px 0 8px;
+      color: var(--foreground);
+      pointer-events: auto;
+    }
+
+    .agent-mark {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border-radius: 999px;
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-size: 11px;
+      font-weight: 780;
+    }
+
+    .agent-label {
+      font-size: 12px;
+      font-weight: 620;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @keyframes panel-in {
+      from {
+        opacity: 0;
+        transform: translateY(8px) scale(0.98);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @media (max-width: 1260px) {
+      .queue-layout {
+        grid-template-columns: minmax(450px, 1fr) 340px;
+      }
+
+      .review-layout {
+        grid-template-columns: 250px minmax(390px, 1fr) 258px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="titlebar">
+      <div class="app-icon">P</div>
+      <div class="titlebar-name">PersonAgent</div>
+      <div class="titlebar-local">.local</div>
+      <div class="window-controls" aria-hidden="true">
+        <span>-</span>
+        <span>□</span>
+        <span>x</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="app-icon">P</div>
+          <button class="workspace-button" type="button">
+            <span>PersonAgent</span>
+            <span class="chevron">⌄</span>
+          </button>
+          <button class="icon-button" type="button" aria-label="Collapse sidebar">‹</button>
+        </div>
+
+        <div class="sidebar-actions">
+          <button class="nav-item" type="button">
+            <span class="nav-icon">+</span>
+            <span>New Chat</span>
+          </button>
+          <button class="nav-item" type="button">
+            <span class="nav-icon">△</span>
+            <span>Lab</span>
+          </button>
+          <button class="nav-item active" type="button">
+            <span class="nav-icon">PR</span>
+            <span>Open PR</span>
+          </button>
+        </div>
+
+        <div class="section-label">CHATS</div>
+        <div class="empty-chats">No chats yet</div>
+        <div class="sidebar-spacer"></div>
+        <div class="sidebar-footer">
+          <span>›</span>
+          <span>MCP CONNECTIONS</span>
+          <span style="margin-left:auto">0</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="topbar">
+          <div class="breadcrumb">
+            <strong>Folder</strong>
+            <span>›</span>
+            <span id="breadcrumb-label">Pull Requests</span>
+          </div>
+          <div class="view-switch" aria-label="Prototype screen switch">
+            <button class="switch-button active" id="queueSwitch" type="button">Queue</button>
+            <button class="switch-button" id="reviewSwitch" type="button">Inside PR</button>
+          </div>
+        </div>
+
+        <section class="content">
+          <div class="screen active" id="queueScreen">
+            <div class="queue-layout">
+              <section class="panel queue-panel" aria-label="Pull request queue">
+                <div class="panel-header">
+                  <div class="panel-title">
+                    <div class="eyebrow">Open PR</div>
+                    <h1>Pull Requests</h1>
+                  </div>
+                  <div class="tabs" aria-label="Pull request filters">
+                    <button class="tab active" type="button">Open</button>
+                    <button class="tab" type="button">Review</button>
+                    <button class="tab" type="button">Draft</button>
+                    <button class="tab" type="button">Merged</button>
+                  </div>
+                </div>
+
+                <div class="search-row">
+                  <input class="input" value="" placeholder="Search PR title, branch, author, file..." aria-label="Search pull requests">
+                  <div class="select-like">PersonAgent / desktop-electron</div>
+                  <div class="select-like">Updated</div>
+                </div>
+
+                <div class="pr-list" id="prList"></div>
+              </section>
+
+              <aside class="panel preview-panel" aria-label="Pull request preview">
+                <div class="panel-header">
+                  <div class="panel-title">
+                    <div class="eyebrow">Preview</div>
+                    <h2 id="previewTitle">PR summary</h2>
+                  </div>
+                  <span class="chip primary" id="previewRisk">Risk</span>
+                </div>
+                <div class="preview-body">
+                  <div class="summary-block preview-title">
+                    <p id="previewDesc"></p>
+                    <div class="fact-list" id="previewFacts"></div>
+                    <div class="metric-grid">
+                      <div class="metric">
+                        <strong id="metricFiles">0</strong>
+                        <span>files</span>
+                      </div>
+                      <div class="metric">
+                        <strong id="metricChecks">0/0</strong>
+                        <span>checks</span>
+                      </div>
+                      <div class="metric">
+                        <strong id="metricComments">0</strong>
+                        <span>comments</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="summary-block">
+                    <h3>Changed file groups</h3>
+                    <div class="file-groups" id="previewGroups"></div>
+                  </div>
+
+                  <div class="summary-block">
+                    <h3>Review data</h3>
+                    <div class="file-groups" id="previewReviewData"></div>
+                  </div>
+                </div>
+                <div class="panel-footer">
+                  <button class="primary-button" id="startReview" type="button">Start review</button>
+                </div>
+              </aside>
+            </div>
+          </div>
+
+          <div class="screen" id="reviewScreen">
+            <div class="review-layout">
+              <aside class="panel file-panel" aria-label="Modified files">
+                <div class="panel-header">
+                  <div class="panel-title">
+                    <div class="eyebrow">Files</div>
+                    <h2>Review map</h2>
+                  </div>
+                  <span class="chip" id="fileProgress">0/0 done</span>
+                </div>
+                <div class="file-filter">
+                  <input class="input" placeholder="Find file or function..." aria-label="Find file">
+                  <div class="tabs">
+                    <button class="tab active" type="button">All</button>
+                    <button class="tab" type="button">Todo</button>
+                    <button class="tab" type="button">Done</button>
+                  </div>
+                </div>
+                <div class="file-list" id="fileList"></div>
+              </aside>
+
+              <section class="panel diff-panel" aria-label="Selected file diff">
+                <div class="review-titlebar">
+                  <button class="ghost-button" id="backToQueue" type="button">Back to PRs</button>
+                  <div class="title-text">
+                    <div class="eyebrow" id="reviewPrNumber">PR</div>
+                    <h1 id="reviewPrTitle">Pull request</h1>
+                  </div>
+                  <span class="chip success">AI context linked</span>
+                </div>
+                <div class="diff-toolbar">
+                  <div class="diff-path mono" id="activePath">file</div>
+                  <div style="display:flex;gap:6px">
+                    <span class="chip" id="activeStatus">Todo</span>
+                    <button class="ghost-button" type="button">Open full file</button>
+                  </div>
+                </div>
+                <div class="diff-body" id="diffBody">
+                  <div class="code-card">
+                    <div class="code-head">
+                      <span id="codeContext">Changed section</span>
+                      <span id="codeMeta">Diff metadata</span>
+                    </div>
+                    <div class="mono" id="codeLines"></div>
+                  </div>
+
+                  <div class="natural-card">
+                    <div class="natural-head">
+                      <div>
+                        <div class="eyebrow">Natural analysis</div>
+                        <h3 id="naturalTitle">File behavior</h3>
+                      </div>
+                      <span class="chip" id="analysisConfidence">LLM pass</span>
+                    </div>
+                    <div class="analysis-list" id="naturalAnalysis"></div>
+                  </div>
+
+                  <div class="pinned-context">
+                    <div class="pinned-head">
+                      <div>
+                        <div class="eyebrow">Pinned context</div>
+                        <h3>Files dropped into this viewer</h3>
+                      </div>
+                      <span class="chip" id="pinnedCount">0 pinned</span>
+                    </div>
+                    <div class="pinned-list" id="pinnedFiles"></div>
+                  </div>
+
+                  <div class="section-actions">
+                    <div>
+                      <h3>Section review checkpoint</h3>
+                      <p id="sectionCheckpoint">Current file is still waiting for review.</p>
+                    </div>
+                    <button class="done-button" id="markFileDone" type="button">Mark Done</button>
+                  </div>
+                </div>
+              </section>
+
+              <aside class="panel review-panel" aria-label="Review phases">
+                <div class="panel-header">
+                  <div class="panel-title">
+                    <div class="eyebrow">Timeline</div>
+                    <h2>Review phases</h2>
+                  </div>
+                  <button class="done-button" id="markPhaseDone" type="button">Done</button>
+                </div>
+                <div class="review-body">
+                  <div class="phase-list" id="phaseList"></div>
+
+                  <div class="review-note" id="reviewLiveData"></div>
+                </div>
+              </aside>
+            </div>
+          </div>
+
+          <div class="agent-dock">
+            <div class="agent-panel" id="agentPanel" aria-label="AI review assistant">
+              <div class="agent-header">
+                <div>
+                  <div class="eyebrow">AI Review Agent</div>
+                  <h2>Ask about the current PR context</h2>
+                </div>
+                <button class="icon-button" id="closeAgent" type="button" aria-label="Close agent">x</button>
+              </div>
+              <div class="agent-suggestions">
+                <button class="suggestion" type="button">Review this file for regressions</button>
+                <button class="suggestion" type="button">Find risky async flows</button>
+                <button class="suggestion" type="button">Check missing tests</button>
+                <button class="suggestion" type="button">Summarize unresolved findings</button>
+              </div>
+              <div class="agent-input-row">
+                <textarea class="textarea" id="agentInput" placeholder="Ask the agent to review X, inspect Y function, find errors, or compare this file with the PR scope."></textarea>
+                <button class="primary-button" type="button">Send</button>
+              </div>
+            </div>
+            <button class="agent-button" id="agentToggle" type="button">
+              <span class="agent-mark">AI</span>
+              <span class="agent-label">Review agent</span>
+            </button>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const prs = [
+      {
+        number: "#428",
+        title: "Add PR review workspace to Electron sidebar",
+        branch: "feature/pr-review-system",
+        base: "main",
+        state: "Open",
+        mergeable: "Blocked by 1 check",
+        commit: "a18f4c9",
+        author: "LB",
+        authorName: "Levy Bonito",
+        reviewers: ["frontend", "runtime"],
+        labels: ["desktop-electron", "review-ui", "ai-assist"],
+        status: "Needs review",
+        risk: "Medium",
+        checks: "9/10",
+        files: 18,
+        comments: 6,
+        created: "Today, 10:14",
+        updated: "12 min ago",
+        desc: "Introduces the Open PR surface, queue preview, file review map, and AI review assistant contract.",
+        reviewData: [
+          ["Requested reviewers", "frontend, runtime"],
+          ["CI", "9 passing, 1 waiting"],
+          ["Last commit", "a18f4c9"],
+          ["Review state", "No blocking findings yet"]
+        ],
+        groups: [
+          ["Sidebar entry", "2 files"],
+          ["PR queue UI", "5 files"],
+          ["Review workspace", "8 files"],
+          ["Tests and copy", "3 files"]
+        ]
+      },
+      {
+        number: "#427",
+        title: "Preserve stream order for grouped tool results",
+        branch: "fix/tool-event-order",
+        base: "main",
+        state: "Open",
+        mergeable: "Needs attention",
+        commit: "9bd210e",
+        author: "NM",
+        authorName: "Nadia Martins",
+        reviewers: ["chat-runtime"],
+        labels: ["streaming", "tools"],
+        status: "Open",
+        risk: "High",
+        checks: "7/8",
+        files: 11,
+        comments: 14,
+        created: "Today, 09:31",
+        updated: "31 min ago",
+        desc: "Keeps reasoning, tools, and final answer in backend emission order while grouped batches are running.",
+        reviewData: [
+          ["Requested reviewers", "chat-runtime"],
+          ["CI", "7 passing, 1 failed"],
+          ["Last commit", "9bd210e"],
+          ["Review state", "2 unresolved comments"]
+        ],
+        groups: [
+          ["Message feed", "4 files"],
+          ["Tool blocks", "3 files"],
+          ["Regression tests", "4 files"]
+        ]
+      },
+      {
+        number: "#426",
+        title: "Backfill unique session titles from transcript",
+        branch: "runtime/session-title-backfill",
+        base: "main",
+        state: "Draft",
+        mergeable: "Draft",
+        commit: "f72c6b1",
+        author: "AR",
+        authorName: "Ana Reis",
+        reviewers: ["backend"],
+        labels: ["sessions", "migration"],
+        status: "Draft",
+        risk: "Medium",
+        checks: "5/5",
+        files: 9,
+        comments: 2,
+        created: "Yesterday, 18:02",
+        updated: "1 hr ago",
+        desc: "Analyzes saved transcripts, repairs duplicated titles, and adds a small background refresh path.",
+        reviewData: [
+          ["Requested reviewers", "backend"],
+          ["CI", "5 passing"],
+          ["Last commit", "f72c6b1"],
+          ["Review state", "Draft review only"]
+        ],
+        groups: [
+          ["Backend title service", "3 files"],
+          ["Electron sidebar", "2 files"],
+          ["Migration tests", "4 files"]
+        ]
+      },
+      {
+        number: "#425",
+        title: "Soften composer shell and keep InputBar untouched",
+        branch: "design/composer-shell",
+        base: "main",
+        state: "Open",
+        mergeable: "Clean",
+        commit: "c0d31a7",
+        author: "JP",
+        authorName: "Joao Pereira",
+        reviewers: ["design"],
+        labels: ["ui-polish", "composer"],
+        status: "Open",
+        risk: "Low",
+        checks: "6/6",
+        files: 7,
+        comments: 1,
+        created: "Yesterday, 16:48",
+        updated: "2 hr ago",
+        desc: "Makes the composer feel floating while preserving the existing input control behavior and keyboard flow.",
+        reviewData: [
+          ["Requested reviewers", "design"],
+          ["CI", "6 passing"],
+          ["Last commit", "c0d31a7"],
+          ["Review state", "Ready for approval"]
+        ],
+        groups: [
+          ["Composer wrapper", "2 files"],
+          ["Design tokens", "2 files"],
+          ["Visual tests", "3 files"]
+        ]
+      }
+    ];
+
+    const files = [
+      {
+        group: "Sidebar and route",
+        path: "@desktop-electron/src/components/layout/sidebar.tsx",
+        lines: "+42 -4",
+        status: "progress",
+        owner: "layout",
+        changeType: "Navigation entry",
+        risk: "Medium",
+        context: "Hunk 108-119 / SidebarActions / +4 -0",
+        meta: "Adds the PR section route and active sidebar state",
+        checkpoint: "Confirm the new section does not disturb New Chat and Lab navigation.",
+        signals: ["Touches primary navigation", "Uses existing store section state", "Needs collapsed-sidebar parity"],
+        analysis: [
+          {
+            title: "SidebarActions routes into PR review",
+            lines: "108-117",
+            text: "The component reads the active section from the app store, creates an Open PR callback, and renders a sidebar row that becomes active when the PR section is selected.",
+            preview: "function SidebarActions() {\n  const section = useAppStore((state) => state.section);\n  const openPrReview = () => setSection(\"pullRequests\");\n  return <button ...><span>Open PR</span></button>;"
+          },
+          {
+            title: "Selection state is shared with the shell",
+            lines: "110-114",
+            text: "The same section value that drives Skills can drive Pull Requests, so the new entry should not need a parallel local state.",
+            preview: "const section = useAppStore((state) => state.section);\n<button className={navClass(section === \"pullRequests\")} ...>"
+          }
+        ],
+        code: [
+          ["108", " ", "function SidebarActions() {"],
+          ["109", " ", "  const setSection = useAppStore((state) => state.setSection);"],
+          ["110", "+", "  const section = useAppStore((state) => state.section);"],
+          ["111", "+", "  const openPrReview = () => setSection(\"pullRequests\");"],
+          ["112", " ", ""],
+          ["113", " ", "  return ("],
+          ["114", "+", "    <button className={navClass(section === \"pullRequests\")} onClick={openPrReview}>"],
+          ["115", "+", "      <GitPullRequest className=\"h-3.5 w-3.5\" />"],
+          ["116", "+", "      <span>Open PR</span>"],
+          ["117", "+", "    </button>"],
+          ["118", " ", "  );"],
+          ["119", " ", "}"]
+        ]
+      },
+      {
+        group: "PR queue",
+        path: "@desktop-electron/src/components/pr/pr-queue.tsx",
+        lines: "+214 -0",
+        status: "todo",
+        owner: "pr-ui",
+        changeType: "New component",
+        risk: "Medium",
+        context: "Hunk 31-37 / PullRequestQueue / +214 -0",
+        meta: "Builds queue, filters, selected row, and preview handoff",
+        checkpoint: "Check keyboard selection and preview refresh when switching rows.",
+        signals: ["New list surface", "Search and filters share local state", "Preview depends on selected PR"],
+        analysis: [
+          {
+            title: "Queue keeps selection outside the row",
+            lines: "31-36",
+            text: "PullRequestQueue receives the selected id and callback, then maps PR rows without each row owning independent selection state.",
+            preview: "export function PullRequestQueue({ prs, selectedId, onSelect }) {\n  return <section aria-label=\"Pull requests\">..."
+          },
+          {
+            title: "Preview data can stay live",
+            lines: "34-35",
+            text: "The selected PR object is passed to the preview panel, which makes branch, state, checks, labels, and changed groups update immediately.",
+            preview: "{prs.map((pr) => <PullRequestRow key={pr.id} pr={pr} />)}\n<PullRequestPreview pr={selected} />"
+          }
+        ],
+        code: [
+          ["31", "+", "export function PullRequestQueue({ prs, selectedId, onSelect }) {"],
+          ["32", "+", "  return <section aria-label=\"Pull requests\">"],
+          ["33", "+", "    <PullRequestFilters />"],
+          ["34", "+", "    {prs.map((pr) => <PullRequestRow key={pr.id} pr={pr} />)}"],
+          ["35", "+", "    <PullRequestPreview pr={selected} />"],
+          ["36", "+", "  </section>;"],
+          ["37", "+", "}"]
+        ]
+      },
+      {
+        group: "PR queue",
+        path: "@desktop-electron/src/components/pr/pr-preview.tsx",
+        lines: "+136 -0",
+        status: "todo",
+        owner: "pr-ui",
+        changeType: "Preview panel",
+        risk: "Low",
+        context: "Hunk 74-80 / PullRequestPreview / +136 -0",
+        meta: "Shows PR metadata, changed file groups, and review signals",
+        checkpoint: "Verify the preview removes static instructional copy and only shows PR data.",
+        signals: ["Branch/base metadata", "CI summary", "Reviewers and labels"],
+        analysis: [
+          {
+            title: "Preview derives grouped file data",
+            lines: "74-78",
+            text: "Changed files are summarized before rendering, letting the panel show the affected areas without exposing the full diff.",
+            preview: "const groups = summarizeChangedFiles(pr.files);\nconst risk = estimateReviewRisk(pr);\n<ChangedGroups groups={groups} />"
+          }
+        ],
+        code: [
+          ["74", "+", "const groups = summarizeChangedFiles(pr.files);"],
+          ["75", "+", "const risk = estimateReviewRisk(pr);"],
+          ["76", "+", "return <aside className=\"preview-panel\">"],
+          ["77", "+", "  <Summary pr={pr} risk={risk} />"],
+          ["78", "+", "  <ChangedGroups groups={groups} />"],
+          ["79", "+", "  <ReviewPhasePreview />"],
+          ["80", "+", "</aside>;"]
+        ]
+      },
+      {
+        group: "Review workspace",
+        path: "@desktop-electron/src/components/pr/pr-review-workspace.tsx",
+        lines: "+288 -0",
+        status: "todo",
+        owner: "pr-ui",
+        changeType: "Workspace layout",
+        risk: "High",
+        context: "Hunk 122-127 / ReviewLayout / +288 -0",
+        meta: "Connects file map, diff reader, natural analysis, and timeline",
+        checkpoint: "Validate drag/drop pinning, file progress, and small viewport density.",
+        signals: ["Three-column workspace", "Progress is file-based", "Pinned context can compare files"],
+        analysis: [
+          {
+            title: "Active file is the center of review context",
+            lines: "122-126",
+            text: "The workspace finds the selected file and passes it into the diff reader while the file map and timeline stay synchronized around progress.",
+            preview: "const activeFile = files.find((file) => file.path === activePath);\n<DiffReader file={activeFile} onDone={markFileDone} />"
+          }
+        ],
+        code: [
+          ["122", "+", "const activeFile = files.find((file) => file.path === activePath);"],
+          ["123", "+", "return <ReviewLayout>"],
+          ["124", "+", "  <FileReviewMap files={files} progress={progress} />"],
+          ["125", "+", "  <DiffReader file={activeFile} onDone={markFileDone} />"],
+          ["126", "+", "  <ReviewTimeline phases={phases} onDone={markPhaseDone} />"],
+          ["127", "+", "</ReviewLayout>;"]
+        ]
+      },
+      {
+        group: "Review workspace",
+        path: "@desktop-electron/src/components/pr/ai-review-agent.tsx",
+        lines: "+174 -0",
+        status: "todo",
+        owner: "agent-ui",
+        changeType: "Context bridge",
+        risk: "Medium",
+        context: "Hunk 51-54 / FloatingAgent / +174 -0",
+        meta: "Builds prompt context from PR, file, visible range, and phases",
+        checkpoint: "Confirm prompts include selected file and pinned context files.",
+        signals: ["Current file context", "Visible diff range", "Pinned files"],
+        analysis: [
+          {
+            title: "Agent context is built from visible review state",
+            lines: "51-54",
+            text: "The agent gets the selected PR, current file, visible range, and phase state, so targeted questions can reference the same file the reviewer is reading.",
+            preview: "const context = buildReviewContext({ pr, file, visibleRange, phases });\nreturn <FloatingAgent context={context}>..."
+          }
+        ],
+        code: [
+          ["51", "+", "const context = buildReviewContext({ pr, file, visibleRange, phases });"],
+          ["52", "+", "return <FloatingAgent context={context}>"],
+          ["53", "+", "  <ReviewPromptInput suggestions={suggestions} />"],
+          ["54", "+", "</FloatingAgent>;"]
+        ]
+      },
+      {
+        group: "Tests",
+        path: "@desktop-electron/src/components/pr/pr-review-workspace.test.tsx",
+        lines: "+96 -0",
+        status: "todo",
+        owner: "test",
+        changeType: "Interaction test",
+        risk: "Low",
+        context: "Hunk 18-22 / file progress test / +96 -0",
+        meta: "Covers PR entry, file progress, and agent entry point",
+        checkpoint: "Add a drag/drop pinned-file assertion before implementation.",
+        signals: ["Progress assertion", "Agent open path", "Missing drag/drop assertion"],
+        analysis: [
+          {
+            title: "Test records review progress behavior",
+            lines: "18-22",
+            text: "The test starts a review, marks a file done, and expects the progress badge to move from 0/6 to 1/6.",
+            preview: "await user.click(screen.getByRole(\"button\", { name: /Mark Done/i }));\nexpect(screen.getByText(\"1/6 done\")).toBeInTheDocument();"
+          }
+        ],
+        code: [
+          ["18", "+", "it(\"tracks file progress while navigating the PR\", async () => {"],
+          ["19", "+", "  await user.click(screen.getByRole(\"button\", { name: /Start review/i }));"],
+          ["20", "+", "  await user.click(screen.getByRole(\"button\", { name: /Mark Done/i }));"],
+          ["21", "+", "  expect(screen.getByText(\"1/6 done\")).toBeInTheDocument();"],
+          ["22", "+", "});"]
+        ]
+      }
+    ];
+
+    const phases = [
+      ["Scope", "18 files, 4 changed groups, 9/10 checks.", "done"],
+      ["Architecture", "2 shell boundaries, 1 navigation state path.", "progress"],
+      ["Files", "0 of 6 visible files completed.", "todo"],
+      ["Tests", "1 test file added, drag/drop coverage pending.", "todo"],
+      ["Decision", "0 blocking findings recorded.", "todo"]
+    ];
+
+    let selectedPrIndex = 0;
+    let selectedFileIndex = 0;
+    let selectedPhaseIndex = 1;
+    let pinnedFileIndexes = [];
+
+    const queueScreen = document.getElementById("queueScreen");
+    const reviewScreen = document.getElementById("reviewScreen");
+    const queueSwitch = document.getElementById("queueSwitch");
+    const reviewSwitch = document.getElementById("reviewSwitch");
+    const breadcrumbLabel = document.getElementById("breadcrumb-label");
+
+    function showScreen(name) {
+      const isQueue = name === "queue";
+      queueScreen.classList.toggle("active", isQueue);
+      reviewScreen.classList.toggle("active", !isQueue);
+      queueSwitch.classList.toggle("active", isQueue);
+      reviewSwitch.classList.toggle("active", !isQueue);
+      breadcrumbLabel.textContent = isQueue ? "Pull Requests" : `${prs[selectedPrIndex].number} Review`;
+      document.getElementById("agentToggle").classList.toggle("hidden", isQueue);
+      document.getElementById("agentPanel").classList.remove("open");
+    }
+
+    function renderPrList() {
+      const list = document.getElementById("prList");
+      list.innerHTML = prs.map((pr, index) => `
+        <button class="pr-row ${index === selectedPrIndex ? "active" : ""}" type="button" data-pr="${index}">
+          <span class="avatar">${pr.author}</span>
+          <span class="pr-main">
+            <span class="pr-title">
+              <strong>${pr.number} ${pr.title}</strong>
+              <span class="chip ${pr.status === "Draft" ? "warning" : "success"}">${pr.status}</span>
+            </span>
+            <span class="pr-desc">${pr.desc}</span>
+            <span class="pr-meta">
+              <span>${pr.branch}</span>
+              <span>${pr.files} files</span>
+              <span>${pr.checks} checks</span>
+              <span>${pr.comments} comments</span>
+              <span>${pr.updated}</span>
+            </span>
+          </span>
+          <span class="pr-score">
+            <span class="score-box">
+              <span class="score">${pr.risk === "High" ? "H" : pr.risk === "Medium" ? "M" : "L"}</span>
+              <span>${pr.risk} risk</span>
+            </span>
+          </span>
+        </button>
+      `).join("");
+
+      list.querySelectorAll("[data-pr]").forEach((button) => {
+        button.addEventListener("click", () => {
+          selectedPrIndex = Number(button.dataset.pr);
+          renderPrList();
+          renderPreview();
+          renderReviewHeader();
+        });
+      });
+    }
+
+    function renderPreview() {
+      const pr = prs[selectedPrIndex];
+      document.getElementById("previewTitle").textContent = `${pr.number} ${pr.title}`;
+      document.getElementById("previewDesc").textContent = pr.desc;
+      document.getElementById("previewRisk").textContent = `${pr.risk} risk`;
+      document.getElementById("metricFiles").textContent = pr.files;
+      document.getElementById("metricChecks").textContent = pr.checks;
+      document.getElementById("metricComments").textContent = pr.comments;
+      document.getElementById("previewFacts").innerHTML = [
+        ["Branch", pr.branch],
+        ["Base", pr.base],
+        ["State", pr.state],
+        ["Author", pr.authorName],
+        ["Labels", pr.labels.join(", ")],
+        ["Merge", pr.mergeable],
+        ["Created", pr.created],
+        ["Updated", pr.updated]
+      ].map(([label, value]) => `
+        <div class="fact-row"><span>${label}</span><span>${value}</span></div>
+      `).join("");
+      document.getElementById("previewGroups").innerHTML = pr.groups.map(([name, count]) => `
+        <div class="file-group"><strong>${name}</strong><span>${count}</span></div>
+      `).join("");
+      document.getElementById("previewReviewData").innerHTML = pr.reviewData.map(([name, value]) => `
+        <div class="file-group"><strong>${name}</strong><span>${value}</span></div>
+      `).join("");
+    }
+
+    function renderReviewHeader() {
+      const pr = prs[selectedPrIndex];
+      document.getElementById("reviewPrNumber").textContent = `${pr.number} / ${pr.branch}`;
+      document.getElementById("reviewPrTitle").textContent = pr.title;
+    }
+
+    function renderFiles() {
+      const list = document.getElementById("fileList");
+      const doneCount = files.filter((file) => file.status === "done").length;
+      document.getElementById("fileProgress").textContent = `${doneCount}/${files.length} done`;
+
+      let currentGroup = "";
+      list.innerHTML = files.map((file, index) => {
+        const groupMarkup = file.group !== currentGroup ? `<div class="file-section">${file.group}</div>` : "";
+        currentGroup = file.group;
+        return `${groupMarkup}
+          <button class="file-row ${index === selectedFileIndex ? "active" : ""}" type="button" data-file="${index}" draggable="true" aria-label="Open ${file.path}">
+            <span class="status-dot ${file.status}"></span>
+            <span class="drag-grip" aria-hidden="true">::</span>
+            <span class="file-name mono">${file.path.replace("@desktop-electron/src/components/", "")}</span>
+            <span class="file-lines mono">${file.lines}</span>
+          </button>`;
+      }).join("");
+
+      list.querySelectorAll("[data-file]").forEach((button) => {
+        button.addEventListener("dragstart", (event) => {
+          button.classList.add("dragging");
+          event.dataTransfer.setData("text/plain", button.dataset.file);
+          event.dataTransfer.effectAllowed = "copy";
+        });
+        button.addEventListener("dragend", () => {
+          button.classList.remove("dragging");
+        });
+        button.addEventListener("click", () => {
+          selectedFileIndex = Number(button.dataset.file);
+          if (files[selectedFileIndex].status === "todo") files[selectedFileIndex].status = "progress";
+          renderFiles();
+          renderDiff();
+        });
+      });
+    }
+
+    function renderDiff() {
+      const file = files[selectedFileIndex];
+      document.getElementById("activePath").textContent = file.path;
+      document.getElementById("activeStatus").textContent = file.status === "done" ? "Done" : file.status === "progress" ? "In progress" : "Todo";
+      document.getElementById("codeContext").textContent = file.context;
+      document.getElementById("codeMeta").textContent = file.meta;
+      document.getElementById("naturalTitle").textContent = `${file.changeType} / ${file.owner}`;
+      document.getElementById("analysisConfidence").textContent = `${file.risk} risk`;
+      document.getElementById("sectionCheckpoint").textContent = file.checkpoint;
+      document.getElementById("markFileDone").classList.toggle("done", file.status === "done");
+      document.getElementById("markFileDone").textContent = file.status === "done" ? "Done" : "Mark Done";
+      document.getElementById("codeLines").innerHTML = file.code.map(([line, type, code]) => {
+        const cls = type === "+" ? "add" : type === "-" ? "del" : "";
+        const sign = type === " " ? " " : type;
+        return `<div class="code-line ${cls}">
+          <span class="line-no">${line}</span>
+          <span class="line-code">${sign} ${escapeHtml(code)}</span>
+        </div>`;
+      }).join("");
+      document.getElementById("naturalAnalysis").innerHTML = file.analysis.map((item) => `
+        <div class="analysis-item">
+          <strong>${item.title}</strong>
+          <p>${item.text}</p>
+          <span class="line-ref">lines ${item.lines}<span class="line-preview mono">${escapeHtml(item.preview)}</span></span>
+        </div>
+      `).join("");
+      renderPinnedContext();
+      renderReviewLiveData();
+    }
+
+    function renderPinnedContext() {
+      const pinned = pinnedFileIndexes.map((index) => files[index]).filter(Boolean);
+      document.getElementById("pinnedCount").textContent = `${pinned.length} pinned`;
+      document.getElementById("pinnedFiles").innerHTML = pinned.length === 0
+        ? `<div class="pinned-empty">No pinned context files.</div>`
+        : pinned.map((file, position) => `
+          <div class="context-card">
+            <div>
+              <strong class="mono">${file.path.replace("@desktop-electron/src/components/", "")}</strong>
+              <span>${file.changeType} / ${file.lines} / ${file.signals[0]}</span>
+            </div>
+            <div style="display:flex; gap:6px">
+              <button class="ghost-button" type="button" data-open-pinned="${files.indexOf(file)}">Open</button>
+              <button class="icon-button" type="button" data-remove-pinned="${position}" aria-label="Remove pinned file">x</button>
+            </div>
+          </div>
+        `).join("");
+
+      document.querySelectorAll("[data-open-pinned]").forEach((button) => {
+        button.addEventListener("click", () => {
+          selectedFileIndex = Number(button.dataset.openPinned);
+          if (files[selectedFileIndex].status === "todo") files[selectedFileIndex].status = "progress";
+          renderFiles();
+          renderDiff();
+        });
+      });
+
+      document.querySelectorAll("[data-remove-pinned]").forEach((button) => {
+        button.addEventListener("click", () => {
+          pinnedFileIndexes.splice(Number(button.dataset.removePinned), 1);
+          renderPinnedContext();
+          renderReviewLiveData();
+        });
+      });
+    }
+
+    function renderReviewLiveData() {
+      const pr = prs[selectedPrIndex];
+      const file = files[selectedFileIndex];
+      const doneCount = files.filter((item) => item.status === "done").length;
+      document.getElementById("reviewLiveData").innerHTML = `
+        <div class="note-item">
+          <strong>Current file</strong>
+          <p class="mono">${file.path}</p>
+          <div class="fact-list">
+            <div class="fact-row"><span>Owner</span><span>${file.owner}</span></div>
+            <div class="fact-row"><span>Change</span><span>${file.changeType}</span></div>
+            <div class="fact-row"><span>Lines</span><span>${file.lines}</span></div>
+            <div class="fact-row"><span>Status</span><span>${file.status}</span></div>
+          </div>
+        </div>
+        <div class="note-item">
+          <strong>File signals</strong>
+          <div class="file-groups">
+            ${file.signals.map((signal) => `<div class="file-group"><strong>${signal}</strong><span>${file.risk} risk</span></div>`).join("")}
+          </div>
+        </div>
+        <div class="note-item">
+          <strong>PR state</strong>
+          <div class="fact-list">
+            <div class="fact-row"><span>Branch</span><span>${pr.branch}</span></div>
+            <div class="fact-row"><span>Base</span><span>${pr.base}</span></div>
+            <div class="fact-row"><span>Reviewers</span><span>${pr.reviewers.join(", ")}</span></div>
+            <div class="fact-row"><span>Progress</span><span>${doneCount}/${files.length} files done</span></div>
+            <div class="fact-row"><span>Pinned</span><span>${pinnedFileIndexes.length} context files</span></div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderPhases() {
+      const list = document.getElementById("phaseList");
+      list.innerHTML = phases.map((phase, index) => `
+        <button class="phase-row ${phase[2]} ${index === selectedPhaseIndex ? "active" : ""}" type="button" data-phase="${index}">
+          <span class="phase-number">${phase[2] === "done" ? "✓" : index + 1}</span>
+          <span class="phase-copy">
+            <strong>${phase[0]}</strong>
+            <span>${phase[1]}</span>
+          </span>
+          <span class="chip">${phase[2] === "done" ? "Done" : phase[2] === "progress" ? "Now" : "Todo"}</span>
+        </button>
+      `).join("");
+      list.querySelectorAll("[data-phase]").forEach((button) => {
+        button.addEventListener("click", () => {
+          selectedPhaseIndex = Number(button.dataset.phase);
+          if (phases[selectedPhaseIndex][2] === "todo") phases[selectedPhaseIndex][2] = "progress";
+          renderPhases();
+        });
+      });
+    }
+
+    function escapeHtml(value) {
+      return value.replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      }[char]));
+    }
+
+    document.getElementById("startReview").addEventListener("click", () => showScreen("review"));
+    document.getElementById("backToQueue").addEventListener("click", () => showScreen("queue"));
+    queueSwitch.addEventListener("click", () => showScreen("queue"));
+    reviewSwitch.addEventListener("click", () => showScreen("review"));
+
+    document.getElementById("markFileDone").addEventListener("click", () => {
+      files[selectedFileIndex].status = "done";
+      phases[2][1] = `${files.filter((file) => file.status === "done").length} of ${files.length} visible files completed.`;
+      renderFiles();
+      renderDiff();
+      renderPhases();
+    });
+
+    document.getElementById("markPhaseDone").addEventListener("click", () => {
+      phases[selectedPhaseIndex][2] = "done";
+      const next = phases.findIndex((phase, index) => index > selectedPhaseIndex && phase[2] !== "done");
+      if (next !== -1) {
+        selectedPhaseIndex = next;
+        phases[next][2] = phases[next][2] === "todo" ? "progress" : phases[next][2];
+      }
+      renderPhases();
+    });
+
+    const diffBody = document.getElementById("diffBody");
+    diffBody.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      diffBody.classList.add("drop-ready");
+    });
+    diffBody.addEventListener("dragleave", (event) => {
+      if (!diffBody.contains(event.relatedTarget)) diffBody.classList.remove("drop-ready");
+    });
+    diffBody.addEventListener("drop", (event) => {
+      event.preventDefault();
+      diffBody.classList.remove("drop-ready");
+      const index = Number(event.dataTransfer.getData("text/plain"));
+      if (!Number.isInteger(index) || !files[index]) return;
+      if (index !== selectedFileIndex && !pinnedFileIndexes.includes(index)) {
+        pinnedFileIndexes.push(index);
+      }
+      renderPinnedContext();
+      renderReviewLiveData();
+    });
+
+    const agentPanel = document.getElementById("agentPanel");
+    const agentInput = document.getElementById("agentInput");
+    document.getElementById("agentToggle").addEventListener("click", () => {
+      agentPanel.classList.toggle("open");
+      if (agentPanel.classList.contains("open")) agentInput.focus();
+    });
+    document.getElementById("closeAgent").addEventListener("click", () => agentPanel.classList.remove("open"));
+    document.querySelectorAll(".suggestion").forEach((button) => {
+      button.addEventListener("click", () => {
+        agentInput.value = button.textContent + " in " + files[selectedFileIndex].path;
+        agentInput.focus();
+      });
+    });
+
+    renderPrList();
+    renderPreview();
+    renderReviewHeader();
+    renderFiles();
+    renderDiff();
+    renderPhases();
+    showScreen("queue");
+  </script>
+</body>
+</html>

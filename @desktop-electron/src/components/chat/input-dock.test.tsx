@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getCodexAuthStatus, getGitStatus, gitCheckoutBranch, gitCreateBranch, listChatCommands, listGitBranches, listModels, logoutCodex } from "../../api/client";
+import { getCodexAuthStatus, getGitStatus, gitCheckoutBranch, gitCreateBranch, listChatCommands, listGitBranches, listModels, listSkills, listWorkspaceMentions, logoutCodex } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
 import type { ChatMessageUi, ToolBlockUi } from "../../types/chat";
@@ -22,6 +22,8 @@ vi.mock("../../api/client", () => ({
     is_dirty: false,
     remote_url: null,
   }),
+  getGitRecentActions: vi.fn().mockResolvedValue({ is_repo: false, actions: [], errors: [] }),
+  generateGitCommitMessage: vi.fn().mockResolvedValue({ message: "Update workspace" }),
   listGitBranches: vi.fn().mockResolvedValue({
     is_repo: false,
     current: "",
@@ -34,6 +36,8 @@ vi.mock("../../api/client", () => ({
   gitOpenPr: vi.fn(),
   listModels: vi.fn().mockResolvedValue([]),
   listChatCommands: vi.fn().mockResolvedValue([]),
+  listSkills: vi.fn().mockResolvedValue([]),
+  listWorkspaceMentions: vi.fn().mockResolvedValue([]),
   logoutCodex: vi.fn().mockResolvedValue({ authenticated: false, logout_started: true }),
   resolveBackendUrl: vi.fn().mockResolvedValue("http://localhost:8000"),
   streamChatCompletion: vi.fn(),
@@ -45,6 +49,8 @@ const originalSendMessage = useChatStore.getState().sendMessage;
 describe("InputDock", () => {
   const listModelsMock = vi.mocked(listModels);
   const listChatCommandsMock = vi.mocked(listChatCommands);
+  const listSkillsMock = vi.mocked(listSkills);
+  const listWorkspaceMentionsMock = vi.mocked(listWorkspaceMentions);
   const getCodexAuthStatusMock = vi.mocked(getCodexAuthStatus);
   const logoutCodexMock = vi.mocked(logoutCodex);
   const getGitStatusMock = vi.mocked(getGitStatus);
@@ -57,6 +63,10 @@ describe("InputDock", () => {
     listModelsMock.mockResolvedValue([]);
     listChatCommandsMock.mockReset();
     listChatCommandsMock.mockResolvedValue([]);
+    listSkillsMock.mockReset();
+    listSkillsMock.mockResolvedValue([]);
+    listWorkspaceMentionsMock.mockReset();
+    listWorkspaceMentionsMock.mockResolvedValue([]);
     getCodexAuthStatusMock.mockReset();
     getCodexAuthStatusMock.mockResolvedValue({
       authenticated: false,
@@ -385,11 +395,125 @@ describe("InputDock", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /send/i }));
 
-    expect(sendMessage).toHaveBeenCalledWith(expect.stringContaining("@Annotation#1"));
-    expect(sendMessage).toHaveBeenCalledWith(expect.stringContaining("Annotation:\nRewrite this guidance"));
-    expect(sendMessage).toHaveBeenCalledWith(expect.stringContaining("Selected lines:\n```markdown\n8: old guidance"));
-    expect(sendMessage).toHaveBeenCalledWith(expect.stringContaining("Request:\nApply with a concise tone"));
+    expect(sendMessage).toHaveBeenCalledWith(
+      "Apply with a concise tone",
+      undefined,
+      expect.objectContaining({
+        contextAttachments: [
+          expect.objectContaining({
+            type: "viewer_annotation",
+            label: "@Annotation#1",
+            file_path: "/home/levybonito/Projetos/MindFlow/AGENTS.md",
+            display_path: "AGENTS.md",
+            start_line: 8,
+            end_line: 24,
+            text: "Rewrite this guidance",
+          }),
+        ],
+      }),
+    );
+    const options = sendMessage.mock.calls[0][2];
+    expect(JSON.stringify(options)).not.toContain("Selected lines");
+    expect(JSON.stringify(options)).not.toContain("8: old guidance");
     expect(useChatStore.getState().composerAnnotations).toEqual([]);
+  });
+
+  it("turns @ file autocomplete selections into context attachments", async () => {
+    const sendMessage = vi.fn();
+    useAppStore.setState({ selectedWorkspace: "/workspace" });
+    useChatStore.setState({ sendMessage });
+    listWorkspaceMentionsMock.mockResolvedValue([
+      {
+        type: "file",
+        name: "app.ts",
+        path: "/workspace/src/app.ts",
+        display_path: "src/app.ts",
+        is_directory: false,
+        score: 1,
+      },
+    ]);
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    const input = screen.getByPlaceholderText(/ask the local agent/i);
+    fireEvent.change(input, { target: { value: "Review @app" } });
+
+    const suggestion = await screen.findByText("src/app.ts");
+    fireEvent.mouseDown(suggestion);
+
+    expect(screen.getByTestId("composer-mentions")).toBeInTheDocument();
+    expect(screen.getByText("@File")).toBeInTheDocument();
+    expect(input).toHaveValue("Review @src/app.ts ");
+
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "Review @src/app.ts",
+      undefined,
+      expect.objectContaining({
+        contextAttachments: [
+          expect.objectContaining({
+            type: "file",
+            label: "@File",
+            file_path: "/workspace/src/app.ts",
+            display_path: "src/app.ts",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("turns @ skill autocomplete selections into skill context attachments", async () => {
+    const sendMessage = vi.fn();
+    useAppStore.setState({ selectedWorkspace: "/workspace" });
+    useChatStore.setState({ sendMessage });
+    listSkillsMock.mockResolvedValue([
+      {
+        name: "Debug Root Cause",
+        invocation_name: "debug-root-cause",
+        slash_name: "/debug-root-cause",
+        description: "Investigate failures end to end",
+        source: "workspace",
+        path: "/workspace/.personagent/skills/debug-root-cause/SKILL.md",
+        enabled: true,
+        user_invocable: true,
+        model_invocable: true,
+        allowed_tools: [],
+        context: "inline",
+      },
+    ]);
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    const input = screen.getByPlaceholderText(/ask the local agent/i);
+    fireEvent.change(input, { target: { value: "Use @skill:debug" } });
+
+    const suggestion = await screen.findByText("@skill:debug-root-cause");
+    fireEvent.mouseDown(suggestion);
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "Use @skill:debug-root-cause",
+      undefined,
+      expect.objectContaining({
+        contextAttachments: [
+          expect.objectContaining({
+            type: "skill",
+            label: "@skill:debug-root-cause",
+            invocation_name: "debug-root-cause",
+            slash_name: "/debug-root-cause",
+          }),
+        ],
+      }),
+    );
   });
 
   it("lets the user remove a composer annotation before sending", () => {
@@ -482,6 +606,16 @@ describe("InputDock", () => {
           last_commit_subject: "api work",
         },
         {
+          name: "cascade/worktree",
+          kind: "local",
+          current: false,
+          upstream: null,
+          last_commit_iso: "2026-04-28T10:03:00Z",
+          last_commit_subject: "worktree branch",
+          worktree_path: "/home/levybonito/.windsurf/worktrees/WebPilot/WebPilot-aa41215c",
+          checked_out_elsewhere: true,
+        },
+        {
           name: "origin/preview",
           kind: "remote",
           current: false,
@@ -512,6 +646,9 @@ describe("InputDock", () => {
     expect(screen.getByText("Working tree has local changes. Checkout may fail if Git cannot preserve them.")).toBeInTheDocument();
     expect(screen.getByText("Remote")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /origin\/main/i })).not.toBeInTheDocument();
+    const lockedWorktreeBranch = screen.getByRole("button", { name: /cascade\/worktree/i });
+    expect(lockedWorktreeBranch).toBeDisabled();
+    expect(screen.getByText("In use: WebPilot/WebPilot-aa41215c")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /feature\/api/i }));
 

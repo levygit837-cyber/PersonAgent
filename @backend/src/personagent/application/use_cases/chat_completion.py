@@ -1,7 +1,8 @@
 """Caso de uso: Chat Completion."""
 
+import re
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -51,10 +52,12 @@ from personagent.domain.models.conversation import Conversation, Message, Role
 from personagent.domain.models.inference_result import GeneratedImage, InferenceResult, StreamChunk
 from personagent.domain.prompts.commands import (
     CommandRegistry,
+    CommandService,
     SlashCommandResolution,
     parse_slash_invocation,
 )
 from personagent.domain.prompts.compact import BASE_COMPACT_PROMPT
+from personagent.domain.prompts.context_attachments import resolve_context_attachments
 from personagent.domain.prompts.services import PromptBuilder, PromptContextAnalyzer
 from personagent.domain.prompts.services.prompt_builder import estimate_text_tokens
 from personagent.domain.prompts.skills import (
@@ -88,6 +91,8 @@ class _PromptPreparation:
     request: ChatRequestDTO
     slash_reminder: str | None = None
     slash_metadata: dict[str, Any] | None = None
+    context_reminders: list[str] = field(default_factory=list)
+    context_attachment_metadata: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ChatCompletionUseCase:
@@ -121,6 +126,7 @@ class ChatCompletionUseCase:
         self._prompt_builder = prompt_builder or PromptBuilder()
         self._prompt_context_analyzer = prompt_context_analyzer
         self._command_registry = command_registry or CommandRegistry()
+        self._command_service = CommandService(self._command_registry)
         self._session_memory_service = session_memory_service
         self._next_step_suggestion_service = next_step_suggestion_service
         self._session_title_service = session_title_service
@@ -143,7 +149,11 @@ class ChatCompletionUseCase:
         tools = self._resolve_tool_schemas(request)
 
         # Adiciona mensagem do usuário
-        user_msg = Message(role=Role.USER, content=request.message)
+        user_msg = Message(
+            role=Role.USER,
+            content=request.message,
+            metadata=self._user_message_metadata(preparation),
+        )
         conversation.add_message(user_msg)
 
         # Recall memórias relevantes
@@ -356,7 +366,11 @@ class ChatCompletionUseCase:
         tools = self._resolve_tool_schemas(request)
 
         if append_user_message:
-            user_msg = Message(role=Role.USER, content=request.message)
+            user_msg = Message(
+                role=Role.USER,
+                content=request.message,
+                metadata=self._user_message_metadata(preparation),
+            )
             conversation.add_message(user_msg)
 
         # Emite status para o frontend saber que está montando o prompt
@@ -802,6 +816,7 @@ class ChatCompletionUseCase:
                 "allowed_tools": request.allowed_tools,
                 "tool_context": request.tool_context,
                 "max_tool_iterations": request.max_tool_iterations,
+                "context_attachments": request.context_attachments,
             },
             "created_at": now_iso(),
         }
@@ -843,6 +858,7 @@ class ChatCompletionUseCase:
                 "allowed_tools": request.allowed_tools,
                 "tool_context": request.tool_context,
                 "max_tool_iterations": request.max_tool_iterations,
+                "context_attachments": request.context_attachments,
             },
             "created_at": now_iso(),
         }
@@ -915,14 +931,29 @@ class ChatCompletionUseCase:
         request: ChatRequestDTO,
         context_result: ContextBuildResult,
     ) -> _PromptPreparation:
+        workspace_root = context_result.system_context.workspace_root
+        context_cwd = context_result.system_context.cwd or workspace_root
+        attachment_context = resolve_context_attachments(
+            request.context_attachments,
+            workspace_root=workspace_root,
+            cwd=context_cwd,
+            extra_skill_roots=self._skill_roots(),
+        )
         parsed = parse_slash_invocation(request.message)
         if parsed is None:
-            return _PromptPreparation(request=request)
+            return _PromptPreparation(
+                request=request,
+                context_reminders=attachment_context.reminders,
+                context_attachment_metadata=attachment_context.metadata,
+            )
 
-        workspace_root = context_result.system_context.workspace_root
-        resolution = self._command_registry.resolve(request.message, workspace_root)
+        resolution = self._command_service.resolve_prompt_command(request.message, workspace_root)
         if resolution is not None:
-            return self._preparation_from_command(request, resolution)
+            return self._with_context_attachments(
+                self._preparation_from_command(request, resolution),
+                attachment_context.reminders,
+                attachment_context.metadata,
+            )
 
         skill = find_skill(
             parsed[0],
@@ -939,7 +970,19 @@ class ChatCompletionUseCase:
             ):
                 raise ValueError(f"Skill is disabled: /{parsed[0]}")
             if skill.user_invocable:
-                return self._preparation_from_skill(request, skill, parsed[1])
+                return self._with_context_attachments(
+                    self._preparation_from_skill(request, skill, parsed[1]),
+                    attachment_context.reminders,
+                    attachment_context.metadata,
+                )
+
+        builtin = self._command_service.resolve_builtin(request.message)
+        if builtin is not None:
+            return self._with_context_attachments(
+                self._preparation_from_builtin(request, builtin),
+                attachment_context.reminders,
+                attachment_context.metadata,
+            )
 
         raise ValueError(f"Unknown slash command: /{parsed[0]}")
 
@@ -959,6 +1002,26 @@ class ChatCompletionUseCase:
             request=prepared,
             slash_reminder=resolution.reminder(),
             slash_metadata=resolution.metadata(),
+        )
+
+    def _preparation_from_builtin(
+        self,
+        request: ChatRequestDTO,
+        resolution: Any,
+    ) -> _PromptPreparation:
+        command = resolution.command
+        prepared = self._apply_prompt_surface_overrides(
+            request,
+            allowed_tools=command.allowed_tools,
+            model=command.model,
+            effort=command.effort,
+        )
+        metadata = resolution.metadata()
+        metadata["source"] = "builtin"
+        return _PromptPreparation(
+            request=prepared,
+            slash_reminder=resolution.reminder(),
+            slash_metadata=metadata,
         )
 
     def _preparation_from_skill(
@@ -989,6 +1052,24 @@ class ChatCompletionUseCase:
             slash_reminder=reminder,
             slash_metadata=metadata,
         )
+
+    def _with_context_attachments(
+        self,
+        preparation: _PromptPreparation,
+        reminders: list[str],
+        metadata: list[dict[str, Any]],
+    ) -> _PromptPreparation:
+        preparation.context_reminders = list(preparation.context_reminders) + list(reminders)
+        preparation.context_attachment_metadata = list(metadata)
+        return preparation
+
+    def _user_message_metadata(self, preparation: _PromptPreparation) -> dict[str, Any]:
+        metadata: dict[str, Any] = {}
+        if preparation.slash_metadata:
+            metadata["slash_command"] = preparation.slash_metadata
+        if preparation.context_attachment_metadata:
+            metadata["context_attachments"] = preparation.context_attachment_metadata
+        return metadata
 
     def _apply_prompt_surface_overrides(
         self,
@@ -1197,12 +1278,42 @@ class ChatCompletionUseCase:
 
         if self._operational_memory_service is not None:
             try:
-                operational_memory = await self._operational_memory_service.recall_for_prompt(
-                    project_slug=project_slug,
-                    query=request.message,
-                    provider=request.provider,
-                    model=request.model,
+                detected_file_paths = _detect_memory_file_paths(request.message)
+                detected_source_types = _detect_memory_source_types(request.message)
+                operational_package = (
+                    await self._operational_memory_service.recall_package_for_prompt(
+                        project_slug=project_slug,
+                        query=request.message,
+                        provider=request.provider,
+                        model=request.model,
+                        conversation_id=str(conversation.id),
+                        workspace_root=workspace_root,
+                        source_types=detected_source_types,
+                        file_paths=detected_file_paths,
+                        context_window_tokens=self._context_window_tokens,
+                    )
                 )
+                conversation.metadata["_operational_memory_prompt"] = operational_package.metadata()
+                operational_memory = operational_package.formatted
+                if not operational_memory:
+                    operational_package = (
+                        await self._operational_memory_service.recall_package_for_prompt(
+                            project_slug=project_slug,
+                            query=request.message,
+                            provider=request.provider,
+                            model=request.model,
+                            conversation_id=str(conversation.id),
+                            workspace_root=workspace_root,
+                            source_types=detected_source_types,
+                            file_paths=detected_file_paths,
+                            latest_only=True,
+                            context_window_tokens=self._context_window_tokens,
+                        )
+                    )
+                    conversation.metadata["_operational_memory_prompt"] = (
+                        operational_package.metadata()
+                    )
+                    operational_memory = operational_package.formatted
                 if operational_memory:
                     formatted_memories.append(operational_memory)
             except Exception:
@@ -1342,6 +1453,8 @@ class ChatCompletionUseCase:
         runtime_reminders = []
         if preparation and preparation.slash_reminder:
             runtime_reminders.append(preparation.slash_reminder)
+        if preparation:
+            runtime_reminders.extend(preparation.context_reminders)
         built_prompt = await self._prompt_builder.build(
             context_result.system_context,
             context_result.user_context,
@@ -1377,6 +1490,7 @@ class ChatCompletionUseCase:
         final_prompt_tokens = estimate_text_tokens(system_prompt) + estimate_text_tokens(
             built_prompt.user_context_message or ""
         )
+        memory_metadata = conversation.metadata.get("_operational_memory_prompt") or {}
         return _PromptPackage(
             system_prompt=system_prompt,
             user_context_message=built_prompt.user_context_message,
@@ -1397,9 +1511,21 @@ class ChatCompletionUseCase:
                 "line_count": len(system_prompt.splitlines()),
                 "char_count": len(system_prompt),
                 "slash_command": preparation.slash_metadata if preparation else None,
+                "context_attachments": (
+                    preparation.context_attachment_metadata if preparation else []
+                ),
+                "context_attachment_count": (
+                    len(preparation.context_attachment_metadata) if preparation else 0
+                ),
                 "context_source": context_result.metadata.get("source"),
                 "prompt_tokens_estimated": final_prompt_tokens,
                 "prompt_build_duration_ms": built_prompt.build_duration_ms,
+                "memory_budget_tokens": memory_metadata.get("memory_budget_tokens"),
+                "memory_budget_used": memory_metadata.get("memory_budget_used"),
+                "memory_items_injected": memory_metadata.get("memory_items_injected"),
+                "memory_items_omitted": memory_metadata.get("memory_items_omitted"),
+                "memory_latency_ms": memory_metadata.get("memory_latency_ms"),
+                "memory_filters_applied": memory_metadata.get("memory_filters_applied"),
                 "has_custom_system_prompt": has_custom_system_prompt,
                 "custom_system_prompt_policy": "append_to_dynamic_system_prompt",
             },
@@ -1423,7 +1549,11 @@ class ChatCompletionUseCase:
         prompt_package: _PromptPackage,
         tools: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        messages = self._messages_with_prompt(conversation, prompt_package)
+        messages = self._messages_with_prompt(
+            conversation,
+            prompt_package,
+            include_reasoning_content=request.provider == "deepseek",
+        )
         estimated_tokens = self._estimate_request_tokens(messages, tools)
         metadata = {
             **prompt_package.metadata,
@@ -1439,7 +1569,11 @@ class ChatCompletionUseCase:
         if not compacted:
             return messages, metadata
 
-        messages = self._messages_with_prompt(conversation, prompt_package)
+        messages = self._messages_with_prompt(
+            conversation,
+            prompt_package,
+            include_reasoning_content=request.provider == "deepseek",
+        )
         estimated_tokens = self._estimate_request_tokens(messages, tools)
         metadata.update(
             {
@@ -1453,8 +1587,23 @@ class ChatCompletionUseCase:
         self,
         conversation: Conversation,
         prompt_package: _PromptPackage,
+        *,
+        include_reasoning_content: bool = False,
     ) -> list[dict[str, Any]]:
-        messages = conversation.get_messages_for_llm(prompt_package.system_prompt)
+        messages: list[dict[str, Any]] = []
+        if prompt_package.system_prompt:
+            messages.append({"role": "system", "content": prompt_package.system_prompt})
+        for message in conversation.messages:
+            rendered = message.to_dict()
+            reasoning_content = message.metadata.get("reasoning_content")
+            if (
+                include_reasoning_content
+                and message.role == Role.ASSISTANT
+                and isinstance(reasoning_content, str)
+                and reasoning_content
+            ):
+                rendered["reasoning_content"] = reasoning_content
+            messages.append(rendered)
         if not prompt_package.user_context_message:
             return messages
         insert_at = 1 if messages and messages[0].get("role") == "system" else 0
@@ -1794,6 +1943,32 @@ class ChatCompletionUseCase:
         if not any(_is_relative_to(resolved, root) for root in allowed_roots):
             raise ValueError(f"Tool path is outside configured roots: {raw_path}")
         return resolved
+
+
+_MEMORY_FILE_PATH_RE = re.compile(
+    r"(?:[\w.@+-]+/)+[\w.@+-]+\.(?:py|ts|tsx|js|jsx|json|md|toml|ya?ml|css|html|sql|rs|go)"
+)
+
+
+def _detect_memory_file_paths(message: str) -> list[str]:
+    return list(dict.fromkeys(match.group(0) for match in _MEMORY_FILE_PATH_RE.finditer(message)))
+
+
+def _detect_memory_source_types(message: str) -> list[str]:
+    normalized = message.lower()
+    source_types: list[str] = []
+    if re.search(r"\b(decis[aã]o|decis[õo]es|decision|decisions)\b", normalized):
+        source_types.extend(["decision"])
+    if re.search(r"\b(arquivo|arquivos|file|path|diff)\b", normalized):
+        source_types.extend(["file_state", "file_read", "file_created", "file_edited", "diff_applied"])
+    if re.search(r"\b(comando|command|shell|terminal)\b", normalized):
+        source_types.extend(["command_result", "command_executed"])
+    if re.search(r"\b(erro|error|falha|failure|solution|solu[cç][aã]o)\b", normalized):
+        source_types.extend(["error_solution", "error_found", "solution_attempted"])
+    if re.search(r"\b(resumo|summary|sess[aã]o|session)\b", normalized):
+        source_types.extend(["session_summary", "operational_summary"])
+    return list(dict.fromkeys(source_types))
+
 
 def _is_relative_to(path: Path, root: Path) -> bool:
     try:

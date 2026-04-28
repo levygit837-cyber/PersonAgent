@@ -3,7 +3,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from personagent.application.services.operational_memory import _should_recall_operational_memory
-from personagent.domain.memory.models.operational import RecallFinding
+from personagent.domain.memory.models.operational import (
+    MemoryContextBudget,
+    OperationalMemoryFilter,
+    RecallFinding,
+    StructuredMemoryItem,
+    StructuredMemoryType,
+)
 from personagent.domain.memory.services.operational_memory import (
     OperationalMemoryChunker,
     OperationalMemoryFormatter,
@@ -17,6 +23,7 @@ from personagent.infrastructure.persistence.operational_memory_repository import
     _overlap_coefficient,
     _semantic_signature,
     _semantic_term_set,
+    _structured_where_clause,
 )
 
 
@@ -75,6 +82,94 @@ def test_formatter_outputs_relevant_execution_memory_section() -> None:
     assert "Finding 1:" in formatted
     assert "src/agents/orchestrator.ts" in formatted
     assert "Source ids: chunk-1" in formatted
+
+
+def test_structured_formatter_applies_budget_and_never_outputs_raw_chunk() -> None:
+    budget = MemoryContextBudget(
+        total_tokens=160,
+        session_summary_tokens=40,
+        latest_decision_tokens=40,
+        fact_tokens=45,
+        evidence_tokens=35,
+        evidence_max_chars=40,
+    )
+    items = [
+        StructuredMemoryItem(
+            type=StructuredMemoryType.FACT,
+            summary="Operational fact: indexed structured memory, not raw chunk.",
+            evidence=["raw chunk full body should be truncated away " * 20],
+            paths=["src/memory.py"],
+            source_ids=["structured-1"],
+            score=1.0,
+        ),
+        StructuredMemoryItem(
+            type=StructuredMemoryType.FACT,
+            summary="Operational fact: second item exceeds tiny group budget.",
+            evidence=["extra evidence"],
+            source_ids=["structured-2"],
+            score=0.9,
+        ),
+    ]
+
+    formatted, used_tokens, omitted, selected = OperationalMemoryFormatter.format_structured_items(
+        items,
+        budget=budget,
+    )
+
+    assert "# Relevant Execution Memory" in formatted
+    assert "raw chunk full body should be truncated away" not in formatted
+    assert used_tokens <= budget.total_tokens
+    assert len(selected) == 1
+    assert omitted == 1
+
+
+def test_structured_filter_builds_pre_ann_predicates() -> None:
+    filters = OperationalMemoryFilter(
+        conversation_id="018f9f1e-1111-7222-8333-aaaaaaaaaaaa",
+        workspace_root="/repo",
+        source_types=["file_state", "decision"],
+        file_paths=["src/app.py"],
+        latest_only=True,
+        active_only=True,
+    )
+    params: dict[str, object] = {}
+
+    clause = _structured_where_clause("smi", filters, params)
+
+    assert "smi.conversation_id = :conversation_id" in clause
+    assert "smi.workspace_root = :workspace_root" in clause
+    assert "smi.source_type IN (:source_type_0, :source_type_1)" in clause
+    assert "smi.primary_path IN (:file_path_0)" in clause
+    assert "smi.is_latest = true" in clause
+    assert "smi.status = 'active'" in clause
+    assert params["workspace_root"] == "/repo"
+
+
+def test_structured_file_path_filter_matches_relative_and_absolute_paths() -> None:
+    filters = OperationalMemoryFilter(
+        workspace_root="/repo",
+        file_paths=["/repo/docs/scale-runs/T023-tool-loop-limit-session.md"],
+    )
+    params: dict[str, object] = {}
+
+    clause = _structured_where_clause("smi", filters, params)
+
+    assert "smi.primary_path IN (:file_path_0)" in clause
+    assert "smi.primary_path IN (:file_path_0_variant_0)" in clause
+    assert "jsonb_array_elements_text(smi.paths)" in clause
+    assert params["file_path_0"] == "/repo/docs/scale-runs/T023-tool-loop-limit-session.md"
+    assert params["file_path_0_variant_0"] == "docs/scale-runs/T023-tool-loop-limit-session.md"
+
+
+def test_structured_file_path_filter_matches_absolute_stored_path_suffix() -> None:
+    filters = OperationalMemoryFilter(file_paths=["docs/scale-runs/T023-tool-loop-limit-session.md"])
+    params: dict[str, object] = {}
+
+    clause = _structured_where_clause("smi", filters, params)
+
+    assert "smi.primary_path LIKE :file_path_0_suffix_0" in clause
+    assert "memory_path.path LIKE :file_path_0_suffix_0" in clause
+    assert params["file_path_0_suffix_0"] == "%/docs/scale-runs/T023-tool-loop-limit-session.md"
 
 
 def test_repository_excerpt_prefers_query_context_inside_long_chunk() -> None:
