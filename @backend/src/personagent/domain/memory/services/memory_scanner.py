@@ -1,10 +1,10 @@
-"""Serviço de scan e parse de arquivos de memória.
+"""Service for scanning and parsing memory files.
 
-Responsável por:
-- Escaniar diretórios de memória
-- Parsear frontmatter YAML de arquivos .md
-- Validar estrutura dos arquivos
-- Extrair metadados (MemoryHeader)
+Responsible for:
+- Scanning memory directories
+- Parsing YAML frontmatter from .md files
+- Validating file structure
+- Extracting metadata (MemoryHeader)
 """
 
 from __future__ import annotations
@@ -18,24 +18,24 @@ from personagent.domain.memory.models.memory_file import MemoryFile, MemoryHeade
 from personagent.domain.memory.models.memory_types import MemoryScope, MemoryType
 
 
-# Regex para extrair frontmatter YAML entre --- delimiters
-# Usa lookbehind para garantir que é início de linha, e limita a 2000 chars
+# Regex for extracting YAML frontmatter between --- delimiters.
+# Uses lookbehind to ensure line start and limits matches to 2000 chars.
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
-# Regex mais seguro: só matcha frontmatter no início do arquivo
+# Safer regex: only matches frontmatter at the start of the file.
 _FRONTMATTER_RE_SAFE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
 
-# Regex para validar nome snake_case
+# Regex for validating snake_case names.
 _SNAKE_CASE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 class FrontmatterParseError(Exception):
-    """Erro ao parsear frontmatter de um arquivo de memória."""
+    """Error while parsing frontmatter from a memory file."""
 
     pass
 
 
 class MemoryScanner:
-    """Escaneia e parseia arquivos de memória no filesystem."""
+    """Scan and parse memory files from the filesystem."""
 
     def __init__(self, max_files: int = 200) -> None:
         self.max_files = max_files
@@ -44,13 +44,13 @@ class MemoryScanner:
         self,
         memory_dir: Path,
     ) -> list[MemoryHeader]:
-        """Escaneia um diretório e retorna headers de todos os .md válidos.
+        """Scan a directory and return headers for all valid .md files.
 
         Args:
-            memory_dir: Diretório a escanear.
+            memory_dir: Directory to scan.
 
         Returns:
-            Lista de MemoryHeader ordenada por mtime (mais recente primeiro).
+            List of MemoryHeader values ordered by mtime, newest first.
         """
         if not memory_dir.exists():
             return []
@@ -63,8 +63,8 @@ class MemoryScanner:
         )
 
         for file_path in md_files[: self.max_files]:
-            # Pula subdiretórios de logs (logs são append-only, não entram no índice)
-            # Pula subdiretórios de logs (logs são append-only, não entram no índice)
+            # Skip log subdirectories; logs are append-only and are not indexed.
+            # Skip log subdirectories; logs are append-only and are not indexed.
             rel_parts = file_path.relative_to(memory_dir).parts
             if len(rel_parts) > 1 and rel_parts[0] == "logs":
                 continue
@@ -75,13 +75,13 @@ class MemoryScanner:
         return headers
 
     def _parse_header_only(self, file_path: Path) -> MemoryHeader | None:
-        """Extrai apenas o header (frontmatter) de um arquivo .md.
+        """Extract only the header/frontmatter from an .md file.
 
         Args:
-            file_path: Path do arquivo.
+            file_path: File path.
 
         Returns:
-            MemoryHeader ou None se o arquivo for inválido.
+            MemoryHeader or None when the file is invalid.
         """
         try:
             raw = file_path.read_text(encoding="utf-8")
@@ -91,10 +91,10 @@ class MemoryScanner:
 
         match = _FRONTMATTER_RE_SAFE.match(raw)
         if not match:
-            # Tenta regex fallback para compatibilidade
+            # Try the fallback regex for compatibility.
             match = _FRONTMATTER_RE.match(raw)
         if not match:
-            # Arquivo sem frontmatter — trata como inválido para o sistema
+            # Files without frontmatter are invalid for this system.
             return None
 
         try:
@@ -118,16 +118,16 @@ class MemoryScanner:
         max_bytes: int = 25_000,
         scope: MemoryScope = MemoryScope.PRIVATE,
     ) -> MemoryFile | None:
-        """Parseia um arquivo de memória completo.
+        """Parse a complete memory file.
 
         Args:
-            file_path: Path do arquivo.
-            max_lines: Máximo de linhas do corpo.
-            max_bytes: Máximo de bytes do conteúdo.
-            scope: Escopo da memória.
+            file_path: File path.
+            max_lines: Maximum number of body lines.
+            max_bytes: Maximum content bytes.
+            scope: Memory scope.
 
         Returns:
-            MemoryFile ou None se inválido.
+            MemoryFile or None when invalid.
         """
         try:
             raw = file_path.read_text(encoding="utf-8")
@@ -178,19 +178,19 @@ class MemoryScanner:
         )
 
     def _parse_yaml(self, yaml_text: str) -> dict[str, Any]:
-        """Parseia um bloco YAML simples (apenas pares chave: valor).
+        """Parse a simple YAML block with key/value pairs only.
 
-        Suporta valores com aspas aninhadas preservando-as.
-        Não suporta listas ou nested maps.
+        Supports nested quoted values and preserves them.
+        Does not support lists or nested maps.
 
         Args:
-            yaml_text: Texto YAML do frontmatter.
+            yaml_text: Frontmatter YAML text.
 
         Returns:
-            Dict com os valores parseados.
+            Dict with parsed values.
 
         Raises:
-            FrontmatterParseError: Se o YAML for inválido.
+            FrontmatterParseError: If the YAML is invalid.
         """
         result: dict[str, Any] = {}
         for line in yaml_text.split("\n"):
@@ -202,7 +202,7 @@ class MemoryScanner:
             key, value = line.split(":", 1)
             key = key.strip()
             value = value.strip()
-            # Remove aspas externas mas preserva internas
+            # Remove external quotes but preserve internal quotes.
             if len(value) >= 2:
                 if (value.startswith('"') and value.endswith('"')) or \
                    (value.startswith("'") and value.endswith("'")):
@@ -211,7 +211,7 @@ class MemoryScanner:
         return result
 
     def _parse_memory_type(self, raw: str | None) -> MemoryType | None:
-        """Converte string para MemoryType."""
+        """Convert a string to MemoryType."""
         if not raw:
             return None
         try:
@@ -220,33 +220,33 @@ class MemoryScanner:
             return None
 
     def validate_name(self, name: str) -> bool:
-        """Valida se um nome de memória segue o padrão snake_case."""
+        """Validate whether a memory name follows the snake_case pattern."""
         return bool(_SNAKE_CASE_RE.match(name))
 
     def build_manifest(
         self,
         headers: list[MemoryHeader],
     ) -> str:
-        """Constroi o manifesto de memórias para o LLM selector.
+        """Build the memory manifest for the LLM selector.
 
-        Formato: "- [type] filename (timestamp): description"
+        Format: "- [type] filename (timestamp): description"
 
         Args:
-            headers: Lista de headers de memória.
+            headers: List of memory headers.
 
         Returns:
-            String formatada com o manifesto.
+            Formatted manifest string.
         """
         lines: list[str] = []
         for h in headers:
             mtype = h.memory_type.value if h.memory_type else "unknown"
-            desc = h.description or "(sem descrição)"
+            desc = h.description or "(no description)"
             age = self._format_age(h.mtime_ms)
             lines.append(f"- [{mtype}] {h.filename} ({age}): {desc}")
         return "\n".join(lines)
 
     def _format_age(self, mtime_ms: int) -> str:
-        """Formata o timestamp como idade relativa."""
+        """Format a timestamp as relative age."""
         now = datetime.now(timezone.utc).timestamp() * 1000
         diff_ms = now - mtime_ms
         diff_hours = diff_ms / (1000 * 3600)

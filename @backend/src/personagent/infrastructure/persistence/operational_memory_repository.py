@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from personagent.domain.memory.models.operational import (
@@ -186,7 +186,15 @@ class OperationalMemoryRepository:
         started = time.perf_counter()
         filters = filters or {}
         async with self._session_factory() as session:
-            result = await session.execute(
+            candidate_limit = int(filters.get("candidate_limit") or 500)
+            ann_ids = await self._ann_candidate_chunk_ids(
+                session=session,
+                project_slug=project_slug,
+                query_embedding=query_embedding,
+                limit=int(filters.get("ann_candidate_limit") or max(candidate_limit, top_k * 40)),
+            )
+
+            recent_result = await session.execute(
                 select(
                     OperationalMemoryChunkORM,
                     OperationalMemoryEventORM,
@@ -204,12 +212,35 @@ class OperationalMemoryRepository:
                 )
                 .where(OperationalMemoryChunkORM.project_slug == project_slug)
                 .order_by(desc(OperationalMemoryChunkORM.created_at))
-                .limit(int(filters.get("candidate_limit") or 500))
+                .limit(candidate_limit)
             )
-            candidates = [
-                StoredMemoryChunk(chunk=row[0], event=row[1], embedding=row[2])
-                for row in result.all()
-            ]
+            candidates = _rows_to_candidates(recent_result.all())
+            seen_chunk_ids = {candidate.chunk.id for candidate in candidates}
+
+            if ann_ids:
+                ann_result = await session.execute(
+                    select(
+                        OperationalMemoryChunkORM,
+                        OperationalMemoryEventORM,
+                        MemoryEmbeddingORM.embedding,
+                    )
+                    .join(
+                        OperationalMemoryEventORM,
+                        OperationalMemoryChunkORM.event_id == OperationalMemoryEventORM.id,
+                        isouter=True,
+                    )
+                    .join(
+                        MemoryEmbeddingORM,
+                        OperationalMemoryChunkORM.id == MemoryEmbeddingORM.chunk_id,
+                        isouter=True,
+                    )
+                    .where(OperationalMemoryChunkORM.id.in_(ann_ids))
+                )
+                for candidate in _rows_to_candidates(ann_result.all()):
+                    if candidate.chunk.id in seen_chunk_ids:
+                        continue
+                    candidates.append(candidate)
+                    seen_chunk_ids.add(candidate.chunk.id)
 
             active_decisions = (
                 await session.execute(
@@ -223,8 +254,13 @@ class OperationalMemoryRepository:
                 )
             ).scalars().all()
 
+            query_terms = _terms(query)
             scored = self._score_candidates(query, candidates, query_embedding)
-            findings = self._to_findings(scored[: max(1, top_k)], active_decisions)
+            findings = self._to_findings(
+                scored[: max(1, top_k)],
+                active_decisions,
+                query_terms=query_terms,
+            )
             latency_ms = int((time.perf_counter() - started) * 1000)
             session.add(
                 MemoryRecallLogORM(
@@ -244,6 +280,39 @@ class OperationalMemoryRepository:
             )
             await session.commit()
         return findings
+
+    async def _ann_candidate_chunk_ids(
+        self,
+        *,
+        session: Any,
+        project_slug: str,
+        query_embedding: list[float] | None,
+        limit: int,
+    ) -> list[UUID]:
+        if not query_embedding or len(query_embedding) != 4096:
+            return []
+        try:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT me.chunk_id
+                    FROM memory_embeddings me
+                    WHERE me.project_slug = :project_slug
+                      AND me.dimensions = 4096
+                    ORDER BY ((subvector(me.embedding, 1, 2000))::vector(2000))
+                      <=> ((subvector(CAST(:query_vector AS vector(4096)), 1, 2000))::vector(2000))
+                    LIMIT :limit
+                    """
+                ),
+                {
+                    "project_slug": project_slug,
+                    "query_vector": _vector_literal(query_embedding),
+                    "limit": max(1, limit),
+                },
+            )
+        except Exception:
+            return []
+        return [row[0] for row in result.all()]
 
     async def stats(self, project_slug: str) -> dict[str, Any]:
         async with self._session_factory() as session:
@@ -346,6 +415,8 @@ class OperationalMemoryRepository:
         self,
         candidates: list[StoredMemoryChunk],
         active_decisions: list[MemoryDecisionORM],
+        *,
+        query_terms: set[str] | None = None,
     ) -> list[RecallFinding]:
         findings: list[RecallFinding] = []
         decision_texts = [
@@ -361,7 +432,7 @@ class OperationalMemoryRepository:
             event_type = event.event_type if event else candidate.chunk.source_type
             tool_name = f" via {event.tool_name}" if event and event.tool_name else ""
             path_text = f" em {path}" if path else ""
-            excerpt = _excerpt(candidate.chunk.content)
+            excerpt = _excerpt(candidate.chunk.content, query_terms=query_terms)
             finding = f"Evento operacional `{event_type}`{tool_name}{path_text}: {excerpt}"
             cautions: list[str] = []
             if event and event.error:
@@ -393,6 +464,34 @@ def _uuid_or_none(value: str | UUID | None) -> UUID | None:
         return None
 
 
+def _embedding_to_list(value: Any) -> list[float] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [float(item) for item in value]
+    to_list = getattr(value, "to_list", None)
+    if callable(to_list):
+        return [float(item) for item in to_list()]
+    to_numpy = getattr(value, "to_numpy", None)
+    if callable(to_numpy):
+        return [float(item) for item in to_numpy().tolist()]
+    try:
+        return [float(item) for item in value]
+    except TypeError:
+        return None
+
+
+def _rows_to_candidates(rows: list[Any]) -> list[StoredMemoryChunk]:
+    return [
+        StoredMemoryChunk(chunk=row[0], event=row[1], embedding=_embedding_to_list(row[2]))
+        for row in rows
+    ]
+
+
+def _vector_literal(values: list[float]) -> str:
+    return "[" + ",".join(f"{value:.8g}" for value in values) + "]"
+
+
 def _terms(text: str) -> set[str]:
     return {
         term.lower()
@@ -420,8 +519,22 @@ def _event_type_boost(event_type: str) -> float:
     return 0.1
 
 
-def _excerpt(text: str, limit: int = 420) -> str:
+def _excerpt(text: str, limit: int = 420, query_terms: set[str] | None = None) -> str:
     compact = " ".join(text.split())
     if len(compact) <= limit:
         return compact
-    return f"{compact[: limit - 3]}..."
+    if query_terms:
+        lower = compact.lower()
+        positions = [lower.find(term) for term in query_terms if term and lower.find(term) >= 0]
+        if positions:
+            first_match = min(positions)
+            start = max(0, first_match - max(40, limit // 5))
+            end = min(len(compact), start + limit)
+            if end - start < limit:
+                start = max(0, end - limit)
+            prefix = "..." if start > 0 else ""
+            suffix = "..." if end < len(compact) else ""
+            return f"{prefix}{compact[start:end]}{suffix}"
+    head_size = max(120, limit // 2 - 3)
+    tail_size = max(120, limit - head_size - 5)
+    return f"{compact[:head_size]} ... {compact[-tail_size:]}"

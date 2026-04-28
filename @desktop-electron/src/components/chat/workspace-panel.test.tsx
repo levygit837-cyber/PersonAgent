@@ -64,7 +64,7 @@ describe("WorkspacePanel", () => {
 
     renderWorkspacePanel("/workspaces/Eval");
 
-    expect(await screen.findByText("A listagem recebida não pertence ao workspace ativo.")).toBeInTheDocument();
+    expect(await screen.findByText("The received listing does not belong to the active workspace.")).toBeInTheDocument();
     expect(screen.queryByText("webpilot.ts")).not.toBeInTheDocument();
   });
 

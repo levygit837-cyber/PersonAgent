@@ -1,4 +1,4 @@
-"""Rotas para persistência dos grafos do Lab."""
+"""Routes for Lab graph persistence."""
 
 from collections.abc import Sequence
 from datetime import datetime
@@ -18,21 +18,21 @@ DB_SESSION_DEPENDENCY = Depends(get_db)
 
 
 class LabGraphCreateRequest(BaseModel):
-    """Payload para criar um grafo do Lab."""
+    """Payload for creating a Lab graph."""
 
     title: str = Field(default="Untitled Lab Graph", min_length=1, max_length=255)
     graph: dict[str, Any] = Field(default_factory=dict)
 
 
 class LabGraphUpdateRequest(BaseModel):
-    """Payload para atualizar um grafo do Lab."""
+    """Payload for updating a Lab graph."""
 
     title: str | None = Field(default=None, min_length=1, max_length=255)
     graph: dict[str, Any] | None = None
 
 
 class LabGraphResponse(BaseModel):
-    """Resposta completa de um grafo do Lab."""
+    """Complete Lab graph response."""
 
     id: str
     title: str
@@ -42,7 +42,7 @@ class LabGraphResponse(BaseModel):
 
 
 class LabGraphStore(Protocol):
-    """Contrato de persistência dos grafos do Lab."""
+    """Persistence contract for Lab graphs."""
 
     async def list(self, limit: int, offset: int) -> Sequence[LabGraphORM]: ...
 
@@ -60,7 +60,7 @@ class LabGraphStore(Protocol):
 
 
 class SqlAlchemyLabGraphStore:
-    """Persistência de grafos do Lab com SQLAlchemy."""
+    """Lab graph persistence with SQLAlchemy."""
 
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -110,7 +110,7 @@ class SqlAlchemyLabGraphStore:
 async def get_lab_graph_store(
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> LabGraphStore:
-    """Dependency para obter a store de grafos do Lab."""
+    """Dependency for obtaining the Lab graph store."""
 
     return SqlAlchemyLabGraphStore(session)
 
@@ -119,7 +119,7 @@ LAB_GRAPH_STORE_DEPENDENCY = Depends(get_lab_graph_store)
 
 
 def serialize_lab_graph(graph: LabGraphORM) -> LabGraphResponse:
-    """Serializa um grafo do Lab para resposta HTTP."""
+    """Serialize a Lab graph into an HTTP response."""
 
     created_at = graph.created_at or datetime.now()
     updated_at = graph.updated_at or created_at
@@ -138,7 +138,7 @@ async def list_lab_graphs(
     offset: int = 0,
     store: LabGraphStore = LAB_GRAPH_STORE_DEPENDENCY,
 ) -> list[LabGraphResponse]:
-    """Lista grafos do Lab."""
+    """List Lab graphs."""
 
     graphs = await store.list(limit=limit, offset=offset)
     return [serialize_lab_graph(graph) for graph in graphs]
@@ -149,7 +149,7 @@ async def create_lab_graph(
     request: LabGraphCreateRequest,
     store: LabGraphStore = LAB_GRAPH_STORE_DEPENDENCY,
 ) -> LabGraphResponse:
-    """Cria um grafo do Lab."""
+    """Create a Lab graph."""
 
     graph = await store.create(request)
     return serialize_lab_graph(graph)
@@ -160,7 +160,7 @@ async def get_lab_graph(
     graph_id: UUID,
     store: LabGraphStore = LAB_GRAPH_STORE_DEPENDENCY,
 ) -> LabGraphResponse:
-    """Carrega um grafo completo do Lab."""
+    """Load a complete Lab graph."""
 
     graph = await store.get(graph_id)
     if graph is None:
@@ -174,7 +174,7 @@ async def update_lab_graph(
     request: LabGraphUpdateRequest,
     store: LabGraphStore = LAB_GRAPH_STORE_DEPENDENCY,
 ) -> LabGraphResponse:
-    """Atualiza o documento completo de um grafo do Lab."""
+    """Update the complete document for a Lab graph."""
 
     graph = await store.update(graph_id, request)
     if graph is None:
@@ -187,7 +187,7 @@ async def delete_lab_graph(
     graph_id: UUID,
     store: LabGraphStore = LAB_GRAPH_STORE_DEPENDENCY,
 ) -> dict[str, bool]:
-    """Remove um grafo do Lab."""
+    """Delete a Lab graph."""
 
     deleted = await store.delete(graph_id)
     if not deleted:

@@ -2,6 +2,7 @@
 
 import uuid
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -15,7 +16,7 @@ class ConversationORM(Base):
     __tablename__ = "conversations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    title = Column(String(255), nullable=False, default="Nova Conversa")
+    title = Column(String(255), nullable=False, default="New Chat")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     model_config_id = Column(String(50), default="default")
@@ -331,13 +332,7 @@ class OperationalMemoryChunkORM(Base):
 
 
 class MemoryEmbeddingORM(Base):
-    """Embedding vectors for operational memory chunks.
-
-    The vector is stored as JSONB in v1 so the application does not require the
-    Python pgvector package at import time. Database init still attempts to
-    enable the pgvector extension; a later migration can move this column to a
-    native vector type once the extension is present in every environment.
-    """
+    """Embedding vectors for operational memory chunks."""
 
     __tablename__ = "memory_embeddings"
 
@@ -350,7 +345,7 @@ class MemoryEmbeddingORM(Base):
     project_slug = Column(Text, nullable=False)
     embedding_model = Column(Text, nullable=False)
     dimensions = Column(Integer, nullable=False)
-    embedding = Column(JSONB, nullable=False)
+    embedding = Column(Vector(4096), nullable=False)
     content_hash = Column(String(64), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

@@ -198,6 +198,7 @@ interface WorkspaceGroup {
 function useGroupedConversations() {
   const baseUrl = useAppStore((state) => state.baseUrl);
   const convWorkspaceMap = useAppStore((state) => state.convWorkspaceMap);
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
   const queryClient = useQueryClient();
 
   const conversations = useQuery({
@@ -217,7 +218,7 @@ function useGroupedConversations() {
     const byWorkspace = new Map<string, import("../../types/chat").ConversationSummary[]>();
 
     for (const conv of all) {
-      const ws = convWorkspaceMap[conv.id];
+      const ws = workspaceForConversation(conv, convWorkspaceMap, selectedWorkspace);
       if (ws) {
         const list = byWorkspace.get(ws) ?? [];
         list.push(conv);
@@ -233,9 +234,21 @@ function useGroupedConversations() {
     }));
 
     return { groups };
-  }, [conversations.data, convWorkspaceMap]);
+  }, [conversations.data, convWorkspaceMap, selectedWorkspace]);
 
   return { groups, isLoading: conversations.isLoading, baseUrl };
+}
+
+function workspaceForConversation(
+  conversation: import("../../types/chat").ConversationSummary,
+  convWorkspaceMap: Record<string, string>,
+  selectedWorkspace?: string,
+) {
+  const mapped = convWorkspaceMap[conversation.id]?.trim();
+  if (mapped) return mapped;
+  const fromBackend = conversation.workspace_root?.trim();
+  if (fromBackend) return fromBackend;
+  return selectedWorkspace?.trim();
 }
 
 function SessionList() {
@@ -355,13 +368,13 @@ function MoreSessionsDropdown({
         <Button
           variant="subtle"
           size="xs"
-          aria-label={`Mostrar mais sessões de ${workspaceName}`}
-          title={`Mostrar mais sessões de ${workspaceName}`}
+          aria-label={`Show more sessions from ${workspaceName}`}
+          title={`Show more sessions from ${workspaceName}`}
           className="mt-1 h-7 w-full justify-between rounded-xl border-glass-border/30 bg-background/[0.35] px-2 text-[11px] font-medium text-muted-foreground hover:border-glass-border/45 hover:bg-glass/80 hover:text-foreground data-[state=open]:border-primary/35 data-[state=open]:bg-glass data-[state=open]:text-foreground"
         >
           <span className="flex min-w-0 items-center gap-1.5">
             <ChevronDown className="h-3 w-3 shrink-0" />
-            <span className="truncate">Mais sessões</span>
+            <span className="truncate">More sessions</span>
           </span>
           <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
             +{remainingCount}
@@ -369,7 +382,7 @@ function MoreSessionsDropdown({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="right" align="start" sideOffset={8} className="personagent-dropdown-fade w-72 rounded-xl">
-        <DropdownMenuLabel>Sessões adicionais</DropdownMenuLabel>
+        <DropdownMenuLabel>Additional sessions</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <div className="max-h-72 overflow-y-auto">
           {conversations.map((conversation) => (
@@ -383,7 +396,7 @@ function MoreSessionsDropdown({
               <span className="min-w-0 flex-1 truncate">{conversation.title || "Untitled"}</span>
               {conversation.id === activeConversationId || conversation.id === loadingConversationId ? (
                 <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-primary">
-                  {conversation.id === loadingConversationId ? "Abrindo" : "Atual"}
+                  {conversation.id === loadingConversationId ? "Opening" : "Current"}
                 </span>
               ) : null}
             </DropdownMenuItem>

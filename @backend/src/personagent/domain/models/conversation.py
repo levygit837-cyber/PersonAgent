@@ -1,4 +1,4 @@
-"""Entidades de conversa do domínio."""
+"""Domain conversation entities."""
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 
 class Role(Enum):
-    """Papel de uma mensagem na conversa."""
+    """Role of a message in the conversation."""
 
     SYSTEM = "system"
     USER = "user"
@@ -18,7 +18,7 @@ class Role(Enum):
 
 @dataclass(frozen=True, slots=True)
 class Message:
-    """Uma mensagem individual na conversa."""
+    """One individual message in the conversation."""
 
     role: Role
     content: str
@@ -28,7 +28,7 @@ class Message:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Serializa a mensagem para formato compatível com APIs LLM."""
+        """Serialize the message to an LLM API-compatible format."""
         result: dict[str, Any] = {
             "role": self.role.value,
             "content": self.content,
@@ -41,7 +41,7 @@ class Message:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Message":
-        """Cria uma Message a partir de um dicionário."""
+        """Create a Message from a dictionary."""
         return cls(
             role=Role(data.get("role", "assistant")),
             content=data.get("content", ""),
@@ -53,10 +53,10 @@ class Message:
 
 @dataclass
 class Conversation:
-    """Uma thread de conversa completa."""
+    """One complete conversation thread."""
 
     id: UUID = field(default_factory=uuid4)
-    title: str = "Nova Conversa"
+    title: str = "New Chat"
     messages: list[Message] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
@@ -64,12 +64,12 @@ class Conversation:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def add_message(self, message: Message) -> None:
-        """Adiciona uma mensagem à conversa."""
+        """Add a message to the conversation."""
         self.messages.append(message)
         self.updated_at = datetime.utcnow()
 
     def get_messages_for_llm(self, system_prompt: str | None = None) -> list[dict[str, Any]]:
-        """Retorna mensagens no formato esperado por APIs LLM."""
+        """Return messages in the format expected by LLM APIs."""
         result: list[dict[str, Any]] = []
         if system_prompt:
             result.append({"role": "system", "content": system_prompt})
@@ -77,11 +77,11 @@ class Conversation:
         return result
 
     def generate_title(self, max_length: int = 50) -> str:
-        """Gera um título baseado na primeira mensagem do usuário."""
+        """Generate a title from the first user message."""
         for msg in self.messages:
             if msg.role == Role.USER:
                 title = msg.content.strip().replace("\n", " ")
                 if len(title) > max_length:
                     title = title[:max_length].rsplit(" ", 1)[0] + "..."
-                return title or "Nova Conversa"
+                return title or "New Chat"
         return self.title

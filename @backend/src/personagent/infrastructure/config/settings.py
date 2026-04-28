@@ -190,12 +190,24 @@ class Settings(BaseSettings):
     brief_tool_enabled: bool = Field(default=False, alias="PERSONAGENT_BRIEF_TOOL_ENABLED")
     prompt_command_roots: str | None = Field(default=None, alias="PROMPT_COMMAND_ROOTS")
     prompt_context_analysis_timeout_seconds: float = Field(
-        default=4.0,
+        default=12.0,
         alias="PROMPT_CONTEXT_ANALYSIS_TIMEOUT_SECONDS",
     )
+    prompt_context_analysis_long_timeout_seconds: float = Field(
+        default=30.0,
+        alias="PROMPT_CONTEXT_ANALYSIS_LONG_TIMEOUT_SECONDS",
+    )
     prompt_context_analysis_failure_cooldown_seconds: float = Field(
-        default=60.0,
+        default=15.0,
         alias="PROMPT_CONTEXT_ANALYSIS_FAILURE_COOLDOWN_SECONDS",
+    )
+    prompt_context_analysis_long_context_chars: int = Field(
+        default=200_000,
+        alias="PROMPT_CONTEXT_ANALYSIS_LONG_CONTEXT_CHARS",
+    )
+    prompt_context_analysis_max_payload_chars: int = Field(
+        default=24_000,
+        alias="PROMPT_CONTEXT_ANALYSIS_MAX_PAYLOAD_CHARS",
     )
 
     # --- Chat post-turn services ---

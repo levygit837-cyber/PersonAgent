@@ -61,12 +61,12 @@ describe("chat rendering", () => {
 
   it("renders markdown emphasis inside reasoning blocks", () => {
     const { container } = render(
-      <ReasoningBlock reasoning={"**Identificando estratégia**\n\nValidar streaming."} isStreaming={true} />,
+      <ReasoningBlock reasoning={"**Identifying strategy**\n\nValidate streaming."} isStreaming={true} />,
     );
 
     expect(screen.getByText("Reasoning")).toBeInTheDocument();
-    expect(container.querySelector("strong")?.textContent).toBe("Identificando estratégia");
-    expect(screen.getByText("Validar streaming.")).toBeInTheDocument();
+    expect(container.querySelector("strong")?.textContent).toBe("Identifying strategy");
+    expect(screen.getByText("Validate streaming.")).toBeInTheDocument();
   });
 
   it("keeps reasoning-only agent output expanded for Qwen length stops", () => {

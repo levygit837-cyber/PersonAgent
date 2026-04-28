@@ -253,7 +253,7 @@ function ComposerAnnotationTray({
             type="button"
             variant="ghost"
             size="iconSm"
-            aria-label={`Remover @Annotation#${annotation.id}`}
+            aria-label={`Remove @Annotation#${annotation.id}`}
             onClick={() => onRemove(annotation.id)}
             className="h-6 w-6 shrink-0 rounded-lg opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
           >

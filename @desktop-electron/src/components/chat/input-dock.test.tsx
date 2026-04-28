@@ -372,7 +372,7 @@ describe("InputDock", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Remover @Annotation#2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove @Annotation#2" }));
 
     expect(screen.queryByTestId("composer-annotations")).not.toBeInTheDocument();
     expect(useChatStore.getState().composerAnnotations).toEqual([]);

@@ -145,16 +145,16 @@ describe("SessionPanel", () => {
     expect(screen.getAllByText("personagent").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Debug Session")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Painel da Sessão" }));
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
 
-    expect(screen.getByRole("tab", { name: "Resumo" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Summary" })).toBeInTheDocument();
     expect(await screen.findByText("Agent Usage")).toBeInTheDocument();
-    expect(screen.getByText("Arquivos Alterados")).toBeInTheDocument();
+    expect(screen.getByText("Changed Files")).toBeInTheDocument();
     expect(screen.getByText("Project Details")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Fechar painel da sessão" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close session panel" }));
 
-    await waitFor(() => expect(screen.queryByRole("tab", { name: "Resumo" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "Summary" })).not.toBeInTheDocument());
     expect(screen.getByTestId("session-panel-shell")).toHaveClass("w-0");
   });
 
@@ -188,7 +188,7 @@ describe("SessionPanel", () => {
     getSessionPanelMock.mockReturnValue(new Promise<SessionPanelSnapshot>(() => {}));
 
     renderWithProviders(<ChatWorkspace />);
-    fireEvent.click(screen.getByRole("button", { name: "Painel da Sessão" }));
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
 
     expect(await screen.findByText("Cached Debug Session")).toBeInTheDocument();
     expect(screen.getByText("99")).toBeInTheDocument();
@@ -198,7 +198,7 @@ describe("SessionPanel", () => {
   it("opens project item details as a closeable browser tab inside the panel", async () => {
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Painel da Sessão" }));
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
     await screen.findByText("Project Details");
     fireEvent.click(await screen.findByText("feat: session panel"));
 
@@ -210,39 +210,39 @@ describe("SessionPanel", () => {
       workspaceRoot: "/tmp/personagent",
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Fechar aba feat: session panel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close tab feat: session panel" }));
     await waitFor(() => expect(screen.queryByText(/Adds the session panel shell/)).not.toBeInTheDocument());
-    expect(screen.getByRole("tab", { name: "Resumo" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("opens and closes an empty browser-style tab from the plus button", async () => {
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Painel da Sessão" }));
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
     await screen.findByText("Agent Usage");
-    const addTabButton = screen.getByRole("button", { name: "Nova aba do painel" });
+    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
     fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
     fireEvent.click(addTabButton);
     fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
 
     expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("button", { name: "Voltar" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Avançar" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Recarregar página" })).toBeDisabled();
-    expect(screen.getByRole("textbox", { name: "Digite sua url" })).toHaveAttribute("placeholder", "digite sua url");
-    expect(screen.getByText("Digite uma URL para abrir uma página nesta aba.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Forward" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reload page" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveAttribute("placeholder", "enter url");
+    expect(screen.getByText("Enter a URL to open a page in this tab.")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Digite sua url" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Enter URL" }), {
       target: { value: "example.com" },
     });
-    fireEvent.submit(screen.getByRole("textbox", { name: "Digite sua url" }).closest("form")!);
+    fireEvent.submit(screen.getByRole("textbox", { name: "Enter URL" }).closest("form")!);
 
-    expect(screen.getByRole("textbox", { name: "Digite sua url" })).toHaveValue("https://example.com");
+    expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://example.com");
     expect(screen.getByTitle("Browser https://example.com")).toHaveAttribute("src", "https://example.com");
-    expect(screen.getByRole("button", { name: "Recarregar página" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reload page" })).toBeEnabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Fechar aba Browser" }));
-    expect(screen.getByRole("tab", { name: "Resumo" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Close tab Browser" }));
+    expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("keeps browser controls visible even when there is no active conversation", async () => {
@@ -254,20 +254,20 @@ describe("SessionPanel", () => {
 
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Painel da Sessão" }));
-    expect(screen.getByText("Inicie ou abra uma conversa para ver dados da sessão.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+    expect(screen.getByText("Start or open a conversation to view session data.")).toBeInTheDocument();
 
-    const addTabButton = screen.getByRole("button", { name: "Nova aba do painel" });
+    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
     fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
     fireEvent.click(addTabButton);
     fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
 
     expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("button", { name: "Voltar" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Avançar" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Recarregar página" })).toBeDisabled();
-    expect(screen.getByRole("textbox", { name: "Digite sua url" })).toBeInTheDocument();
-    expect(screen.queryByText("Inicie ou abra uma conversa para ver dados da sessão.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Forward" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reload page" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Enter URL" })).toBeInTheDocument();
+    expect(screen.queryByText("Start or open a conversation to view session data.")).not.toBeInTheDocument();
   });
 });
 

@@ -1,4 +1,4 @@
-"""Adapter para comunicação com llama-server (API OpenAI-compatible)."""
+"""Adapter for llama-server communication through an OpenAI-compatible API."""
 
 import json
 from collections.abc import AsyncIterator
@@ -69,7 +69,7 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
         return httpx.Timeout(self.timeout)
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Retorna ou cria o cliente HTTP assíncrono."""
+        """Return or create the async HTTP client."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
@@ -94,7 +94,7 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
         tool_choice: str | dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> InferenceResult:
-        """Executa uma completion síncrona."""
+        """Execute a synchronous completion."""
         payload = self._build_payload(
             messages,
             temperature,
@@ -111,11 +111,11 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
             response.raise_for_status()
         except httpx.ConnectError as exc:
             raise LLMBackendConnectionError(
-                f"Não foi possível conectar ao llama-server em {self.base_url}"
+                f"Could not connect to llama-server at {self.base_url}"
             ) from exc
         except httpx.TimeoutException as exc:
             raise LLMBackendTimeoutError(
-                f"Timeout na requisição ao llama-server ({self.timeout}s)"
+                f"Timeout while requesting llama-server ({self.timeout}s)"
             ) from exc
         except httpx.HTTPStatusError as exc:
             raise LLMBackendError(
@@ -146,7 +146,7 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
         tool_choice: str | dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
-        """Executa uma completion com streaming de resposta."""
+        """Execute a streaming completion."""
         payload = self._build_payload(
             messages,
             temperature,
@@ -192,7 +192,7 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
 
         except httpx.ConnectError as exc:
             raise LLMBackendConnectionError(
-                f"Não foi possível conectar ao llama-server em {self.base_url}"
+                f"Could not connect to llama-server at {self.base_url}"
             ) from exc
         except httpx.TimeoutException as exc:
             raise LLMBackendTimeoutError(f"Timeout no streaming ({self.timeout}s)") from exc
@@ -202,7 +202,7 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
             ) from exc
 
     async def health_check(self) -> dict[str, Any]:
-        """Verifica se o llama-server está respondendo."""
+        """Check whether llama-server is responding."""
         try:
             client = await self._get_client()
             response = await client.get("/health", timeout=5.0)
@@ -218,7 +218,7 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
             }
 
     async def get_model_info(self) -> dict[str, Any]:
-        """Retorna informações sobre o modelo carregado."""
+        """Return information about the loaded model."""
         try:
             client = await self._get_client()
             response = await client.get("/models", timeout=10.0)
@@ -246,7 +246,7 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Constrói o payload para a API do llama-server."""
+        """Build the payload for the llama-server API."""
         model = extra.get("model", "local-model")
         payload: dict[str, Any] = {
             "model": model,
@@ -354,7 +354,7 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
         accumulate_tool_call_delta(deltas, accumulator)
 
     def _finalize_tool_calls(self, accumulator: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
-        """Finaliza tool_calls acumulados em ordem de índice."""
+        """Finalize accumulated tool_calls in index order."""
         return [
             {
                 "id": item.get("id") or f"call_{index}",

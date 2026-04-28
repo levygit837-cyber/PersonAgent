@@ -1,4 +1,4 @@
-"""Rotas para gerenciamento de conversas."""
+"""Routes for conversation management."""
 
 from uuid import UUID
 
@@ -15,17 +15,18 @@ DB_SESSION_DEPENDENCY = Depends(get_db)
 
 
 class ConversationListResponse(BaseModel):
-    """Resposta de listagem de conversas."""
+    """Conversation list response."""
 
     id: str
     title: str
     created_at: str
     updated_at: str
     message_count: int
+    workspace_root: str | None = None
 
 
 class ConversationDetailResponse(BaseModel):
-    """Resposta detalhada de uma conversa."""
+    """Detailed conversation response."""
 
     id: str
     title: str
@@ -35,7 +36,7 @@ class ConversationDetailResponse(BaseModel):
 
 
 def serialize_message(message: Message) -> dict:
-    """Serializa mensagens para a UI sem contaminar o payload enviado ao LLM."""
+    """Serialize messages for the UI without polluting the payload sent to the LLM."""
     data = message.to_dict()
     data["timestamp"] = message.timestamp.isoformat()
     if message.metadata:
@@ -49,7 +50,7 @@ async def list_conversations(
     offset: int = 0,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> list[ConversationListResponse]:
-    """Lista todas as conversas."""
+    """List all conversations."""
     container = get_container()
     repo = await container.get_conversation_repo(session)
     title_service = getattr(container, "get_session_title_service", lambda: None)()
@@ -72,13 +73,13 @@ async def get_conversation(
     conversation_id: str,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> ConversationDetailResponse:
-    """Recupera uma conversa pelo ID."""
+    """Retrieve a conversation by ID."""
     container = get_container()
     repo = await container.get_conversation_repo(session)
     conv = await repo.get_by_id(UUID(conversation_id))
 
     if not conv:
-        raise HTTPException(status_code=404, detail="Conversa não encontrada")
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
     return ConversationDetailResponse(
         id=str(conv.id),
@@ -94,13 +95,13 @@ async def delete_conversation(
     conversation_id: str,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> dict[str, bool]:
-    """Remove uma conversa pelo ID."""
+    """Delete a conversation by ID."""
     container = get_container()
     repo = await container.get_conversation_repo(session)
     deleted = await repo.delete(UUID(conversation_id))
 
     if not deleted:
-        raise HTTPException(status_code=404, detail="Conversa não encontrada")
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
     return {"deleted": True}
 
@@ -111,7 +112,7 @@ async def search_conversations(
     limit: int = 10,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> list[ConversationListResponse]:
-    """Busca conversas por conteúdo."""
+    """Search conversations by content."""
     container = get_container()
     repo = await container.get_conversation_repo(session)
     search_summaries = getattr(repo, "search_summaries", None)
@@ -133,4 +134,12 @@ def _conversation_list_response(conv: Conversation) -> ConversationListResponse:
         created_at=conv.created_at.isoformat(),
         updated_at=conv.updated_at.isoformat(),
         message_count=len(conv.messages),
+        workspace_root=_workspace_root_from_metadata(conv.metadata),
     )
+
+
+def _workspace_root_from_metadata(metadata: dict | None) -> str | None:
+    value = (metadata or {}).get("workspace_root")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None

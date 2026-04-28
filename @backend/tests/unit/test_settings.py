@@ -189,8 +189,11 @@ def test_lightpanda_settings_defaults():
     assert settings.lightpanda_search_base_url == "https://search.yahoo.com/search"
     assert settings.lightpanda_session_ttl_seconds == 900
     assert settings.lightpanda_max_sessions == 32
-    assert settings.prompt_context_analysis_timeout_seconds == 4
-    assert settings.prompt_context_analysis_failure_cooldown_seconds == 60
+    assert settings.prompt_context_analysis_timeout_seconds == 12
+    assert settings.prompt_context_analysis_long_timeout_seconds == 30
+    assert settings.prompt_context_analysis_failure_cooldown_seconds == 15
+    assert settings.prompt_context_analysis_long_context_chars == 200_000
+    assert settings.prompt_context_analysis_max_payload_chars == 24_000
 
 
 def test_chat_post_turn_llm_services_default_off():

@@ -12,7 +12,7 @@ export interface TreeNodeState {
   loading?: boolean;
 }
 
-export const WORKSPACE_MISMATCH_ERROR = "A listagem recebida não pertence ao workspace ativo.";
+export const WORKSPACE_MISMATCH_ERROR = "The received listing does not belong to the active workspace.";
 
 export async function readWorkspaceDirectory(
   baseUrl: string,
@@ -39,7 +39,7 @@ export async function readWorkspaceTextFile(
 
 export function normalizeDirectoryEntries(entries: DirEntry[], requestedPath: string, workspaceRoot: string): DirEntry[] {
   if (!Array.isArray(entries)) {
-    throw new Error("Resposta inválida ao listar o workspace.");
+    throw new Error("Invalid response while listing the workspace.");
   }
 
   const normalized: DirEntry[] = [];

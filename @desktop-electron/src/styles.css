@@ -399,12 +399,12 @@ pre,
   fill: hsl(var(--primary)) !important;
 }
 
-/* Garantir que o viewport do minimap seja visível */
+/* Ensure the minimap viewport remains visible */
 .react-flow__minimap svg rect:first-child {
   fill: hsl(var(--card)) !important;
 }
 
-/* Container do MiniMap */
+/* MiniMap container */
 .react-flow__panel.react-flow__minimap {
   background: hsl(var(--card)) !important;
   border-radius: var(--radius) !important;

@@ -117,14 +117,14 @@ export function ChatWorkspace() {
               <Button
                 variant={sessionPanelOpen ? "secondary" : "ghost"}
                 size="iconSm"
-                aria-label="Painel da Sessão"
+                aria-label="Session Panel"
                 onClick={() => setSessionPanelOpen((value) => !value)}
                 className="rounded-xl border border-glass-border/35 bg-background/80 shadow-soft backdrop-blur"
               >
                 <PanelRight className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Painel da Sessão</TooltipContent>
+            <TooltipContent>Session Panel</TooltipContent>
           </Tooltip>
         </div>
       </header>

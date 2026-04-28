@@ -21,25 +21,24 @@ describe("PlanApprovalPanel", () => {
           conversationId: "conversation-1",
           approvalId: "approval-1",
           planId: "plan-1",
-          planContent: "## Plano\n\n1. Atualizar backend.",
+          planContent: "## Plan\n\n1. Update the backend.",
           planStatus: "awaiting_approval",
         }}
       />,
     );
 
-    expect(screen.getByText("Plano")).toBeInTheDocument();
-    expect(screen.getByText("Atualizar backend.")).toBeInTheDocument();
+    expect(screen.getByText("Plan")).toBeInTheDocument();
+    expect(screen.getByText("Update the backend.")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByPlaceholderText("Feedback opcional"), {
-      target: { value: "Inclua testes" },
+    fireEvent.change(screen.getByPlaceholderText("Optional feedback"), {
+      target: { value: "Include tests" },
     });
-    fireEvent.click(screen.getByText("Proceder"));
-    fireEvent.click(screen.getByText("Continuar planejando"));
-    fireEvent.click(screen.getByText("Cancelar"));
+    fireEvent.click(screen.getByText("Proceed"));
+    fireEvent.click(screen.getByText("Continue planning"));
+    fireEvent.click(screen.getByText("Cancel"));
 
-    expect(proceed).toHaveBeenCalledWith("Inclua testes");
-    expect(continuePlanning).toHaveBeenCalledWith("Inclua testes");
-    expect(cancel).toHaveBeenCalledWith("Inclua testes");
+    expect(proceed).toHaveBeenCalledWith("Include tests");
+    expect(continuePlanning).toHaveBeenCalledWith("Include tests");
+    expect(cancel).toHaveBeenCalledWith("Include tests");
   });
 });
-

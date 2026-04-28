@@ -281,20 +281,20 @@ export function WorkspacePanel({ visible, onClose, onOpenFile, activeFilePaths, 
         </div>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="iconSm" aria-label="Fechar workspace" onClick={onClose}>
+            <Button variant="ghost" size="iconSm" aria-label="Close workspace" onClick={onClose}>
               <PanelRightClose className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Fechar</TooltipContent>
+          <TooltipContent>Close</TooltipContent>
         </Tooltip>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-1 py-2">
         {!workspaceRoot ? (
-          <EmptyState text="Nenhum workspace selecionado." />
+          <EmptyState text="No workspace selected." />
         ) : loading ? (
           <div className="flex min-h-[120px] items-center justify-center text-xs text-muted-foreground">
-            Carregando diretório...
+            Loading directory...
           </div>
         ) : error ? (
           <EmptyState text={error} />

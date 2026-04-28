@@ -19,31 +19,31 @@ from personagent.domain.repositories.llm_backend_repository import LLMBackendRep
 @pytest.mark.asyncio
 async def test_session_title_service_batches_llm_titles_and_reuses_cache():
     repo = MemoryConversationRepository()
-    first = Conversation(title="Teste")
-    first.add_message(Message(role=Role.USER, content="oi"))
+    first = Conversation(title="Test")
+    first.add_message(Message(role=Role.USER, content="hi"))
     first.add_message(
         Message(
             role=Role.ASSISTANT,
-            content="Mapeei o painel de sessões e os endpoints envolvidos.",
+            content="I mapped the session panel and the related endpoints.",
         )
     )
     first.add_message(
-        Message(role=Role.USER, content="Agora ajuste o painel de sessões no Electron.")
+        Message(role=Role.USER, content="Now adjust the session panel in Electron.")
     )
-    second = Conversation(title="Teste")
-    second.add_message(Message(role=Role.USER, content="oi"))
+    second = Conversation(title="Test")
+    second.add_message(Message(role=Role.USER, content="hi"))
     second.add_message(
         Message(
             role=Role.ASSISTANT,
-            content="A falha está no fluxo do LightPanda sobre CDP.",
+            content="The failure is in the LightPanda flow over CDP.",
         )
     )
     await repo.create(first)
     await repo.create(second)
     llm = MappingTitleLLM(
         {
-            str(first.id): "Painel de sessões Electron",
-            str(second.id): "LightPanda CDP estável",
+            str(first.id): "Electron Session Panel",
+            str(second.id): "Stable LightPanda CDP",
         }
     )
     service = SessionTitleService(primary_llm_backend=llm, fallback_llm_backend=None)
@@ -55,8 +55,8 @@ async def test_session_title_service_batches_llm_titles_and_reuses_cache():
     assert result.updated == 2
     assert len(llm.calls) == 1
     assert llm.calls[0]["model"] == "openai/gpt-oss-120b"
-    assert first.title == "Painel de sessões Electron"
-    assert second.title == "LightPanda CDP estável"
+    assert first.title == "Electron Session Panel"
+    assert second.title == "Stable LightPanda CDP"
     assert first.metadata[SESSION_TITLE_CACHE_KEY]["history_hash"]
 
     rerun = await service.verify_all(repo, batch_size=10)
@@ -69,13 +69,13 @@ async def test_session_title_service_batches_llm_titles_and_reuses_cache():
 @pytest.mark.asyncio
 async def test_session_title_service_uses_local_fallback_when_gpt_oss_fails():
     repo = MemoryConversationRepository()
-    conversation = Conversation(title="Nova Conversa")
+    conversation = Conversation(title="New Chat")
     conversation.add_message(
-        Message(role=Role.USER, content="Investigue os benchmarks dos modelos NVIDIA.")
+        Message(role=Role.USER, content="Investigate the NVIDIA model benchmarks.")
     )
     await repo.create(conversation)
     primary = FailingTitleLLM()
-    fallback = MappingTitleLLM({str(conversation.id): "Benchmarks NVIDIA longos"})
+    fallback = MappingTitleLLM({str(conversation.id): "Long NVIDIA Benchmarks"})
     service = SessionTitleService(
         primary_llm_backend=primary,
         fallback_llm_backend=fallback,
@@ -88,16 +88,16 @@ async def test_session_title_service_uses_local_fallback_when_gpt_oss_fails():
     assert result.results[0].source == "llm_fallback"
     assert fallback.calls[0]["provider"] == "llama"
     assert fallback.calls[0]["model"] == "local-model"
-    assert conversation.title == "Benchmarks NVIDIA longos"
+    assert conversation.title == "Long NVIDIA Benchmarks"
 
 
 @pytest.mark.asyncio
 async def test_session_title_service_repairs_duplicate_cached_titles_without_llm():
     repo = MemoryConversationRepository()
     first = Conversation(title="Debug Browser Tools")
-    first.add_message(Message(role=Role.USER, content="Depure BrowserSearch no backend."))
+    first.add_message(Message(role=Role.USER, content="Debug BrowserSearch in the backend."))
     second = Conversation(title="Debug Browser Tools")
-    second.add_message(Message(role=Role.USER, content="Depure BrowserOpen no backend."))
+    second.add_message(Message(role=Role.USER, content="Debug BrowserOpen in the backend."))
     llm = MappingTitleLLM({})
     service = SessionTitleService(primary_llm_backend=llm, fallback_llm_backend=None)
     for conversation in (first, second):

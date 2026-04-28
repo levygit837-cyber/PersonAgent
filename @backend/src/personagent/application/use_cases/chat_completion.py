@@ -82,7 +82,7 @@ class _PromptPreparation:
 
 
 class ChatCompletionUseCase:
-    """Orquestra uma interação de chat com o LLM."""
+    """Orchestrates one chat interaction with the LLM."""
 
     def __init__(
         self,
@@ -124,7 +124,7 @@ class ChatCompletionUseCase:
         self._state_manager = StateManager.get_instance()
 
     async def execute(self, request: ChatRequestDTO) -> ChatResponseDTO:
-        """Executa um chat completion síncrono."""
+        """Execute a synchronous chat completion."""
         conversation = await self._get_or_create_conversation(request)
         was_empty = len(conversation.messages) == 0
 
@@ -243,7 +243,7 @@ class ChatCompletionUseCase:
         )
 
     async def execute_stream(self, request: ChatRequestDTO) -> AsyncIterator[StreamChunk]:
-        """Executa um chat completion com streaming."""
+        """Execute a streaming chat completion."""
         conversation = await self._get_or_create_conversation(request)
         was_empty = len(conversation.messages) == 0
         yield StreamChunk(
@@ -270,7 +270,7 @@ class ChatCompletionUseCase:
             conversation = await self._conversation_repo.get_by_id(request.conversation_id)
             if conversation is None:
                 raise ConversationNotFoundError(
-                    f"Conversa {request.conversation_id} não encontrada"
+                    f"Conversation {request.conversation_id} not found"
                 )
         else:
             conversation = Conversation()
@@ -312,7 +312,7 @@ class ChatCompletionUseCase:
     ) -> AsyncIterator[StreamChunk]:
         """Retoma o loop do modelo depois que um tool_result foi persistido."""
         if request.conversation_id is None:
-            raise ConversationNotFoundError("conversation_id é obrigatório para retomar ferramenta")
+            raise ConversationNotFoundError("conversation_id is required to resume a tool")
         conversation = await self._get_or_create_conversation(request)
         yield StreamChunk(
             metadata={
@@ -340,7 +340,7 @@ class ChatCompletionUseCase:
         was_empty: bool,
         status: str,
     ) -> AsyncIterator[StreamChunk]:
-        """Executa um turno de streaming, opcionalmente sem nova mensagem de usuário."""
+        """Execute one streaming turn, optionally without a new user message."""
         context_result = await self._build_context_result(request, conversation)
         preparation = self._prepare_prompt_surfaces(request, context_result)
         request = preparation.request
@@ -643,17 +643,19 @@ class ChatCompletionUseCase:
         )
 
     async def _get_or_create_conversation(self, request: ChatRequestDTO) -> Conversation:
-        """Recupera ou cria uma conversa baseada no request."""
+        """Retrieve or create a conversation from the request."""
         if request.conversation_id:
             conversation = await self._conversation_repo.get_by_id(request.conversation_id)
             if not conversation:
                 raise ConversationNotFoundError(
-                    f"Conversa {request.conversation_id} não encontrada"
+                    f"Conversation {request.conversation_id} not found"
                 )
+            _apply_workspace_metadata(conversation, request.tool_context)
             return conversation
 
-        # Cria nova conversa
+        # Create a new conversation
         conversation = Conversation()
+        _apply_workspace_metadata(conversation, request.tool_context)
         await self._conversation_repo.create(conversation)
         return conversation
 
@@ -1016,6 +1018,8 @@ class ChatCompletionUseCase:
         *,
         available_tools: list[str],
         workspace_root: str,
+        context_size_chars: int = 0,
+        conversation_message_count: int = 0,
     ):
         if request.provider == "llama" and request.prompt_mode == "auto":
             from personagent.domain.prompts.services.context_analyzer import fallback_prompt_profile
@@ -1032,6 +1036,8 @@ class ChatCompletionUseCase:
                     workspace_root=workspace_root,
                     model=request.model,
                     provider=request.provider,
+                    context_size_chars=context_size_chars,
+                    conversation_message_count=conversation_message_count,
                 )
             return fallback_prompt_profile()
         return await self._prompt_context_analyzer.analyze(
@@ -1041,6 +1047,8 @@ class ChatCompletionUseCase:
             workspace_root=workspace_root,
             model=request.model,
             provider=request.provider,
+            context_size_chars=context_size_chars,
+            conversation_message_count=conversation_message_count,
         )
 
     def _resolve_tool_schemas(self, request: ChatRequestDTO) -> list[dict[str, Any]]:
@@ -1126,15 +1134,15 @@ class ChatCompletionUseCase:
         context_result: ContextBuildResult,
         conversation: Conversation,
     ) -> list[str]:
-        """Executa o recall de memórias relevantes para a query atual.
+        """Execute relevant-memory recall for the current query.
 
         Args:
-            request: DTO do chat request.
-            context_result: Resultado do build context.
-            conversation: Conversa atual (para tracking de already_surfaced).
+            request: Chat request DTO.
+            context_result: Build context result.
+            conversation: Current conversation, used to track already_surfaced.
 
         Returns:
-            Lista de memórias relevantes formatadas como strings.
+            List of relevant memories formatted as strings.
         """
         workspace_root = context_result.system_context.workspace_root
         project_slug = self._sanitize_project_slug(workspace_root)
@@ -1271,7 +1279,7 @@ class ChatCompletionUseCase:
         )
 
     def _sanitize_project_slug(self, workspace_root: str | None) -> str:
-        """Sanitiza o nome do diretório para uso como project_slug."""
+        """Sanitize the directory name for use as project_slug."""
         return project_slug_from_workspace(workspace_root)
 
     def _extract_recent_tools(
@@ -1299,6 +1307,11 @@ class ChatCompletionUseCase:
             request,
             available_tools=prompt_tool_names,
             workspace_root=workspace_root,
+            context_size_chars=(
+                context_result.total_context_size
+                + sum(len(message.content or "") for message in conversation.messages)
+            ),
+            conversation_message_count=len(conversation.messages),
         )
         commands = self._command_registry.list_commands(workspace_root)
         skills = self._skill_inventory(request, context_result)
@@ -1470,11 +1483,11 @@ class ChatCompletionUseCase:
         conversation: Conversation,
         request: ChatRequestDTO,
     ) -> None:
-        """Dispara um job de extração de memória em background.
+        """Dispatch a background memory extraction job.
 
         Args:
-            conversation: Conversa atual.
-            request: Request do chat.
+            conversation: Current conversation.
+            request: Chat request.
         """
         if self._memory_job_scheduler is None:
             return
@@ -1769,3 +1782,9 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _apply_workspace_metadata(conversation: Conversation, tool_context: dict[str, Any] | None) -> None:
+    workspace_root = (tool_context or {}).get("workspace_root")
+    if isinstance(workspace_root, str) and workspace_root.strip():
+        conversation.metadata["workspace_root"] = workspace_root.strip()

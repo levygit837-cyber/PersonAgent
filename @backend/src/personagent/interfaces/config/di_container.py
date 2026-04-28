@@ -1,4 +1,4 @@
-"""Container de Injeção de Dependências (DI)."""
+"""Dependency Injection (DI) container."""
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -64,7 +64,7 @@ from personagent.infrastructure.tools import (
 
 
 class DIContainer:
-    """Container simples de injeção de dependências."""
+    """Simple dependency injection container."""
 
     def __init__(self) -> None:
         self._settings = get_settings()
@@ -222,9 +222,12 @@ class DIContainer:
             analyzer = PromptContextAnalyzer(
                 llm_backend,
                 timeout_seconds=self._settings.prompt_context_analysis_timeout_seconds,
+                long_timeout_seconds=self._settings.prompt_context_analysis_long_timeout_seconds,
                 failure_cooldown_seconds=(
                     self._settings.prompt_context_analysis_failure_cooldown_seconds
                 ),
+                long_context_chars=self._settings.prompt_context_analysis_long_context_chars,
+                max_payload_chars=self._settings.prompt_context_analysis_max_payload_chars,
             )
             self._prompt_context_analyzers[backend_key] = analyzer
         return analyzer
@@ -242,7 +245,7 @@ class DIContainer:
         return NextStepSuggestionService(llm_backend)
 
     def get_session_title_service(self) -> SessionTitleService | None:
-        """Retorna o verificador LLM/cacheado de nomes de sessões."""
+        """Return the cached/LLM-backed session title verifier."""
         if not self._settings.chat_session_title_checks_enabled:
             return None
         if self._session_title_service is None:
@@ -269,7 +272,7 @@ class DIContainer:
         return CommandRegistry(extra_roots=self._settings.prompt_command_root_paths)
 
     def get_context_repository(self) -> InMemoryContextRepository:
-        """Retorna o cache em memória de contexto do chat principal."""
+        """Return the in-memory context cache for the main chat."""
         if self._context_repository is None:
             self._context_repository = InMemoryContextRepository()
         return self._context_repository
@@ -286,24 +289,24 @@ class DIContainer:
             memory_repository=FileSystemMemoryRepository(),
         )
 
-    # --- Sistema de Memória Inteligente ---
+    # --- Intelligent Memory System ---
 
     def get_memory_repository(self):
-        """Retorna o repositório de memória (singleton)."""
+        """Return the memory repository singleton."""
         from personagent.infrastructure.persistence.memory.filesystem_memory_repository import (
             FileSystemMemoryRepository,
         )
         return FileSystemMemoryRepository()
 
     def get_memory_job_scheduler(self):
-        """Retorna o scheduler de jobs de memória (singleton)."""
+        """Return the memory job scheduler singleton."""
         from personagent.application.jobs.memory_job_scheduler import MemoryJobScheduler
         if not hasattr(self, "_memory_job_scheduler"):
             self._memory_job_scheduler = MemoryJobScheduler()
         return self._memory_job_scheduler
 
     def create_memory_recall_selector(self, llm_backend: LLMBackendRepository):
-        """Cria o selector de memórias relevantes."""
+        """Create the relevant-memory selector."""
         from personagent.domain.memory.services.memory_recall_selector import MemoryRecallSelector
         return MemoryRecallSelector(
             llm_backend=llm_backend,
@@ -313,7 +316,7 @@ class DIContainer:
         )
 
     def create_recall_memory_use_case(self, llm_backend: LLMBackendRepository):
-        """Cria o use case de recall de memórias."""
+        """Create the memory recall use case."""
         from personagent.application.use_cases.memory.recall_memory import RecallMemoryUseCase
         return RecallMemoryUseCase(
             recall_selector=self.create_memory_recall_selector(llm_backend),
@@ -338,7 +341,7 @@ class DIContainer:
         return self._embedding_adapter
 
     def get_operational_memory_repository(self):
-        """Retorna o repositório PostgreSQL de memória operacional."""
+        """Return the PostgreSQL operational-memory repository."""
         if self._operational_memory_repository is None:
             from personagent.infrastructure.persistence.operational_memory_repository import (
                 OperationalMemoryRepository,
@@ -348,7 +351,7 @@ class DIContainer:
         return self._operational_memory_repository
 
     def get_operational_memory_service(self) -> OperationalMemoryService | None:
-        """Retorna o serviço RAG operacional, se habilitado."""
+        """Return the operational RAG service when enabled."""
         if not self._settings.operational_memory_enabled:
             return None
         if self._operational_memory_service is None:
@@ -367,7 +370,7 @@ class DIContainer:
         return self._operational_memory_service
 
     def create_extract_memory_worker(self):
-        """Cria o worker de extração de memórias."""
+        """Create the memory extraction worker."""
         from contextlib import asynccontextmanager
 
         from personagent.application.jobs.workers.extract_memory_worker import ExtractMemoryWorker
@@ -388,7 +391,7 @@ class DIContainer:
         )
 
     def create_consolidate_memory_worker(self):
-        """Cria o worker de consolidação de memórias."""
+        """Create the memory consolidation worker."""
         from personagent.application.jobs.workers.consolidate_memory_worker import (
             ConsolidateMemoryWorker,
         )
@@ -423,7 +426,7 @@ class DIContainer:
         )
 
     def get_tool_runtime_config(self) -> ToolRuntimeConfig:
-        """Retorna a configuração do runtime de ferramentas."""
+        """Return the tool runtime configuration."""
         if self._tool_runtime_config is None:
             self._tool_runtime_config = ToolRuntimeConfig.from_values(
                 workspace_root=self._settings.tool_workspace_root_path,
@@ -447,7 +450,7 @@ class DIContainer:
         return self._tool_runtime_config
 
     async def get_db_session(self) -> AsyncGenerator[AsyncSession, None]:
-        """Retorna uma sessão de banco de dados."""
+        """Return a database session."""
         session = AsyncSessionLocal()
         try:
             yield session
@@ -455,7 +458,7 @@ class DIContainer:
             await session.close()
 
     async def get_conversation_repo(self, session: AsyncSession) -> ConversationRepository:
-        """Retorna o repositório de conversas."""
+        """Return the conversation repository."""
         return PostgresConversationRepository(session)
 
     async def close_llm_backends(self) -> None:
@@ -491,7 +494,7 @@ def get_container() -> DIContainer:
 
 
 def reset_container() -> None:
-    """Reseta o container (útil para testes)."""
+    """Reset the container, useful for tests."""
     global _container
     _container = None
 
@@ -507,15 +510,15 @@ async def lifespan() -> AsyncGenerator[DIContainer, None]:
         pm = container.get_process_manager()
         started = await pm.start()
         if not started:
-            print("⚠️  Aviso: Não foi possível iniciar o llama-server automaticamente.")
-            print("   Certifique-se de que o servidor está rodando manualmente.")
+            print("⚠️  Warning: Could not start llama-server automatically.")
+            print("   Make sure the server is running manually.")
 
     if settings.embedding_auto_start:
         embedding_pm = container.get_embedding_process_manager()
         started = await embedding_pm.start()
         if not started:
-            print("⚠️  Aviso: Não foi possível iniciar o embedding server automaticamente.")
-            print("   Execute manualmente: ./@llama/scripts/start-embedding-server.sh")
+            print("⚠️  Warning: Could not start the embedding server automatically.")
+            print("   Run manually: ./@llama/scripts/start-embedding-server.sh")
 
     try:
         yield container

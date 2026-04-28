@@ -54,6 +54,28 @@ OPTIONAL_OPERATIONAL_MEMORY_SCHEMA_STATEMENTS = (
 OPERATIONAL_MEMORY_SCHEMA_STATEMENTS = (
     "ALTER TABLE memory_events DROP CONSTRAINT IF EXISTS memory_events_conversation_id_fkey",
     "ALTER TABLE memory_decisions DROP CONSTRAINT IF EXISTS memory_decisions_conversation_id_fkey",
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = 'memory_embeddings'
+              AND column_name = 'embedding'
+              AND udt_name = 'jsonb'
+        ) THEN
+            ALTER TABLE memory_embeddings
+            ALTER COLUMN embedding TYPE vector(4096)
+            USING embedding::text::vector(4096);
+        END IF;
+    END $$;
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_memory_embeddings_embedding_subvector_1_2000_hnsw
+    ON memory_embeddings
+    USING hnsw (((subvector(embedding, 1, 2000))::vector(2000)) vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64)
+    """,
 )
 
 

@@ -73,7 +73,7 @@ describe("Sidebar", () => {
     }
 
     expect(screen.queryByText("Long History 5")).not.toBeInTheDocument();
-    const moreSessionsButton = screen.getByRole("button", { name: /mostrar mais sessões/i });
+    const moreSessionsButton = screen.getByRole("button", { name: /show more sessions/i });
     expect(moreSessionsButton).toBeInTheDocument();
 
     fireEvent.pointerDown(moreSessionsButton);
@@ -105,6 +105,52 @@ describe("Sidebar", () => {
     await waitFor(() => {
       expect(loadConversation).toHaveBeenCalledWith("conversation_2", "/home/user/other-project");
     });
+  });
+
+  it("does not hide backend sessions when local workspace mapping is empty", async () => {
+    useAppStore.setState({
+      convWorkspaceMap: {},
+      selectedWorkspace: "/home/user/my-project",
+      recentWorkspaces: ["/home/user/my-project"],
+    });
+
+    renderSidebar();
+
+    expect(await screen.findByText("my-project")).toBeInTheDocument();
+    expect(await screen.findByText("Debug Session")).toBeInTheDocument();
+    expect(screen.queryByText("No chats yet")).not.toBeInTheDocument();
+  });
+
+  it("uses workspace roots returned by the backend before the selected fallback", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            id: "conversation_backend",
+            title: "Backend Workspace Session",
+            created_at: "",
+            updated_at: "",
+            message_count: 1,
+            workspace_root: "/home/user/backend-project",
+          },
+        ]),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    useAppStore.setState({
+      convWorkspaceMap: {},
+      selectedWorkspace: "/home/user/my-project",
+      recentWorkspaces: ["/home/user/my-project"],
+    });
+
+    renderSidebar();
+
+    expect(await screen.findByText("backend-project")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /backend-project/i }));
+    expect(await screen.findByText("Backend Workspace Session")).toBeInTheDocument();
   });
 
   it("keeps workspace folder order stable after the selected workspace changes", async () => {
