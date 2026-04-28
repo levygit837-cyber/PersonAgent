@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FolderOpen,
+  GitPullRequest,
   MessageSquare,
   Plug,
   Plus,
@@ -61,6 +62,20 @@ export function Sidebar() {
             </Button>
           </TooltipTrigger>
           <TooltipContent side="right">Skills</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={section === "openPr" ? "secondary" : "ghost"}
+              size="iconSm"
+              className="mb-1"
+              aria-label="Open PR"
+              onClick={() => setSection("openPr")}
+            >
+              <GitPullRequest className="h-3.5 w-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">Open PR</TooltipContent>
         </Tooltip>
         <div className="mt-auto">
           <Tooltip>
@@ -169,6 +184,21 @@ function SidebarActions() {
       >
         <Sparkles className="h-3.5 w-3.5" />
         <span>Skills</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => setSection("openPr")}
+        className={
+          section === "openPr"
+            ? "flex w-full items-center gap-2 rounded-xl bg-accent/80 px-2 py-1.5 text-[13px] text-foreground shadow-soft"
+            : "flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-glass/80 hover:text-foreground"
+        }
+      >
+        <GitPullRequest className="h-3.5 w-3.5" />
+        <span className="min-w-0 flex-1 text-left">Open PR</span>
+        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary">
+          3
+        </span>
       </button>
     </div>
   );

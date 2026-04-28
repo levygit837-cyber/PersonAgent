@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { ChatWorkspace } from "./components/chat/chat-workspace";
 import { Sidebar } from "./components/layout/sidebar";
 import { TitleBar } from "./components/layout/titlebar";
+import { OpenPrWorkspace } from "./components/open-pr/open-pr-workspace";
 import { SkillsWorkspace } from "./components/skills/skills-workspace";
 import { useAppStore } from "./stores/app-store";
 
@@ -19,7 +20,7 @@ export function App() {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <Sidebar />
         <main className="min-w-0 flex-1 overflow-hidden">
-          {section === "skills" ? <SkillsWorkspace /> : <ChatWorkspace />}
+          {section === "skills" ? <SkillsWorkspace /> : section === "openPr" ? <OpenPrWorkspace /> : <ChatWorkspace />}
         </main>
       </div>
     </div>
