@@ -16,6 +16,7 @@ from personagent.domain.exceptions import (
     LLMBackendConnectionError,
     LLMBackendError,
     LLMBackendTimeoutError,
+    provider_http_error,
 )
 from personagent.domain.models.inference_result import InferenceResult, StreamChunk
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
@@ -128,7 +129,7 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
         except httpx.TimeoutException as exc:
             raise LLMBackendTimeoutError(f"Timeout calling Kimi Code ({self.timeout}s)") from exc
         except httpx.HTTPStatusError as exc:
-            raise LLMBackendError(self._http_error_message(exc, "Kimi Code")) from exc
+            raise self._http_error(exc, "Kimi Code") from exc
 
         return self._parse_message_response(response.json(), payload["model"])
 
@@ -190,7 +191,7 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
                 f"Timeout streaming from Kimi Code ({self._stream_timeout_label()}, model={payload['model']})"
             ) from exc
         except httpx.HTTPStatusError as exc:
-            raise LLMBackendError(self._http_error_message(exc, "Kimi Code")) from exc
+            raise self._http_error(exc, "Kimi Code") from exc
 
     async def health_check(self) -> dict[str, Any]:
         if not self.api_key:
@@ -776,6 +777,17 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
             body = exc.response.text[:500]
         suffix = f": {body}" if body else f": {exc.response.reason_phrase}"
         return f"{provider} HTTP {exc.response.status_code}{suffix}"
+
+    def _http_error(self, exc: httpx.HTTPStatusError, provider: str) -> LLMBackendError:
+        body = ""
+        with suppress(Exception):
+            body = exc.response.text[:500]
+        return provider_http_error(
+            provider=provider,
+            status_code=exc.response.status_code,
+            detail=body or exc.response.reason_phrase,
+            retry_after=exc.response.headers.get("retry-after"),
+        )
 
     async def close(self) -> None:
         if self._client and not self._client.is_closed:

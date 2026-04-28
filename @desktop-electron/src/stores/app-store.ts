@@ -10,7 +10,7 @@ const settingsKeys = {
 };
 
 type ApiStatus = "checking" | "online" | "offline";
-export type WorkbenchSection = "chat";
+export type WorkbenchSection = "chat" | "skills";
 
 interface AppState {
   baseUrl: string;

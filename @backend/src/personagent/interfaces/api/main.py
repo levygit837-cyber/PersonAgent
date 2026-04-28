@@ -10,11 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from personagent.application.jobs.memory_job import JobType
 from personagent.infrastructure.config.settings import get_settings
 from personagent.infrastructure.persistence.database import init_db
+from personagent.interfaces.api.errors import install_error_handlers
 from personagent.interfaces.api.routes import (
     chat,
     conversations,
     memory,
     sessions,
+    skills,
     workspace,
 )
 from personagent.interfaces.config.di_container import get_container
@@ -123,11 +125,13 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    install_error_handlers(app)
 
     # Routes
     app.include_router(chat.router)
     app.include_router(conversations.router)
     app.include_router(sessions.router)
+    app.include_router(skills.router)
     app.include_router(memory.router)
     app.include_router(workspace.router)
 

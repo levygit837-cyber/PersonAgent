@@ -87,11 +87,20 @@ describe("Sidebar", () => {
   it("shows collapsible MCP section without deprecated secondary navigation", async () => {
     renderSidebar();
 
+    expect(screen.getByText("Skills")).toBeInTheDocument();
     expect(screen.getByText("MCP Connections")).toBeInTheDocument();
     fireEvent.click(screen.getByText("MCP Connections"));
     expect(screen.getByTestId("mcp-connections-region")).toBeInTheDocument();
     expect(screen.queryByText(deprecatedSectionLabel)).not.toBeInTheDocument();
     expect(useAppStore.getState().section).toBe("chat");
+  });
+
+  it("switches to the Skills section from the sidebar", async () => {
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: /^skills$/i }));
+
+    expect(useAppStore.getState().section).toBe("skills");
   });
 
   it("loads sessions with the workspace from their folder group", async () => {

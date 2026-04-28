@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${SCRIPT_DIR}/../.."
 
 # Carrega configurações do .env ou config.yaml
-MODEL_PATH="${LLAMA_MODEL_PATH:-/home/levybonito/.lmstudio/models/Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF}"
+MODEL_PATH="${LLAMA_MODEL_PATH:-/home/levybonito/.lmstudio/models/Jackrong/Qwen3.5-4B-Reasoning-Distilled-v2-GGUF}"
 LLAMA_DIR="${SCRIPT_DIR}/../llama-cpp-turboquant"
 BUILD_DIR="${LLAMA_DIR}/build"
 LLAMA_SERVER="${BUILD_DIR}/bin/llama-server"

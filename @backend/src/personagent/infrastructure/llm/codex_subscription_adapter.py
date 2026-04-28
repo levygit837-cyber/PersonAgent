@@ -22,6 +22,7 @@ from personagent.domain.exceptions import (
     LLMBackendConnectionError,
     LLMBackendError,
     LLMBackendTimeoutError,
+    provider_http_error,
 )
 from personagent.domain.models.inference_result import InferenceResult, StreamChunk
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
@@ -332,7 +333,7 @@ class CodexSubscriptionAdapter(LLMBackendRepository):  # type: ignore[misc]
                 f"Timeout streaming from Codex ({self._stream_timeout_label()}, model={payload['model']})"
             ) from exc
         except httpx.HTTPStatusError as exc:
-            raise LLMBackendError(self._http_error_message(exc, "Codex")) from exc
+            raise self._http_error(exc, "Codex") from exc
 
     async def health_check(self) -> dict[str, Any]:
         snapshot = self.auth_store.read_status()
@@ -716,7 +717,7 @@ class CodexSubscriptionAdapter(LLMBackendRepository):  # type: ignore[misc]
                 return self._normalize_models_catalog(data, source="remote")
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code != 401 or retried:
-                    raise LLMBackendError(self._http_error_message(exc, "Codex")) from exc
+                    raise self._http_error(exc, "Codex") from exc
                 retried = True
                 await self.auth_store.refresh_via_cli()
             except httpx.ConnectError as exc:
@@ -899,6 +900,14 @@ class CodexSubscriptionAdapter(LLMBackendRepository):  # type: ignore[misc]
 
     def _http_error_message(self, exc: httpx.HTTPStatusError, provider: str) -> str:
         return f"{provider} HTTP {exc.response.status_code}: {exc.response.reason_phrase}"
+
+    def _http_error(self, exc: httpx.HTTPStatusError, provider: str) -> LLMBackendError:
+        return provider_http_error(
+            provider=provider,
+            status_code=exc.response.status_code,
+            detail=exc.response.text[:500] or exc.response.reason_phrase,
+            retry_after=exc.response.headers.get("retry-after"),
+        )
 
     def _safe_error_detail(self, data: dict[str, Any]) -> str:
         error = data.get("error")

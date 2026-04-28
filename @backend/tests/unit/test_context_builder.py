@@ -152,8 +152,8 @@ class TestContextBuilder:
         additional_dir = temp_workspace / "additional"
         additional_dir.mkdir()
 
-        additional_claude = additional_dir / "persona.md"
-        additional_claude.write_text("Additional content")
+        additional_persona = additional_dir / "persona.md"
+        additional_persona.write_text("Additional content")
 
         builder = ContextBuilder(
             workspace_root=temp_workspace,

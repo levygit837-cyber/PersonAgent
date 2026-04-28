@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_MAX_TOOL_ITERATIONS = 8
+MAX_TOOL_ITERATIONS_HARD_CAP = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,7 +15,7 @@ class ToolRuntimeConfig:
 
     workspace_root: Path
     allowed_roots: tuple[Path, ...]
-    max_tool_iterations: int | None = DEFAULT_MAX_TOOL_ITERATIONS
+    max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS
     max_concurrency: int = 4
     read_max_bytes: int = 128_000
     read_default_limit: int = 1_000
@@ -58,9 +59,7 @@ class ToolRuntimeConfig:
         return cls(
             workspace_root=root,
             allowed_roots=roots,
-            max_tool_iterations=(
-                max(1, max_tool_iterations) if max_tool_iterations is not None else None
-            ),
+            max_tool_iterations=_bounded_tool_iterations(max_tool_iterations),
             max_concurrency=max(1, max_concurrency),
             read_max_bytes=max(1, read_max_bytes),
             read_default_limit=max(1, read_default_limit),
@@ -85,4 +84,10 @@ class ToolRuntimeConfig:
         )
 
 
-__all__ = ["DEFAULT_MAX_TOOL_ITERATIONS", "ToolRuntimeConfig"]
+def _bounded_tool_iterations(value: int | None) -> int:
+    if value is None:
+        return DEFAULT_MAX_TOOL_ITERATIONS
+    return min(MAX_TOOL_ITERATIONS_HARD_CAP, max(1, int(value)))
+
+
+__all__ = ["DEFAULT_MAX_TOOL_ITERATIONS", "MAX_TOOL_ITERATIONS_HARD_CAP", "ToolRuntimeConfig"]

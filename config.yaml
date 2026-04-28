@@ -22,7 +22,7 @@ postgres:
 llama:
   server_url: "http://localhost:8080/v1"
   server_api_key: "local"
-  model_path: "/home/levybonito/.lmstudio/models/Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF"
+  model_path: "/home/levybonito/.lmstudio/models/Jackrong/Qwen3.5-4B-Reasoning-Distilled-v2-GGUF"
   ctx_size: 131072
   n_gpu_layers: 999
   temperature: 0.7

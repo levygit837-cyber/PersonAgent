@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from personagent.application.tools import ToolRegistry
-from personagent.domain.prompts.skills import find_skill
+from personagent.domain.prompts.skills import find_skill, is_skill_enabled
 from personagent.domain.tools import (
     Tool,
     ToolArguments,
@@ -93,6 +93,20 @@ def create_skill_tool() -> Tool:
                 tool_call_id=call.id,
                 tool_name="Skill",
                 content=f"Skill not found: {name}",
+                status=ToolExecutionStatus.ERROR,
+                is_error=True,
+            )
+        skill_roots = tuple(str(path) for path in context.limits.get("skill_roots", ()))
+        if not is_skill_enabled(
+            skill,
+            workspace_root=context.workspace_root,
+            cwd=context.cwd,
+            extra_roots=skill_roots,
+        ):
+            return ToolResult(
+                tool_call_id=call.id,
+                tool_name="Skill",
+                content=f"Skill is disabled: {name}",
                 status=ToolExecutionStatus.ERROR,
                 is_error=True,
             )

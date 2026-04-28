@@ -1,10 +1,11 @@
-import { ArrowUp, Brain, ChevronDown, ChevronRight, Command, LogOut, Plus, Sparkles, Square, UsersRound, X } from "lucide-react";
+import { ArrowUp, Brain, ChevronDown, ChevronRight, Command, LogOut, Plus, Sparkles, Square, Terminal, UsersRound, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { getCodexAuthStatus, listChatCommands, listModels, logoutCodex } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore, type ComposerAnnotation } from "../../stores/chat-store";
+import { useTerminalStore } from "../../stores/terminal-store";
 import { localModel, reasoningPresets, type ChatCommandInfo, type ChatMessageUi, type LlmModel, type ModelProvider, type ReasoningPreset, type ToolBlockStatus, type ToolBlockUi } from "../../types/chat";
 import { Button } from "../ui/button";
 import { isTodoTool, todoItems, type TodoItem } from "./tool-block";
@@ -124,6 +125,9 @@ export function InputDock() {
   const composerAnnotations = useChatStore((state) => state.composerAnnotations);
   const removeComposerAnnotation = useChatStore((state) => state.removeComposerAnnotation);
   const clearComposerAnnotations = useChatStore((state) => state.clearComposerAnnotations);
+  const pendingSnippet = useTerminalStore((state) => state.pendingSnippet);
+  const clearPendingSnippet = useTerminalStore((state) => state.clearPendingSnippet);
+  const snippetNonce = useTerminalStore((state) => state.snippetNonce);
   const baseUrl = useAppStore((state) => state.baseUrl);
   const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
   const disabled = isStreaming;
@@ -135,7 +139,7 @@ export function InputDock() {
     staleTime: 30_000,
   });
   const commandMatches = filterSlashCommands(slashCommands.data ?? [], slashToken);
-  const canSend = Boolean(text.trim()) || composerAnnotations.length > 0;
+  const canSend = Boolean(text.trim()) || composerAnnotations.length > 0 || Boolean(pendingSnippet);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -144,6 +148,19 @@ export function InputDock() {
     el.style.height = `${Math.min(el.scrollHeight, 148)}px`;
   }, [text]);
 
+  // Inject terminal snippet prefix when pending snippet arrives
+  useEffect(() => {
+    if (!pendingSnippet) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    const prefix = "@terminal:bash ";
+    setText((prev) => {
+      if (prev.startsWith(prefix)) return prev;
+      return prev ? `${prefix}${prev}` : prefix;
+    });
+    requestAnimationFrame(() => el.focus());
+  }, [snippetNonce, pendingSnippet?.id]);
+
   const submit = () => {
     if (isStreaming) {
       stopStreaming();
@@ -151,10 +168,12 @@ export function InputDock() {
       return;
     }
     const value = text.trim();
-    if (!value && composerAnnotations.length === 0) return;
-    void sendMessage(formatComposerMessage(value, composerAnnotations));
+    if (!value && composerAnnotations.length === 0 && !pendingSnippet) return;
+    const terminalContent = pendingSnippet?.content ?? "";
+    void sendMessage(formatComposerMessage(value, composerAnnotations, terminalContent));
     setText("");
     clearComposerAnnotations();
+    clearPendingSnippet();
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
@@ -181,6 +200,7 @@ export function InputDock() {
             }}
           />
           <ComposerAnnotationTray annotations={composerAnnotations} onRemove={removeComposerAnnotation} />
+          <TerminalSnippetTray snippet={pendingSnippet} onRemove={clearPendingSnippet} />
           <div className="flex items-end gap-2 px-2.5 py-2.5 sm:gap-2.5 sm:px-3">
             <FeatureMenu enabled={!disabled} />
             <textarea
@@ -212,6 +232,41 @@ export function InputDock() {
             </Button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function TerminalSnippetTray({
+  snippet,
+  onRemove,
+}: {
+  snippet: { id: string; content: string } | null;
+  onRemove: () => void;
+}) {
+  if (!snippet) return null;
+
+  return (
+    <div className="flex flex-col gap-1.5 overflow-y-auto border-b border-glass-border/20 px-3 py-2">
+      <div className="group flex min-w-0 items-center gap-2 rounded-xl border border-primary/25 bg-primary/10 px-2.5 py-2 text-left ring-1 ring-primary/10">
+        <span className="shrink-0 rounded-md bg-primary/20 px-2 py-1 font-mono text-[11px] font-semibold text-primary">
+          <Terminal className="inline h-3 w-3" />
+          {" "}@terminal:bash
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+          {snippet.content.slice(0, 120).replace(/\n/g, " ")}
+          {snippet.content.length > 120 ? "..." : ""}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="iconSm"
+          aria-label="Remover terminal snippet"
+          onClick={onRemove}
+          className="h-6 w-6 shrink-0 rounded-lg opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+        >
+          <X className="h-3 w-3" />
+        </Button>
       </div>
     </div>
   );
@@ -1057,28 +1112,44 @@ function formatVendorLabel(value: string) {
     .trim();
 }
 
-function formatComposerMessage(text: string, annotations: ComposerAnnotation[]) {
-  if (annotations.length === 0) return text;
+function formatComposerMessage(text: string, annotations: ComposerAnnotation[], terminalContent?: string) {
+  const blocks: string[] = [];
 
-  const annotationBlocks = annotations.map((annotation) => {
-    const fenceLanguage = annotation.language === "plaintext" ? "" : annotation.language;
-    return [
-      `@Annotation#${annotation.id}`,
-      `File: ${annotation.displayPath}`,
-      `Path: ${annotation.filePath}`,
-      `Lines: ${formatLineRange(annotation.startLine, annotation.endLine)}`,
+  if (annotations.length > 0) {
+    const annotationBlocks = annotations.map((annotation) => {
+      const fenceLanguage = annotation.language === "plaintext" ? "" : annotation.language;
+      return [
+        `@Annotation#${annotation.id}`,
+        `File: ${annotation.displayPath}`,
+        `Path: ${annotation.filePath}`,
+        `Lines: ${formatLineRange(annotation.startLine, annotation.endLine)}`,
+        "",
+        "Annotation:",
+        annotation.text,
+        "",
+        "Selected lines:",
+        `\`\`\`${fenceLanguage}`,
+        annotation.selectedLines,
+        "```",
+      ].join("\n");
+    });
+    blocks.push(annotationBlocks.join("\n\n"));
+  }
+
+  if (terminalContent) {
+    blocks.push([
+      "@terminal:bash",
       "",
-      "Annotation:",
-      annotation.text,
-      "",
-      "Selected lines:",
-      `\`\`\`${fenceLanguage}`,
-      annotation.selectedLines,
+      "Terminal output:",
+      "```bash",
+      terminalContent,
       "```",
-    ].join("\n");
-  });
+    ].join("\n"));
+  }
 
-  return `${annotationBlocks.join("\n\n")}\n\nRequest:\n${text.trim()}`;
+  if (blocks.length === 0) return text;
+
+  return `${blocks.join("\n\n")}\n\nRequest:\n${text.trim()}`;
 }
 
 function formatLineRange(start: number, end: number) {

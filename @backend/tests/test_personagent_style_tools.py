@@ -57,7 +57,7 @@ from personagent.infrastructure.tools import (
 )
 
 
-def test_registry_exposes_claude_names_aliases_deferred_and_schema_cache(tmp_path):
+def test_registry_exposes_personagent_names_aliases_deferred_and_schema_cache(tmp_path):
     registry = ToolRegistry(
         [
             create_read_file_tool(),
@@ -92,7 +92,7 @@ def test_registry_exposes_claude_names_aliases_deferred_and_schema_cache(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_claude_parity_tool_registration_aliases_and_runtime_contracts(tmp_path):
+async def test_personagent_runtime_tool_registration_aliases_and_runtime_contracts(tmp_path):
     store = InMemoryTaskStore()
     mcp_config = {
         "name": "fake",

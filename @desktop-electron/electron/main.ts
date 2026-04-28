@@ -1,7 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions, type IpcMainInvokeEvent } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import * as pty from "node-pty";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -11,6 +12,39 @@ type SettingsRecord = Record<string, unknown>;
 let mainWindow: BrowserWindow | null = null;
 let settingsWriteQueue: Promise<void> = Promise.resolve();
 const MAX_FILE_PREVIEW_BYTES = 2 * 1024 * 1024;
+
+// Terminal PTY manager
+const terminals = new Map<string, pty.IPty>();
+
+function getDefaultShell(): string {
+  if (process.platform === "win32") return process.env.COMSPEC || "cmd.exe";
+  return process.env.SHELL || "/bin/bash";
+}
+
+function createTerminalInstance(id: string, cwd?: string) {
+  const shell = getDefaultShell();
+  const term = pty.spawn(shell, [], {
+    name: "xterm-color",
+    cwd: cwd || process.env.HOME || process.cwd(),
+    env: process.env as { [key: string]: string },
+  });
+
+  term.onData((data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("terminal:data", { id, data });
+    }
+  });
+
+  term.onExit(() => {
+    terminals.delete(id);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("terminal:exit", { id });
+    }
+  });
+
+  terminals.set(id, term);
+  return term;
+}
 
 function desktopDebug(message: string, details?: Record<string, unknown>) {
   if (process.env.PERSONAGENT_DESKTOP_DEBUG !== "1") return;
@@ -210,6 +244,40 @@ ipcMain.handle("fs:read-file", async (_event, filePath: string, workspaceRoot?: 
     throw new Error(`File is too large to preview: ${filePath}`);
   }
   return readFile(resolvedPath, "utf8");
+});
+
+ipcMain.handle("terminal:create", (_event: IpcMainInvokeEvent, id: string, cwd?: string) => {
+  if (terminals.has(id)) {
+    terminals.get(id)?.kill();
+    terminals.delete(id);
+  }
+  createTerminalInstance(id, cwd);
+  return true;
+});
+
+ipcMain.handle("terminal:write", (_event: IpcMainInvokeEvent, id: string, data: string) => {
+  const term = terminals.get(id);
+  if (term) {
+    term.write(data);
+  }
+  return true;
+});
+
+ipcMain.handle("terminal:resize", (_event: IpcMainInvokeEvent, id: string, cols: number, rows: number) => {
+  const term = terminals.get(id);
+  if (term) {
+    term.resize(cols, rows);
+  }
+  return true;
+});
+
+ipcMain.handle("terminal:kill", (_event: IpcMainInvokeEvent, id: string) => {
+  const term = terminals.get(id);
+  if (term) {
+    term.kill();
+    terminals.delete(id);
+  }
+  return true;
 });
 
 app.whenReady().then(async () => {

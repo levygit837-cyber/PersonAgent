@@ -20,6 +20,7 @@ from personagent.domain.exceptions import (
     LLMBackendConnectionError,
     LLMBackendError,
     LLMBackendTimeoutError,
+    provider_http_error,
 )
 from personagent.domain.models.inference_result import InferenceResult, StreamChunk
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
@@ -160,8 +161,11 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
         except httpx.TimeoutException as exc:
             raise LLMBackendTimeoutError(f"Timeout calling NVIDIA NIM ({self.timeout}s)") from exc
         except httpx.HTTPStatusError as exc:
-            raise LLMBackendError(
-                f"NVIDIA NIM HTTP {exc.response.status_code}: {exc.response.reason_phrase}"
+            raise provider_http_error(
+                provider="NVIDIA NIM",
+                status_code=exc.response.status_code,
+                detail=exc.response.text[:500] or exc.response.reason_phrase,
+                retry_after=exc.response.headers.get("retry-after"),
             ) from exc
 
         data = response.json()
@@ -261,8 +265,11 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
                 f"({self._stream_timeout_label()}, model={payload['model']})"
             ) from exc
         except httpx.HTTPStatusError as exc:
-            raise LLMBackendError(
-                f"NVIDIA NIM HTTP {exc.response.status_code}: {exc.response.reason_phrase}"
+            raise provider_http_error(
+                provider="NVIDIA NIM",
+                status_code=exc.response.status_code,
+                detail=exc.response.text[:500] or exc.response.reason_phrase,
+                retry_after=exc.response.headers.get("retry-after"),
             ) from exc
 
     async def health_check(self) -> dict[str, Any]:

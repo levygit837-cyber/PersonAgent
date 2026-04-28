@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -34,6 +35,124 @@ if TYPE_CHECKING:
     )
 
 logger = structlog.get_logger(__name__)
+
+
+_MEMORY_META_TERMS = {
+    "lembranca",
+    "lembrancas",
+    "lembra",
+    "lembrar",
+    "memoria",
+    "memorias",
+    "memory",
+    "memories",
+    "remember",
+}
+_MEMORY_CAPABILITY_TERMS = {
+    "acessa",
+    "acessar",
+    "acesso",
+    "access",
+    "available",
+    "capacidade",
+    "capabilities",
+    "disponivel",
+    "disponiveis",
+    "possui",
+    "tem",
+}
+_QUERY_STOPWORDS = {
+    "a",
+    "as",
+    "com",
+    "como",
+    "de",
+    "da",
+    "das",
+    "do",
+    "dos",
+    "e",
+    "em",
+    "eu",
+    "me",
+    "na",
+    "no",
+    "nos",
+    "o",
+    "os",
+    "para",
+    "por",
+    "qual",
+    "quais",
+    "que",
+    "se",
+    "sua",
+    "suas",
+    "tem",
+    "tenho",
+    "voce",
+    "voces",
+    "what",
+    "which",
+    "you",
+    "your",
+}
+_OPERATIONAL_ANCHOR_TERMS = {
+    "agent",
+    "agente",
+    "api",
+    "arquivo",
+    "arquivos",
+    "arquitetura",
+    "auth",
+    "backend",
+    "backpressure",
+    "benchmark",
+    "budget",
+    "chunk",
+    "chunks",
+    "codigo",
+    "comando",
+    "comandos",
+    "cookie",
+    "decisao",
+    "decisoes",
+    "dependencia",
+    "dependencias",
+    "diff",
+    "diffs",
+    "duplicar",
+    "duplicata",
+    "erro",
+    "erros",
+    "executor",
+    "ferramenta",
+    "ferramentas",
+    "fetch",
+    "file",
+    "finding",
+    "findings",
+    "frontend",
+    "header",
+    "http",
+    "idempotency",
+    "incidente",
+    "incidentes",
+    "jwt",
+    "marcador",
+    "planner",
+    "registry",
+    "retry",
+    "solucao",
+    "solucoes",
+    "timeout",
+    "tool",
+    "tools",
+}
+_CODE_ANCHOR_RE = re.compile(
+    r"(`[^`]+`|[\w./-]+\.(?:py|ts|tsx|js|jsx|json|md|toml|ya?ml|css|html|sql)|"
+    r"\b[a-z]+_[a-z0-9_]+\b|[A-Z][A-Z0-9_]{3,})"
+)
 
 
 class OperationalMemoryService:
@@ -209,6 +328,9 @@ class OperationalMemoryService:
         top_k: int | None = None,
     ) -> str:
         if not self._recall_enabled:
+            return ""
+        if not _should_recall_operational_memory(query):
+            logger.debug("operational_memory_recall_skipped", reason="query_intent_gate")
             return ""
         query_embedding = await self._embed_query(query)
         findings: list[RecallFinding] = []
@@ -463,3 +585,57 @@ def project_slug_from_workspace(workspace_root: str | None) -> str:
         return "default"
     name = Path(workspace_root).name
     return re.sub(r"[^a-zA-Z0-9_-]", "_", name).lower() or "default"
+
+
+def _should_recall_operational_memory(query: str) -> bool:
+    """Return whether a user query is specific enough for execution-memory recall."""
+
+    normalized = _normalize_query(query)
+    if not normalized:
+        return False
+
+    has_code_anchor = bool(_CODE_ANCHOR_RE.search(query))
+    tokens = _query_tokens(normalized)
+    if has_code_anchor:
+        return True
+
+    if _is_memory_capability_query(tokens):
+        return False
+
+    if tokens & _OPERATIONAL_ANCHOR_TERMS:
+        return True
+
+    signal_tokens = [
+        token
+        for token in tokens
+        if token not in _QUERY_STOPWORDS
+        and token not in _MEMORY_META_TERMS
+        and token not in _MEMORY_CAPABILITY_TERMS
+        and len(token) >= 4
+    ]
+    asks_about_specific_memory = bool(tokens & _MEMORY_META_TERMS) and "sobre" in tokens
+    return asks_about_specific_memory and bool(signal_tokens)
+
+
+def _is_memory_capability_query(tokens: set[str]) -> bool:
+    if not tokens & _MEMORY_META_TERMS:
+        return False
+    if tokens & _OPERATIONAL_ANCHOR_TERMS:
+        return False
+    non_generic = tokens - _QUERY_STOPWORDS - _MEMORY_META_TERMS - _MEMORY_CAPABILITY_TERMS
+    return not non_generic or non_generic <= {"sistema", "tipo", "tipos"}
+
+
+def _normalize_query(query: str) -> str:
+    normalized = unicodedata.normalize("NFKD", query)
+    ascii_text = "".join(char for char in normalized if not unicodedata.combining(char))
+    return ascii_text.lower().strip()
+
+
+def _query_tokens(normalized_query: str) -> set[str]:
+    return {
+        token
+        for raw in normalized_query.replace("_", " ").replace("-", " ").split()
+        for token in [raw.strip(".,:;()[]{}'\"`!?")]
+        if token
+    }

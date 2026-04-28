@@ -6,7 +6,13 @@ from personagent.domain.context.models import SystemContext, UserContext
 from personagent.domain.prompts.commands import CommandRegistry, parse_slash_invocation
 from personagent.domain.prompts.models import PromptProfile
 from personagent.domain.prompts.services import PromptBuilder
-from personagent.domain.prompts.skills import SkillDefinition, discover_skills, find_skill
+from personagent.domain.prompts.skills import (
+    SkillDefinition,
+    discover_enabled_skills,
+    discover_skills,
+    find_skill,
+    set_skill_activation,
+)
 from personagent.domain.tools import ToolDefinition
 
 
@@ -82,6 +88,50 @@ Follow agent development instructions.
     assert discovered["agent-development"].slash_name == "/agent-development"
     assert skill is not None
     assert skill.name == "Agent Development"
+
+
+def test_skill_activation_filters_prompt_inventory(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    workspace_skill = workspace / ".personagent" / "skills" / "writer"
+    codex_skill = home / ".codex" / "skills" / "global-review"
+    workspace_skill.mkdir(parents=True)
+    codex_skill.mkdir(parents=True)
+    (workspace_skill / "SKILL.md").write_text(
+        """---
+name: Writer
+description: Write clean prose
+---
+Use concise prose.
+""",
+        encoding="utf-8",
+    )
+    (codex_skill / "SKILL.md").write_text(
+        """---
+name: Global Review
+description: Review globally
+---
+Review code.
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PERSONAGENT_SKILL_STATE_PATH", str(tmp_path / "state.json"))
+
+    assert [skill.invocation_name for skill in discover_enabled_skills(workspace_root=workspace)] == [
+        "writer"
+    ]
+
+    set_skill_activation("global-review", True)
+    assert [skill.invocation_name for skill in discover_enabled_skills(workspace_root=workspace)] == [
+        "global-review",
+        "writer",
+    ]
+
+    set_skill_activation("writer", False)
+    assert [skill.invocation_name for skill in discover_enabled_skills(workspace_root=workspace)] == [
+        "global-review"
+    ]
 
 
 @pytest.mark.asyncio

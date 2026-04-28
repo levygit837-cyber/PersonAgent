@@ -20,6 +20,7 @@ from personagent.domain.exceptions import (
     LLMBackendConnectionError,
     LLMBackendError,
     LLMBackendTimeoutError,
+    provider_http_error,
 )
 from personagent.domain.models.inference_result import GeneratedImage, InferenceResult, StreamChunk
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
@@ -964,7 +965,12 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
         with suppress(ValueError, TypeError, httpx.ResponseNotRead):
             body = exc.response.json()
             detail = _error_message_from_body(body, detail)
-        return LLMBackendError(f"Vertex AI HTTP {exc.response.status_code}: {detail}")
+        return provider_http_error(
+            provider="Vertex AI",
+            status_code=exc.response.status_code,
+            detail=detail,
+            retry_after=exc.response.headers.get("retry-after"),
+        )
 
 
 def _first_candidate(data: dict[str, Any]) -> dict[str, Any] | None:

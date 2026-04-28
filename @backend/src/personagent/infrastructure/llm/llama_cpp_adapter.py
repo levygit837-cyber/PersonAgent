@@ -15,8 +15,8 @@ from tenacity import (
 
 from personagent.domain.exceptions import (
     LLMBackendConnectionError,
-    LLMBackendError,
     LLMBackendTimeoutError,
+    provider_http_error,
 )
 from personagent.domain.models.inference_result import InferenceResult, StreamChunk
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
@@ -118,8 +118,11 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
                 f"Timeout while requesting llama-server ({self.timeout}s)"
             ) from exc
         except httpx.HTTPStatusError as exc:
-            raise LLMBackendError(
-                f"Erro HTTP {exc.response.status_code}: {exc.response.text}"
+            raise provider_http_error(
+                provider="llama",
+                status_code=exc.response.status_code,
+                detail=exc.response.text,
+                retry_after=exc.response.headers.get("retry-after"),
             ) from exc
 
         data = response.json()
@@ -197,8 +200,11 @@ class LlamaCppAdapter(LLMBackendRepository):  # type: ignore[misc]
         except httpx.TimeoutException as exc:
             raise LLMBackendTimeoutError(f"Timeout no streaming ({self.timeout}s)") from exc
         except httpx.HTTPStatusError as exc:
-            raise LLMBackendError(
-                f"Erro HTTP {exc.response.status_code}: {exc.response.text}"
+            raise provider_http_error(
+                provider="llama",
+                status_code=exc.response.status_code,
+                detail=exc.response.text,
+                retry_after=exc.response.headers.get("retry-after"),
             ) from exc
 
     async def health_check(self) -> dict[str, Any]:

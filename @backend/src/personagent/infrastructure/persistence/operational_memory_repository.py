@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -35,6 +37,105 @@ class StoredMemoryChunk:
     event: OperationalMemoryEventORM | None
     embedding: list[float] | None
     score: float = 0.0
+
+
+_RELEVANCE_STOPWORDS = {
+    "a",
+    "as",
+    "com",
+    "como",
+    "de",
+    "da",
+    "das",
+    "do",
+    "dos",
+    "e",
+    "em",
+    "foi",
+    "na",
+    "no",
+    "nos",
+    "o",
+    "os",
+    "para",
+    "por",
+    "qual",
+    "quais",
+    "que",
+    "the",
+    "to",
+    "was",
+    "what",
+    "which",
+}
+_RELEVANCE_CANONICAL_TERMS = {
+    "arquitetura": "architecture",
+    "arquiteturais": "architecture",
+    "arquivo": "file",
+    "arquivos": "file",
+    "comando": "command",
+    "comandos": "command",
+    "decisao": "decision",
+    "decisoes": "decision",
+    "decisions": "decision",
+    "dependencia": "dependency",
+    "dependencias": "dependency",
+    "duplicados": "duplicate",
+    "duplicar": "duplicate",
+    "erros": "error",
+    "ferramenta": "tool",
+    "ferramentas": "tool",
+    "incidente": "incident",
+    "incidentes": "incident",
+    "marcador": "marker",
+    "marcadores": "marker",
+    "retries": "retry",
+    "solucao": "resolution",
+    "solucoes": "resolution",
+    "usuario": "user",
+}
+_CONTEXT_ANCHOR_TERMS = {
+    "architecture",
+    "api",
+    "auth",
+    "backpressure",
+    "benchmark",
+    "budget",
+    "canary",
+    "chunk",
+    "command",
+    "conversation",
+    "cookie",
+    "decision",
+    "dependency",
+    "diff",
+    "duplicate",
+    "error",
+    "executor",
+    "fetch",
+    "file",
+    "fingerprint",
+    "frontend",
+    "header",
+    "idempotency",
+    "incident",
+    "jwt",
+    "marker",
+    "planner",
+    "registry",
+    "retry",
+    "tenant",
+    "timeout",
+    "tool",
+    "workspace",
+}
+_WEAK_SINGLE_MATCH_TERMS = {"benchmark", "incident"}
+_FOCUS_REQUIREMENTS = {
+    "decision": {"auth", "cookie", "decision", "executor", "jwt", "planner"},
+    "file": {"api", "backend", "file", "frontend", "path", "src"},
+    "header": {"fingerprint", "header", "idempotency"},
+    "marker": {"boundary", "canary", "marker", "tenant"},
+}
 
 
 class OperationalMemoryRepository:
@@ -79,7 +180,6 @@ class OperationalMemoryRepository:
                     select(OperationalMemoryChunkORM).where(
                         OperationalMemoryChunkORM.project_slug == chunk.project_slug,
                         OperationalMemoryChunkORM.source_type == chunk.source_type,
-                        OperationalMemoryChunkORM.source_id == chunk.source_id,
                         OperationalMemoryChunkORM.content_hash == chunk.content_hash,
                     )
                 )
@@ -124,6 +224,18 @@ class OperationalMemoryRepository:
         async with self._session_factory() as session:
             for chunk, vector in zip(chunks, vectors, strict=False):
                 if not vector:
+                    continue
+                existing_embedding = await session.scalar(
+                    select(MemoryEmbeddingORM).where(
+                        MemoryEmbeddingORM.chunk_id == chunk.id,
+                        MemoryEmbeddingORM.embedding_model == embedding_model,
+                    )
+                )
+                if existing_embedding is not None:
+                    row = await session.get(OperationalMemoryChunkORM, chunk.id)
+                    if row is not None:
+                        row.embedding_status = EmbeddingStatus.EMBEDDED.value
+                        row.embedding_error = None
                     continue
                 session.add(
                     MemoryEmbeddingORM(
@@ -256,8 +368,13 @@ class OperationalMemoryRepository:
 
             query_terms = _terms(query)
             scored = self._score_candidates(query, candidates, query_embedding)
+            contextual = [
+                candidate for candidate in scored
+                if _is_contextually_relevant(query, candidate)
+            ]
+            diversified = self._dedupe_and_diversify(contextual, top_k=max(1, top_k))
             findings = self._to_findings(
-                scored[: max(1, top_k)],
+                diversified,
                 active_decisions,
                 query_terms=query_terms,
             )
@@ -411,6 +528,43 @@ class OperationalMemoryRepository:
                 candidate.score = raw_score + _event_type_boost(event_type) + recency
         return sorted(candidates, key=lambda item: item.score, reverse=True)
 
+    def _dedupe_and_diversify(
+        self,
+        candidates: list[StoredMemoryChunk],
+        *,
+        top_k: int,
+    ) -> list[StoredMemoryChunk]:
+        selected: list[StoredMemoryChunk] = []
+        seen_hashes: set[str] = set()
+        seen_signatures: set[str] = set()
+        seen_term_sets: list[set[str]] = []
+
+        for candidate in candidates:
+            if candidate.score <= 0:
+                continue
+            content_hash = str(candidate.chunk.content_hash or "")
+            if content_hash and content_hash in seen_hashes:
+                continue
+            signature = _semantic_signature(candidate.chunk.content)
+            if signature and signature in seen_signatures:
+                continue
+            candidate_terms = _semantic_term_set(candidate.chunk.content)
+            if any(
+                _overlap_coefficient(candidate_terms, selected_terms) >= 0.82
+                for selected_terms in seen_term_sets
+            ):
+                continue
+            selected.append(candidate)
+            if content_hash:
+                seen_hashes.add(content_hash)
+            if signature:
+                seen_signatures.add(signature)
+            if candidate_terms:
+                seen_term_sets.append(candidate_terms)
+            if len(selected) >= top_k:
+                break
+        return selected
+
     def _to_findings(
         self,
         candidates: list[StoredMemoryChunk],
@@ -499,6 +653,113 @@ def _terms(text: str) -> set[str]:
         if len(term.strip(".,:;()[]{}'\"`")) >= 3
         for term in [term.strip(".,:;()[]{}'\"`")]
     }
+
+
+def _semantic_signature(text: str, limit: int = 360) -> str:
+    """Normalize a chunk enough to collapse repeated synthetic filler."""
+
+    compact = " ".join(text.lower().split())
+    if not compact:
+        return ""
+
+    normalized: list[str] = []
+    current_size = 0
+    for raw in compact.replace("_", " ").replace("-", " ").split():
+        token = raw.strip(".,:;()[]{}'\"`")
+        if not token:
+            continue
+        if any(char.isdigit() for char in token):
+            token = "<num>"
+        normalized.append(token)
+        current_size += len(token) + 1
+        if current_size >= limit:
+            break
+    return " ".join(normalized)[:limit]
+
+
+def _semantic_term_set(text: str) -> set[str]:
+    terms: set[str] = set()
+    for raw in text.lower().replace("_", " ").replace("-", " ").split():
+        token = raw.strip(".,:;()[]{}'\"`")
+        if len(token) < 4:
+            continue
+        if any(char.isdigit() for char in token):
+            token = "<num>"
+        terms.add(token)
+    return terms
+
+
+def _is_contextually_relevant(query: str, candidate: StoredMemoryChunk) -> bool:
+    event_type = str(candidate.event.event_type if candidate.event else candidate.chunk.source_type)
+    query_terms = _relevance_terms(query)
+    if not query_terms:
+        return False
+    if event_type in {"assistant_message", "user_message"} and not _conversation_event_requested(query_terms):
+        return False
+
+    candidate_text = " ".join(
+        str(part or "")
+        for part in (
+            candidate.chunk.content,
+            candidate.chunk.file_path,
+            candidate.chunk.source_type,
+            event_type,
+            candidate.event.tool_name if candidate.event else "",
+        )
+    )
+    candidate_terms = _relevance_terms(candidate_text)
+    if not _focus_requirements_satisfied(query_terms, candidate_terms):
+        return False
+    overlap = query_terms & candidate_terms
+    if len(overlap) >= 2:
+        return True
+
+    anchor_terms = query_terms & _CONTEXT_ANCHOR_TERMS
+    anchor_overlap = anchor_terms & candidate_terms
+    return bool(anchor_overlap - _WEAK_SINGLE_MATCH_TERMS)
+
+
+def _focus_requirements_satisfied(query_terms: set[str], candidate_terms: set[str]) -> bool:
+    for focus, required_terms in _FOCUS_REQUIREMENTS.items():
+        if focus in query_terms and not (candidate_terms & required_terms):
+            return False
+    return True
+
+
+def _conversation_event_requested(query_terms: set[str]) -> bool:
+    return bool(
+        query_terms
+        & {
+            "assistant",
+            "conversa",
+            "mensagem",
+            "pergunta",
+            "resposta",
+            "usuario",
+            "user",
+        }
+    )
+
+
+def _relevance_terms(text: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKD", text)
+    ascii_text = "".join(char for char in normalized if not unicodedata.combining(char))
+    terms: set[str] = set()
+    for token in re.findall(r"[a-z0-9]+", ascii_text.lower()):
+        if len(token) < 3 or token in _RELEVANCE_STOPWORDS:
+            continue
+        terms.add(_canonical_relevance_term(token))
+    return terms
+
+
+def _canonical_relevance_term(token: str) -> str:
+    return _RELEVANCE_CANONICAL_TERMS.get(token, token)
+
+
+def _overlap_coefficient(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / min(len(left), len(right))
 
 
 def _lexical_score(query_terms: set[str], text: str) -> float:

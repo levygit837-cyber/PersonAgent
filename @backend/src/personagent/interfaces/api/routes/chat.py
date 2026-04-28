@@ -37,11 +37,14 @@ from personagent.application.team_chat import (
 from personagent.application.use_cases.chat_completion import ChatCompletionUseCase
 from personagent.domain.exceptions import (
     ConversationNotFoundError,
+    DatabaseError,
+    InvalidRequestError,
     LLMBackendConnectionError,
     LLMBackendError,
+    TeamValidationSystemError,
 )
 from personagent.domain.models.conversation import Message, Role
-from personagent.domain.prompts.skills import discover_skills
+from personagent.domain.prompts.skills import discover_enabled_skills
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.domain.tools import ToolCall, ToolExecutionStatus
 from personagent.infrastructure.persistence.database import AsyncSessionLocal
@@ -50,6 +53,7 @@ from personagent.infrastructure.persistence.models import (
     TeamMemorySnapshotORM,
     TeamRunORM,
 )
+from personagent.interfaces.api.errors import error_event
 from personagent.interfaces.config.di_container import DIContainer, get_container
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -664,6 +668,7 @@ async def list_chat_commands(
 
     root = workspace_root or resolve_context_workspace_root(ChatRequest(message="placeholder"))
     container = get_container()
+    skill_roots = tuple(str(path) for path in container.get_tool_runtime_config().skill_roots)
     commands = [
         ChatCommandInfo(
             name=command.name,
@@ -686,7 +691,11 @@ async def list_chat_commands(
             path=str(skill.path),
             user_invocable=skill.user_invocable,
         )
-        for skill in discover_skills(workspace_root=root)
+        for skill in discover_enabled_skills(
+            workspace_root=root,
+            cwd=root,
+            extra_roots=skill_roots,
+        )
         if skill.user_invocable
     ]
     by_name: dict[str, ChatCommandInfo] = {}
@@ -813,14 +822,14 @@ async def chat_completion(
 
     try:
         result = await use_case.execute(dto)
-    except ConversationNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConversationNotFoundError:
+        raise
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except LLMBackendConnectionError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except LLMBackendError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise InvalidRequestError(str(exc)) from exc
+    except LLMBackendConnectionError:
+        raise
+    except LLMBackendError:
+        raise
 
     return ChatResponse(
         conversation_id=str(result.conversation_id),
@@ -923,22 +932,16 @@ async def chat_completion_stream(
                     yield encode_sse(data)
 
         except ConversationNotFoundError as exc:
-            yield encode_sse({"event": "error", "error": str(exc), "status": 404})
+            yield encode_sse(error_event(exc))
         except ValueError as exc:
-            yield encode_sse({"event": "error", "error": str(exc), "status": 400})
+            yield encode_sse(error_event(exc, status_code=400))
         except LLMBackendConnectionError as exc:
-            yield encode_sse({"event": "error", "error": str(exc), "status": 503})
+            yield encode_sse(error_event(exc))
         except LLMBackendError as exc:
-            yield encode_sse({"event": "error", "error": str(exc), "status": 500})
+            yield encode_sse(error_event(exc))
         except Exception as exc:
             logger.exception("chat_stream_unhandled_error")
-            yield encode_sse(
-                {
-                    "event": "error",
-                    "error": f"Unexpected error in chat stream: {exc}",
-                    "status": 500,
-                }
-            )
+            yield encode_sse(error_event(exc, default_message="Unexpected error in chat stream."))
         finally:
             yield "data: [DONE]\n\n"
 
@@ -1151,23 +1154,19 @@ async def approve_tool_stream(
                 if data:
                     yield encode_sse(data)
         except ConversationNotFoundError as exc:
-            yield encode_sse({"event": "error", "error": str(exc), "status": 404})
+            yield encode_sse(error_event(exc))
         except ValueError as exc:
-            yield encode_sse({"event": "error", "error": str(exc), "status": 400})
+            yield encode_sse(error_event(exc, status_code=400))
         except LLMBackendConnectionError as exc:
-            yield encode_sse({"event": "error", "error": str(exc), "status": 503})
+            yield encode_sse(error_event(exc))
         except LLMBackendError as exc:
-            yield encode_sse({"event": "error", "error": str(exc), "status": 500})
+            yield encode_sse(error_event(exc))
         except HTTPException as exc:
-            yield encode_sse({"event": "error", "error": exc.detail, "status": exc.status_code})
+            yield encode_sse(error_event(exc))
         except Exception as exc:
             logger.exception("tool_approval_stream_unhandled_error")
             yield encode_sse(
-                {
-                    "event": "error",
-                    "error": f"Unexpected error while approving tool: {exc}",
-                    "status": 500,
-                }
+                error_event(exc, default_message="Unexpected error while approving tool.")
             )
         finally:
             yield "data: [DONE]\n\n"
@@ -1283,23 +1282,19 @@ async def answer_user_question_stream(
                 if data:
                     yield encode_sse(data)
         except ConversationNotFoundError as exc:
-            yield encode_sse({"event": "error", "error": str(exc), "status": 404})
+            yield encode_sse(error_event(exc))
         except ValueError as exc:
-            yield encode_sse({"event": "error", "error": str(exc), "status": 400})
+            yield encode_sse(error_event(exc, status_code=400))
         except LLMBackendConnectionError as exc:
-            yield encode_sse({"event": "error", "error": str(exc), "status": 503})
+            yield encode_sse(error_event(exc))
         except LLMBackendError as exc:
-            yield encode_sse({"event": "error", "error": str(exc), "status": 500})
+            yield encode_sse(error_event(exc))
         except HTTPException as exc:
-            yield encode_sse({"event": "error", "error": exc.detail, "status": exc.status_code})
+            yield encode_sse(error_event(exc))
         except Exception as exc:
             logger.exception("user_question_stream_unhandled_error")
             yield encode_sse(
-                {
-                    "event": "error",
-                    "error": f"Unexpected error while answering question: {exc}",
-                    "status": 500,
-                }
+                error_event(exc, default_message="Unexpected error while answering question.")
             )
         finally:
             yield "data: [DONE]\n\n"
@@ -1472,28 +1467,29 @@ async def team_chat_websocket(websocket: WebSocket) -> None:
         status = "cancelled"
     except (TeamValidationError, ValueError) as exc:
         status = "failed"
-        error_message = str(exc)
-        event = {"event": "error", "error": error_message, "status": 400}
+        error = TeamValidationSystemError(str(exc))
+        error_message = error.user_message
+        event = error_event(error)
         trace_events.append(event)
         await _send_ws_json_safely(websocket, event)
     except LLMBackendError as exc:
         status = "failed"
-        error_message = str(exc)
-        event = {"event": "error", "error": error_message, "status": 500}
+        error_message = exc.user_message
+        event = error_event(exc)
         trace_events.append(event)
         await _send_ws_json_safely(websocket, event)
     except SQLAlchemyError as exc:
         logger.exception("team_chat_websocket_database_error")
         status = "failed"
         error_message = _compact_team_error_message("Team Mode database error", exc)
-        event = {"event": "error", "error": error_message, "status": 500}
+        event = error_event(DatabaseError(error_message, cause=exc))
         trace_events.append(event)
         await _send_ws_json_safely(websocket, event)
     except Exception as exc:
         logger.exception("team_chat_websocket_unhandled_error")
         status = "failed"
         error_message = _compact_team_error_message("Unexpected Team Mode error", exc)
-        event = {"event": "error", "error": error_message, "status": 500}
+        event = error_event(exc, default_message=error_message)
         trace_events.append(event)
         await _send_ws_json_safely(websocket, event)
     finally:
