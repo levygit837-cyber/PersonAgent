@@ -27,12 +27,14 @@ describe("OpenPrWorkspace", () => {
   it("filters pull requests by project and branch", () => {
     render(<OpenPrWorkspace />);
 
-    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "WebPilot" } });
+    openFilterMenu("Project: PersonAgent");
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "WebPilot" }));
 
     expect(screen.getAllByText("Review browser execution flow split").length).toBeGreaterThan(0);
     expect(screen.queryByText("Add context attachments to chat completion")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Branch"), { target: { value: "fix/upload-preview" } });
+    openFilterMenu("Branch: All branches");
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "fix/upload-preview" }));
 
     expect(screen.getAllByText("Fix upload artifact previews").length).toBeGreaterThan(0);
     expect(screen.queryByText("Review browser execution flow split")).not.toBeInTheDocument();
@@ -91,4 +93,8 @@ function createDataTransfer() {
       store.set(type, value);
     },
   };
+}
+
+function openFilterMenu(name: string) {
+  fireEvent.pointerDown(screen.getByRole("button", { name }), { button: 0, ctrlKey: false, pointerType: "mouse" });
 }
