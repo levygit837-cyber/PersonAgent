@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getGitStatus, gitCommit, gitPush, gitOpenPr } from "../api/client";
+import { getGitStatus, gitCheckoutBranch, gitCommit, gitCreateBranch, gitOpenPr, gitPush, listGitBranches, type GitBranchInfo } from "../api/client";
 import { useAppStore } from "./app-store";
 
 const GIT_STATUS_POLL_MS = 15_000;
@@ -16,6 +16,54 @@ export function useGitStatus(enabled: boolean) {
     staleTime: 0,
     gcTime: 0,
     refetchOnWindowFocus: true,
+  });
+}
+
+export function useGitBranches(enabled: boolean) {
+  const baseUrl = useAppStore((state) => state.baseUrl);
+  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+
+  return useQuery({
+    queryKey: ["git-branches", baseUrl, workspaceRoot],
+    queryFn: () => listGitBranches(baseUrl, workspaceRoot),
+    enabled: enabled && Boolean(baseUrl) && Boolean(workspaceRoot),
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnWindowFocus: true,
+  });
+}
+
+export function useGitCreateBranch() {
+  const queryClient = useQueryClient();
+  const baseUrl = useAppStore((state) => state.baseUrl);
+  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+
+  return useMutation({
+    mutationFn: async (name: string) => {
+      if (!workspaceRoot) throw new Error("No workspace selected");
+      return gitCreateBranch(baseUrl, workspaceRoot, name);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["git-status"] });
+      queryClient.invalidateQueries({ queryKey: ["git-branches"] });
+    },
+  });
+}
+
+export function useGitCheckoutBranch() {
+  const queryClient = useQueryClient();
+  const baseUrl = useAppStore((state) => state.baseUrl);
+  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+
+  return useMutation({
+    mutationFn: async (branch: Pick<GitBranchInfo, "name" | "kind">) => {
+      if (!workspaceRoot) throw new Error("No workspace selected");
+      return gitCheckoutBranch(baseUrl, workspaceRoot, branch.name, branch.kind);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["git-status"] });
+      queryClient.invalidateQueries({ queryKey: ["git-branches"] });
+    },
   });
 }
 

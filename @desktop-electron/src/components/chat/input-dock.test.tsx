@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getCodexAuthStatus, listChatCommands, listModels, logoutCodex } from "../../api/client";
+import { getCodexAuthStatus, getGitStatus, gitCheckoutBranch, gitCreateBranch, listChatCommands, listGitBranches, listModels, logoutCodex } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
 import type { ChatMessageUi, ToolBlockUi } from "../../types/chat";
@@ -13,6 +13,25 @@ vi.mock("../../api/client", () => ({
     authenticated: false,
     error: "Run codex login",
   }),
+  getGitStatus: vi.fn().mockResolvedValue({
+    branch: "",
+    ahead: 0,
+    behind: 0,
+    modified_count: 0,
+    untracked_count: 0,
+    is_dirty: false,
+    remote_url: null,
+  }),
+  listGitBranches: vi.fn().mockResolvedValue({
+    is_repo: false,
+    current: "",
+    branches: [],
+  }),
+  gitCreateBranch: vi.fn().mockResolvedValue({ success: true, branch: "feature/new" }),
+  gitCheckoutBranch: vi.fn().mockResolvedValue({ success: true, branch: "feature/api" }),
+  gitCommit: vi.fn(),
+  gitPush: vi.fn(),
+  gitOpenPr: vi.fn(),
   listModels: vi.fn().mockResolvedValue([]),
   listChatCommands: vi.fn().mockResolvedValue([]),
   logoutCodex: vi.fn().mockResolvedValue({ authenticated: false, logout_started: true }),
@@ -28,6 +47,10 @@ describe("InputDock", () => {
   const listChatCommandsMock = vi.mocked(listChatCommands);
   const getCodexAuthStatusMock = vi.mocked(getCodexAuthStatus);
   const logoutCodexMock = vi.mocked(logoutCodex);
+  const getGitStatusMock = vi.mocked(getGitStatus);
+  const listGitBranchesMock = vi.mocked(listGitBranches);
+  const gitCreateBranchMock = vi.mocked(gitCreateBranch);
+  const gitCheckoutBranchMock = vi.mocked(gitCheckoutBranch);
 
   beforeEach(() => {
     listModelsMock.mockReset();
@@ -41,6 +64,26 @@ describe("InputDock", () => {
     });
     logoutCodexMock.mockReset();
     logoutCodexMock.mockResolvedValue({ authenticated: false, logout_started: true });
+    getGitStatusMock.mockReset();
+    getGitStatusMock.mockResolvedValue({
+      branch: "",
+      ahead: 0,
+      behind: 0,
+      modified_count: 0,
+      untracked_count: 0,
+      is_dirty: false,
+      remote_url: null,
+    });
+    listGitBranchesMock.mockReset();
+    listGitBranchesMock.mockResolvedValue({
+      is_repo: false,
+      current: "",
+      branches: [],
+    });
+    gitCreateBranchMock.mockReset();
+    gitCreateBranchMock.mockResolvedValue({ success: true, branch: "feature/new" });
+    gitCheckoutBranchMock.mockReset();
+    gitCheckoutBranchMock.mockResolvedValue({ success: true, branch: "feature/api" });
     useAppStore.setState({
       baseUrl: "http://localhost:8000",
       provider: "llama",
@@ -392,6 +435,146 @@ describe("InputDock", () => {
     expect(input).not.toBeDisabled();
     fireEvent.change(input, { target: { value: "next message" } });
     expect(screen.getByRole("button", { name: /send/i })).not.toBeDisabled();
+  });
+
+  it("opens the branch panel from the composer", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /branches/i }));
+
+    expect(await screen.findByTestId("branch-switcher-panel")).toBeInTheDocument();
+    expect(screen.getAllByText("No workspace selected").length).toBeGreaterThan(0);
+  });
+
+  it("lists branches and checks out a selected branch", async () => {
+    useAppStore.setState({ selectedWorkspace: "/workspace/repo" });
+    getGitStatusMock.mockResolvedValue({
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      modified_count: 1,
+      untracked_count: 0,
+      is_dirty: true,
+      remote_url: null,
+    });
+    listGitBranchesMock.mockResolvedValue({
+      is_repo: true,
+      current: "main",
+      branches: [
+        {
+          name: "main",
+          kind: "local",
+          current: true,
+          upstream: "origin/main",
+          last_commit_iso: "2026-04-28T10:00:00Z",
+          last_commit_subject: "main commit",
+        },
+        {
+          name: "feature/api",
+          kind: "local",
+          current: false,
+          upstream: null,
+          last_commit_iso: "2026-04-28T10:01:00Z",
+          last_commit_subject: "api work",
+        },
+        {
+          name: "origin/preview",
+          kind: "remote",
+          current: false,
+          upstream: null,
+          last_commit_iso: "2026-04-28T10:02:00Z",
+          last_commit_subject: "preview work",
+        },
+        {
+          name: "origin/main",
+          kind: "remote",
+          current: false,
+          upstream: null,
+          last_commit_iso: "2026-04-28T10:00:00Z",
+          last_commit_subject: "main commit",
+        },
+      ],
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /branches/i }));
+
+    expect(await screen.findByText("main commit")).toBeInTheDocument();
+    expect(screen.getByText("Working tree has local changes. Checkout may fail if Git cannot preserve them.")).toBeInTheDocument();
+    expect(screen.getByText("Remote")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /origin\/main/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /feature\/api/i }));
+
+    await waitFor(() => {
+      expect(gitCheckoutBranchMock).toHaveBeenCalledWith(
+        "http://localhost:8000",
+        "/workspace/repo",
+        "feature/api",
+        "local",
+      );
+    });
+  });
+
+  it("creates a branch from the branch panel", async () => {
+    useAppStore.setState({ selectedWorkspace: "/workspace/repo" });
+    getGitStatusMock.mockResolvedValue({
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      modified_count: 0,
+      untracked_count: 0,
+      is_dirty: false,
+      remote_url: null,
+    });
+    listGitBranchesMock.mockResolvedValue({
+      is_repo: true,
+      current: "main",
+      branches: [{ name: "main", kind: "local", current: true, upstream: null }],
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /branches/i }));
+    await screen.findByPlaceholderText("Search branches...");
+    fireEvent.click(await screen.findByRole("button", { name: /create branch/i }));
+    fireEvent.change(screen.getByPlaceholderText("new-branch-name"), {
+      target: { value: "feature/new-panel" },
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: /create branch/i }).at(-1)!);
+
+    await waitFor(() => {
+      expect(gitCreateBranchMock).toHaveBeenCalledWith(
+        "http://localhost:8000",
+        "/workspace/repo",
+        "feature/new-panel",
+      );
+    });
+  });
+
+  it("disables the branch button while streaming", () => {
+    useChatStore.setState({ isStreaming: true });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: /branches/i })).toBeDisabled();
   });
 
   it("renders active todos attached above the input dock while the agent is running", () => {

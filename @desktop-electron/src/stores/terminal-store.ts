@@ -170,6 +170,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
             : null,
       }));
 
+      // If right pane becomes empty, exit split mode
+      if (pane === "right" && remaining.length === 0) {
+        set({ splitMode: false, rightPane: null });
+      }
+
       // If all panes empty, close panel
       get().closeIfEmpty();
     },
@@ -183,8 +188,32 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
       const nextSplit = !state.splitMode;
 
       if (nextSplit) {
-        // Enter split: right pane starts empty (or copies left active if desired)
-        set({ splitMode: true, rightPane: createEmptyPane() });
+        // Enter split: create right pane with an initial terminal instance
+        const rightPane = createEmptyPane();
+        const rightId = `terminal-right-${rightPane.nextId}`;
+        const rightInstance: TerminalInstance = {
+          id: rightId,
+          name: "Terminal 1",
+          pane: "right",
+          content: "",
+          cols: 80,
+          rows: 24,
+          alive: true,
+        };
+        set({
+          splitMode: true,
+          rightPane: {
+            instances: [rightInstance],
+            activeInstanceId: rightId,
+            nextId: rightPane.nextId + 1,
+          },
+        });
+
+        try {
+          void ensureTerminalApi().create(rightId);
+        } catch {
+          // Terminal API not available in browser/dev — keep as mock
+        }
       } else {
         // Exit split: merge right instances into left
         const rightInstances = state.rightPane?.instances ?? [];

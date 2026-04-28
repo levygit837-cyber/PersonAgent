@@ -1,15 +1,21 @@
 import { Columns2, Plus, X } from "lucide-react";
 import { Button } from "../ui/button";
-import { useTerminalStore, type TerminalPane } from "../../stores/terminal-store";
+import { useTerminalStore, type TerminalInstance, type TerminalPane } from "../../stores/terminal-store";
 import { TerminalView } from "./terminal-view";
 
 interface TerminalPaneProps {
   pane: TerminalPane;
 }
 
+const EMPTY_TERMINAL_INSTANCES: TerminalInstance[] = [];
+
 function TerminalPaneComponent({ pane }: TerminalPaneProps) {
-  const instances = useTerminalStore((s) => s.getPaneInstances(pane));
-  const activeInstanceId = useTerminalStore((s) => s.getPaneActiveId(pane));
+  const instances = useTerminalStore((s) =>
+    pane === "left" ? s.leftPane.instances : (s.rightPane?.instances ?? EMPTY_TERMINAL_INSTANCES)
+  );
+  const activeInstanceId = useTerminalStore((s) =>
+    pane === "left" ? s.leftPane.activeInstanceId : (s.rightPane?.activeInstanceId ?? null)
+  );
   const addInstance = useTerminalStore((s) => s.addInstance);
   const removeInstance = useTerminalStore((s) => s.removeInstance);
   const setActiveInstance = useTerminalStore((s) => s.setActiveInstance);
