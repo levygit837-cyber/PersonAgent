@@ -7,8 +7,18 @@ import { TooltipProvider } from "../ui/tooltip";
 import { FileViewerPanel } from "./file-viewer-panel";
 
 vi.mock("../../api/client", () => ({
+  approvePlan: vi.fn(),
+  cancelPlan: vi.fn(),
+  continuePlan: vi.fn(),
+  forkConversation: vi.fn(),
+  getConversation: vi.fn(),
+  gitCreateWorktree: vi.fn(),
   listWorkspaceFiles: vi.fn().mockResolvedValue([]),
   readWorkspaceFile: vi.fn(),
+  rejectTool: vi.fn(),
+  streamApproveTool: vi.fn(),
+  streamChatCompletion: vi.fn(),
+  streamTeamChat: vi.fn(),
 }));
 
 const readWorkspaceFileMock = vi.mocked(readWorkspaceFile);

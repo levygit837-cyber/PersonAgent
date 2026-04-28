@@ -447,7 +447,7 @@ function ComposerAnnotationTray({
             {annotation.displayPath}
           </span>
           <span className="shrink-0 rounded-md bg-background/45 px-2 py-1 font-mono text-[11px] text-muted-foreground">
-            L{formatLineRange(annotation.startLine, annotation.endLine)}
+            {annotation.source === "browser" ? "DOM" : `L${formatLineRange(annotation.startLine, annotation.endLine)}`}
           </span>
           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
             {annotation.text}
@@ -1483,18 +1483,35 @@ function buildComposerContextAttachments(
   mentions: ComposerMention[] = [],
 ) {
   const mentionAttachments: ContextAttachment[] = mentions.map((mention) => contextAttachmentFromMention(mention));
-  const annotationAttachments: ContextAttachment[] = annotations.map((annotation) => ({
-    type: "viewer_annotation",
-    id: annotation.id,
-    label: `@Annotation#${annotation.id}`,
-    file_name: annotation.fileName,
-    file_path: annotation.filePath,
-    display_path: annotation.displayPath,
-    start_line: annotation.startLine,
-    end_line: annotation.endLine,
-    language: annotation.language,
-    text: annotation.text,
-  }));
+  const annotationAttachments: ContextAttachment[] = annotations.map((annotation) => {
+    if (annotation.source === "browser") {
+      return {
+        type: "browser_annotation",
+        id: annotation.id,
+        label: `@Annotation#${annotation.id}`,
+        display_path: annotation.displayPath,
+        url: annotation.browserUrl || annotation.filePath,
+        title: annotation.browserTitle || annotation.fileName,
+        node_id: annotation.browserNodeId,
+        selector: annotation.browserSelector,
+        role: annotation.browserRole,
+        text: annotation.text,
+        quote: annotation.browserQuote || annotation.selectedLines,
+      };
+    }
+    return {
+      type: "viewer_annotation",
+      id: annotation.id,
+      label: `@Annotation#${annotation.id}`,
+      file_name: annotation.fileName,
+      file_path: annotation.filePath,
+      display_path: annotation.displayPath,
+      start_line: annotation.startLine,
+      end_line: annotation.endLine,
+      language: annotation.language,
+      text: annotation.text,
+    };
+  });
   const requestAttachments: ContextAttachment[] = [...mentionAttachments, ...annotationAttachments];
   const displayAttachments: ContextAttachment[] = [...requestAttachments];
 

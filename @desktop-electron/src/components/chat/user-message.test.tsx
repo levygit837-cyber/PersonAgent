@@ -1,9 +1,24 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessageUi } from "../../types/chat";
+import { useChatStore } from "../../stores/chat-store";
 import { UserMessage } from "./user-message";
 
+const originalRewindUserMessage = useChatStore.getState().rewindUserMessage;
+
 describe("UserMessage", () => {
+  beforeEach(() => {
+    useChatStore.setState({ isStreaming: false, rewindUserMessage: originalRewindUserMessage });
+  });
+
+  it("renders user messages with a background and no speaker label", () => {
+    const { container } = render(<UserMessage message={message("Plain request")} />);
+
+    expect(screen.queryByText("User")).not.toBeInTheDocument();
+    expect(screen.getByText("Plain request").closest(".bg-foreground\\/\\[0\\.055\\]")).not.toBeNull();
+    expect(container.querySelector("article")?.className).toContain("justify-end");
+  });
+
   it("renders structured context attachments without raw selected lines", () => {
     render(
       <UserMessage
@@ -109,6 +124,57 @@ describe("UserMessage", () => {
 
     expect(screen.getByText("@Annotation#1")).toBeInTheDocument();
     expect(screen.getByText("Rewrite this section.")).toBeInTheDocument();
+  });
+
+  it("renders normal user messages as markdown in the chat feed", () => {
+    render(
+      <UserMessage
+        message={message("## Plan\n\n- **Update** the backend.\n- Add tests.\n")}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { level: 2, name: "Plan" })).toBeInTheDocument();
+    expect(screen.getByText("Update", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByText("Add tests.")).toBeInTheDocument();
+  });
+
+  it("keeps long user messages inside a scrollable card", () => {
+    render(<UserMessage message={message(["# Plan", "", ...Array.from({ length: 24 }, (_, index) => `- Step ${index + 1}`)].join("\n"))} />);
+
+    const card = screen.getByTestId("user-message-card");
+    expect(card).toHaveClass("max-h-[min(58vh,520px)]");
+    expect(card).toHaveClass("overflow-y-auto");
+    expect(card).toHaveClass("overscroll-contain");
+  });
+
+  it("opens the rewind editor and resends edited text through the store action", () => {
+    const rewindUserMessage = vi.fn();
+    useChatStore.setState({ rewindUserMessage });
+    render(
+      <UserMessage
+        message={message("Original request", {
+          context_attachments: [
+            {
+              type: "file",
+              label: "@File",
+              display_path: "src/app.ts",
+            },
+          ],
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /rewind message/i }));
+
+    const editor = screen.getByLabelText("Rewind message content");
+    expect(editor).toHaveValue("Original request");
+    expect(screen.getAllByText("@File").length).toBeGreaterThan(0);
+    expect(screen.getByText("src/app.ts")).toBeInTheDocument();
+
+    fireEvent.change(editor, { target: { value: "Edited request" } });
+    fireEvent.click(screen.getByRole("button", { name: /resend/i }));
+
+    expect(rewindUserMessage).toHaveBeenCalledWith("message-1", "Edited request");
   });
 });
 

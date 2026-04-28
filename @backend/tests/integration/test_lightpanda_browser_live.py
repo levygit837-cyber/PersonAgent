@@ -54,6 +54,8 @@ async def test_lightpanda_direct_page_tools_live_flow(tmp_path):
         assert "Example Domain" in content["content"], content
         assert content["extraction_method"] in {
             "lightpanda_markdown",
+            "prepared_dom_text",
+            "prepared_readable_dom_text",
             "readable_dom_text",
         }, content
 
@@ -84,12 +86,12 @@ async def test_lightpanda_search_tools_live_flow(tmp_path):
         search = await _run(
             orchestrator,
             context,
-                ToolCall(
-                    id="call_search",
-                    name="BrowserSearch",
-                    arguments={"query": "IANA example domain", "max_results": 3},
-                ),
-            )
+            ToolCall(
+                id="call_search",
+                name="BrowserSearch",
+                arguments={"query": "IANA example domain", "max_results": 3},
+            ),
+        )
         assert search["results"], search
 
         opened = await _run(

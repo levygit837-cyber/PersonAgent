@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import subprocess
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import gettempdir
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -222,6 +225,40 @@ def _branch_worktree_path(cwd: Path, branch_name: str) -> str | None:
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
+
+
+def _safe_worktree_slug(value: str | None) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", (value or "").strip()).strip(".-")
+    if not slug or not slug[0].isalnum():
+        slug = "message"
+    return slug[:48].lower()
+
+
+def _worktree_base_path(repo_root: Path, slug: str) -> Path:
+    digest = hashlib.sha1(str(repo_root).encode("utf-8")).hexdigest()[:12]
+    return Path(gettempdir()) / "personagent-worktrees" / digest / slug
+
+
+def _unique_worktree_path(repo_root: Path, slug: str) -> Path:
+    base = _worktree_base_path(repo_root, slug)
+    if not base.exists():
+        return base
+    for index in range(2, 100):
+        candidate = base.with_name(f"{base.name}-{index}")
+        if not candidate.exists():
+            return candidate
+    return base.with_name(f"{base.name}-{int(time.time())}")
+
+
+def _unique_branch_name(cwd: Path, requested: str) -> str:
+    if not _local_branch_exists(cwd, requested):
+        return requested
+    base = requested[:56].rstrip("/-") or "personagent/branch"
+    for index in range(2, 100):
+        candidate = f"{base}-{index}"
+        if not _local_branch_exists(cwd, candidate):
+            return candidate
+    return f"{base}-{int(time.time())}"
 
 
 def _status_records(cwd: Path) -> list[tuple[str, str]]:
@@ -1062,6 +1099,13 @@ class GitBranchCreateRequest(BaseModel):
     name: str
 
 
+class GitWorktreeCreateRequest(BaseModel):
+    workspace_root: str
+    name: str | None = None
+    branch: str | None = None
+    source_message_id: str | None = None
+
+
 class GitCheckoutRequest(BaseModel):
     workspace_root: str
     name: str
@@ -1246,6 +1290,43 @@ async def git_create_branch(payload: GitBranchCreateRequest) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail=_git_error("git switch failed", switch_result))
 
     return {"success": True, "branch": branch_name, "output": switch_result.stdout.strip()}
+
+
+@router.post("/git-worktrees")
+async def git_create_worktree(payload: GitWorktreeCreateRequest) -> dict[str, Any]:
+    """Create an isolated worktree and branch from the workspace HEAD."""
+    cwd = _resolve_workspace(payload.workspace_root)
+    if not _is_git_repo(cwd):
+        raise HTTPException(status_code=400, detail="No Git repository detected")
+
+    repo_root = _git_repo_root(cwd) or cwd
+    source = payload.name or payload.source_message_id or "message"
+    slug = _safe_worktree_slug(source)
+    requested_branch = (payload.branch or f"personagent/{slug}").strip()
+    if not requested_branch or requested_branch.startswith("-"):
+        raise HTTPException(status_code=400, detail="Invalid branch name")
+
+    branch_name = _unique_branch_name(cwd, requested_branch)
+    check_result = _run_git_command(cwd, ["check-ref-format", "--branch", branch_name])
+    if check_result.returncode != 0:
+        raise HTTPException(status_code=400, detail=_git_error("Invalid branch name", check_result))
+
+    worktree_path = _unique_worktree_path(repo_root, slug)
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    add_result = _run_git_command(
+        cwd,
+        ["worktree", "add", "-b", branch_name, str(worktree_path), "HEAD"],
+        timeout=60,
+    )
+    if add_result.returncode != 0:
+        raise HTTPException(status_code=409, detail=_git_error("git worktree add failed", add_result))
+
+    return {
+        "success": True,
+        "branch": branch_name,
+        "path": str(worktree_path),
+        "output": _git_output(add_result),
+    }
 
 
 @router.post("/git-checkout")

@@ -347,9 +347,46 @@ describe("chat rendering", () => {
     expect(screen.queryByText("Thinking...")).not.toBeInTheDocument();
   });
 
+  it("renders icon actions for completed agent output without speaker labels", () => {
+    render(
+      <AgentMessage
+        message={baseAgentMessage({
+          content: "Done",
+          parts: [{ kind: "content", id: "content-1", content: "Done" }],
+        })}
+      />,
+    );
+
+    expect(screen.queryByText("PersonAgent")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Positive feedback" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Negative feedback" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Regenerate" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Branch to worktree" })).toBeInTheDocument();
+  });
+
   it("renders running read tools with a reading label", () => {
     render(<ToolBlock block={toolBlock({ name: "read_file", status: "running" })} />);
     expect(screen.getByText("Reading 1 File...")).toBeInTheDocument();
+  });
+
+  it("uses the same completed status dot size and color for tool events", () => {
+    const { container } = render(
+      <>
+        <ToolBlock block={toolBlock({ name: "read_file", status: "completed" })} />
+        <ToolBlock block={toolBlock({ name: "Edit", status: "completed", path: "src/app.ts" })} />
+        <ToolBlock block={toolBlock({ name: "Grep", status: "completed", data: { pattern: "PersonAgent", matches: 1 } })} />
+        <ToolBlock block={toolBlock({ name: "Glob", status: "completed", data: { pattern: "**", count: 51 } })} />
+      </>,
+    );
+
+    const dots = Array.from(container.querySelectorAll<HTMLElement>(".personagent-tool-status-dot"));
+    expect(dots).toHaveLength(4);
+    dots.forEach((dot) => {
+      expect(dot.style.width).toBe("6px");
+      expect(dot.style.height).toBe("6px");
+      expect(dot).toHaveClass("bg-success");
+      expect(dot).toHaveClass("inline-flex");
+    });
   });
 
   it("renders created Write output with added line count and scrollable content", () => {
@@ -415,6 +452,40 @@ describe("chat rendering", () => {
     expect(screen.getByText("old").closest("div")).toHaveClass("text-destructive");
   });
 
+  it("renders Edit diffs through the file preview and starts collapsed", () => {
+    window.localStorage.setItem("personagent.toolOutputVisibility", "show");
+
+    render(
+      <ToolBlock
+        block={toolBlock({
+          name: "Edit",
+          title: "Edit",
+          content: "Edited src/app.ts",
+          path: "src/app.ts",
+          data: {
+            type: "file_edit",
+            display_path: "src/app.ts",
+            diff: "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -3,2 +3,2 @@\n keep\n-old value\n+new value",
+          },
+          isCollapsed: false,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Edit - src/app.ts")).toBeInTheDocument();
+    expect(screen.getByText("+1")).toHaveClass("text-success");
+    expect(screen.getByText("-1")).toHaveClass("text-destructive");
+    expect(screen.getByText("Show")).toBeInTheDocument();
+    expect(screen.queryByText("Edit preview: src/app.ts")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Show"));
+
+    expect(screen.getByText("Edit preview: src/app.ts")).toBeInTheDocument();
+    expect(screen.getByText("new value").closest("div")).toHaveClass("text-success");
+    expect(screen.getByText("old value").closest("div")).toHaveClass("text-destructive");
+    expect(screen.getAllByText("4").length).toBeGreaterThan(0);
+  });
+
   it("groups search tools into a compact block", () => {
     const message: ChatMessageUi = baseAgentMessage({
       toolBlocks: [
@@ -465,8 +536,10 @@ describe("chat rendering", () => {
       />,
     );
 
+    expect(screen.getByText("Grep - PersonAgent 1 match")).toBeInTheDocument();
+    expect(screen.queryByText("Output - Show")).not.toBeInTheDocument();
     expect(screen.queryByText("Pattern")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("Output - Show"));
+    fireEvent.click(screen.getByRole("button", { name: "Show search output" }));
 
     expect(screen.getByText("Pattern")).toBeInTheDocument();
     expect(screen.getByText("PersonAgent")).toBeInTheDocument();
@@ -494,7 +567,10 @@ describe("chat rendering", () => {
       />,
     );
 
-    fireEvent.click(screen.getByText("Output - Show"));
+    expect(screen.getByText("Glob - **/*.ts 2 files")).toBeInTheDocument();
+    expect(screen.getByText("Glob - **/*.ts 2 files").closest("div")?.parentElement?.parentElement?.querySelector(".personagent-tool-status-dot")).not.toBeNull();
+    expect(screen.queryByText("Output - Show")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show search output" }));
 
     expect(screen.getByText("Files")).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
@@ -520,12 +596,42 @@ describe("chat rendering", () => {
     );
 
     expect(screen.getByText("Find src -name '*.ts'")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Output - Show"));
+    expect(screen.queryByText("Output - Show")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show search output" }));
 
     expect(screen.getByText("Command")).toBeInTheDocument();
     expect(screen.getByText("find src -name '*.ts'")).toBeInTheDocument();
     expect(screen.getAllByText("src/app.ts").length).toBeGreaterThan(0);
     expect(screen.getByText("src/chat.ts")).toBeInTheDocument();
+  });
+
+  it("toggles shell output from the tool row with the shared status dot", () => {
+    const { container } = render(
+      <ToolBlock
+        block={toolBlock({
+          name: "shell",
+          title: "Shell command",
+          content: "command output\nexpanded only",
+          data: {
+            type: "shell",
+            command: "pwd",
+            content: "command output\nexpanded only",
+            return_code: 0,
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("pwd")).toBeInTheDocument();
+    expect(screen.queryByText("Output - Show")).not.toBeInTheDocument();
+    expect(container.querySelector(".personagent-tool-status-dot")).not.toBeNull();
+    expect(screen.queryByText("expanded only")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show shell output" }));
+
+    expect(screen.getByText(/expanded only/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hide shell output" }));
+    expect(screen.queryByText("expanded only")).not.toBeInTheDocument();
   });
 
   it("auto-collapses search output even when generic tool visibility is set to show", () => {
@@ -566,10 +672,11 @@ describe("chat rendering", () => {
       />,
     );
 
-    expect(screen.getByText("Output - Show")).toBeInTheDocument();
+    expect(screen.queryByText("Output - Show")).not.toBeInTheDocument();
+    expect(screen.getByText("Grep - PersonAgent 1 match")).toBeInTheDocument();
     expect(screen.queryByText("Pattern")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("Output - Show"));
+    fireEvent.click(screen.getByRole("button", { name: "Show search output" }));
 
     expect(screen.getByText("Pattern")).toBeInTheDocument();
     expect(screen.getAllByText("PersonAgent").length).toBeGreaterThan(0);
@@ -638,7 +745,9 @@ describe("chat rendering", () => {
 
     fireEvent.click(screen.getByText("Search 2 times >"));
 
-    expect(screen.getAllByText("Output - Show")).toHaveLength(2);
+    expect(screen.queryByText("Output - Show")).not.toBeInTheDocument();
+    expect(screen.getByText("Grep - PersonAgent 1 match")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Show search output" })).toHaveLength(2);
     expect(screen.queryByText("Pattern")).not.toBeInTheDocument();
     expect(screen.queryByText("Command")).not.toBeInTheDocument();
   });

@@ -37,11 +37,13 @@ def create_browser_tools(worker: LightPandaBrowserWorker) -> list[Tool]:
         create_browser_extract_content_tool(worker),
         create_browser_read_content_chunk_tool(),
         create_browser_get_html_tool(worker),
+        create_browser_get_element_map_tool(worker),
+        create_browser_act_tool(worker),
     ]
 
 
 _DEFAULT_CHUNK_SIZE = 3_000
-_EXTRACT_INLINE_CONTENT_CHARS = 3_000
+_EXTRACT_INLINE_CONTENT_CHARS = 8_000
 _MAX_CHUNK_COUNT = 6
 _MAX_RETURNED_LINKS = 20
 _LINK_SUPPRESSION_THRESHOLD = 24
@@ -172,7 +174,7 @@ def create_browser_search_tool(worker: LightPandaBrowserWorker) -> Tool:
             search_hint="browser bing google chrome lightpanda search web research",
             is_read_only=True,
             is_open_world=True,
-            timeout_ms=60_000,
+            timeout_ms=90_000,
         ),
         handler=handler,
         validate_input=validate,
@@ -290,7 +292,7 @@ def create_browser_open_tool(worker: LightPandaBrowserWorker) -> Tool:
             search_hint="browser open url navigate lightpanda",
             is_read_only=True,
             is_open_world=True,
-            timeout_ms=60_000,
+            timeout_ms=90_000,
         ),
         handler=handler,
         validate_input=validate,
@@ -375,7 +377,9 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
             return target_error
         target_id = _coerce_page_or_window_id(page_id, window_id)
         if isinstance(url, str) and url.strip() and target_id:
-            return _deny("BrowserExtractContent requires either 'url' or 'page_id/window_id', not both.")
+            return _deny(
+                "BrowserExtractContent requires either 'url' or 'page_id/window_id', not both."
+            )
         if isinstance(url, str) and url.strip():
             validation = validate_web_url(url, context)
             if validation is not None:
@@ -428,7 +432,9 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
             name="BrowserExtractContent",
             description=(
                 "Return organized markdown/text content from the current LightPanda page or "
-                "from a provided URL/page_id. Defaults to the last BrowserOpen page in the conversation."
+                "from a provided URL/page_id. The tool prepares the rendered page, closes common "
+                "dismissible overlays, scrolls incrementally to load lazy content, and defaults "
+                "to the last BrowserOpen page in the conversation."
             ),
             input_schema={
                 "type": "object",
@@ -455,7 +461,7 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
             output_schema={"type": "object", "additionalProperties": True},
             group=ToolGroup.WEB.value,
             search_hint="browser extract content markdown lightpanda page",
-            max_result_size_chars=12_000,
+            max_result_size_chars=24_000,
             is_read_only=True,
             is_open_world=True,
             timeout_ms=60_000,
@@ -701,6 +707,167 @@ def create_browser_get_html_tool(worker: LightPandaBrowserWorker) -> Tool:
     )
 
 
+def create_browser_get_element_map_tool(worker: LightPandaBrowserWorker) -> Tool:
+    async def validate(
+        arguments: ToolArguments, _context: ToolUseContext
+    ) -> ToolPermissionResult | None:
+        width = arguments.get("width", 1024)
+        height = arguments.get("height", 720)
+        if not _is_int(width) or int(width) < 320 or int(width) > 2400:
+            return _deny("BrowserGetElementMap width must be between 320 and 2400.")
+        if not _is_int(height) or int(height) < 240 or int(height) > 1800:
+            return _deny("BrowserGetElementMap height must be between 240 and 1800.")
+        return None
+
+    async def handler(
+        arguments: ToolArguments, context: ToolUseContext, call: ToolCall
+    ) -> ToolResult:
+        width = min(max(320, int(arguments.get("width") or 1024)), 2400)
+        height = min(max(240, int(arguments.get("height") or 720)), 1800)
+        await _progress(context, call, "Mapping browser elements...", {"width": width, "height": height})
+        try:
+            view = await worker.view_snapshot(
+                browser_id=context.conversation_id,
+                width=width,
+                height=height,
+            )
+        except Exception as exc:
+            return _error(call, "BrowserGetElementMap", str(exc), exc)
+        elements = _summarize_element_map(view.get("element_map"))
+        data = {
+            "type": "browser_element_map",
+            "url": view.get("url") or "",
+            "title": view.get("title") or "",
+            "css_fidelity": view.get("css_fidelity") or "",
+            "element_count": len(elements),
+            "elements": elements,
+        }
+        return _json_result(call, "BrowserGetElementMap", data)
+
+    return build_tool(
+        definition=ToolDefinition(
+            name="BrowserGetElementMap",
+            description=(
+                "Return the current browser page's mapped links, buttons, inputs, forms, and "
+                "important content blocks. Use node_id values with BrowserAct."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "width": {"type": "integer", "minimum": 320, "maximum": 2400, "default": 1024},
+                    "height": {"type": "integer", "minimum": 240, "maximum": 1800, "default": 720},
+                },
+                "additionalProperties": False,
+            },
+            output_schema={"type": "object", "additionalProperties": True},
+            group=ToolGroup.WEB.value,
+            search_hint="browser element map node_id ui automation",
+            max_result_size_chars=24_000,
+            is_read_only=True,
+            is_open_world=True,
+            timeout_ms=30_000,
+        ),
+        handler=handler,
+        validate_input=validate,
+        is_read_only=lambda _args: True,
+        is_concurrency_safe=lambda _args: False,
+    )
+
+
+def create_browser_act_tool(worker: LightPandaBrowserWorker) -> Tool:
+    async def validate(
+        arguments: ToolArguments, _context: ToolUseContext
+    ) -> ToolPermissionResult | None:
+        node_id = arguments.get("node_id")
+        action = arguments.get("action")
+        if not isinstance(node_id, str) or not node_id.strip():
+            return _deny("BrowserAct requires a non-empty node_id.")
+        if action not in {"click", "fill", "submit", "select", "press"}:
+            return _deny("BrowserAct action must be click, fill, submit, select, or press.")
+        if action in {"fill", "select"} and not isinstance(arguments.get("value"), str):
+            return _deny("BrowserAct fill/select requires a string value.")
+        if action == "press" and not isinstance(arguments.get("key", arguments.get("value", "")), str):
+            return _deny("BrowserAct press requires key or value.")
+        return None
+
+    async def handler(
+        arguments: ToolArguments, context: ToolUseContext, call: ToolCall
+    ) -> ToolResult:
+        node_id = str(arguments["node_id"]).strip()
+        action = str(arguments["action"]).strip()
+        width = min(max(320, int(arguments.get("width") or 1024)), 2400)
+        height = min(max(240, int(arguments.get("height") or 720)), 1800)
+        value = arguments.get("value") if isinstance(arguments.get("value"), str) else None
+        key = arguments.get("key") if isinstance(arguments.get("key"), str) else None
+        await _progress(
+            context,
+            call,
+            f"Running browser action {action}...",
+            {"node_id": node_id, "action": action},
+        )
+        try:
+            view = await worker.view_act(
+                browser_id=context.conversation_id,
+                node_id=node_id,
+                action=action,
+                value=value,
+                key=key,
+                width=width,
+                height=height,
+            )
+        except Exception as exc:
+            return _error(call, "BrowserAct", str(exc), exc)
+        elements = _summarize_element_map(view.get("element_map"))
+        data = {
+            "type": "browser_action",
+            "url": view.get("url") or "",
+            "title": view.get("title") or "",
+            "node_id": node_id,
+            "action": action,
+            "last_action": view.get("last_action") or {},
+            "element_count": len(elements),
+            "elements": elements[:60],
+        }
+        return _json_result(call, "BrowserAct", data)
+
+    return build_tool(
+        definition=ToolDefinition(
+            name="BrowserAct",
+            description=(
+                "Execute an action on the current browser page using a node_id from BrowserGetElementMap. "
+                "Supports click, fill, submit, select, and press."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "node_id": {"type": "string", "description": "Element node_id from BrowserGetElementMap."},
+                    "action": {
+                        "type": "string",
+                        "enum": ["click", "fill", "submit", "select", "press"],
+                    },
+                    "value": {"type": "string", "description": "Text/value for fill, select, or press."},
+                    "key": {"type": "string", "description": "Keyboard key for press."},
+                    "width": {"type": "integer", "minimum": 320, "maximum": 2400, "default": 1024},
+                    "height": {"type": "integer", "minimum": 240, "maximum": 1800, "default": 720},
+                },
+                "required": ["node_id", "action"],
+                "additionalProperties": False,
+            },
+            output_schema={"type": "object", "additionalProperties": True},
+            group=ToolGroup.WEB.value,
+            search_hint="browser act click fill submit select press automation node_id",
+            max_result_size_chars=20_000,
+            is_read_only=False,
+            is_open_world=True,
+            timeout_ms=60_000,
+        ),
+        handler=handler,
+        validate_input=validate,
+        is_read_only=lambda _args: False,
+        is_concurrency_safe=lambda _args: False,
+    )
+
+
 async def _progress(
     context: ToolUseContext,
     call: ToolCall,
@@ -778,6 +945,33 @@ def _prepare_extracted_content_response(
         data["content_available_in_chunks"] = False
     data["chunks_available"] = bool(data.get("chunk_count"))
     return data
+
+
+def _summarize_element_map(raw_map: Any) -> list[dict[str, Any]]:
+    elements: list[dict[str, Any]] = []
+    if not isinstance(raw_map, list):
+        return elements
+    for item in raw_map:
+        if not isinstance(item, dict):
+            continue
+        node_id = str(item.get("node_id") or "").strip()
+        if not node_id:
+            continue
+        elements.append(
+            {
+                "node_id": node_id,
+                "role": str(item.get("role") or ""),
+                "tag": str(item.get("tag") or ""),
+                "text": " ".join(str(item.get("text") or "").split())[:180],
+                "href": str(item.get("href") or ""),
+                "selector": str(item.get("selector") or ""),
+                "form_action": str(item.get("form_action") or ""),
+                "input_type": str(item.get("input_type") or ""),
+            }
+        )
+        if len(elements) >= 120:
+            break
+    return elements
 
 
 def _cache_page_content(conversation_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -1083,6 +1277,8 @@ def _error_type(tool_name: str) -> str:
         "BrowserExtractContent": "browser_extract_content",
         "BrowserReadContentChunk": "browser_content_chunks",
         "BrowserGetHtml": "browser_get_html",
+        "BrowserGetElementMap": "browser_element_map",
+        "BrowserAct": "browser_action",
     }.get(tool_name, "browser")
 
 

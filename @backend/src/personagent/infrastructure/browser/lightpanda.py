@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import inspect
 import json
@@ -11,8 +12,9 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
 import structlog
@@ -28,6 +30,17 @@ _MARKDOWN_ANY_LINK_PATTERN = re.compile(r"\[([^\]]*)]\([^)]*\)")
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _URL_PATTERN = re.compile(r"https?://[^\s)>\]]+")
 _MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*]\([^)]*\)")
+_STYLESHEET_LINK_PATTERN = re.compile(
+    r"<link\b(?=[^>]*\brel\s*=\s*['\"][^'\"]*stylesheet[^'\"]*['\"])(?=[^>]*\bhref\s*=\s*['\"](?P<href>[^'\"]+)['\"])[^>]*>",
+    re.IGNORECASE,
+)
+_LINK_TAG_PATTERN = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
+_HTML_ATTR_PATTERN = re.compile(
+    r"(?P<name>[a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?P<value>\"[^\"]*\"|'[^']*'|[^\s\"'>`]+)"
+)
+_CSS_URL_PATTERN = re.compile(r"url\((?P<quote>['\"]?)(?P<url>[^)'\"\s][^)'\"]*)(?P=quote)\)")
+_STYLESHEET_CACHE_TTL_SECONDS = 600.0
+_MAX_STYLESHEET_CACHE_ENTRIES = 256
 _MIN_READABLE_CONTENT_CHARS = 240
 _URL_EDGE_NOISE_CHARS = " \t\r\n\f\v\u00a0\u200b\u200c\u200d\ufeff"
 _URL_ENCODED_EDGE_NOISE_SUFFIXES = (
@@ -148,6 +161,307 @@ _READABLE_DOM_SCRIPT = r"""
     score: bestScore
   };
 })()
+"""
+
+_POPUP_DISMISS_SCRIPT = r"""
+(() => {
+  const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const isVisible = (el) => {
+    const style = window.getComputedStyle(el);
+    if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity || 1) === 0) {
+      return false;
+    }
+    const rect = el.getBoundingClientRect();
+    return rect.width >= 8 && rect.height >= 8 && rect.bottom >= 0 && rect.right >= 0 &&
+      rect.top <= window.innerHeight && rect.left <= window.innerWidth;
+  };
+  const fixedAncestor = (el) => {
+    let node = el;
+    for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (style.position === 'fixed' || style.position === 'sticky') return true;
+      const z = Number.parseInt(style.zIndex || '0', 10);
+      if (Number.isFinite(z) && z >= 1000) return true;
+    }
+    return false;
+  };
+  const dismissPattern = /\b(accept all|accept|agree|i agree|allow all|got it|ok|continue|close|dismiss|reject all|reject|decline|no thanks|not now|skip|fechar|aceitar|concordo|entendi|continuar|rejeitar|agora nao|agora n\u00e3o|nao obrigado|n\u00e3o obrigado)\b/i;
+  const closePattern = /\b(close|dismiss|fechar|x)\b/i;
+  const unsafePattern = /\b(subscribe|sign in|login|log in|register|buy|purchase|checkout|download)\b/i;
+  const selector = [
+    'button',
+    '[role="button"]',
+    'a[href]',
+    'input[type="button"]',
+    'input[type="submit"]',
+    '[aria-label]',
+    '[title]'
+  ].join(',');
+  const candidates = [];
+  for (const el of Array.from(document.querySelectorAll(selector))) {
+    if (!isVisible(el)) continue;
+    const rect = el.getBoundingClientRect();
+    const label = normalize([
+      el.innerText,
+      el.textContent,
+      el.getAttribute('aria-label'),
+      el.getAttribute('title'),
+      el.getAttribute('value'),
+      el.id,
+      typeof el.className === 'string' ? el.className : ''
+    ].join(' '));
+    if (!label || !dismissPattern.test(label)) continue;
+    const isClose = closePattern.test(label) || normalize(el.textContent).toLowerCase() === '\u00d7';
+    if (!isClose && unsafePattern.test(label)) continue;
+    const overlayish = fixedAncestor(el) || rect.top < 140 || rect.bottom > window.innerHeight - 180;
+    if (!overlayish && !isClose) continue;
+    candidates.push({
+      el,
+      label: label.slice(0, 80),
+      priority: (isClose ? 0 : 10) + (fixedAncestor(el) ? 0 : 5) + rect.width * rect.height / 100000
+    });
+  }
+  candidates.sort((a, b) => a.priority - b.priority);
+  const clicked = [];
+  for (const candidate of candidates.slice(0, 3)) {
+    try {
+      candidate.el.click();
+      clicked.push(candidate.label);
+    } catch (_error) {}
+  }
+  return { clicked_count: clicked.length, clicked_labels: clicked };
+})()
+"""
+
+_INCREMENTAL_SCROLL_SCRIPT = r"""
+async ({ maxSteps, delayMs, stepRatio }) => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const root = document.scrollingElement || document.documentElement || document.body;
+  const metrics = () => {
+    const scrollY = window.scrollY || root.scrollTop || 0;
+    const viewportHeight = window.innerHeight || root.clientHeight || 0;
+    const scrollHeight = Math.max(
+      root.scrollHeight || 0,
+      document.body ? document.body.scrollHeight || 0 : 0,
+      document.documentElement ? document.documentElement.scrollHeight || 0 : 0
+    );
+    return {
+      scroll_y: Math.round(scrollY),
+      viewport_height: Math.round(viewportHeight),
+      scroll_height: Math.round(scrollHeight),
+      at_bottom: scrollY + viewportHeight >= scrollHeight - 8
+    };
+  };
+  let previous = metrics();
+  let stableBottomCount = 0;
+  let steps = 0;
+  for (; steps < maxSteps; steps += 1) {
+    const step = Math.max(260, Math.floor((previous.viewport_height || 800) * stepRatio));
+    window.scrollBy({ top: step, left: 0, behavior: 'instant' });
+    await sleep(delayMs);
+    const current = metrics();
+    if (
+      current.at_bottom &&
+      current.scroll_height === previous.scroll_height &&
+      Math.abs(current.scroll_y - previous.scroll_y) < 4
+    ) {
+      stableBottomCount += 1;
+    } else {
+      stableBottomCount = 0;
+    }
+    previous = current;
+    if (current.at_bottom && stableBottomCount >= 2) break;
+  }
+  await sleep(delayMs);
+  return { ...metrics(), steps };
+}
+"""
+
+_BROWSER_ELEMENT_MAP_SCRIPT = r"""
+() => {
+  const selectors = [
+    'a[href]',
+    'button',
+    'input',
+    'textarea',
+    'select',
+    'form',
+    '[role="button"]',
+    '[role="link"]',
+    '[role="menuitem"]',
+    '[role="checkbox"]',
+    '[role="radio"]',
+    '[role="tab"]',
+    'summary',
+    'label',
+    'h1',
+    'h2',
+    'h3',
+    'article',
+    'main',
+    'section'
+  ].join(',');
+  const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const hash = (value) => {
+    let h = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+      h ^= value.charCodeAt(index);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(36);
+  };
+  const cssEscape = (value) => window.CSS && CSS.escape
+    ? CSS.escape(value)
+    : String(value).replace(/["\\#.:>[\]\s]/g, '\\$&');
+  const cssPath = (el) => {
+    const parts = [];
+    let node = el;
+    let depth = 0;
+    while (node && node.nodeType === Node.ELEMENT_NODE && depth < 8) {
+      const tag = node.tagName.toLowerCase();
+      const id = node.id ? `#${cssEscape(node.id)}` : '';
+      if (id) {
+        parts.unshift(`${tag}${id}`);
+        break;
+      }
+      let index = 1;
+      let sibling = node.previousElementSibling;
+      while (sibling) {
+        if (sibling.tagName === node.tagName) index += 1;
+        sibling = sibling.previousElementSibling;
+      }
+      parts.unshift(`${tag}:nth-of-type(${index})`);
+      node = node.parentElement;
+      depth += 1;
+    }
+    return parts.join(' > ');
+  };
+  const inferredRole = (el) => {
+    const explicit = normalize(el.getAttribute('role')).toLowerCase();
+    if (explicit) return explicit;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'a') return 'link';
+    if (tag === 'button') return 'button';
+    if (tag === 'input') return normalize(el.getAttribute('type')).toLowerCase() || 'input';
+    if (tag === 'textarea') return 'textbox';
+    if (tag === 'select') return 'select';
+    if (tag === 'form') return 'form';
+    if (/^h[1-3]$/.test(tag)) return 'heading';
+    return tag;
+  };
+  const accessibleName = (el) => {
+    const labelledBy = normalize(el.getAttribute('aria-labelledby'));
+    if (labelledBy) {
+      const text = labelledBy
+        .split(/\s+/)
+        .map((id) => document.getElementById(id)?.textContent || '')
+        .join(' ');
+      if (normalize(text)) return normalize(text);
+    }
+    return normalize([
+      el.getAttribute('aria-label'),
+      el.getAttribute('alt'),
+      el.getAttribute('title'),
+      el.getAttribute('placeholder'),
+      el.getAttribute('value'),
+      el.innerText,
+      el.textContent
+    ].filter(Boolean).join(' ')).slice(0, 240);
+  };
+  const isVisible = (el) => {
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) === 0) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.right >= 0 &&
+      rect.top <= Math.max(window.innerHeight, 1) * 3 && rect.left <= Math.max(window.innerWidth, 1) * 3;
+  };
+  const candidates = Array.from(document.querySelectorAll(selectors));
+  const mapped = [];
+  const seen = new Set();
+  for (const el of candidates) {
+    if (!(el instanceof Element) || !isVisible(el)) continue;
+    const role = inferredRole(el);
+    const selector = cssPath(el);
+    const text = accessibleName(el);
+    const href = el instanceof HTMLAnchorElement ? el.href : '';
+    const form = el instanceof HTMLFormElement ? el : el.closest('form');
+    const key = `${role}|${selector}|${href}|${text.slice(0, 80)}`;
+    const nodeId = normalize(el.getAttribute('data-pa-node-id')) || `pa_${hash(key)}`;
+    if (seen.has(nodeId)) continue;
+    seen.add(nodeId);
+    el.setAttribute('data-pa-node-id', nodeId);
+    el.setAttribute('data-pa-role', role);
+    const rect = el.getBoundingClientRect();
+    mapped.push({
+      node_id: nodeId,
+      role,
+      tag: el.tagName.toLowerCase(),
+      text,
+      selector,
+      href,
+      name: normalize(el.getAttribute('name')),
+      input_type: el instanceof HTMLInputElement ? normalize(el.type) : '',
+      form_method: form ? normalize(form.getAttribute('method') || 'get').toLowerCase() : '',
+      form_action: form ? new URL(form.getAttribute('action') || document.baseURI, document.baseURI).href : '',
+      bounds: {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height)
+      },
+      visible: true
+    });
+    if (mapped.length >= 220) break;
+  }
+  return mapped;
+}
+"""
+
+_BROWSER_ACT_SCRIPT = r"""
+async ({ nodeId, selector, action, value, key }) => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  let el = Array.from(document.querySelectorAll('[data-pa-node-id]'))
+    .find((candidate) => candidate.getAttribute('data-pa-node-id') === nodeId);
+  if (!el && selector) {
+    try {
+      el = document.querySelector(selector);
+    } catch (_error) {}
+  }
+  if (!el) return { ok: false, reason: 'node_not_found' };
+  const dispatch = (target, type) => target.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));
+  const focus = () => {
+    if (typeof el.focus === 'function') {
+      try { el.focus({ preventScroll: false }); } catch (_error) { el.focus(); }
+    }
+  };
+  focus();
+  if (action === 'click') {
+    el.click();
+  } else if (action === 'fill') {
+    if (!('value' in el)) return { ok: false, reason: 'not_fillable' };
+    el.value = String(value ?? '');
+    dispatch(el, 'input');
+    dispatch(el, 'change');
+  } else if (action === 'select') {
+    if (!('value' in el)) return { ok: false, reason: 'not_selectable' };
+    el.value = String(value ?? '');
+    dispatch(el, 'input');
+    dispatch(el, 'change');
+  } else if (action === 'submit') {
+    const form = el.tagName.toLowerCase() === 'form' ? el : el.closest('form');
+    if (!form) return { ok: false, reason: 'form_not_found' };
+    if (typeof form.requestSubmit === 'function') form.requestSubmit();
+    else form.submit();
+  } else if (action === 'press') {
+    const nextKey = String(key || value || 'Enter');
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: nextKey, bubbles: true, cancelable: true }));
+    el.dispatchEvent(new KeyboardEvent('keyup', { key: nextKey, bubbles: true, cancelable: true }));
+  } else {
+    return { ok: false, reason: 'unsupported_action' };
+  }
+  await sleep(350);
+  return { ok: true, node_id: nodeId, action, url: window.location.href };
+}
 """
 
 
@@ -335,6 +649,54 @@ def _clean_browser_url(raw_url: str) -> str:
     return url
 
 
+def _normalize_navigation_url(raw_url: str) -> str:
+    url = _clean_browser_url(raw_url)
+    if not url:
+        raise BrowserError("A URL is required.")
+    if re.match(r"^https?://", url, re.IGNORECASE):
+        return url
+    return f"https://{url}"
+
+
+def _browser_empty_fallback_html(url: str, title: str = "") -> str:
+    safe_url = _escape_html(url)
+    safe_title = _escape_html(title or url or "Browser")
+    return (
+        "<!doctype html><html><head>"
+        f"<title>{safe_title}</title>"
+        "<style>"
+        "body{font-family:Inter,ui-sans-serif,system-ui,sans-serif;margin:0;padding:24px;"
+        "background:#fff;color:#111827;line-height:1.5}"
+        ".pa-empty{max-width:620px;margin:10vh auto;border:1px solid #e5e7eb;border-radius:12px;padding:18px}"
+        ".pa-url{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#6b7280;word-break:break-all}"
+        "</style></head><body><main class='pa-empty'>"
+        "<h1>Browser page loaded</h1>"
+        "<p>The page reached this URL, but the DOM snapshot was empty after redirects settled.</p>"
+        f"<p class='pa-url'>{safe_url}</p>"
+        "</main></body></html>"
+    )
+
+
+def _escape_html(value: str) -> str:
+    return (
+        str(value or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )
+
+
+def _clamped_viewport(width: int, height: int) -> tuple[int, int]:
+    return min(max(int(width), 320), 2400), min(max(int(height), 240), 1800)
+
+
+def _is_local_lightpanda_endpoint(raw_url: str) -> bool:
+    parsed = urlparse(str(raw_url or "").strip())
+    return parsed.hostname in {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
+
+
 def _urls_equivalent(first: str, second: str) -> bool:
     first_clean = _clean_browser_url(first)
     second_clean = _clean_browser_url(second)
@@ -449,7 +811,9 @@ def _is_link_only_line(line: str) -> bool:
     stripped = line.strip()
     if not stripped:
         return False
-    link_count = len(_MARKDOWN_ANY_LINK_PATTERN.findall(stripped)) + len(_URL_PATTERN.findall(stripped))
+    link_count = len(_MARKDOWN_ANY_LINK_PATTERN.findall(stripped)) + len(
+        _URL_PATTERN.findall(stripped)
+    )
     if link_count == 0:
         return False
     without_links = _MARKDOWN_ANY_LINK_PATTERN.sub("", stripped)
@@ -504,6 +868,7 @@ class LightPandaBrowserWorker:
         search_base_url: str = _DEFAULT_SEARCH_BASE_URL,
         session_ttl_seconds: int = 900,
         max_sessions: int = 32,
+        auto_start_lightpanda: bool = True,
         connector: Connector | None = None,
     ) -> None:
         self.enabled = enabled
@@ -513,15 +878,20 @@ class LightPandaBrowserWorker:
         self.search_provider = _infer_search_provider(self.search_base_url)
         self.session_ttl_seconds = max(1, int(session_ttl_seconds))
         self.max_sessions = max(1, int(max_sessions))
+        self.auto_start_lightpanda = auto_start_lightpanda
         self._connector = connector
         self._lock = asyncio.Lock()
         self._sessions_lock = asyncio.Lock()
+        self._container_start_lock = asyncio.Lock()
+        self._container_start_attempted = False
         self._playwright: Any | None = None
         self._sessions: dict[str, _BrowserSession] = {}
         self._search_cache: dict[str, list[BrowserSearchSnapshot]] = {}
         self._current_url_cache: dict[str, str] = {}
         self._last_open_cache: dict[str, BrowserOpenedPage] = {}
         self._opened_pages_cache: dict[str, list[BrowserOpenedPage]] = {}
+        self._element_map_cache: dict[str, list[dict[str, Any]]] = {}
+        self._stylesheet_cache: dict[str, tuple[float, str]] = {}
 
     async def warmup(self) -> bool:
         """Best-effort startup connection. Failures are logged, not raised."""
@@ -549,6 +919,7 @@ class LightPandaBrowserWorker:
             self._current_url_cache.clear()
             self._last_open_cache.clear()
             self._opened_pages_cache.clear()
+            self._stylesheet_cache.clear()
 
     @property
     def search_provider_label(self) -> str:
@@ -675,20 +1046,20 @@ class LightPandaBrowserWorker:
         if target_url is None:
             raise BrowserError("BrowserOpen requires url or result_index.")
         page = await self._new_session_page(session)
-        if page is not None:
-            try:
-                await self._goto_page(page, target_url, allow_partial=True)
-                await self._raise_if_search_blocked(page)
-            except Exception:
+        close_failed_page = page is not None
+        if page is None:
+            page = self._preferred_session_page(session)
+        try:
+            await self._goto_page(page, target_url, allow_partial=True)
+            await self._raise_if_search_blocked(page)
+        except Exception:
+            if close_failed_page:
                 await self._best_effort_resource_call("browser_open_failed_page_close", page.close)
-                raise
-            title = await self._safe_title(page)
-            if not title:
-                title = matched_search_title
-            final_url = str(getattr(page, "url", target_url) or target_url)
-        else:
-            final_url = target_url
+            raise
+        title = await self._safe_title(page)
+        if not title:
             title = matched_search_title
+        final_url = str(getattr(page, "url", target_url) or target_url)
         session.current_url = final_url
         self._remember_current_url(conversation_id, final_url)
         opened_page = self._cache_opened_page(
@@ -699,9 +1070,8 @@ class LightPandaBrowserWorker:
             source_search_id=matched_search_id,
             opener_tool_call_id=tool_call_id,
         )
-        if page is not None:
-            session.pages[opened_page.page_id] = page
-            session.page = page
+        session.pages[opened_page.page_id] = page
+        session.page = page
         session.last_open_url = opened_page.final_url
         session.last_open_page_id = opened_page.page_id
         session.current_page_id = opened_page.page_id
@@ -748,11 +1118,33 @@ class LightPandaBrowserWorker:
             )
         if not target_url:
             raise BrowserError("No browser page selected. Run BrowserOpen or provide a URL.")
-        title = self._target_title(conversation_id, target_page_id)
-        if not title and session is not None:
-            title = await self._safe_title(session.page)
+        if session is None and url and not target_page_id:
+            session = await self._get_session(conversation_id)
         final_url = _clean_browser_url(str(target_url))
-        content, extraction_method, content_cleanup = await self._markdown_or_text_url(final_url)
+        page = await self._content_page_for_target(
+            conversation_id=conversation_id,
+            session=session,
+            target_url=final_url,
+            target_page_id=target_page_id,
+            allow_navigation=bool(url and not target_page_id),
+        )
+        title = self._target_title(conversation_id, target_page_id)
+        if page is not None:
+            page_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
+            if page_url.startswith(("http://", "https://")):
+                final_url = page_url
+            if not title:
+                title = await self._safe_title(page)
+            content, extraction_method, content_cleanup = await self._markdown_or_text_page(
+                page,
+                fallback_url=final_url,
+            )
+        else:
+            if not title and session is not None:
+                title = await self._safe_title(session.page)
+            content, extraction_method, content_cleanup = await self._markdown_or_text_url(
+                final_url
+            )
         truncated = len(content) > max_chars
         if truncated:
             content = content[:max_chars].rstrip()
@@ -814,11 +1206,28 @@ class LightPandaBrowserWorker:
             )
         if not target_url:
             raise BrowserError("No browser page selected. Run BrowserOpen or provide a URL.")
-        title = self._target_title(conversation_id, target_page_id)
-        if not title and session is not None:
-            title = await self._safe_title(session.page)
+        if session is None and url and not target_page_id:
+            session = await self._get_session(conversation_id)
         final_url = _clean_browser_url(str(target_url))
-        html, html_method = await self._html_or_empty_url(final_url)
+        page = await self._content_page_for_target(
+            conversation_id=conversation_id,
+            session=session,
+            target_url=final_url,
+            target_page_id=target_page_id,
+            allow_navigation=bool(url and not target_page_id),
+        )
+        title = self._target_title(conversation_id, target_page_id)
+        if page is not None:
+            page_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
+            if page_url.startswith(("http://", "https://")):
+                final_url = page_url
+            if not title:
+                title = await self._safe_title(page)
+            html, html_method = await self._html_or_empty_page(page, fallback_url=final_url)
+        else:
+            if not title and session is not None:
+                title = await self._safe_title(session.page)
+            html, html_method = await self._html_or_empty_url(final_url)
         truncated = len(html) > max_chars
         if truncated:
             html = html[:max_chars].rstrip()
@@ -882,6 +1291,268 @@ class LightPandaBrowserWorker:
             "tabs": tabs,
         }
 
+    async def view_snapshot(
+        self,
+        *,
+        browser_id: str,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        """Return a real LightPanda-rendered screenshot for a session-panel browser."""
+
+        session = await self._get_session(browser_id)
+        return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
+
+    async def view_navigate(
+        self,
+        *,
+        browser_id: str,
+        url: str,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        """Navigate the session-panel browser and return the rendered view."""
+
+        session = await self._get_session(browser_id)
+        target_url = _normalize_navigation_url(url)
+        await self._goto(browser_id, session, target_url, allow_partial=True)
+        final_url = _clean_browser_url(str(getattr(session.page, "url", target_url) or target_url))
+        session.current_url = final_url
+        session.last_open_url = final_url
+        self._remember_current_url(browser_id, final_url)
+        session.touch()
+        return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
+
+    async def view_history(
+        self,
+        *,
+        browser_id: str,
+        direction: int,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        """Move the session-panel browser back or forward in its real page history."""
+
+        session = await self._get_session(browser_id)
+        page = self._preferred_session_page(session)
+        session.page = page
+        operation = getattr(page, "go_back" if direction < 0 else "go_forward", None)
+        if not callable(operation):
+            raise BrowserUnavailableError("LightPanda history navigation is unavailable.")
+        with suppress(Exception):
+            await operation(wait_until="domcontentloaded", timeout=self.timeout_ms)
+        with suppress(Exception):
+            await page.wait_for_timeout(250)
+        final_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
+        if final_url:
+            session.current_url = final_url
+            session.last_open_url = final_url
+            self._remember_current_url(browser_id, final_url)
+        session.touch()
+        return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
+
+    async def view_reload(
+        self,
+        *,
+        browser_id: str,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        """Reload the current session-panel browser page and return the rendered view."""
+
+        session = await self._get_session(browser_id)
+        page = self._preferred_session_page(session)
+        session.page = page
+        current_url = _clean_browser_url(
+            str(getattr(page, "url", "") or session.current_url or session.last_open_url or "")
+        )
+        operation = getattr(page, "reload", None)
+        if callable(operation):
+            try:
+                await operation(wait_until="domcontentloaded", timeout=self.timeout_ms)
+            except Exception as exc:
+                if current_url.startswith(("http://", "https://")):
+                    logger.warning("lightpanda_reload_falling_back_to_goto", url=current_url, error=str(exc))
+                    await self._goto_page(page, current_url, allow_partial=True)
+                else:
+                    raise BrowserUnavailableError("LightPanda reload is unavailable.") from exc
+        elif current_url.startswith(("http://", "https://")):
+            await self._goto_page(page, current_url, allow_partial=True)
+        else:
+            raise BrowserUnavailableError("LightPanda reload is unavailable.")
+        with suppress(Exception):
+            await page.wait_for_timeout(250)
+        session.touch()
+        return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
+
+    async def view_click(
+        self,
+        *,
+        browser_id: str,
+        x: float,
+        y: float,
+        width: int,
+        height: int,
+        button: str = "left",
+    ) -> dict[str, Any]:
+        """Click within the rendered session-panel browser viewport."""
+
+        session = await self._get_session(browser_id)
+        page = self._preferred_session_page(session)
+        session.page = page
+        viewport_width, viewport_height = _clamped_viewport(width, height)
+        await self._set_page_viewport(page, viewport_width, viewport_height)
+        mouse = getattr(page, "mouse", None)
+        click = getattr(mouse, "click", None)
+        if not callable(click):
+            raise BrowserUnavailableError("LightPanda pointer interaction is unavailable.")
+        safe_button = button if button in {"left", "middle", "right"} else "left"
+        await click(
+            min(max(float(x), 0.0), float(viewport_width)),
+            min(max(float(y), 0.0), float(viewport_height)),
+            button=safe_button,
+        )
+        with suppress(Exception):
+            await page.wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 5_000))
+        with suppress(Exception):
+            await page.wait_for_timeout(250)
+        session.touch()
+        return await self._browser_view_snapshot(
+            browser_id,
+            session,
+            width=viewport_width,
+            height=viewport_height,
+        )
+
+    async def view_key(
+        self,
+        *,
+        browser_id: str,
+        width: int,
+        height: int,
+        text: str | None = None,
+        key: str | None = None,
+    ) -> dict[str, Any]:
+        """Type or press a key in the focused session-panel browser page."""
+
+        session = await self._get_session(browser_id)
+        page = self._preferred_session_page(session)
+        session.page = page
+        keyboard = getattr(page, "keyboard", None)
+        if keyboard is None:
+            raise BrowserUnavailableError("LightPanda keyboard interaction is unavailable.")
+        if text:
+            type_text = getattr(keyboard, "type", None)
+            if not callable(type_text):
+                raise BrowserUnavailableError("LightPanda text input is unavailable.")
+            await type_text(text)
+        elif key:
+            press_key = getattr(keyboard, "press", None)
+            if not callable(press_key):
+                raise BrowserUnavailableError("LightPanda key input is unavailable.")
+            await press_key(key)
+        with suppress(Exception):
+            await page.wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 5_000))
+        with suppress(Exception):
+            await page.wait_for_timeout(120)
+        session.touch()
+        return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
+
+    async def view_scroll(
+        self,
+        *,
+        browser_id: str,
+        delta_x: float,
+        delta_y: float,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        """Scroll the real session-panel browser page."""
+
+        session = await self._get_session(browser_id)
+        page = self._preferred_session_page(session)
+        session.page = page
+        mouse = getattr(page, "mouse", None)
+        wheel = getattr(mouse, "wheel", None)
+        if callable(wheel):
+            await wheel(float(delta_x), float(delta_y))
+        else:
+            await self._evaluate_page(
+                page,
+                "([deltaX, deltaY]) => window.scrollBy(deltaX, deltaY)",
+                [float(delta_x), float(delta_y)],
+            )
+        with suppress(Exception):
+            await page.wait_for_timeout(120)
+        session.touch()
+        return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
+
+    async def view_act(
+        self,
+        *,
+        browser_id: str,
+        node_id: str,
+        action: str,
+        width: int,
+        height: int,
+        value: str | None = None,
+        key: str | None = None,
+    ) -> dict[str, Any]:
+        """Execute a mapped DOM action and return the updated browser workspace view."""
+
+        normalized_node_id = str(node_id or "").strip()
+        normalized_action = str(action or "").strip().lower()
+        if not normalized_node_id:
+            raise BrowserError("BrowserAct requires node_id.")
+        if normalized_action not in {"click", "fill", "submit", "select", "press"}:
+            raise BrowserError("BrowserAct action must be click, fill, submit, select, or press.")
+        session = await self._get_session(browser_id)
+        page = self._preferred_session_page(session)
+        session.page = page
+        viewport_width, viewport_height = _clamped_viewport(width, height)
+        await self._set_page_viewport(page, viewport_width, viewport_height)
+        # The snapshot step injects stable data-pa-node-id attributes. Re-inject before acting
+        # so agent tools can act after a fresh BrowserOpen without a visible UI snapshot.
+        await self._browser_element_map(page)
+        cached_selector = self._element_selector(browser_id, normalized_node_id)
+        before_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
+        result = await self._evaluate_page(
+            page,
+            _BROWSER_ACT_SCRIPT,
+            {
+                "nodeId": normalized_node_id,
+                "selector": cached_selector,
+                "action": normalized_action,
+                "value": value,
+                "key": key,
+            },
+        )
+        after_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
+        navigated = bool(after_url and after_url != before_url)
+        if (not isinstance(result, Mapping) or not result.get("ok")) and not navigated:
+            reason = ""
+            if isinstance(result, Mapping):
+                reason = str(result.get("reason") or "")
+            raise BrowserError(reason or "Browser action failed.")
+        with suppress(Exception):
+            await page.wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 5_000))
+        with suppress(Exception):
+            await page.wait_for_timeout(250)
+        session.touch()
+        view = await self._browser_view_snapshot(
+            browser_id,
+            session,
+            width=viewport_width,
+            height=viewport_height,
+        )
+        view["last_action"] = {
+            "node_id": normalized_node_id,
+            "action": normalized_action,
+            "value": value if normalized_action in {"fill", "select"} else None,
+            "key": key if normalized_action == "press" else None,
+        }
+        return view
+
     def search_url(self, query: str, *, max_results: int | None = None) -> str:
         parsed = urlparse(self.search_base_url)
         params = dict(parse_qsl(parsed.query, keep_blank_values=True))
@@ -924,6 +1595,283 @@ class LightPandaBrowserWorker:
             )
         )
 
+    async def _browser_view_snapshot(
+        self,
+        browser_id: str,
+        session: _BrowserSession,
+        *,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        page = self._preferred_session_page(session)
+        session.page = page
+        viewport_width, viewport_height = _clamped_viewport(width, height)
+        await self._set_page_viewport(page, viewport_width, viewport_height)
+        current_url = _clean_browser_url(str(getattr(page, "url", "") or "about:blank"))
+        title, user_agent, element_map, html = await asyncio.gather(
+            self._safe_title(page),
+            self._safe_user_agent(page),
+            self._browser_element_map(page),
+            self._safe_html(page),
+        )
+        self._element_map_cache[browser_id] = element_map
+        html_from_fallback = False
+        if not html.strip() and current_url.startswith(("http://", "https://")):
+            html, _html_method = await self._html_or_empty_page(page, fallback_url=current_url)
+            html_from_fallback = True
+        if not html.strip() and current_url.startswith(("http://", "https://")):
+            html = _browser_empty_fallback_html(current_url, title)
+            html_from_fallback = True
+        html, embedded_stylesheet_count = await self._html_with_embedded_stylesheet_fallbacks(
+            html,
+            current_url,
+        )
+        is_lightpanda = user_agent.lower().startswith("lightpanda/")
+        image_data = ""
+        image_error = ""
+        if is_lightpanda:
+            image_error = "LightPanda has no graphical rendering engine; using DOM mirror."
+        else:
+            try:
+                screenshot = getattr(page, "screenshot", None)
+                if not callable(screenshot):
+                    raise BrowserUnavailableError("Page screenshot capture is unavailable.")
+                raw_image = await asyncio.wait_for(
+                    screenshot(type="png", full_page=False),
+                    timeout=min(max(self.timeout_ms / 1000, 1.0), 10.0),
+                )
+                image_data = base64.b64encode(raw_image).decode("ascii")
+            except Exception as exc:
+                image_error = str(exc)
+                logger.warning("lightpanda_browser_view_screenshot_failed", error=image_error)
+
+        if current_url and current_url != "about:blank":
+            session.current_url = current_url
+            self._remember_current_url(browser_id, current_url)
+        session.touch()
+        css_fidelity = self._css_fidelity(
+            html=html,
+            render_mode="html_mirror" if is_lightpanda or not image_data else "screenshot",
+            embedded_stylesheet_count=embedded_stylesheet_count,
+        )
+        if html_from_fallback and css_fidelity == "original":
+            css_fidelity = "fallback_html"
+        fallback_reason = (
+            ""
+            if css_fidelity in {"original", "pixel", "embedded"}
+            else "Page HTML was captured, but original CSS could not be confirmed."
+        )
+        browser_snapshot = {
+            "document_html": html,
+            "url": current_url,
+            "title": title,
+            "render_mode": "html_mirror" if is_lightpanda or not image_data else "screenshot",
+            "css_fidelity": css_fidelity,
+            "fallback_reason": fallback_reason,
+            "element_map": element_map,
+        }
+        return {
+            "type": "browser_view",
+            "browser_id": browser_id,
+            "url": current_url,
+            "title": title,
+            "html": html,
+            "document_html": html,
+            "render_mode": browser_snapshot["render_mode"],
+            "css_fidelity": css_fidelity,
+            "fallback_reason": fallback_reason,
+            "element_map": element_map,
+            "annotations": [],
+            "timeline_events": [],
+            "browser_snapshot": browser_snapshot,
+            "user_agent": user_agent,
+            "image_data": image_data,
+            "image_mime_type": "image/png" if image_data else "",
+            "screenshot_method": "playwright_page_screenshot" if image_data else "",
+            "screenshot_error": image_error,
+            "viewport_width": viewport_width,
+            "viewport_height": viewport_height,
+            "can_capture": bool(image_data),
+        }
+
+    async def _browser_element_map(self, page: Any) -> list[dict[str, Any]]:
+        with suppress(Exception):
+            value = await self._evaluate_page(page, _BROWSER_ELEMENT_MAP_SCRIPT)
+            if isinstance(value, list):
+                return [
+                    item
+                    for item in value
+                    if isinstance(item, dict) and isinstance(item.get("node_id"), str)
+                ][:220]
+        return []
+
+    async def _html_with_embedded_stylesheet_fallbacks(
+        self,
+        html: str,
+        current_url: str,
+    ) -> tuple[str, int]:
+        if not html or not current_url.startswith(("http://", "https://")):
+            return html, 0
+        hrefs = self._stylesheet_hrefs(html, current_url, max_hrefs=12)
+        if not hrefs:
+            return html, 0
+        timeout = httpx.Timeout(1.8, connect=0.6)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            results = await asyncio.gather(
+                *(self._fetch_stylesheet_css(client, href) for href in hrefs),
+                return_exceptions=True,
+            )
+        embedded_styles = [
+            f"/* PersonAgent embedded stylesheet fallback: {href} */\n{css_text}"
+            for href, css_text in zip(hrefs, results, strict=False)
+            if isinstance(css_text, str) and css_text.strip()
+        ]
+        if not embedded_styles:
+            return html, 0
+        style_block = (
+            '<style data-personagent-embedded-css="true">\n'
+            + "\n\n".join(embedded_styles)
+            + "\n</style>"
+        )
+        if re.search(r"<head(\s[^>]*)?>", html, flags=re.IGNORECASE):
+            return (
+                re.sub(
+                    r"<head(\s[^>]*)?>",
+                    lambda match: f"{match.group(0)}{style_block}",
+                    html,
+                    count=1,
+                    flags=re.IGNORECASE,
+                ),
+                len(embedded_styles),
+            )
+        return f"{style_block}{html}", len(embedded_styles)
+
+    @staticmethod
+    def _stylesheet_hrefs(html: str, current_url: str, *, max_hrefs: int) -> list[str]:
+        hrefs: list[str] = []
+        for tag_match in _LINK_TAG_PATTERN.finditer(html):
+            attrs = LightPandaBrowserWorker._html_attrs(str(tag_match.group(0) or ""))
+            href = str(attrs.get("href") or "").strip()
+            if not href:
+                continue
+            rel = str(attrs.get("rel") or "").lower()
+            as_attr = str(attrs.get("as") or "").lower()
+            parsed_path = urlparse(href).path.lower()
+            looks_like_stylesheet = (
+                "stylesheet" in rel
+                or as_attr == "style"
+                or parsed_path.endswith(".css")
+                or ".css" in parsed_path
+            )
+            if not looks_like_stylesheet:
+                continue
+            absolute = urljoin(current_url, href)
+            if absolute.startswith(("http://", "https://")) and absolute not in hrefs:
+                hrefs.append(absolute)
+            if len(hrefs) >= max_hrefs:
+                break
+        return hrefs
+
+    @staticmethod
+    def _html_attrs(tag: str) -> dict[str, str]:
+        attrs: dict[str, str] = {}
+        for match in _HTML_ATTR_PATTERN.finditer(tag):
+            name = str(match.group("name") or "").lower()
+            value = str(match.group("value") or "")
+            if len(value) >= 2 and value[0] in {"'", '"'} and value[-1] == value[0]:
+                value = value[1:-1]
+            attrs[name] = value
+        return attrs
+
+    async def _fetch_stylesheet_css(self, client: httpx.AsyncClient, href: str) -> str:
+        now = time.monotonic()
+        cached = self._stylesheet_cache.get(href)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+        response = await client.get(href)
+        if response.status_code >= 400:
+            return ""
+        content_type = response.headers.get("content-type", "")
+        css_text = response.text
+        if "css" not in content_type.lower() and "{" not in css_text[:1000]:
+            return ""
+        css_text = self._rewrite_css_urls(css_text[:350_000], href)
+        self._stylesheet_cache[href] = (now + _STYLESHEET_CACHE_TTL_SECONDS, css_text)
+        if len(self._stylesheet_cache) > _MAX_STYLESHEET_CACHE_ENTRIES:
+            expired = [key for key, (expires_at, _) in self._stylesheet_cache.items() if expires_at <= now]
+            for key in expired:
+                self._stylesheet_cache.pop(key, None)
+            while len(self._stylesheet_cache) > _MAX_STYLESHEET_CACHE_ENTRIES:
+                self._stylesheet_cache.pop(next(iter(self._stylesheet_cache)))
+        return css_text
+
+    @staticmethod
+    def _rewrite_css_urls(css_text: str, stylesheet_url: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            raw_url = str(match.group("url") or "").strip()
+            quote = str(match.group("quote") or "")
+            if not raw_url or raw_url.startswith(("data:", "http://", "https://", "#")):
+                return match.group(0)
+            return f"url({quote}{urljoin(stylesheet_url, raw_url)}{quote})"
+
+        return _CSS_URL_PATTERN.sub(replace, css_text)
+
+    @staticmethod
+    def _css_fidelity(*, html: str, render_mode: str, embedded_stylesheet_count: int = 0) -> str:
+        if render_mode == "screenshot":
+            return "pixel"
+        if not html.strip():
+            return "fallback_html"
+        if embedded_stylesheet_count > 0:
+            return "original_embedded"
+        lowered = html.lower()
+        if (
+            'rel="stylesheet"' in lowered
+            or "rel='stylesheet'" in lowered
+            or "as=\"style\"" in lowered
+            or "as='style'" in lowered
+            or "<style" in lowered
+        ):
+            return "original"
+        return "fallback_html"
+
+    def _element_selector(self, browser_id: str, node_id: str) -> str:
+        for item in self._element_map_cache.get(browser_id, []):
+            if str(item.get("node_id") or "") == node_id:
+                return str(item.get("selector") or "")
+        return ""
+
+    async def _set_page_viewport(self, page: Any, width: int, height: int) -> None:
+        operation = getattr(page, "set_viewport_size", None)
+        if not callable(operation):
+            return
+        with suppress(Exception):
+            result = operation({"width": int(width), "height": int(height)})
+            if inspect.isawaitable(result):
+                await result
+
+    async def _safe_user_agent(self, page: Any) -> str:
+        with suppress(Exception):
+            value = await self._evaluate_page(page, "() => navigator.userAgent || ''")
+            if isinstance(value, str):
+                return value.strip()
+        return ""
+
+    async def _safe_html(self, page: Any) -> str:
+        operation = getattr(page, "content", None)
+        if not callable(operation):
+            return ""
+        with suppress(Exception):
+            value = operation()
+            if inspect.isawaitable(value):
+                value = await asyncio.wait_for(
+                    value,
+                    timeout=min(max(self.timeout_ms / 1000, 1.0), 5.0),
+                )
+            if isinstance(value, str):
+                return value[:2_000_000]
+        return ""
+
     async def _get_session(self, conversation_id: str) -> _BrowserSession:
         async with self._sessions_lock:
             await self._cleanup_sessions()
@@ -947,7 +1895,9 @@ class LightPandaBrowserWorker:
                         last_open = self._last_open_cache.get(conversation_id)
                         if last_open is not None:
                             session.last_open_url = session.last_open_url or last_open.final_url
-                            session.last_open_page_id = session.last_open_page_id or last_open.page_id
+                            session.last_open_page_id = (
+                                session.last_open_page_id or last_open.page_id
+                            )
                         session.touch()
                         return session
                 except Exception:
@@ -1075,11 +2025,67 @@ class LightPandaBrowserWorker:
                 if attempt == 2:
                     break
                 await asyncio.sleep(0.25 * (attempt + 1))
+        if await self._try_start_lightpanda_container():
+            for attempt in range(4):
+                endpoint = await self._resolve_endpoint()
+                try:
+                    if self._connector is not None:
+                        return await self._connector(endpoint)
+                    return await self._connect_with_playwright(endpoint)
+                except Exception as exc:
+                    last_error = exc
+                    if attempt == 3:
+                        break
+                    await asyncio.sleep(0.5 * (attempt + 1))
         raise BrowserUnavailableError(
             "Browser CDP endpoint is unavailable. Start LightPanda with "
             "`docker compose up -d lightpanda` or start Chrome/Chromium with "
             "`--remote-debugging-port=9222`, then verify /json/version."
         ) from last_error
+
+    async def _try_start_lightpanda_container(self) -> bool:
+        if (
+            not self.auto_start_lightpanda
+            or self._connector is not None
+            or not _is_local_lightpanda_endpoint(self.cdp_url)
+        ):
+            return False
+        async with self._container_start_lock:
+            if self._container_start_attempted:
+                return False
+            self._container_start_attempted = True
+            repo_root = Path(__file__).resolve().parents[5]
+            compose_file = repo_root / "docker-compose.yml"
+            if not compose_file.exists():
+                return False
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "docker",
+                    "compose",
+                    "up",
+                    "-d",
+                    "lightpanda",
+                    cwd=repo_root,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout_data, stderr_data = await asyncio.wait_for(proc.communicate(), timeout=60)
+            except (OSError, TimeoutError) as exc:
+                logger.warning("lightpanda_container_autostart_failed", error=str(exc))
+                return False
+            output = (
+                stdout_data.decode("utf-8", errors="replace")
+                + stderr_data.decode("utf-8", errors="replace")
+            ).strip()
+            if proc.returncode != 0:
+                logger.warning(
+                    "lightpanda_container_autostart_failed",
+                    returncode=proc.returncode,
+                    output=output,
+                )
+                return False
+            logger.info("lightpanda_container_autostarted", output=output)
+            return True
 
     async def _connect_with_playwright(self, endpoint: str) -> Any:
         try:
@@ -1151,9 +2157,7 @@ class LightPandaBrowserWorker:
     ) -> None:
         clean_url = _clean_browser_url(url)
         try:
-            await page.goto(
-                clean_url, wait_until="domcontentloaded", timeout=self.timeout_ms
-            )
+            await page.goto(clean_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
             await page.wait_for_timeout(250)
         except Exception as exc:
             page_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
@@ -1206,6 +2210,217 @@ class LightPandaBrowserWorker:
             raise last_error
         return None
 
+    async def _content_page_for_target(
+        self,
+        *,
+        conversation_id: str,
+        session: _BrowserSession | None,
+        target_url: str,
+        target_page_id: str | None,
+        allow_navigation: bool,
+    ) -> Any | None:
+        if session is None:
+            return None
+        clean_target_url = _clean_browser_url(target_url)
+        if target_page_id:
+            page = session.pages.get(target_page_id)
+            if page is not None and self._is_live_page_for_url(page, clean_target_url):
+                return page
+            return None
+
+        preferred_page = self._preferred_session_page(session)
+        if self._is_live_page_for_url(preferred_page, clean_target_url):
+            return preferred_page
+        if not allow_navigation or not clean_target_url.startswith(("http://", "https://")):
+            return None
+
+        page = await self._new_session_page(session)
+        if page is None:
+            page = preferred_page
+        await self._goto_page(page, clean_target_url, allow_partial=True)
+        session.page = page
+        session.current_url = _clean_browser_url(
+            str(getattr(page, "url", clean_target_url) or clean_target_url)
+        )
+        self._remember_current_url(conversation_id, session.current_url)
+        session.touch()
+        return page
+
+    def _is_live_page_for_url(self, page: Any, target_url: str) -> bool:
+        with suppress(Exception):
+            if page.is_closed():
+                return False
+        page_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
+        return bool(page_url and _urls_equivalent(page_url, target_url))
+
+    async def _prepare_page_for_extraction(self, page: Any) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "prepared_page": True,
+            "popup_dismissed_count": 0,
+            "popup_dismissed_labels": [],
+            "scroll_steps": 0,
+        }
+        await self._wait_for_page_settle(page)
+        with suppress(Exception):
+            await page.wait_for_timeout(350)
+
+        first_dismiss = await self._dismiss_page_popups(page)
+        self._merge_popup_dismissal(metadata, first_dismiss)
+        if first_dismiss.get("clicked_count"):
+            with suppress(Exception):
+                await page.wait_for_timeout(350)
+
+        scroll = await self._scroll_page_incrementally(page)
+        metadata.update(scroll)
+
+        second_dismiss = await self._dismiss_page_popups(page)
+        self._merge_popup_dismissal(metadata, second_dismiss)
+        if second_dismiss.get("clicked_count"):
+            with suppress(Exception):
+                await page.wait_for_timeout(250)
+        return metadata
+
+    async def _wait_for_page_settle(self, page: Any) -> None:
+        wait_for_load_state = getattr(page, "wait_for_load_state", None)
+        if not callable(wait_for_load_state):
+            return
+        with suppress(Exception):
+            await wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 8_000))
+        with suppress(Exception):
+            await wait_for_load_state("load", timeout=min(self.timeout_ms, 2_000))
+
+    async def _dismiss_page_popups(self, page: Any) -> dict[str, Any]:
+        try:
+            value = await asyncio.wait_for(
+                self._evaluate_page(page, _POPUP_DISMISS_SCRIPT),
+                timeout=min(self.timeout_ms / 1000, 3),
+            )
+        except Exception as exc:
+            logger.debug("browser_popup_dismiss_failed", error=str(exc))
+            return {"clicked_count": 0, "clicked_labels": [], "error": str(exc)}
+        if isinstance(value, dict):
+            labels = value.get("clicked_labels")
+            return {
+                "clicked_count": int(value.get("clicked_count") or 0),
+                "clicked_labels": labels if isinstance(labels, list) else [],
+            }
+        return {"clicked_count": 0, "clicked_labels": []}
+
+    def _merge_popup_dismissal(
+        self,
+        metadata: dict[str, Any],
+        dismissed: dict[str, Any],
+    ) -> None:
+        clicked_count = int(dismissed.get("clicked_count") or 0)
+        metadata["popup_dismissed_count"] = (
+            int(metadata.get("popup_dismissed_count") or 0) + clicked_count
+        )
+        labels = metadata.setdefault("popup_dismissed_labels", [])
+        if isinstance(labels, list):
+            labels.extend(str(label) for label in dismissed.get("clicked_labels") or [])
+            del labels[8:]
+
+    async def _scroll_page_incrementally(self, page: Any) -> dict[str, Any]:
+        try:
+            value = await asyncio.wait_for(
+                self._evaluate_page(
+                    page,
+                    _INCREMENTAL_SCROLL_SCRIPT,
+                    {
+                        "maxSteps": 36,
+                        "delayMs": 180,
+                        "stepRatio": 0.82,
+                    },
+                ),
+                timeout=min(max(self.timeout_ms / 1000, 1.0), 8.0),
+            )
+        except Exception as exc:
+            logger.debug("browser_incremental_scroll_failed", error=str(exc))
+            return {"scroll_error": str(exc)}
+        if not isinstance(value, dict):
+            return {}
+        return {
+            "scroll_steps": int(value.get("steps") or 0),
+            "scroll_y": int(value.get("scroll_y") or 0),
+            "scroll_height": int(value.get("scroll_height") or 0),
+            "viewport_height": int(value.get("viewport_height") or 0),
+            "scroll_at_bottom": bool(value.get("at_bottom")),
+        }
+
+    async def _markdown_or_text_page(
+        self,
+        page: Any,
+        *,
+        fallback_url: str,
+    ) -> tuple[str, str, dict[str, Any]]:
+        try:
+            preparation = await asyncio.wait_for(
+                self._prepare_page_for_extraction(page),
+                timeout=min(max(self.timeout_ms / 1000, 1.0), 22.0),
+            )
+        except Exception as exc:
+            fallback_content, fallback_method, fallback_stats = await self._markdown_or_text_url(
+                fallback_url
+            )
+            return (
+                fallback_content,
+                fallback_method,
+                {
+                    **fallback_stats,
+                    "prepared_page": False,
+                    "prepare_error": str(exc),
+                    "fallback": fallback_method,
+                },
+            )
+        value: Any = None
+        with suppress(Exception):
+            value = await self._evaluate_page(page, _READABLE_DOM_SCRIPT)
+        if isinstance(value, dict):
+            content = value.get("content")
+            if isinstance(content, str):
+                cleaned, stats = _clean_extracted_content(content)
+                if cleaned:
+                    return (
+                        cleaned,
+                        "prepared_readable_dom_text",
+                        {
+                            **stats,
+                            **preparation,
+                            "selected_tag": value.get("selected_tag"),
+                            "readable_score": value.get("score"),
+                        },
+                    )
+        elif isinstance(value, str):
+            cleaned, stats = _clean_extracted_content(value)
+            if cleaned:
+                return cleaned, "prepared_dom_text", {**stats, **preparation}
+
+        text = ""
+        with suppress(Exception):
+            value = await self._evaluate_page(
+                page,
+                "() => ((document.body && (document.body.innerText || document.body.textContent)) "
+                "|| document.documentElement.textContent || '')",
+            )
+            if isinstance(value, str):
+                text = value
+        cleaned_text, text_stats = _clean_extracted_content(text)
+        if cleaned_text:
+            return cleaned_text, "prepared_dom_text", {**text_stats, **preparation}
+
+        fallback_content, fallback_method, fallback_stats = await self._markdown_or_text_url(
+            fallback_url
+        )
+        return (
+            fallback_content,
+            fallback_method,
+            {
+                **fallback_stats,
+                **preparation,
+                "fallback": fallback_method,
+            },
+        )
+
     async def _markdown_or_text(self, session: _BrowserSession) -> tuple[str, str, dict[str, Any]]:
         url = _clean_browser_url(str(getattr(session.page, "url", "") or ""))
         return await self._markdown_or_text_url(url)
@@ -1217,10 +2432,14 @@ class LightPandaBrowserWorker:
             if _should_prefer_readable_dom(cleaned_markdown, stats):
                 readable = await self._readable_dom_content_url(url)
                 if readable:
-                    return readable, "readable_dom_text", {
-                        **stats,
-                        "fallback": "readable_dom_text",
-                    }
+                    return (
+                        readable,
+                        "readable_dom_text",
+                        {
+                            **stats,
+                            "fallback": "readable_dom_text",
+                        },
+                    )
             if cleaned_markdown:
                 method = (
                     "lightpanda_markdown_cleaned"
@@ -1334,6 +2553,28 @@ class LightPandaBrowserWorker:
     async def _html_or_empty(self, session: _BrowserSession) -> tuple[str, str]:
         url = _clean_browser_url(str(getattr(session.page, "url", "") or ""))
         return await self._html_or_empty_url(url)
+
+    async def _html_or_empty_page(self, page: Any, *, fallback_url: str) -> tuple[str, str]:
+        try:
+            await asyncio.wait_for(
+                self._prepare_page_for_extraction(page),
+                timeout=min(max(self.timeout_ms / 1000, 1.0), 22.0),
+            )
+        except Exception as exc:
+            logger.debug("browser_page_html_prepare_failed", error=str(exc))
+            return await self._html_or_empty_url(fallback_url)
+        try:
+            content = getattr(page, "content", None)
+            if callable(content):
+                html = await asyncio.wait_for(
+                    content(),
+                    timeout=min(self.timeout_ms / 1000, 10),
+                )
+                if isinstance(html, str):
+                    return html, "prepared_playwright_page_content"
+        except Exception as exc:
+            logger.debug("browser_page_html_failed", error=str(exc))
+        return await self._html_or_empty_url(fallback_url)
 
     async def _html_or_empty_url(self, url: str) -> tuple[str, str]:
         url = _clean_browser_url(url)
@@ -1869,6 +3110,7 @@ class LightPandaBrowserWorker:
                     self._current_url_cache.pop(conversation_id, None)
                     self._last_open_cache.pop(conversation_id, None)
                     self._opened_pages_cache.pop(conversation_id, None)
+                    self._element_map_cache.pop(conversation_id, None)
 
     async def _enforce_session_limit(self) -> None:
         while len(self._sessions) > self.max_sessions:
@@ -1888,6 +3130,7 @@ class LightPandaBrowserWorker:
 
     async def _close_session(self, conversation_id: str, session: _BrowserSession) -> None:
         self._sessions.pop(conversation_id, None)
+        self._element_map_cache.pop(conversation_id, None)
         for page in self._session_pages(session):
             await self._best_effort_resource_call("browser_page_close", page.close)
         await self._best_effort_resource_call("browser_context_close", session.context.close)

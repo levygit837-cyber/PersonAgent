@@ -250,6 +250,47 @@ async def test_orchestrator_applies_tool_definition_result_limit(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_preserves_json_when_capping_structured_result(tmp_path):
+    async def handler(args, context, call):
+        data = {"type": "browser_get_html", "html": "<main>" + ("x" * 500) + "</main>"}
+        return ToolResult(
+            tool_call_id=call.id,
+            tool_name="BrowserGetHtml",
+            content=json.dumps(data),
+            data=data,
+        )
+
+    tool = build_tool(
+        definition=ToolDefinition(
+            name="BrowserGetHtml",
+            description="Browser HTML",
+            input_schema={"type": "object", "properties": {}},
+            max_result_size_chars=180,
+        ),
+        handler=handler,
+    )
+    orchestrator = ToolOrchestrator(
+        ToolRegistry([tool]),
+        ToolRuntimeConfig.from_values(workspace_root=tmp_path),
+    )
+
+    events = [
+        event
+        async for event in orchestrator.execute(
+            [ToolCall(id="call_html", name="BrowserGetHtml", arguments={})],
+            _tool_context(tmp_path),
+        )
+    ]
+
+    result = events[-1].result
+    assert result is not None
+    data = json.loads(result.content)
+    assert data["truncated"] is True
+    assert data["html"].endswith("[Output truncated.]")
+    assert len(result.content) <= 180
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_emits_parallel_start_events_in_call_order(tmp_path):
     async def handler(args, context, call):
         await asyncio.sleep(0.01 if call.id == "call_1" else 0)

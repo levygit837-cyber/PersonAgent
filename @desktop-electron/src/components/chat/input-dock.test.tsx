@@ -23,6 +23,7 @@ vi.mock("../../api/client", () => ({
     remote_url: null,
   }),
   getGitRecentActions: vi.fn().mockResolvedValue({ is_repo: false, actions: [], errors: [] }),
+  forkConversation: vi.fn(),
   generateGitCommitMessage: vi.fn().mockResolvedValue({ message: "Update workspace" }),
   listGitBranches: vi.fn().mockResolvedValue({
     is_repo: false,
@@ -30,6 +31,7 @@ vi.mock("../../api/client", () => ({
     branches: [],
   }),
   gitCreateBranch: vi.fn().mockResolvedValue({ success: true, branch: "feature/new" }),
+  gitCreateWorktree: vi.fn(),
   gitCheckoutBranch: vi.fn().mockResolvedValue({ success: true, branch: "feature/api" }),
   gitCommit: vi.fn(),
   gitPush: vi.fn(),
@@ -416,6 +418,58 @@ describe("InputDock", () => {
     expect(JSON.stringify(options)).not.toContain("Selected lines");
     expect(JSON.stringify(options)).not.toContain("8: old guidance");
     expect(useChatStore.getState().composerAnnotations).toEqual([]);
+  });
+
+  it("sends browser annotations as browser context attachments", () => {
+    const sendMessage = vi.fn();
+    useChatStore.setState({
+      sendMessage,
+      composerAnnotations: [
+        {
+          id: 2,
+          source: "browser",
+          fileName: "Search results",
+          displayPath: "Search results · google.com",
+          filePath: "https://www.google.com/search?q=personagent",
+          startLine: 1,
+          endLine: 1,
+          text: "Use this result in the response",
+          selectedLines: "Visible text: PersonAgent",
+          language: "browser",
+          browserUrl: "https://www.google.com/search?q=personagent",
+          browserTitle: "Search results",
+          browserNodeId: "pa_result_1",
+          browserSelector: "html > body > a",
+          browserRole: "link",
+          browserQuote: "PersonAgent",
+        },
+      ],
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("DOM")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "Use this result in the response",
+      undefined,
+      expect.objectContaining({
+        contextAttachments: [
+          expect.objectContaining({
+            type: "browser_annotation",
+            url: "https://www.google.com/search?q=personagent",
+            node_id: "pa_result_1",
+            selector: "html > body > a",
+            quote: "PersonAgent",
+          }),
+        ],
+      }),
+    );
   });
 
   it("turns @ file autocomplete selections into context attachments", async () => {

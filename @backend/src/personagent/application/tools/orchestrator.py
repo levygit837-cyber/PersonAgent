@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
 from tempfile import gettempdir
@@ -421,6 +423,9 @@ class ToolOrchestrator:
             return result
 
         storage_ref = self._persist_large_result(result, context)
+        structured = self._cap_structured_result(result, max_chars, storage_ref)
+        if structured is not None:
+            return structured
         truncated = result.content[:max_chars] + "\n[Output truncated.]"
         metadata = {
             **result.metadata,
@@ -435,6 +440,76 @@ class ToolOrchestrator:
             "storage_ref": storage_ref,
         }
         return replace(result, content=truncated, metadata=metadata, data=data)
+
+    def _cap_structured_result(
+        self,
+        result: ToolResult,
+        max_chars: int,
+        storage_ref: str | None,
+    ) -> ToolResult | None:
+        if not result.data:
+            return None
+        try:
+            data = deepcopy(result.data)
+            if not isinstance(data, dict):
+                return None
+            data.update(
+                {
+                    "truncated": True,
+                    "original_chars": len(result.content),
+                    "storage_ref": storage_ref,
+                }
+            )
+            for _attempt in range(20):
+                content = json.dumps(data, ensure_ascii=False)
+                if len(content) <= max_chars:
+                    return replace(
+                        result,
+                        content=content,
+                        metadata={
+                            **result.metadata,
+                            "truncated": True,
+                            "original_chars": len(result.content),
+                            "storage_ref": storage_ref,
+                        },
+                        data=data,
+                    )
+                slot = self._largest_string_slot(data)
+                if slot is None:
+                    return None
+                parent, key, value = slot
+                marker = "\n[Output truncated.]"
+                excess = len(content) - max_chars
+                target_len = max(0, len(value) - excess - len(marker) - 200)
+                if target_len >= len(value):
+                    target_len = max(0, len(value) // 2)
+                parent[key] = value[:target_len].rstrip() + marker
+        except (TypeError, ValueError):
+            return None
+        return None
+
+    def _largest_string_slot(self, value: Any) -> tuple[dict[str, Any] | list[Any], Any, str] | None:
+        best: tuple[dict[str, Any] | list[Any], Any, str] | None = None
+
+        def visit(node: Any) -> None:
+            nonlocal best
+            if isinstance(node, dict):
+                for key, item in node.items():
+                    if isinstance(item, str):
+                        if best is None or len(item) > len(best[2]):
+                            best = (node, key, item)
+                    else:
+                        visit(item)
+            elif isinstance(node, list):
+                for index, item in enumerate(node):
+                    if isinstance(item, str):
+                        if best is None or len(item) > len(best[2]):
+                            best = (node, index, item)
+                    else:
+                        visit(item)
+
+        visit(value)
+        return best
 
     def _persist_large_result(self, result: ToolResult, context: ToolUseContext) -> str | None:
         raw_root = context.limits.get("tool_result_storage_root")

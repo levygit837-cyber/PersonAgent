@@ -3,11 +3,14 @@ import {
   approvePlan,
   cancelPlan,
   continuePlan,
+  forkConversation,
   getConversation,
+  gitCreateWorktree,
   rejectTool,
   streamApproveTool,
   streamTeamChat,
   streamChatCompletion,
+  type ConversationForkMessagePayload,
 } from "../api/client";
 import { errorMessage } from "../api/errors";
 import { createThinkingTagState, splitThinkingTags, type ThinkingTagState } from "../lib/reasoning";
@@ -65,6 +68,7 @@ type TextFlushBuffer = {
 
 export interface ComposerAnnotation {
   id: number;
+  source?: "file" | "browser";
   fileName: string;
   filePath: string;
   displayPath: string;
@@ -73,6 +77,12 @@ export interface ComposerAnnotation {
   text: string;
   selectedLines: string;
   language: string;
+  browserUrl?: string;
+  browserTitle?: string;
+  browserNodeId?: string;
+  browserSelector?: string;
+  browserRole?: string;
+  browserQuote?: string;
 }
 
 interface ChatState {
@@ -102,6 +112,10 @@ interface ChatState {
   cancelPendingPlan: (feedback?: string) => Promise<void>;
   approvePendingTool: () => Promise<void>;
   rejectPendingTool: () => Promise<void>;
+  setAgentFeedback: (messageId: string, feedback: "positive" | "negative") => void;
+  regenerateAgentMessage: (messageId: string) => Promise<void>;
+  rewindUserMessage: (messageId: string, content: string) => Promise<void>;
+  branchAgentMessage: (messageId: string) => Promise<void>;
   stopStreaming: () => void;
   clearError: () => void;
 }
@@ -419,6 +433,79 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  setAgentFeedback: (messageId, feedback) => {
+    set((state) => ({
+      messages: state.messages.map((message) => {
+        if (message.id !== messageId) return message;
+        const current = stringValue(message.metadata?.feedback);
+        return {
+          ...message,
+          metadata: {
+            ...(message.metadata ?? {}),
+            feedback: current === feedback ? undefined : feedback,
+          },
+        };
+      }),
+    }));
+  },
+
+  regenerateAgentMessage: async (messageId) => {
+    if (get().isStreaming) return;
+    const state = get();
+    const agentIndex = state.messages.findIndex((message) => message.id === messageId && message.role === "agent");
+    if (agentIndex < 0) return;
+    const userIndex = previousUserMessageIndex(state.messages, agentIndex);
+    if (userIndex < 0) return;
+    const userMessage = state.messages[userIndex];
+    await replayUserMessageFromIndex(userIndex, userMessage, userMessage.content, set, get);
+  },
+
+  rewindUserMessage: async (messageId, content) => {
+    if (get().isStreaming) return;
+    const state = get();
+    const userIndex = state.messages.findIndex((message) => message.id === messageId && message.role === "user");
+    if (userIndex < 0) return;
+    const userMessage = state.messages[userIndex];
+    await replayUserMessageFromIndex(userIndex, userMessage, content, set, get);
+  },
+
+  branchAgentMessage: async (messageId) => {
+    if (get().isStreaming) return;
+    const app = useAppStore.getState();
+    const workspaceRoot = app.selectedWorkspace?.trim();
+    if (!workspaceRoot) {
+      setAgentMessageActionState(set, messageId, {
+        worktree_status: "error",
+        worktree_error: "No workspace selected.",
+      });
+      return;
+    }
+
+    setAgentMessageActionState(set, messageId, {
+      worktree_status: "running",
+      worktree_error: undefined,
+    });
+    try {
+      const result = await gitCreateWorktree(app.baseUrl, workspaceRoot, {
+        name: worktreeSlug(get().conversationId, messageId),
+        sourceMessageId: messageId,
+      });
+      await useAppStore.getState().selectWorkspace(result.path);
+      setAgentMessageActionState(set, messageId, {
+        worktree_status: "ready",
+        worktree_branch: result.branch,
+        worktree_path: result.path,
+        worktree_error: undefined,
+      });
+      window.dispatchEvent(new CustomEvent("personagent:workspace-changed"));
+    } catch (error) {
+      setAgentMessageActionState(set, messageId, {
+        worktree_status: "error",
+        worktree_error: errorMessage(error),
+      });
+    }
+  },
+
   stopStreaming: () => {
     const controller = get().activeController;
     controller?.abort();
@@ -444,6 +531,155 @@ export const useChatStore = create<ChatState>((set, get) => ({
 type ChatSet = (
   partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>),
 ) => void;
+
+type ChatGet = () => ChatState;
+
+async function replayUserMessageFromIndex(
+  userIndex: number,
+  userMessage: ChatMessageUi,
+  content: string,
+  set: ChatSet,
+  get: ChatGet,
+) {
+  const state = get();
+  const prefixMessages = state.messages.slice(0, userIndex);
+  const attachments = contextAttachmentsFromMessage(userMessage);
+  const replayContent = content.trim() || userMessage.content.trim() || "Attached context.";
+  set((state) => ({
+    messages: prefixMessages,
+    error: undefined,
+    pendingPlanApproval: undefined,
+    pendingToolApproval: undefined,
+    nextStepSuggestion: undefined,
+  }));
+
+  try {
+    await prepareConversationReplay(prefixMessages, set, get);
+  } catch (error) {
+    set({ error: errorMessage(error) });
+    return;
+  }
+
+  await get().sendMessage(
+    replayContent,
+    undefined,
+    attachments.length
+      ? { contextAttachments: attachments, displayAttachments: attachments }
+      : undefined,
+  );
+}
+
+async function prepareConversationReplay(
+  prefixMessages: ChatMessageUi[],
+  set: ChatSet,
+  get: ChatGet,
+) {
+  const conversationId = get().conversationId;
+  if (!conversationId) return;
+
+  if (prefixMessages.length === 0) {
+    set({ conversationId: undefined, conversationTitle: undefined });
+    return;
+  }
+
+  const app = useAppStore.getState();
+  const fork = await forkConversation(app.baseUrl, conversationId, {
+    title: get().conversationTitle,
+    workspaceRoot: app.selectedWorkspace,
+    messages: conversationForkMessages(prefixMessages),
+  });
+  set({
+    conversationId: fork.id,
+    conversationTitle: fork.title,
+  });
+  void useAppStore.getState().associateConversation(fork.id, app.selectedWorkspace);
+  window.dispatchEvent(new CustomEvent("personagent:conversations-changed"));
+}
+
+function conversationForkMessages(messages: ChatMessageUi[]): ConversationForkMessagePayload[] {
+  const payload: ConversationForkMessagePayload[] = [];
+  for (const message of messages) {
+    if (message.role === "user") {
+      payload.push({
+        role: "user",
+        content: message.content,
+        metadata: message.metadata,
+      });
+      continue;
+    }
+
+    if (message.role === "tool") {
+      const block = message.toolBlocks[0];
+      payload.push({
+        role: "tool",
+        content: block?.content || message.content,
+        tool_call_id: block?.id,
+        metadata: {
+          ...(message.metadata ?? {}),
+          tool_name: block?.name,
+          status: block?.status,
+          data: block?.data,
+        },
+      });
+      continue;
+    }
+
+    const metadata = {
+      ...(message.metadata ?? {}),
+      ...(message.reasoning.trim() ? { reasoning_content: message.reasoning } : {}),
+    };
+    if (message.content.trim() || message.reasoning.trim()) {
+      payload.push({
+        role: "assistant",
+        content: message.content,
+        metadata,
+      });
+    }
+  }
+  return payload;
+}
+
+function previousUserMessageIndex(messages: ChatMessageUi[], beforeIndex: number) {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") return index;
+  }
+  return -1;
+}
+
+function contextAttachmentsFromMessage(message: ChatMessageUi): ContextAttachment[] {
+  const raw = message.metadata?.context_attachments;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isContextAttachment);
+}
+
+function isContextAttachment(value: unknown): value is ContextAttachment {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && typeof (value as { type?: unknown }).type === "string");
+}
+
+function setAgentMessageActionState(
+  set: ChatSet,
+  messageId: string,
+  metadata: Record<string, unknown>,
+) {
+  set((state) => ({
+    messages: state.messages.map((message) =>
+      message.id === messageId
+        ? {
+            ...message,
+            metadata: {
+              ...(message.metadata ?? {}),
+              ...metadata,
+            },
+          }
+        : message,
+    ),
+  }));
+}
+
+function worktreeSlug(conversationId: string | undefined, messageId: string) {
+  const source = `${conversationId || "new"}-${messageId}`.toLowerCase();
+  return source.replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "message";
+}
 
 const localSlashCommands = new Set([
   "clear",

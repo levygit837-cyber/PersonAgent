@@ -429,6 +429,7 @@ class DIContainer:
                 search_base_url=self._settings.lightpanda_search_base_url,
                 session_ttl_seconds=self._settings.lightpanda_session_ttl_seconds,
                 max_sessions=self._settings.lightpanda_max_sessions,
+                auto_start_lightpanda=not bool(self._settings.browser_cdp_url),
             )
         return self._lightpanda_browser_worker
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { ChevronRight, FolderOpen, LayoutGrid, PanelRight, Terminal } from "lucide-react";
 import { type DirEntry } from "../../lib/workspace-files";
 import { InputDock } from "./input-dock";
@@ -6,7 +6,7 @@ import { FileViewerPanel, type WorkspaceFileTab } from "./file-viewer-panel";
 import { MessageFeed } from "./message-feed";
 import { SessionPanel } from "./session-panel";
 import { WorkspacePanel } from "./workspace-panel";
-import { workspaceName } from "../../lib/utils";
+import { cn, workspaceName } from "../../lib/utils";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
 import { useTerminalStore } from "../../stores/terminal-store";
@@ -16,10 +16,24 @@ import { TerminalPanel, TERMINAL_HEIGHT } from "../terminal/terminal-panel";
 import { GitActionButton } from "../git/git-action-button";
 
 const FILE_VIEWER_TRANSITION_MS = 300;
+const SESSION_PANEL_DEFAULT_WIDTH = 430;
+const SESSION_PANEL_MIN_WIDTH = 320;
+const SESSION_PANEL_MIN_CHAT_WIDTH = 360;
+
+function clampSessionPanelWidth(width: number) {
+  if (typeof window === "undefined") return width;
+  const maxWidth = Math.max(SESSION_PANEL_MIN_WIDTH, window.innerWidth - SESSION_PANEL_MIN_CHAT_WIDTH);
+  return Math.min(Math.max(width, SESSION_PANEL_MIN_WIDTH), maxWidth);
+}
 
 export function ChatWorkspace() {
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
+  const [sessionPanelWidth, setSessionPanelWidth] = useState(() => clampSessionPanelWidth(SESSION_PANEL_DEFAULT_WIDTH));
+  const [isSessionPanelResizing, setIsSessionPanelResizing] = useState(false);
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false);
+  const sessionPanelResizeCleanupRef = useRef<(() => void) | null>(null);
+  const sessionPanelResizeHandleRef = useRef<HTMLDivElement | null>(null);
+  const sessionPanelResizePointerIdRef = useRef<number | null>(null);
   const terminalOpen = useTerminalStore((state) => state.open);
   const toggleTerminal = useTerminalStore((state) => state.toggleOpen);
   const [fileTabs, setFileTabs] = useState<WorkspaceFileTab[]>([]);
@@ -36,6 +50,87 @@ export function ChatWorkspace() {
   const visibleFileTabs = fileViewerOpen ? fileTabs : renderedFileTabs;
   const visibleActiveFilePath = fileViewerOpen ? activeFilePath : renderedActiveFilePath;
 
+  const stopSessionPanelResize = () => {
+    sessionPanelResizeCleanupRef.current?.();
+    sessionPanelResizeCleanupRef.current = null;
+    const resizeHandle = sessionPanelResizeHandleRef.current;
+    const pointerId = sessionPanelResizePointerIdRef.current;
+    sessionPanelResizePointerIdRef.current = null;
+    if (resizeHandle && pointerId !== null) {
+      try {
+        resizeHandle.releasePointerCapture?.(pointerId);
+      } catch {
+        // Ignore browsers that already cleared capture or do not support it.
+      }
+    }
+    setIsSessionPanelResizing(false);
+    if (typeof document !== "undefined") {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+  };
+
+  const beginSessionPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    stopSessionPanelResize();
+    setIsSessionPanelResizing(true);
+    if (typeof document !== "undefined") {
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    }
+
+    const updateWidthFromPointer = (clientX: number) => {
+      setSessionPanelWidth(clampSessionPanelWidth(window.innerWidth - clientX));
+    };
+
+    const stopResize = () => {
+      stopSessionPanelResize();
+    };
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      updateWidthFromPointer(moveEvent.clientX);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+    window.addEventListener("blur", stopResize);
+
+    sessionPanelResizeCleanupRef.current = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+      window.removeEventListener("blur", stopResize);
+    };
+
+    sessionPanelResizePointerIdRef.current = event.pointerId;
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // The window listeners still cover the resize interaction if capture fails.
+    }
+    updateWidthFromPointer(event.clientX);
+  };
+
+  const handleSessionPanelResizeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 48 : 24;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      setSessionPanelWidth((current) => clampSessionPanelWidth(current - step));
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setSessionPanelWidth((current) => clampSessionPanelWidth(current + step));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setSessionPanelWidth(SESSION_PANEL_MIN_WIDTH);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setSessionPanelWidth(clampSessionPanelWidth(window.innerWidth));
+    }
+  };
+
   useEffect(() => {
     const chatStore = useChatStore.getState();
     const appStore = useAppStore.getState();
@@ -48,6 +143,23 @@ export function ChatWorkspace() {
     setRenderedFileTabs([]);
     setRenderedActiveFilePath(undefined);
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    if (!sessionPanelOpen) {
+      stopSessionPanelResize();
+      return;
+    }
+    setSessionPanelWidth((current) => clampSessionPanelWidth(current));
+    const clampWidth = () => setSessionPanelWidth((current) => clampSessionPanelWidth(current));
+    window.addEventListener("resize", clampWidth);
+    return () => window.removeEventListener("resize", clampWidth);
+  }, [sessionPanelOpen]);
+
+  useEffect(() => {
+    return () => {
+      stopSessionPanelResize();
+    };
+  }, []);
 
   useEffect(() => {
     if (fileTabs.length > 0) {
@@ -200,14 +312,51 @@ export function ChatWorkspace() {
         </div>
         <div
           data-testid="session-panel-shell"
+          data-resizing={isSessionPanelResizing ? "true" : "false"}
           aria-hidden={!sessionPanelOpen}
+          style={sessionPanelOpen ? { width: `${sessionPanelWidth}px` } : undefined}
           className={
             sessionPanelOpen
-              ? "h-full w-[min(430px,calc(100vw-64px))] shrink-0 translate-x-0 overflow-hidden border-l border-glass-border/25 opacity-100 transition-[width,opacity,transform] duration-300 ease-out"
+              ? cn(
+                  "relative h-full shrink-0 translate-x-0 overflow-visible border-l border-glass-border/25 opacity-100",
+                  isSessionPanelResizing ? "bg-popover/95 shadow-[inset_1px_0_0_hsl(var(--primary)/0.4)] transition-none" : "transition-[width,opacity,transform] duration-300 ease-out",
+                )
               : "pointer-events-none h-full w-0 shrink-0 translate-x-6 overflow-hidden border-l-0 border-glass-border/25 opacity-0 transition-[width,opacity,transform] duration-300 ease-out"
           }
         >
-          <SessionPanel key={selectedWorkspace || "no-workspace"} visible={sessionPanelOpen} onClose={() => setSessionPanelOpen(false)} />
+          {sessionPanelOpen ? (
+            <>
+              <div
+                ref={sessionPanelResizeHandleRef}
+                aria-label="Resize session panel"
+                aria-orientation="vertical"
+                aria-valuemin={SESSION_PANEL_MIN_WIDTH}
+                aria-valuemax={Math.max(SESSION_PANEL_MIN_WIDTH, window.innerWidth - SESSION_PANEL_MIN_CHAT_WIDTH)}
+                aria-valuenow={Math.round(sessionPanelWidth)}
+                data-testid="session-panel-resize-handle"
+                data-resizing={isSessionPanelResizing ? "true" : "false"}
+                role="separator"
+                tabIndex={0}
+                className={cn(
+                  "absolute -left-3 top-0 z-30 h-full w-6 cursor-col-resize touch-none select-none",
+                  isSessionPanelResizing ? "bg-primary/10" : "bg-transparent",
+                )}
+                onKeyDown={handleSessionPanelResizeKeyDown}
+                onPointerDown={beginSessionPanelResize}
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "absolute inset-y-3 left-[7px] w-px rounded-full transition-colors",
+                    isSessionPanelResizing ? "bg-primary/90 shadow-[0_0_14px_hsl(var(--primary)/0.55)]" : "bg-glass-border/80",
+                  )}
+                />
+              </div>
+              <div className="relative h-full overflow-hidden">
+                <SessionPanel key={selectedWorkspace || "no-workspace"} visible={sessionPanelOpen} onClose={() => setSessionPanelOpen(false)} />
+              </div>
+            </>
+          ) : null}
         </div>
       </div>
     </section>

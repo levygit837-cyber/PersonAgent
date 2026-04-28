@@ -124,6 +124,45 @@ def test_context_attachments_expand_file_ranges_as_hidden_context(tmp_path):
     assert "print('two')" in result.reminders[0]
 
 
+def test_context_attachments_expand_browser_annotations_without_files(tmp_path):
+    result = resolve_context_attachments(
+        [
+            {
+                "type": "browser_annotation",
+                "id": 7,
+                "url": "https://example.com/search?q=personagent",
+                "title": "Search results",
+                "node_id": "pa_button_1",
+                "selector": "html > body > form > button",
+                "role": "button",
+                "text": "Use this result",
+                "quote": "PersonAgent browser automation",
+            }
+        ],
+        workspace_root=tmp_path,
+    )
+
+    assert result.metadata == [
+        {
+            "type": "browser_annotation",
+            "id": 7,
+            "label": "@Annotation#1",
+            "url": "https://example.com/search?q=personagent",
+            "title": "Search results",
+            "node_id": "pa_button_1",
+            "selector": "html > body > form > button",
+            "role": "button",
+            "text": "Use this result",
+            "content_preview": "PersonAgent browser automation",
+            "content_char_count": len("PersonAgent browser automation"),
+            "truncated": False,
+        }
+    ]
+    assert "<attached-context type=\"browser_annotation\">" in result.reminders[0]
+    assert "Element node_id: pa_button_1" in result.reminders[0]
+    assert "User annotation: Use this result" in result.reminders[0]
+
+
 def test_context_attachments_reject_paths_outside_workspace(tmp_path):
     outside = tmp_path.parent / "outside.txt"
     outside.write_text("outside", encoding="utf-8")

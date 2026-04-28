@@ -1,20 +1,114 @@
+import { useState } from "react";
+import { RotateCcw, Send, X } from "lucide-react";
 import type { ChatMessageUi, ContextAttachment } from "../../types/chat";
+import { useChatStore } from "../../stores/chat-store";
+import { Button } from "../ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import { MarkdownContent } from "./agent-message";
+
+const USER_MESSAGE_CARD_SCROLL_CLASS = "max-h-[min(58vh,520px)] overflow-y-auto overscroll-contain";
 
 export function UserMessage({ message }: { message: ChatMessageUi }) {
+  const rewindUserMessage = useChatStore((state) => state.rewindUserMessage);
+  const isStreaming = useChatStore((state) => state.isStreaming);
+  const [rewindOpen, setRewindOpen] = useState(false);
   const contextAttachments = contextAttachmentsFromMetadata(message.metadata?.context_attachments);
   const annotationBundle = parseAnnotationMessage(message.content);
 
   return (
-    <article className="mb-9">
-      <div className="mb-2 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">User</div>
-      {contextAttachments.length > 0 ? (
-        <ContextAttachmentMessageCard content={message.content} attachments={contextAttachments} />
-      ) : annotationBundle ? (
-        <AnnotationMessageCard bundle={annotationBundle} />
-      ) : (
-        <div className="whitespace-pre-wrap pl-4 text-[15px] leading-7 text-foreground">{message.content}</div>
-      )}
+    <article className="group/user-message mb-9 flex justify-end">
+      <div className="relative min-w-0 max-w-[min(680px,88%)]">
+        {!rewindOpen ? (
+          <TooltipProvider delayDuration={150}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="iconSm"
+                  disabled={isStreaming}
+                  aria-label="Rewind message"
+                  onClick={() => setRewindOpen(true)}
+                  className="absolute -left-9 top-1 h-7 w-7 rounded-lg opacity-0 transition-opacity group-hover/user-message:opacity-100 focus-visible:opacity-100"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Rewind</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : null}
+        {rewindOpen ? (
+          <RewindEditor
+            message={message}
+            attachments={contextAttachments}
+            onCancel={() => setRewindOpen(false)}
+            onSubmit={(content) => {
+              setRewindOpen(false);
+              void rewindUserMessage(message.id, content);
+            }}
+          />
+        ) : contextAttachments.length > 0 ? (
+          <ContextAttachmentMessageCard content={message.content} attachments={contextAttachments} />
+        ) : annotationBundle ? (
+          <AnnotationMessageCard bundle={annotationBundle} />
+        ) : (
+          <div
+            className={`rounded-2xl border border-glass-border/35 bg-foreground/[0.055] px-3.5 py-3 text-foreground shadow-soft ring-1 ring-white/[0.035] ${USER_MESSAGE_CARD_SCROLL_CLASS}`}
+            data-testid="user-message-card"
+          >
+            <MarkdownContent content={message.content} />
+          </div>
+        )}
+      </div>
     </article>
+  );
+}
+
+function RewindEditor({
+  message,
+  attachments,
+  onCancel,
+  onSubmit,
+}: {
+  message: ChatMessageUi;
+  attachments: ContextAttachment[];
+  onCancel: () => void;
+  onSubmit: (content: string) => void;
+}) {
+  const [draft, setDraft] = useState(message.content);
+  const canSubmit = draft.trim().length > 0 || attachments.length > 0;
+
+  return (
+    <div className="w-full overflow-hidden rounded-2xl border border-primary/25 bg-card/95 shadow-floating ring-1 ring-primary/10 backdrop-blur-xl">
+      <div className="border-b border-glass-border/25 px-3 py-2 font-mono text-[11px] text-muted-foreground">
+        Rewind from this message
+      </div>
+      {attachments.length > 0 ? (
+        <div className="flex max-h-28 flex-col gap-1.5 overflow-y-auto border-b border-glass-border/20 px-3 py-2">
+          {attachments.map((attachment, index) => (
+            <AttachmentChip key={`${attachment.type}:${attachment.id ?? index}`} attachment={attachment} />
+          ))}
+        </div>
+      ) : null}
+      <textarea
+        value={draft}
+        rows={Math.min(8, Math.max(3, draft.split(/\r?\n/).length))}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        className="min-h-28 w-full resize-y bg-transparent px-3 py-3 text-[14px] leading-6 text-foreground outline-none placeholder:text-muted-foreground"
+        aria-label="Rewind message content"
+      />
+      <div className="flex items-center justify-end gap-2 border-t border-glass-border/25 px-3 py-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel} className="h-8 rounded-lg">
+          <X className="mr-1.5 h-3.5 w-3.5" />
+          Cancel
+        </Button>
+        <Button type="button" size="sm" disabled={!canSubmit} onClick={() => onSubmit(draft)} className="h-8 rounded-lg">
+          <Send className="mr-1.5 h-3.5 w-3.5" />
+          Resend
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -26,14 +120,17 @@ function ContextAttachmentMessageCard({
   attachments: ContextAttachment[];
 }) {
   return (
-    <div className="ml-4 max-w-full overflow-hidden rounded-2xl border border-glass-border/35 bg-foreground/[0.045] p-3 shadow-soft ring-1 ring-white/[0.035]">
+    <div
+      className={`max-w-full rounded-2xl border border-glass-border/35 bg-foreground/[0.055] p-3 shadow-soft ring-1 ring-white/[0.035] ${USER_MESSAGE_CARD_SCROLL_CLASS}`}
+      data-testid="user-message-card"
+    >
       <div className="mb-2 flex flex-col gap-1.5">
         {attachments.map((attachment, index) => (
           <AttachmentChip key={`${attachment.type}:${attachment.id ?? index}`} attachment={attachment} />
         ))}
       </div>
       {content.trim() ? (
-        <div className="whitespace-pre-wrap text-[15px] leading-7 text-foreground">{content}</div>
+        <MarkdownContent content={content} />
       ) : null}
     </div>
   );
@@ -129,7 +226,10 @@ interface ParsedAnnotationBundle {
 
 function AnnotationMessageCard({ bundle }: { bundle: ParsedAnnotationBundle }) {
   return (
-    <div className="ml-4 max-w-full overflow-hidden rounded-2xl border border-glass-border/35 bg-foreground/[0.045] p-3 shadow-soft ring-1 ring-white/[0.035]">
+    <div
+      className={`max-w-full rounded-2xl border border-glass-border/35 bg-foreground/[0.055] p-3 shadow-soft ring-1 ring-white/[0.035] ${USER_MESSAGE_CARD_SCROLL_CLASS}`}
+      data-testid="user-message-card"
+    >
       <div className="mb-2 flex flex-col gap-1.5">
         {bundle.annotations.map((annotation) => (
           <div key={annotation.id} className="flex min-w-0 flex-wrap items-center gap-2">
@@ -148,7 +248,7 @@ function AnnotationMessageCard({ bundle }: { bundle: ParsedAnnotationBundle }) {
           </div>
         ))}
       </div>
-      {bundle.request ? <div className="whitespace-pre-wrap text-[15px] leading-7 text-foreground">{bundle.request}</div> : null}
+      {bundle.request ? <MarkdownContent content={bundle.request} /> : null}
     </div>
   );
 }

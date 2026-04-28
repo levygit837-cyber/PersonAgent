@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -64,6 +65,53 @@ def test_lightpanda_search_url_adds_stable_google_parameters():
     assert url == (
         "https://www.google.com/search?q=site%3Aexample.com+Example+Domain&hl=en&gl=us&pws=0&num=7"
     )
+
+
+def test_lightpanda_stylesheet_hrefs_include_preload_and_css_paths():
+    html = """
+    <html><head>
+      <link rel="preload" as="style" href="/_next/static/css/app.css">
+      <link rel="modulepreload" href="/_next/static/chunk.js">
+      <link href="https://cdn.example.com/site.css?hash=1" rel="prefetch">
+      <link rel="stylesheet" href="/styles/theme.css">
+    </head></html>
+    """
+
+    hrefs = LightPandaBrowserWorker._stylesheet_hrefs(
+        html,
+        "https://example.com/docs/page",
+        max_hrefs=8,
+    )
+
+    assert hrefs == [
+        "https://example.com/_next/static/css/app.css",
+        "https://cdn.example.com/site.css?hash=1",
+        "https://example.com/styles/theme.css",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_lightpanda_browser_view_navigation_returns_screenshot_payload():
+    page = ScriptedPage()
+    context = FakeContext(page=page)
+
+    async def connector(_endpoint):
+        return FakeBrowser(context=context)
+
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=connector)
+
+    result = await worker.view_navigate(
+        browser_id="panel-browser",
+        url="example.com",
+        width=800,
+        height=500,
+    )
+
+    assert result["type"] == "browser_view"
+    assert result["url"] == "https://example.com"
+    assert result["image_mime_type"] == "image/png"
+    assert result["image_data"] == base64.b64encode(b"browser-image").decode("ascii")
+    assert page.viewport_size == {"width": 800, "height": 500}
 
 
 def test_clean_browser_url_strips_encoded_invisible_suffix():
@@ -156,7 +204,9 @@ async def test_lightpanda_worker_keeps_recent_search_cache_after_session_reset()
 async def test_lightpanda_worker_remembers_single_target_sessions():
     worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222")
     context = TargetAlreadyLoadedContext(page=FakePage())
-    session = _BrowserSession(browser=FakeBrowser(context=context), context=context, page=context.page)
+    session = _BrowserSession(
+        browser=FakeBrowser(context=context), context=context, page=context.page
+    )
 
     first = await worker._new_session_page(session)
     second = await worker._new_session_page(session)
@@ -168,7 +218,7 @@ async def test_lightpanda_worker_remembers_single_target_sessions():
 
 
 @pytest.mark.asyncio
-async def test_browser_open_uses_cached_search_title_when_new_targets_are_unavailable():
+async def test_browser_open_reuses_single_target_page_when_new_targets_are_unavailable():
     page = ScriptedPage()
     context = TargetAlreadyLoadedContext(page=page)
 
@@ -204,9 +254,10 @@ async def test_browser_open_uses_cached_search_title_when_new_targets_are_unavai
     )
 
     assert opened["final_url"] == "https://source-a.test/article"
-    assert opened["title"] == "Cached Search Title"
+    assert opened["title"] == "Source A"
     assert raw_labels == ["search_results"]
     assert context.new_page_calls == 1
+    assert page.goto_history == ["https://source-a.test/article"]
 
 
 @pytest.mark.asyncio
@@ -332,7 +383,7 @@ async def test_navigation_partial_timeout_keeps_session_and_open_succeeds():
 
 
 @pytest.mark.asyncio
-async def test_extract_url_uses_cleaned_direct_cdp_target_without_page_navigation():
+async def test_extract_url_uses_cleaned_prepared_page_target():
     page = ScriptedPage()
     context = FakeContext(page=page)
 
@@ -340,17 +391,6 @@ async def test_extract_url_uses_cleaned_direct_cdp_target_without_page_navigatio
         return FakeBrowser(context=context)
 
     worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=connector)
-    requested_urls: list[str] = []
-
-    async def raw_markdown(url: str):
-        requested_urls.append(url)
-        return "Stanford AI Index content"
-
-    async def no_readable_dom(_url: str):
-        return ""
-
-    worker._lightpanda_markdown_url = raw_markdown
-    worker._readable_dom_content_url = no_readable_dom
 
     content = await worker.extract_content(
         conversation_id="conversation-a",
@@ -359,10 +399,42 @@ async def test_extract_url_uses_cleaned_direct_cdp_target_without_page_navigatio
         include_links=False,
     )
 
-    assert requested_urls == ["https://hai.stanford.edu/ai-index/2026-ai-index-report"]
     assert content["url"] == "https://hai.stanford.edu/ai-index/2026-ai-index-report"
-    assert content["content"] == "Stanford AI Index content"
-    assert page.goto_history == []
+    assert (
+        content["content"] == "Content from https://hai.stanford.edu/ai-index/2026-ai-index-report"
+    )
+    assert content["extraction_method"] == "prepared_dom_text"
+    assert page.goto_history == ["https://hai.stanford.edu/ai-index/2026-ai-index-report"]
+
+
+@pytest.mark.asyncio
+async def test_extract_prepares_live_page_by_dismissing_popups_and_scrolling():
+    page = PopupScrollPage()
+    context = FakeContext(page=page)
+
+    async def connector(_endpoint: str):
+        return FakeBrowser(context=context)
+
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=connector)
+
+    opened = await worker.open(
+        conversation_id="conversation-a",
+        url="https://example.com/article",
+    )
+    content = await worker.extract_content(
+        conversation_id="conversation-a",
+        page_id=opened["page_id"],
+        max_chars=5_000,
+        include_links=False,
+    )
+
+    assert content["content"] == "Loaded article body after incremental scroll."
+    assert content["extraction_method"] == "prepared_readable_dom_text"
+    assert content["content_cleanup"]["prepared_page"] is True
+    assert content["content_cleanup"]["popup_dismissed_count"] == 1
+    assert content["content_cleanup"]["scroll_steps"] == 4
+    assert page.popup_evaluations == 2
+    assert page.scroll_evaluations == 1
 
 
 @pytest.mark.asyncio
@@ -683,10 +755,11 @@ async def test_parallel_browser_open_and_extract_target_distinct_windows(tmp_pat
     assert [result["final_url"] for result in open_results] == urls
     assert len({result["window_id"] for result in open_results}) == 3
     assert [result["url"] for result in extracted] == urls
-    assert all(result["window_id"] == open_results[index]["window_id"] for index, result in enumerate(extracted))
-    assert [result["content"] for result in extracted] == [
-        f"Readable content from {url}" for url in urls
-    ]
+    assert all(
+        result["window_id"] == open_results[index]["window_id"]
+        for index, result in enumerate(extracted)
+    )
+    assert [result["content"] for result in extracted] == [f"Content from {url}" for url in urls]
 
 
 @pytest.mark.asyncio
@@ -704,7 +777,9 @@ async def test_default_extract_walks_unextracted_opened_pages():
     worker._lightpanda_markdown_url = raw_markdown
 
     first = await worker.open(conversation_id="conversation-a", url="https://source-a.test/article")
-    second = await worker.open(conversation_id="conversation-a", url="https://source-b.test/article")
+    second = await worker.open(
+        conversation_id="conversation-a", url="https://source-b.test/article"
+    )
 
     first_content = await worker.extract_content(
         conversation_id="conversation-a",
@@ -877,7 +952,35 @@ def test_tool_registry_exposes_browser_tools():
         "BrowserExtractContent",
         "BrowserReadContentChunk",
         "BrowserGetHtml",
+        "BrowserGetElementMap",
+        "BrowserAct",
     } <= names
+
+
+@pytest.mark.asyncio
+async def test_browser_element_map_and_act_tools(tmp_path):
+    worker = FakeBrowserWorker()
+    tools = {tool.definition.name: tool for tool in create_browser_tools(worker)}
+    context = _tool_context(tmp_path)
+
+    map_call = ToolCall(id="call_map", name="BrowserGetElementMap", arguments={})
+    map_result = await tools["BrowserGetElementMap"].call(map_call.arguments, context, map_call)
+    map_data = json.loads(map_result.content)
+
+    assert map_data["type"] == "browser_element_map"
+    assert map_data["elements"][0]["node_id"] == "pa_link"
+
+    act_call = ToolCall(
+        id="call_act",
+        name="BrowserAct",
+        arguments={"node_id": "pa_link", "action": "click"},
+    )
+    act_result = await tools["BrowserAct"].call(act_call.arguments, context, act_call)
+    act_data = json.loads(act_result.content)
+
+    assert act_data["type"] == "browser_action"
+    assert act_data["last_action"]["node_id"] == "pa_link"
+    assert act_data["last_action"]["action"] == "click"
 
 
 def _tool_context(root: Path, *, conversation_id: str = "test") -> ToolUseContext:
@@ -1013,6 +1116,42 @@ class FakeBrowserWorker:
             "truncated": False,
         }
 
+    async def view_snapshot(self, *, browser_id: str, width: int, height: int):
+        session = self.sessions.setdefault(browser_id, {})
+        target = session.get("opened") or "https://example.com/"
+        return {
+            "type": "browser_view",
+            "browser_id": browser_id,
+            "url": target,
+            "title": "Example Domain",
+            "css_fidelity": "original",
+            "element_map": [
+                {
+                    "node_id": "pa_link",
+                    "role": "link",
+                    "tag": "a",
+                    "text": "More information",
+                    "href": "https://www.iana.org/domains/example",
+                    "selector": "html > body > a:nth-of-type(1)",
+                }
+            ],
+        }
+
+    async def view_act(
+        self,
+        *,
+        browser_id: str,
+        node_id: str,
+        action: str,
+        width: int,
+        height: int,
+        value=None,
+        key=None,
+    ):
+        view = await self.view_snapshot(browser_id=browser_id, width=width, height=height)
+        view["last_action"] = {"node_id": node_id, "action": action, "value": value, "key": key}
+        return view
+
 
 class LongNoisyContentWorker(FakeBrowserWorker):
     async def extract_content(
@@ -1133,7 +1272,9 @@ class TargetAlreadyLoadedContext(FakeContext):
 
     async def new_page(self):
         self.new_page_calls += 1
-        raise RuntimeError("BrowserContext.new_page: Protocol error (Target.createTarget): TargetAlreadyLoaded")
+        raise RuntimeError(
+            "BrowserContext.new_page: Protocol error (Target.createTarget): TargetAlreadyLoaded"
+        )
 
 
 class FakePage:
@@ -1160,12 +1301,17 @@ class ScriptedPage(FakePage):
         super().__init__()
         self.fail_on_goto = fail_on_goto
         self.goto_history: list[str] = []
+        self.viewport_size: dict[str, int] | None = None
 
     async def goto(self, url, wait_until=None, timeout=None):
         if self.fail_on_goto:
             raise RuntimeError("navigation timed out")
         self.url = url
         self.goto_history.append(url)
+        return None
+
+    async def set_viewport_size(self, viewport):
+        self.viewport_size = viewport
         return None
 
     async def wait_for_timeout(self, _timeout_ms):
@@ -1199,6 +1345,42 @@ class ScriptedPage(FakePage):
 
     async def content(self):
         return f"<html><body>{self.url}</body></html>"
+
+    async def screenshot(self, **_kwargs):
+        return b"browser-image"
+
+
+class PopupScrollPage(ScriptedPage):
+    def __init__(self):
+        super().__init__()
+        self.popup_evaluations = 0
+        self.scroll_evaluations = 0
+        self.scrolled = False
+
+    async def evaluate(self, script, arg=None):
+        if isinstance(arg, dict) and "maxSteps" in arg:
+            self.scroll_evaluations += 1
+            self.scrolled = True
+            return {
+                "steps": 4,
+                "scroll_y": 3200,
+                "scroll_height": 4000,
+                "viewport_height": 800,
+                "at_bottom": True,
+            }
+        if "clicked_count" in str(script) and "clicked_labels" in str(script):
+            self.popup_evaluations += 1
+            if self.popup_evaluations == 1:
+                return {"clicked_count": 1, "clicked_labels": ["Accept all"]}
+            return {"clicked_count": 0, "clicked_labels": []}
+        if "selected_tag" in str(script) and "querySelectorAll" in str(script):
+            suffix = "after incremental scroll." if self.scrolled else "before scroll."
+            return {
+                "content": f"Loaded article body {suffix}",
+                "selected_tag": "article",
+                "score": 2000,
+            }
+        return await super().evaluate(script, arg)
 
 
 class PartialTimeoutPage(ScriptedPage):

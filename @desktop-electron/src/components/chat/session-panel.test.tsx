@@ -2,7 +2,22 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getSessionPanel, getSessionProjectDetail, listChatCommands, listModels } from "../../api/client";
+import {
+  actSessionBrowser,
+  clickSessionBrowser,
+  createSessionBrowserAnnotation,
+  getSessionBrowserView,
+  getSessionPanel,
+  getSessionProjectDetail,
+  keySessionBrowser,
+  listChatCommands,
+  listModels,
+  moveSessionBrowserHistory,
+  navigateSessionBrowser,
+  reloadSessionBrowser,
+  scrollSessionBrowser,
+  type SessionBrowserView,
+} from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
 import { emptySessionUsage, type SessionPanelSnapshot } from "../../types/chat";
@@ -11,6 +26,7 @@ import { ChatWorkspace } from "./chat-workspace";
 import { SESSION_PANEL_CACHE_STORAGE_KEY } from "./session-panel";
 
 vi.mock("../../api/client", () => ({
+  actSessionBrowser: vi.fn(),
   approvePlan: vi.fn(),
   approveTool: vi.fn(),
   cancelPlan: vi.fn(),
@@ -27,18 +43,28 @@ vi.mock("../../api/client", () => ({
     is_dirty: false,
     remote_url: null,
   }),
+  forkConversation: vi.fn(),
+  clickSessionBrowser: vi.fn(),
+  createSessionBrowserAnnotation: vi.fn(),
+  getSessionBrowserView: vi.fn(),
   getSessionPanel: vi.fn(),
   getSessionProjectDetail: vi.fn(),
   generateGitCommitMessage: vi.fn().mockResolvedValue({ message: "Update workspace" }),
+  gitCreateWorktree: vi.fn(),
   gitCommit: vi.fn(),
   gitOpenPr: vi.fn(),
   gitPush: vi.fn(),
   listChatCommands: vi.fn().mockResolvedValue([]),
   listWorkspaceFiles: vi.fn().mockResolvedValue([]),
   listModels: vi.fn().mockResolvedValue([]),
+  keySessionBrowser: vi.fn(),
+  moveSessionBrowserHistory: vi.fn(),
+  navigateSessionBrowser: vi.fn(),
   readWorkspaceFile: vi.fn().mockResolvedValue({ path: "/tmp/personagent/README.md", name: "README.md", content: "# README" }),
   rejectTool: vi.fn(),
+  reloadSessionBrowser: vi.fn(),
   resolveBackendUrl: vi.fn().mockResolvedValue("http://localhost:8000"),
+  scrollSessionBrowser: vi.fn(),
   streamChatCompletion: vi.fn(),
   streamTeamChat: vi.fn(),
 }));
@@ -107,14 +133,95 @@ const snapshot: SessionPanelSnapshot = {
   },
 };
 
+function browserView(
+  url = "about:blank",
+  browserId = "browser:test",
+  title = "",
+  overrides: Partial<SessionBrowserView> = {},
+): SessionBrowserView {
+  return {
+    type: "browser_view",
+    browser_id: browserId,
+    url,
+    title,
+    html: "<html><body>Example</body></html>",
+    document_html: "<html><body>Example</body></html>",
+    render_mode: "screenshot",
+    css_fidelity: "pixel",
+    element_map: [],
+    annotations: [],
+    timeline_events: [],
+    user_agent: "Chrome",
+    image_data: "iVBORw0KGgo=",
+    image_mime_type: "image/png",
+    screenshot_method: "playwright_page_screenshot",
+    screenshot_error: "",
+    viewport_width: 1024,
+    viewport_height: 720,
+    can_capture: true,
+    ...overrides,
+  };
+}
+
 describe("SessionPanel", () => {
+  const getSessionBrowserViewMock = vi.mocked(getSessionBrowserView);
   const getSessionPanelMock = vi.mocked(getSessionPanel);
   const getSessionProjectDetailMock = vi.mocked(getSessionProjectDetail);
+  const navigateSessionBrowserMock = vi.mocked(navigateSessionBrowser);
+  const moveSessionBrowserHistoryMock = vi.mocked(moveSessionBrowserHistory);
+  const reloadSessionBrowserMock = vi.mocked(reloadSessionBrowser);
+  const clickSessionBrowserMock = vi.mocked(clickSessionBrowser);
+  const actSessionBrowserMock = vi.mocked(actSessionBrowser);
+  const createSessionBrowserAnnotationMock = vi.mocked(createSessionBrowserAnnotation);
+  const keySessionBrowserMock = vi.mocked(keySessionBrowser);
+  const scrollSessionBrowserMock = vi.mocked(scrollSessionBrowser);
   const listModelsMock = vi.mocked(listModels);
   const listChatCommandsMock = vi.mocked(listChatCommands);
 
   beforeEach(() => {
     window.localStorage.clear();
+    getSessionBrowserViewMock.mockReset();
+    getSessionBrowserViewMock.mockResolvedValue(browserView());
+    navigateSessionBrowserMock.mockReset();
+    navigateSessionBrowserMock.mockImplementation(async (_baseUrl, browserId, input) =>
+      browserView(input.url, browserId, "Example Domain"),
+    );
+    moveSessionBrowserHistoryMock.mockReset();
+    moveSessionBrowserHistoryMock.mockImplementation(async (_baseUrl, browserId) =>
+      browserView("https://example.com", browserId, "Example Domain"),
+    );
+    reloadSessionBrowserMock.mockReset();
+    reloadSessionBrowserMock.mockImplementation(async (_baseUrl, browserId) =>
+      browserView("https://example.com", browserId, "Example Domain"),
+    );
+    clickSessionBrowserMock.mockReset();
+    clickSessionBrowserMock.mockImplementation(async (_baseUrl, browserId) =>
+      browserView("https://example.com/clicked", browserId, "Clicked"),
+    );
+    actSessionBrowserMock.mockReset();
+    actSessionBrowserMock.mockImplementation(async (_baseUrl, browserId) =>
+      browserView("https://example.com/action", browserId, "Action"),
+    );
+    createSessionBrowserAnnotationMock.mockReset();
+    createSessionBrowserAnnotationMock.mockResolvedValue({
+      annotation: {
+        id: "ann_test",
+        browser_id: "conversation-1",
+        node_id: "pa_test",
+        body: "note",
+        created_at: "2026-04-27T10:00:00Z",
+      },
+      annotations: [],
+      timeline_events: [],
+    });
+    keySessionBrowserMock.mockReset();
+    keySessionBrowserMock.mockImplementation(async (_baseUrl, browserId) =>
+      browserView("https://example.com", browserId, "Example Domain"),
+    );
+    scrollSessionBrowserMock.mockReset();
+    scrollSessionBrowserMock.mockImplementation(async (_baseUrl, browserId) =>
+      browserView("https://example.com", browserId, "Example Domain"),
+    );
     getSessionPanelMock.mockReset();
     getSessionPanelMock.mockResolvedValue(snapshot);
     getSessionProjectDetailMock.mockReset();
@@ -170,6 +277,50 @@ describe("SessionPanel", () => {
 
     await waitFor(() => expect(screen.queryByRole("tab", { name: "Summary" })).not.toBeInTheDocument());
     expect(screen.getByTestId("session-panel-shell")).toHaveClass("w-0");
+  });
+
+  it("resizes the session panel from the left border and shows the active drag state", async () => {
+    renderWithProviders(<ChatWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+
+    await screen.findByText("Agent Usage");
+
+    const shell = screen.getByTestId("session-panel-shell");
+    const handle = screen.getByTestId("session-panel-resize-handle");
+    const setPointerCapture = vi.fn();
+    const releasePointerCapture = vi.fn();
+    const originalWidth = window.innerWidth - 430;
+    const resizedWidth = window.innerWidth - 400;
+    const pointerId = 1;
+
+    Object.defineProperty(handle, "setPointerCapture", {
+      configurable: true,
+      value: setPointerCapture,
+    });
+    Object.defineProperty(handle, "releasePointerCapture", {
+      configurable: true,
+      value: releasePointerCapture,
+    });
+
+    expect(shell).toHaveStyle({ width: "430px" });
+    expect(handle).toHaveAttribute("data-resizing", "false");
+
+    fireEvent.pointerDown(handle, { button: 0, clientX: originalWidth, pointerId });
+
+    expect(shell).toHaveAttribute("data-resizing", "true");
+    expect(handle).toHaveAttribute("data-resizing", "true");
+    expect(setPointerCapture).toHaveBeenCalledWith(pointerId);
+
+    fireEvent.pointerMove(window, { clientX: 400, pointerId });
+
+    await waitFor(() => expect(shell).toHaveStyle({ width: `${resizedWidth}px` }));
+
+    fireEvent.pointerUp(window, { clientX: 400, pointerId });
+
+    await waitFor(() => expect(handle).toHaveAttribute("data-resizing", "false"));
+    expect(shell).toHaveAttribute("data-resizing", "false");
+    expect(releasePointerCapture).toHaveBeenCalledWith(pointerId);
   });
 
   it("does not fetch the session summary while the panel is closed", async () => {
@@ -243,20 +394,236 @@ describe("SessionPanel", () => {
     expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Forward" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Reload page" })).toBeDisabled();
-    expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveAttribute("placeholder", "enter url");
-    expect(screen.getByText("Enter a URL to open a page in this tab.")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveAttribute("placeholder", "Enter URL");
 
     fireEvent.change(screen.getByRole("textbox", { name: "Enter URL" }), {
       target: { value: "example.com" },
     });
     fireEvent.submit(screen.getByRole("textbox", { name: "Enter URL" }).closest("form")!);
 
-    expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://example.com");
-    expect(screen.getByTitle("Browser https://example.com")).toHaveAttribute("src", "https://example.com");
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://example.com"));
+    expect(screen.getByTitle("Browser https://example.com")).toHaveAttribute("src", "data:image/png;base64,iVBORw0KGgo=");
     expect(screen.getByRole("button", { name: "Reload page" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Close tab Browser" }));
     expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("hides the empty browser hint while a navigation is rendering and shows the loaded url after", async () => {
+    let resolveInitialLoad!: (value: SessionBrowserView) => void;
+    getSessionBrowserViewMock.mockImplementation(
+      () =>
+        new Promise<SessionBrowserView>((resolve) => {
+          resolveInitialLoad = resolve;
+        }),
+    );
+
+    let resolveNavigation!: (value: SessionBrowserView) => void;
+    navigateSessionBrowserMock.mockReturnValueOnce(
+      new Promise<SessionBrowserView>((resolve) => {
+        resolveNavigation = resolve;
+      }),
+    );
+
+    renderWithProviders(<ChatWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+    await screen.findByText("Agent Usage");
+    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
+    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
+    fireEvent.click(addTabButton);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+
+    await screen.findByText("Preparando o ambiente...");
+
+    const urlInput = screen.getByRole("textbox", { name: "Enter URL" });
+    fireEvent.change(urlInput, { target: { value: "example.com" } });
+    fireEvent.submit(urlInput.closest("form")!);
+
+    resolveInitialLoad(browserView("about:blank", "conversation-1"));
+
+    await waitFor(() => expect(navigateSessionBrowserMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("Preparando o ambiente...")).toBeInTheDocument();
+
+    resolveNavigation(browserView("https://example.com", "conversation-1", "Example Domain"));
+
+    await waitFor(() => expect(urlInput).toHaveValue("https://example.com"));
+    expect(screen.getByTitle("Browser https://example.com")).toHaveAttribute("src", "data:image/png;base64,iVBORw0KGgo=");
+  });
+
+  it("uses stored URLs for browser back, forward, and reload controls", async () => {
+    renderWithProviders(<ChatWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+    await screen.findByText("Agent Usage");
+    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
+    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
+    fireEvent.click(addTabButton);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+
+    const urlInput = screen.getByRole("textbox", { name: "Enter URL" });
+    fireEvent.change(urlInput, { target: { value: "example.com" } });
+    fireEvent.submit(urlInput.closest("form")!);
+    await waitFor(() => expect(urlInput).toHaveValue("https://example.com"));
+
+    fireEvent.change(urlInput, { target: { value: "example.org" } });
+    fireEvent.submit(urlInput.closest("form")!);
+    await waitFor(() => expect(urlInput).toHaveValue("https://example.org"));
+    vi.mocked(navigateSessionBrowser).mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(urlInput).toHaveValue("https://example.com"));
+    expect(navigateSessionBrowser).toHaveBeenLastCalledWith(
+      "http://localhost:8000",
+      expect.any(String),
+      expect.objectContaining({ url: "https://example.com" }),
+      "conversation-1",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Forward" }));
+    await waitFor(() => expect(urlInput).toHaveValue("https://example.org"));
+    expect(navigateSessionBrowser).toHaveBeenLastCalledWith(
+      "http://localhost:8000",
+      expect.any(String),
+      expect.objectContaining({ url: "https://example.org" }),
+      "conversation-1",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
+    await waitFor(() =>
+      expect(navigateSessionBrowser).toHaveBeenLastCalledWith(
+        "http://localhost:8000",
+        expect.any(String),
+        expect.objectContaining({ url: "https://example.org" }),
+        "conversation-1",
+      ),
+    );
+    expect(moveSessionBrowserHistory).not.toHaveBeenCalled();
+    expect(reloadSessionBrowser).not.toHaveBeenCalled();
+  });
+
+  it("opens the browser annotation editor from iframe-selected element metadata", async () => {
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://example.com", "conversation-1", "Example Domain", {
+        document_html: "<html><body><main><div>Unmapped content</div></main></body></html>",
+        html: "<html><body><main><div>Unmapped content</div></main></body></html>",
+        render_mode: "html_mirror",
+        css_fidelity: "embedded",
+        image_data: "",
+        image_mime_type: "",
+      }),
+    );
+
+    renderWithProviders(<ChatWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+    await screen.findByText("Agent Usage");
+    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
+    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
+    fireEvent.click(addTabButton);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://example.com"));
+    fireEvent.click(screen.getByRole("button", { name: "Inspect and annotate" }));
+
+    fireEvent(
+      window,
+      new MessageEvent("message", {
+        data: {
+          type: "personagent-session-browser:element",
+          browserId: "conversation-1",
+          nodeId: "pa_dom_unmapped",
+          element: {
+            node_id: "pa_dom_unmapped",
+            role: "div",
+            tag: "div",
+            text: "Unmapped content",
+            selector: "body > main:nth-of-type(1) > div:nth-of-type(1)",
+            bounds: { x: 12, y: 20, width: 240, height: 64 },
+            visible: true,
+            color: "rgb(229, 238, 251)",
+            font: "16px Inter",
+          },
+        },
+      }),
+    );
+
+    expect(await screen.findByText("div · Unmapped content")).toBeInTheDocument();
+    const annotationInput = screen.getByPlaceholderText("Ask the agent about this element or describe a change");
+    fireEvent.keyDown(annotationInput, { key: "A", code: "KeyA" });
+    expect(keySessionBrowserMock).not.toHaveBeenCalled();
+    fireEvent.change(annotationInput, { target: { value: "Use this block as context" } });
+    fireEvent.keyDown(annotationInput, { key: "Enter", code: "Enter" });
+
+    await waitFor(() =>
+      expect(createSessionBrowserAnnotationMock).toHaveBeenCalledWith(
+        "http://localhost:8000",
+        "conversation-1",
+        "conversation-1",
+        expect.objectContaining({
+          node_id: "pa_dom_unmapped",
+          body: "Use this block as context",
+          quote: "Unmapped content",
+          url: "https://example.com",
+          title: "Example Domain",
+        }),
+      ),
+    );
+  });
+
+  it("adds selected browser text as a composer reference", async () => {
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://github.com", "conversation-1", "GitHub", {
+        document_html: "<html><body><main><h1>The future of building happens together</h1></main></body></html>",
+        html: "<html><body><main><h1>The future of building happens together</h1></main></body></html>",
+        render_mode: "html_mirror",
+        css_fidelity: "embedded",
+        image_data: "",
+        image_mime_type: "",
+      }),
+    );
+
+    renderWithProviders(<ChatWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+    await screen.findByText("Agent Usage");
+    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
+    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
+    fireEvent.click(addTabButton);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://github.com"));
+    fireEvent(
+      window,
+      new MessageEvent("message", {
+        data: {
+          type: "personagent-session-browser:text-selection",
+          browserId: "conversation-1",
+          selection: {
+            text: "The future of building",
+            node_id: "pa_dom_heading",
+            selector: "body > main:nth-of-type(1) > h1:nth-of-type(1)",
+            role: "heading",
+            tag: "h1",
+            start_offset: 0,
+            end_offset: 22,
+            bounds: { x: 96, y: 250, width: 198, height: 78 },
+          },
+        },
+      }),
+    );
+
+    const annotations = useChatStore.getState().composerAnnotations;
+    expect(annotations.at(-1)).toEqual(
+      expect.objectContaining({
+        source: "browser",
+        browserUrl: "https://github.com",
+        browserTitle: "GitHub",
+        browserNodeId: "pa_dom_heading",
+        browserSelector: "body > main:nth-of-type(1) > h1:nth-of-type(1)",
+        browserQuote: "The future of building",
+      }),
+    );
   });
 
   it("keeps browser controls visible even when there is no active conversation", async () => {

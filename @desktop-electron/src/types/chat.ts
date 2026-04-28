@@ -122,6 +122,7 @@ export type ContextAttachmentType =
   | "skill"
   | "mcp_resource"
   | "terminal_output"
+  | "browser_annotation"
   | "viewer_annotation"
   | "command_context";
 
@@ -140,6 +141,12 @@ export interface ContextAttachment {
   content?: string;
   content_preview?: string;
   content_char_count?: number;
+  url?: string;
+  title?: string;
+  node_id?: string;
+  selector?: string;
+  role?: string;
+  quote?: string;
   directory_path?: string;
   entry_count?: number;
   name?: string;

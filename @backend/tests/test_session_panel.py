@@ -37,12 +37,100 @@ class MemoryConversationRepository(ConversationRepository):
         return []
 
 
+class FakeBrowserWorker:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def view_snapshot(self, **kwargs):
+        self.calls.append(("view_snapshot", kwargs))
+        return _browser_view(kwargs["browser_id"])
+
+    async def view_navigate(self, **kwargs):
+        self.calls.append(("view_navigate", kwargs))
+        return _browser_view(kwargs["browser_id"], kwargs["url"])
+
+    async def view_history(self, **kwargs):
+        self.calls.append(("view_history", kwargs))
+        return _browser_view(kwargs["browser_id"], "https://example.com/back")
+
+    async def view_reload(self, **kwargs):
+        self.calls.append(("view_reload", kwargs))
+        return _browser_view(kwargs["browser_id"], "https://example.com")
+
+    async def view_click(self, **kwargs):
+        self.calls.append(("view_click", kwargs))
+        return _browser_view(kwargs["browser_id"], "https://example.com/clicked")
+
+    async def view_key(self, **kwargs):
+        self.calls.append(("view_key", kwargs))
+        return _browser_view(kwargs["browser_id"], "https://example.com")
+
+    async def view_scroll(self, **kwargs):
+        self.calls.append(("view_scroll", kwargs))
+        return _browser_view(kwargs["browser_id"], "https://example.com")
+
+    async def view_act(self, **kwargs):
+        self.calls.append(("view_act", kwargs))
+        return _browser_view(kwargs["browser_id"], "https://example.com/action")
+
+
 class FakeContainer:
-    def __init__(self, repo: MemoryConversationRepository) -> None:
+    def __init__(
+        self,
+        repo: MemoryConversationRepository,
+        browser_worker: FakeBrowserWorker | None = None,
+    ) -> None:
         self.repo = repo
+        self.browser_worker = browser_worker or FakeBrowserWorker()
 
     async def get_conversation_repo(self, _session):
         return self.repo
+
+    def get_lightpanda_browser_worker(self):
+        return self.browser_worker
+
+
+def _browser_view(browser_id: str, url: str = "about:blank") -> dict:
+    return {
+        "type": "browser_view",
+        "browser_id": browser_id,
+        "url": url,
+        "title": "Example",
+        "html": "<html><body>Example</body></html>",
+        "document_html": "<html><body><a data-pa-node-id='pa_link' href='https://example.com'>Example</a></body></html>",
+        "render_mode": "html_mirror",
+        "css_fidelity": "original",
+        "fallback_reason": "",
+        "element_map": [
+            {
+                "node_id": "pa_link",
+                "role": "link",
+                "tag": "a",
+                "text": "Example",
+                "href": "https://example.com",
+                "selector": "html > body > a:nth-of-type(1)",
+            }
+        ],
+        "annotations": [],
+        "timeline_events": [],
+        "browser_snapshot": {
+            "document_html": "<html><body><a data-pa-node-id='pa_link' href='https://example.com'>Example</a></body></html>",
+            "url": url,
+            "title": "Example",
+            "render_mode": "html_mirror",
+            "css_fidelity": "original",
+            "fallback_reason": "",
+            "element_map": [],
+        },
+        "user_agent": "Lightpanda/1.0",
+        "image_data": "iVBORw0KGgo=",
+        "image_mime_type": "image/png",
+        "screenshot_method": "playwright_page_screenshot",
+        "screenshot_error": "",
+        "viewport_width": 1024,
+        "viewport_height": 720,
+        "can_capture": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -144,6 +232,83 @@ async def test_session_panel_api_returns_snapshot(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert response.json()["conversation_id"] == str(conversation.id)
+
+
+@pytest.mark.asyncio
+async def test_session_browser_api_controls_lightpanda_worker(monkeypatch):
+    repo = MemoryConversationRepository()
+    browser_worker = FakeBrowserWorker()
+    monkeypatch.setattr(sessions, "get_container", lambda: FakeContainer(repo, browser_worker))
+
+    app = FastAPI()
+    app.include_router(sessions.router)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/sessions/browser/panel-tab/navigate",
+            json={"url": "https://example.com", "width": 900, "height": 500},
+        )
+        click_response = await client.post(
+            "/sessions/browser/panel-tab/click",
+            json={"x": 120, "y": 80, "width": 900, "height": 500, "button": "left"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["url"] == "https://example.com"
+    assert click_response.status_code == 200
+    assert browser_worker.calls[0] == (
+        "view_navigate",
+        {"browser_id": "panel-tab", "url": "https://example.com", "width": 900, "height": 500},
+    )
+    assert browser_worker.calls[1][0] == "view_click"
+
+
+@pytest.mark.asyncio
+async def test_conversation_browser_workspace_persists_annotations_and_timeline(monkeypatch):
+    repo = MemoryConversationRepository()
+    conversation = Conversation(title="Browser workspace")
+    await repo.create(conversation)
+    browser_worker = FakeBrowserWorker()
+    monkeypatch.setattr(sessions, "get_container", lambda: FakeContainer(repo, browser_worker))
+
+    async def fake_get_db():
+        yield object()
+
+    app = FastAPI()
+    app.include_router(sessions.router)
+    app.dependency_overrides[sessions.get_db] = fake_get_db
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        navigate = await client.post(
+            f"/sessions/{conversation.id}/browser/{conversation.id}/navigate",
+            json={"url": "https://example.com", "width": 900, "height": 500},
+        )
+        action = await client.post(
+            f"/sessions/{conversation.id}/browser/{conversation.id}/action",
+            json={"node_id": "pa_link", "action": "click", "width": 900, "height": 500},
+        )
+        annotation = await client.post(
+            f"/sessions/{conversation.id}/browser/{conversation.id}/annotations",
+            json={
+                "node_id": "pa_link",
+                "body": "Reference this link",
+                "quote": "Example",
+                "url": "https://example.com",
+                "title": "Example",
+            },
+        )
+
+    assert navigate.status_code == 200
+    assert navigate.json()["element_map"][0]["node_id"] == "pa_link"
+    assert action.status_code == 200
+    assert action.json()["timeline_events"][-1]["event_type"] == "action"
+    assert annotation.status_code == 200
+    assert annotation.json()["annotation"]["body"] == "Reference this link"
+    stored = repo.conversations[conversation.id].metadata["browser_workspace"]
+    assert stored["annotations"][0]["node_id"] == "pa_link"
+    assert stored["timeline_events"]
 
 
 @pytest.mark.asyncio

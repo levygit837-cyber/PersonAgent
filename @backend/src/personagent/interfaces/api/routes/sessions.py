@@ -1,13 +1,15 @@
 """Session panel routes."""
 
+from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from personagent.application.services.session_panel import SessionPanelService
+from personagent.infrastructure.browser.lightpanda import BrowserError, BrowserUnavailableError
 from personagent.interfaces.api.routes.chat import get_db
 from personagent.interfaces.config.di_container import get_container
 
@@ -23,6 +25,554 @@ class SessionTitleVerifyRequest(BaseModel):
     batch_size: int | None = Field(default=None, ge=1, le=50)
     force: bool = False
     dry_run: bool = False
+
+
+class SessionBrowserViewport(BaseModel):
+    """Viewport dimensions requested by the desktop session-panel browser."""
+
+    width: int = Field(default=1024, ge=320, le=2400)
+    height: int = Field(default=720, ge=240, le=1800)
+
+
+class SessionBrowserNavigateRequest(SessionBrowserViewport):
+    """Request to navigate a session-panel browser."""
+
+    url: str = Field(min_length=1)
+
+
+class SessionBrowserHistoryRequest(SessionBrowserViewport):
+    """Request to move session-panel browser history."""
+
+    direction: int = Field(ge=-1, le=1)
+
+
+class SessionBrowserPointerRequest(SessionBrowserViewport):
+    """Request to click a rendered session-panel browser viewport."""
+
+    x: float = Field(ge=0)
+    y: float = Field(ge=0)
+    button: str = "left"
+
+
+class SessionBrowserKeyboardRequest(SessionBrowserViewport):
+    """Request to type into the focused session-panel browser page."""
+
+    text: str | None = None
+    key: str | None = None
+
+
+class SessionBrowserScrollRequest(SessionBrowserViewport):
+    """Request to scroll a rendered session-panel browser viewport."""
+
+    delta_x: float = 0
+    delta_y: float = 0
+
+
+class SessionBrowserActionRequest(SessionBrowserViewport):
+    """Request to execute a mapped browser element action."""
+
+    node_id: str = Field(min_length=1)
+    action: str = Field(pattern="^(click|fill|submit|select|press)$")
+    value: str | None = None
+    key: str | None = None
+    source: str = "user"
+
+
+class SessionBrowserAnnotationRequest(BaseModel):
+    """Create a persistent Browser Workspace annotation."""
+
+    node_id: str = Field(min_length=1)
+    body: str = Field(min_length=1, max_length=4000)
+    quote: str | None = Field(default=None, max_length=4000)
+    url: str | None = None
+    title: str | None = None
+
+
+@router.get("/browser/{browser_id}/view")
+async def get_session_browser_view(
+    browser_id: str,
+    width: int = Query(default=1024, ge=320, le=2400),
+    height: int = Query(default=720, ge=240, le=1800),
+) -> dict[str, Any]:
+    """Return the current LightPanda-rendered browser viewport."""
+
+    try:
+        return await _browser_worker().view_snapshot(
+            browser_id=browser_id,
+            width=width,
+            height=height,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/browser/{browser_id}/navigate")
+async def navigate_session_browser(
+    browser_id: str,
+    request: SessionBrowserNavigateRequest,
+) -> dict[str, Any]:
+    """Navigate a LightPanda-backed browser viewport."""
+
+    try:
+        return await _browser_worker().view_navigate(
+            browser_id=browser_id,
+            url=request.url,
+            width=request.width,
+            height=request.height,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/browser/{browser_id}/history")
+async def move_session_browser_history(
+    browser_id: str,
+    request: SessionBrowserHistoryRequest,
+) -> dict[str, Any]:
+    """Move a LightPanda-backed browser viewport through real page history."""
+
+    if request.direction == 0:
+        raise HTTPException(status_code=400, detail="Browser history direction must be -1 or 1.")
+    try:
+        return await _browser_worker().view_history(
+            browser_id=browser_id,
+            direction=request.direction,
+            width=request.width,
+            height=request.height,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/browser/{browser_id}/reload")
+async def reload_session_browser(
+    browser_id: str,
+    request: SessionBrowserViewport,
+) -> dict[str, Any]:
+    """Reload the current LightPanda-backed browser viewport."""
+
+    try:
+        return await _browser_worker().view_reload(
+            browser_id=browser_id,
+            width=request.width,
+            height=request.height,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/browser/{browser_id}/click")
+async def click_session_browser(
+    browser_id: str,
+    request: SessionBrowserPointerRequest,
+) -> dict[str, Any]:
+    """Click inside the current LightPanda-rendered browser viewport."""
+
+    try:
+        return await _browser_worker().view_click(
+            browser_id=browser_id,
+            x=request.x,
+            y=request.y,
+            width=request.width,
+            height=request.height,
+            button=request.button,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/browser/{browser_id}/key")
+async def key_session_browser(
+    browser_id: str,
+    request: SessionBrowserKeyboardRequest,
+) -> dict[str, Any]:
+    """Send keyboard input to the current LightPanda-backed browser viewport."""
+
+    if not request.text and not request.key:
+        raise HTTPException(status_code=400, detail="Browser keyboard input requires text or key.")
+    try:
+        return await _browser_worker().view_key(
+            browser_id=browser_id,
+            width=request.width,
+            height=request.height,
+            text=request.text,
+            key=request.key,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/browser/{browser_id}/scroll")
+async def scroll_session_browser(
+    browser_id: str,
+    request: SessionBrowserScrollRequest,
+) -> dict[str, Any]:
+    """Scroll the current LightPanda-backed browser viewport."""
+
+    try:
+        return await _browser_worker().view_scroll(
+            browser_id=browser_id,
+            delta_x=request.delta_x,
+            delta_y=request.delta_y,
+            width=request.width,
+            height=request.height,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{conversation_id}/browser/{browser_id}/view")
+async def get_conversation_browser_view(
+    conversation_id: str,
+    browser_id: str,
+    width: int = Query(default=1024, ge=320, le=2400),
+    height: int = Query(default=720, ge=240, le=1800),
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Return a Browser Workspace view enriched with conversation annotations/timeline."""
+
+    conversation = await _load_conversation(conversation_id, session)
+    try:
+        view = await _browser_worker().view_snapshot(browser_id=browser_id, width=width, height=height)
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await _persist_browser_workspace_view(conversation, session, browser_id, view)
+
+
+@router.post("/{conversation_id}/browser/{browser_id}/navigate")
+async def navigate_conversation_browser(
+    conversation_id: str,
+    browser_id: str,
+    request: SessionBrowserNavigateRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Navigate a conversation Browser Workspace and return the enriched snapshot."""
+
+    conversation = await _load_conversation(conversation_id, session)
+    try:
+        view = await _browser_worker().view_navigate(
+            browser_id=browser_id,
+            url=request.url,
+            width=request.width,
+            height=request.height,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _append_timeline_event(
+        conversation,
+        browser_id=browser_id,
+        event_type="navigate",
+        source="user",
+        label=f"Navigated to {view.get('url') or request.url}",
+        payload={"url": view.get("url") or request.url, "title": view.get("title") or ""},
+    )
+    return await _persist_browser_workspace_view(conversation, session, browser_id, view)
+
+
+@router.post("/{conversation_id}/browser/{browser_id}/history")
+async def move_conversation_browser_history(
+    conversation_id: str,
+    browser_id: str,
+    request: SessionBrowserHistoryRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Move conversation Browser Workspace history."""
+
+    if request.direction == 0:
+        raise HTTPException(status_code=400, detail="Browser history direction must be -1 or 1.")
+    conversation = await _load_conversation(conversation_id, session)
+    try:
+        view = await _browser_worker().view_history(
+            browser_id=browser_id,
+            direction=request.direction,
+            width=request.width,
+            height=request.height,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _append_timeline_event(
+        conversation,
+        browser_id=browser_id,
+        event_type="history",
+        source="user",
+        label="Moved browser history",
+        payload={"direction": request.direction, "url": view.get("url") or ""},
+    )
+    return await _persist_browser_workspace_view(conversation, session, browser_id, view)
+
+
+@router.post("/{conversation_id}/browser/{browser_id}/reload")
+async def reload_conversation_browser(
+    conversation_id: str,
+    browser_id: str,
+    request: SessionBrowserViewport,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Reload conversation Browser Workspace."""
+
+    conversation = await _load_conversation(conversation_id, session)
+    try:
+        view = await _browser_worker().view_reload(browser_id=browser_id, width=request.width, height=request.height)
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _append_timeline_event(
+        conversation,
+        browser_id=browser_id,
+        event_type="reload",
+        source="user",
+        label="Reloaded page",
+        payload={"url": view.get("url") or ""},
+    )
+    return await _persist_browser_workspace_view(conversation, session, browser_id, view)
+
+
+@router.post("/{conversation_id}/browser/{browser_id}/click")
+async def click_conversation_browser(
+    conversation_id: str,
+    browser_id: str,
+    request: SessionBrowserPointerRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Click conversation Browser Workspace by viewport coordinates."""
+
+    conversation = await _load_conversation(conversation_id, session)
+    try:
+        view = await _browser_worker().view_click(
+            browser_id=browser_id,
+            x=request.x,
+            y=request.y,
+            width=request.width,
+            height=request.height,
+            button=request.button,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _append_timeline_event(
+        conversation,
+        browser_id=browser_id,
+        event_type="click",
+        source="user",
+        label="Clicked viewport",
+        payload={"x": request.x, "y": request.y, "url": view.get("url") or ""},
+    )
+    return await _persist_browser_workspace_view(conversation, session, browser_id, view)
+
+
+@router.post("/{conversation_id}/browser/{browser_id}/key")
+async def key_conversation_browser(
+    conversation_id: str,
+    browser_id: str,
+    request: SessionBrowserKeyboardRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Send keyboard input to conversation Browser Workspace."""
+
+    if not request.text and not request.key:
+        raise HTTPException(status_code=400, detail="Browser keyboard input requires text or key.")
+    conversation = await _load_conversation(conversation_id, session)
+    try:
+        view = await _browser_worker().view_key(
+            browser_id=browser_id,
+            width=request.width,
+            height=request.height,
+            text=request.text,
+            key=request.key,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _append_timeline_event(
+        conversation,
+        browser_id=browser_id,
+        event_type="key",
+        source="user",
+        label="Sent keyboard input",
+        payload={"key": request.key or "", "text": request.text or "", "url": view.get("url") or ""},
+    )
+    return await _persist_browser_workspace_view(conversation, session, browser_id, view)
+
+
+@router.post("/{conversation_id}/browser/{browser_id}/scroll")
+async def scroll_conversation_browser(
+    conversation_id: str,
+    browser_id: str,
+    request: SessionBrowserScrollRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Scroll conversation Browser Workspace."""
+
+    conversation = await _load_conversation(conversation_id, session)
+    try:
+        view = await _browser_worker().view_scroll(
+            browser_id=browser_id,
+            delta_x=request.delta_x,
+            delta_y=request.delta_y,
+            width=request.width,
+            height=request.height,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _append_timeline_event(
+        conversation,
+        browser_id=browser_id,
+        event_type="scroll",
+        source="user",
+        label="Scrolled page",
+        payload={"delta_x": request.delta_x, "delta_y": request.delta_y, "url": view.get("url") or ""},
+    )
+    return await _persist_browser_workspace_view(conversation, session, browser_id, view)
+
+
+@router.post("/{conversation_id}/browser/{browser_id}/action")
+async def act_conversation_browser(
+    conversation_id: str,
+    browser_id: str,
+    request: SessionBrowserActionRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Execute a mapped DOM action in the Browser Workspace."""
+
+    conversation = await _load_conversation(conversation_id, session)
+    try:
+        view = await _browser_worker().view_act(
+            browser_id=browser_id,
+            node_id=request.node_id,
+            action=request.action,
+            value=request.value,
+            key=request.key,
+            width=request.width,
+            height=request.height,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _append_timeline_event(
+        conversation,
+        browser_id=browser_id,
+        event_type="action",
+        source=_safe_event_source(request.source),
+        label=f"{request.action.title()} {request.node_id}",
+        payload={
+            "node_id": request.node_id,
+            "action": request.action,
+            "url": view.get("url") or "",
+            "title": view.get("title") or "",
+        },
+    )
+    return await _persist_browser_workspace_view(conversation, session, browser_id, view)
+
+
+@router.post("/{conversation_id}/browser/{browser_id}/annotations")
+async def create_conversation_browser_annotation(
+    conversation_id: str,
+    browser_id: str,
+    request: SessionBrowserAnnotationRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Persist an annotation linked to a Browser Workspace element."""
+
+    conversation = await _load_conversation(conversation_id, session)
+    workspace = _browser_workspace(conversation)
+    annotation = {
+        "id": f"ann_{uuid4().hex[:12]}",
+        "browser_id": browser_id,
+        "node_id": request.node_id,
+        "body": request.body.strip(),
+        "quote": (request.quote or "").strip(),
+        "url": (request.url or "").strip(),
+        "title": (request.title or "").strip(),
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
+    }
+    annotations = _coerce_list(workspace.get("annotations"))
+    annotations.append(annotation)
+    workspace["annotations"] = annotations[-100:]
+    _append_timeline_event(
+        conversation,
+        browser_id=browser_id,
+        event_type="annotation",
+        source="user",
+        label="Added annotation",
+        payload={"node_id": request.node_id, "annotation_id": annotation["id"]},
+    )
+    await _save_conversation(conversation, session)
+    return {"annotation": annotation, **_workspace_payload(conversation, browser_id)}
+
+
+@router.delete("/{conversation_id}/browser/{browser_id}/annotations/{annotation_id}")
+async def delete_conversation_browser_annotation(
+    conversation_id: str,
+    browser_id: str,
+    annotation_id: str,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Delete a persisted Browser Workspace annotation."""
+
+    conversation = await _load_conversation(conversation_id, session)
+    workspace = _browser_workspace(conversation)
+    annotations = [
+        item
+        for item in _coerce_list(workspace.get("annotations"))
+        if str(item.get("id") or "") != annotation_id
+    ]
+    workspace["annotations"] = annotations
+    _append_timeline_event(
+        conversation,
+        browser_id=browser_id,
+        event_type="annotation_deleted",
+        source="user",
+        label="Deleted annotation",
+        payload={"annotation_id": annotation_id},
+    )
+    await _save_conversation(conversation, session)
+    return _workspace_payload(conversation, browser_id)
+
+
+@router.delete("/{conversation_id}/browser/{browser_id}/timeline")
+async def clear_conversation_browser_timeline(
+    conversation_id: str,
+    browser_id: str,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Clear Browser Workspace timeline events for the current conversation."""
+
+    conversation = await _load_conversation(conversation_id, session)
+    workspace = _browser_workspace(conversation)
+    workspace["timeline_events"] = [
+        item
+        for item in _coerce_list(workspace.get("timeline_events"))
+        if str(item.get("browser_id") or "") != browser_id
+    ]
+    await _save_conversation(conversation, session)
+    return _workspace_payload(conversation, browser_id)
 
 
 @router.post("/titles/verify")
@@ -102,3 +652,132 @@ async def _load_conversation(conversation_id: str, session: AsyncSession):
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
     return conversation
+
+
+async def _save_conversation(conversation, session: AsyncSession):
+    container = get_container()
+    repo = await container.get_conversation_repo(session)
+    return await repo.update(conversation)
+
+
+async def _persist_browser_workspace_view(
+    conversation,
+    session: AsyncSession,
+    browser_id: str,
+    view: dict[str, Any],
+) -> dict[str, Any]:
+    workspace = _browser_workspace(conversation)
+    workspace["active_browser_id"] = browser_id
+    if view.get("url") and view.get("url") != "about:blank":
+        workspace["current_url"] = view.get("url")
+        workspace["current_title"] = view.get("title") or ""
+    workspace["last_element_map"] = _compact_element_map(view.get("element_map"))
+    view.update(_workspace_payload(conversation, browser_id))
+    snapshot = view.get("browser_snapshot")
+    if isinstance(snapshot, dict):
+        snapshot["annotations"] = view["annotations"]
+        snapshot["timeline_events"] = view["timeline_events"]
+        snapshot["element_map"] = view.get("element_map") or []
+    await _save_conversation(conversation, session)
+    return view
+
+
+def _browser_workspace(conversation) -> dict[str, Any]:
+    metadata = conversation.metadata
+    workspace = metadata.get("browser_workspace")
+    if not isinstance(workspace, dict):
+        workspace = {}
+        metadata["browser_workspace"] = workspace
+    workspace.setdefault("annotations", [])
+    workspace.setdefault("timeline_events", [])
+    workspace.setdefault("last_element_map", [])
+    return workspace
+
+
+def _workspace_payload(conversation, browser_id: str) -> dict[str, Any]:
+    workspace = _browser_workspace(conversation)
+    annotations = [
+        item
+        for item in _coerce_list(workspace.get("annotations"))
+        if str(item.get("browser_id") or "") == browser_id
+    ]
+    timeline_events = [
+        item
+        for item in _coerce_list(workspace.get("timeline_events"))
+        if str(item.get("browser_id") or "") == browser_id
+    ]
+    return {
+        "annotations": annotations[-100:],
+        "timeline_events": timeline_events[-120:],
+        "workspace_state": {
+            "active_browser_id": str(workspace.get("active_browser_id") or ""),
+            "current_url": str(workspace.get("current_url") or ""),
+            "current_title": str(workspace.get("current_title") or ""),
+            "last_element_map": _coerce_list(workspace.get("last_element_map"))[:220],
+        },
+    }
+
+
+def _append_timeline_event(
+    conversation,
+    *,
+    browser_id: str,
+    event_type: str,
+    source: str,
+    label: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    workspace = _browser_workspace(conversation)
+    event = {
+        "id": f"evt_{uuid4().hex[:12]}",
+        "browser_id": browser_id,
+        "source": _safe_event_source(source),
+        "event_type": event_type,
+        "label": label,
+        "payload": payload or {},
+        "created_at": _now_iso(),
+    }
+    events = _coerce_list(workspace.get("timeline_events"))
+    events.append(event)
+    workspace["timeline_events"] = events[-120:]
+    return event
+
+
+def _compact_element_map(raw_map: Any) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for item in _coerce_list(raw_map):
+        node_id = str(item.get("node_id") or "").strip()
+        if not node_id:
+            continue
+        compact.append(
+            {
+                "node_id": node_id,
+                "role": str(item.get("role") or ""),
+                "tag": str(item.get("tag") or ""),
+                "text": str(item.get("text") or "")[:240],
+                "href": str(item.get("href") or ""),
+                "selector": str(item.get("selector") or ""),
+            }
+        )
+        if len(compact) >= 220:
+            break
+    return compact
+
+
+def _coerce_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _safe_event_source(value: str) -> str:
+    source = str(value or "").strip().lower()
+    return source if source in {"user", "agent", "system"} else "user"
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _browser_worker():
+    return get_container().get_lightpanda_browser_worker()

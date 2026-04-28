@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { ToolBlockStatus, ToolBlockUi } from "../../types/chat";
 
 const TOOL_OUTPUT_VISIBILITY_STORAGE_KEY = "personagent.toolOutputVisibility";
+const TOOL_STATUS_DOT_SIZE = 6;
 const AUTO_COLLAPSED_TOOL_OUTPUT_NAMES = new Set([
   "browserextractcontent",
   "browsergethtml",
@@ -30,6 +31,8 @@ type WriteOutputRow = {
   kind: "add" | "remove" | "context" | "meta" | "error";
   marker: string;
   text: string;
+  oldLine?: number;
+  newLine?: number;
 };
 
 export type TodoItem = {
@@ -43,7 +46,7 @@ export function ToolBlock({ block, nested = false, forceExpanded = false }: { bl
     return <ReadToolEvent block={block} nested={nested} />;
   }
 
-  if (block.name === "Write") {
+  if (isFileMutationTool(block)) {
     return <WriteToolEvent block={block} nested={nested} forceExpanded={forceExpanded} />;
   }
 
@@ -53,6 +56,10 @@ export function ToolBlock({ block, nested = false, forceExpanded = false }: { bl
 
   if (isSearchTool(block)) {
     return <SearchToolEvent block={block} nested={nested} forceExpanded={forceExpanded} />;
+  }
+
+  if (block.name === "shell") {
+    return <ShellToolEvent block={block} nested={nested} forceExpanded={forceExpanded} />;
   }
 
   return <GenericToolEvent block={block} nested={nested} forceExpanded={forceExpanded} />;
@@ -73,7 +80,7 @@ export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: 
   }
 
   return (
-    <div className="mb-2">
+    <div className="mb-1.5">
       <button
         type="button"
         className="flex w-fit items-center gap-2 rounded-lg px-1.5 py-[2px] -ml-1.5 font-mono text-[11px] transition-colors hover:bg-glass/70"
@@ -101,8 +108,8 @@ export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: 
 
 function ReadToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean }) {
   return (
-    <div className={nested ? "mb-1 flex items-center gap-2" : "mb-2 flex items-center gap-2"}>
-      <StatusDot status={block.status} size={6} />
+    <div className={nested ? "mb-1 flex items-center gap-2" : "mb-1.5 flex items-center gap-2"}>
+      <StatusDot status={block.status} />
       <span className={isError(block) ? "min-w-0 truncate font-mono text-xs text-destructive" : "min-w-0 truncate font-mono text-xs text-muted-foreground"}>
         {readEventText(block)}
       </span>
@@ -142,7 +149,7 @@ function TodoPanel({ blocks, nested = false }: { blocks: ToolBlockUi[]; nested?:
     >
       <div className="flex min-w-0 items-center justify-between gap-3 border-b border-glass-border/25 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
-          <StatusDot status={status} size={7} />
+          <StatusDot status={status} />
           <div className="min-w-0">
             <div className="truncate font-mono text-[11px] font-semibold uppercase text-foreground">Todos</div>
             <div className="truncate font-mono text-[10px] text-muted-foreground">
@@ -208,25 +215,27 @@ function SearchToolEvent({ block, nested = false, forceExpanded = false }: { blo
   const hasOutput = searchHasOutput(block);
   const summary = searchSummary(block);
   const preview = searchOutputPreview(block);
+  const canToggle = hasOutput && !forceExpanded && !isRunning(block);
+  const eventText = searchEventText(block, summary);
 
   return (
-    <div className={nested ? "mb-2" : "mb-3"}>
-      <div className="flex items-start gap-2">
-        <div className="pt-1">
-          <StatusDot status={block.status} size={6} />
-        </div>
-        <div className="min-w-0 flex-1">
+    <div className={nested ? "mb-1.5" : "mb-2"}>
+      <div className="flex min-w-0 items-start gap-2">
+        <span className="pt-1">
+          <StatusDot status={block.status} />
+        </span>
+        <button
+          type="button"
+          disabled={!canToggle}
+          className="min-w-0 flex-1 text-left disabled:cursor-default"
+          aria-label={canToggle ? `${outputCollapsed ? "Show" : "Hide"} search output` : undefined}
+          onClick={() => canToggle && toggleCollapsed()}
+        >
           <div className={isError(block) ? "truncate font-mono text-xs text-destructive" : "truncate font-mono text-xs text-muted-foreground"}>
-            {searchEventText(block)}
+            {eventText}
           </div>
-          {summary ? <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/70">{summary}</div> : null}
           {preview ? <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/70">{preview}</div> : null}
-          {hasOutput && !isRunning(block) ? (
-            <button type="button" className="mt-1 font-mono text-[11px] text-primary" onClick={toggleCollapsed}>
-              Output - {collapsed ? "Show" : "Hide"}
-            </button>
-          ) : null}
-        </div>
+        </button>
       </div>
       {hasOutput && !outputCollapsed ? <SearchOutputPanel block={block} rows={rows} /> : null}
     </div>
@@ -234,7 +243,8 @@ function SearchToolEvent({ block, nested = false, forceExpanded = false }: { blo
 }
 
 function WriteToolEvent({ block, nested = false, forceExpanded = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
-  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(block.isCollapsed);
+  const autoCollapse = block.name === "Edit";
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(autoCollapse ? true : block.isCollapsed, { autoCollapse });
   const outputCollapsed = forceExpanded || isRunning(block) ? false : collapsed;
   const rows = useMemo(() => (outputCollapsed ? [] : writeOutputRows(block)), [block, outputCollapsed]);
   const hasOutput = writeHasOutput(block);
@@ -242,7 +252,7 @@ function WriteToolEvent({ block, nested = false, forceExpanded = false }: { bloc
   const showStats = !isRunning(block) && !isError(block) && (stats.added > 0 || stats.removed > 0);
 
   return (
-    <div className={nested ? "mb-1" : "mb-2"}>
+    <div className={nested ? "mb-1" : "mb-1.5"}>
       <button
         type="button"
         disabled={!hasOutput || forceExpanded || isRunning(block)}
@@ -264,7 +274,7 @@ function WriteToolEvent({ block, nested = false, forceExpanded = false }: { bloc
           </>
         ) : null}
       </button>
-      {hasOutput && !outputCollapsed ? <WriteOutputPanel rows={rows} /> : null}
+      {hasOutput && !outputCollapsed ? <WriteOutputPanel block={block} rows={rows} /> : null}
     </div>
   );
 }
@@ -274,25 +284,27 @@ function ShellToolEvent({ block, nested = false, forceExpanded = false }: { bloc
   const outputCollapsed = forceExpanded || isRunning(block) ? false : collapsed;
   const output = block.content.trimEnd();
   const hasOutput = output.trim().length > 0;
+  const canToggle = hasOutput && !forceExpanded && !isRunning(block);
   return (
-    <div className={nested ? "mb-2" : "mb-3"}>
+    <div className={nested ? "mb-1.5" : "mb-2"}>
       <div className="flex items-start gap-2">
-        <div className="pt-1">
-          <StatusDot status={block.status} size={6} />
-        </div>
-        <div className="min-w-0 flex-1">
+        <span className="pt-1">
+          <StatusDot status={block.status} />
+        </span>
+        <button
+          type="button"
+          disabled={!canToggle}
+          className="min-w-0 flex-1 text-left disabled:cursor-default"
+          aria-label={canToggle ? `${outputCollapsed ? "Show" : "Hide"} shell output` : undefined}
+          onClick={() => canToggle && toggleCollapsed()}
+        >
           <div className={isError(block) ? "truncate font-mono text-xs text-destructive" : "truncate font-mono text-xs text-muted-foreground"}>
             {shellCommandText(block)}
           </div>
           {shellOutputPreview(output) ? (
             <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/70">{shellOutputPreview(output)}</div>
           ) : null}
-          {hasOutput && !forceExpanded && !isRunning(block) ? (
-            <button type="button" className="mt-1 font-mono text-[11px] text-primary" onClick={toggleCollapsed}>
-              Output - {outputCollapsed ? "Show" : "Hide"}
-            </button>
-          ) : null}
-        </div>
+        </button>
       </div>
       {hasOutput && !outputCollapsed ? (
         <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 p-3 font-mono text-[11px] leading-5 text-muted-foreground shadow-soft">
@@ -344,12 +356,24 @@ function persistToolOutputCollapsed(collapsed: boolean) {
   }
 }
 
-function WriteOutputPanel({ rows }: { rows: WriteOutputRow[] }) {
+function WriteOutputPanel({ block, rows }: { block: ToolBlockUi; rows: WriteOutputRow[] }) {
+  const stats = writeLineStats(block);
   return (
-    <div className="ml-4 mt-2 max-h-80 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 font-mono text-[11px] leading-5 shadow-soft">
-      {rows.map((row, index) => (
-        <WriteOutputLine key={`${row.kind}-${index}-${row.text}`} row={row} />
-      ))}
+    <div
+      className="ml-4 mt-2 max-h-80 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 shadow-soft"
+      data-testid="file-mutation-preview"
+    >
+      <div className="sticky top-0 z-10 flex min-w-0 items-center justify-between gap-3 border-b border-glass-border/35 bg-card/95 px-3 py-2 font-mono text-[11px] backdrop-blur">
+        <span className="min-w-0 truncate text-foreground">{writePreviewTitle(block)}</span>
+        <span className="shrink-0 text-muted-foreground">
+          {stats.added > 0 ? `+${stats.added}` : "+0"} / {stats.removed > 0 ? `-${stats.removed}` : "-0"}
+        </span>
+      </div>
+      <div className="font-mono text-[11px] leading-5">
+        {rows.map((row, index) => (
+          <WriteOutputLine key={`${row.kind}-${index}-${row.text}`} row={row} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -366,9 +390,12 @@ function WriteOutputLine({ row }: { row: WriteOutputRow }) {
             ? "text-destructive"
             : "text-muted-foreground";
 
+  const lineNumber = row.newLine ?? row.oldLine;
+
   return (
-    <div className={`grid grid-cols-[2.25rem_minmax(0,1fr)] border-b border-glass-border/25 py-0.5 last:border-0 ${className}`}>
-      <span className="select-none pr-3 text-right opacity-80">{row.marker}</span>
+    <div className={`grid grid-cols-[3.75rem_1.25rem_minmax(0,1fr)] border-b border-glass-border/25 py-0.5 last:border-0 ${className}`}>
+      <span className="select-none pr-3 text-right text-muted-foreground/65">{lineNumber ?? ""}</span>
+      <span className="select-none text-center opacity-80">{row.marker}</span>
       <span className="whitespace-pre-wrap break-words pr-3">{row.text.length > 0 ? row.text : " "}</span>
     </div>
   );
@@ -382,14 +409,14 @@ function GenericToolEvent({ block, nested = false, forceExpanded = false }: { bl
   const error = isError(block);
 
   return (
-    <div className={nested ? "mb-1" : "mb-2"}>
+    <div className={nested ? "mb-1" : "mb-1.5"}>
       <button
         type="button"
         disabled={!hasDetails || forceExpanded || isRunning(block)}
         onClick={() => !forceExpanded && !isRunning(block) && toggleCollapsed()}
         className="flex w-full items-center gap-2 text-left font-mono text-xs disabled:cursor-default"
       >
-        <StatusDot status={block.status} size={nested ? 6 : 8} />
+        <StatusDot status={block.status} />
         <span className={error ? "min-w-0 flex-1 truncate text-destructive" : "min-w-0 flex-1 truncate text-muted-foreground"}>
           {inlineToolText(block)}
           {hasDetails && !forceExpanded && !isRunning(block) ? ` - ${outputCollapsed ? "Show" : "Hide"}` : ""}
@@ -466,7 +493,7 @@ function SearchOutputLine({ row }: { row: SearchOutputRow }) {
 }
 
 function toolBlockHasDetails(block: ToolBlockUi) {
-  if (block.name === "Write") return writeHasOutput(block);
+  if (isFileMutationTool(block)) return writeHasOutput(block);
   if (isTodoTool(block)) return todoItems(block).length > 0 || block.content.trim().length > 0;
   if (isSearchTool(block)) return searchHasOutput(block);
   return normalizedToolOutput(block).trim().length > 0;
@@ -477,13 +504,23 @@ function shouldAutoCollapseToolOutput(block: ToolBlockUi) {
   return AUTO_COLLAPSED_TOOL_OUTPUT_NAMES.has(block.name.trim().toLowerCase());
 }
 
-function StatusDot({ status, size = 8 }: { status: ToolBlockStatus; size?: number }) {
+function StatusDot({ status, size = TOOL_STATUS_DOT_SIZE }: { status: ToolBlockStatus; size?: number }) {
   const running = status === "running" || status === "queued";
   const color = isErrorStatus(status) ? "bg-destructive" : "bg-success";
   return running ? (
-    <span className="personagent-spinner shrink-0 text-muted-foreground" style={{ width: size, height: size }} aria-hidden="true" />
+    <span
+      className="personagent-spinner personagent-tool-status-dot inline-block shrink-0 text-muted-foreground"
+      data-status={status}
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    />
   ) : (
-    <span className={`shrink-0 rounded-full ${color}`} style={{ width: size, height: size }} />
+    <span
+      className={`personagent-tool-status-dot inline-flex shrink-0 rounded-full ${color}`}
+      data-status={status}
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    />
   );
 }
 
@@ -512,20 +549,28 @@ function readEventText(block: ToolBlockUi) {
   return `Read ${file}${detail ? ` - ${detail}` : ""}`;
 }
 
-function searchEventText(block: ToolBlockUi) {
+function searchEventText(block: ToolBlockUi, summary?: string) {
   if (block.status === "permission_required") return `Permission required for ${searchStaticLabel(block)}`;
   if (block.status === "error") return `Failed ${searchStaticLabel(block)}`;
   if (isRunning(block)) return searchRunningLabel();
-  return searchStaticLabel(block);
+  const label = searchStaticLabel(block);
+  return summary ? `${label} ${summary}` : label;
 }
 
 function writeEventText(block: ToolBlockUi) {
   const file = writeFileLabel(block);
-  const label = file ? `Write - ${file}` : "Write";
+  const verb = block.name === "Edit" ? "Edit" : "Write";
+  const label = file ? `${verb} - ${file}` : verb;
   if (block.status === "permission_required") return `Permission required for ${label}`;
   if (block.status === "error") return `Failed ${label}`;
   if (isRunning(block)) return `${label} running`;
   return label;
+}
+
+function writePreviewTitle(block: ToolBlockUi) {
+  const file = writeFileLabel(block);
+  const action = block.name === "Edit" ? "Edit preview" : "File preview";
+  return file ? `${action}: ${file}` : action;
 }
 
 function writeFileLabel(block: ToolBlockUi) {
@@ -557,12 +602,17 @@ function writeLineStats(block: ToolBlockUi) {
 function writeOutputRows(block: ToolBlockUi): WriteOutputRow[] {
   const diff = rawStringValue(block.data?.diff);
   if (diff?.trim()) {
-    return diff.split(/\r?\n/).map((line) => writeOutputRowFromDiffLine(line));
+    return writeOutputRowsFromDiff(diff);
   }
 
   const writtenContent = writeWrittenContent(block);
   if (typeof writtenContent === "string") {
-    return contentLines(writtenContent).map((line) => ({ kind: "add", marker: "+", text: line }));
+    return contentLines(writtenContent).map((line, index) => ({
+      kind: "add",
+      marker: "+",
+      text: line,
+      newLine: index + 1,
+    }));
   }
 
   if (isError(block) && block.content.trim()) {
@@ -580,14 +630,49 @@ function writeHasOutput(block: ToolBlockUi) {
   return isError(block) && hasNonWhitespace(block.content);
 }
 
-function writeOutputRowFromDiffLine(line: string): WriteOutputRow {
+function writeOutputRowsFromDiff(diff: string): WriteOutputRow[] {
+  let oldLine = 0;
+  let newLine = 0;
+  return diff.split(/\r?\n/).map((line) => {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunk) {
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[2]);
+      return { kind: "meta", marker: "", text: line };
+    }
+
+    if (line.startsWith("+++") || line.startsWith("---")) {
+      return { kind: "meta", marker: "", text: line };
+    }
+
+    if (line.startsWith("+")) {
+      const row = writeOutputRowFromDiffLine(line, undefined, newLine);
+      newLine += 1;
+      return row;
+    }
+    if (line.startsWith("-")) {
+      const row = writeOutputRowFromDiffLine(line, oldLine, undefined);
+      oldLine += 1;
+      return row;
+    }
+    if (line.startsWith(" ")) {
+      const row = writeOutputRowFromDiffLine(line, oldLine, newLine);
+      oldLine += 1;
+      newLine += 1;
+      return row;
+    }
+    return writeOutputRowFromDiffLine(line, oldLine || undefined, newLine || undefined);
+  });
+}
+
+function writeOutputRowFromDiffLine(line: string, oldLine?: number, newLine?: number): WriteOutputRow {
   if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
     return { kind: "meta", marker: "", text: line };
   }
-  if (line.startsWith("+")) return { kind: "add", marker: "+", text: line.slice(1) };
-  if (line.startsWith("-")) return { kind: "remove", marker: "-", text: line.slice(1) };
-  if (line.startsWith(" ")) return { kind: "context", marker: "", text: line.slice(1) };
-  return { kind: "context", marker: "", text: line };
+  if (line.startsWith("+")) return { kind: "add", marker: "+", text: line.slice(1), newLine };
+  if (line.startsWith("-")) return { kind: "remove", marker: "-", text: line.slice(1), oldLine };
+  if (line.startsWith(" ")) return { kind: "context", marker: "", text: line.slice(1), oldLine, newLine };
+  return { kind: "context", marker: "", text: line, oldLine, newLine };
 }
 
 function diffLineStats(diff: string) {
@@ -701,6 +786,10 @@ export function isTodoTool(block: Pick<ToolBlockUi, "name">) {
   return block.name.toLowerCase().startsWith("todo");
 }
 
+function isFileMutationTool(block: Pick<ToolBlockUi, "name">) {
+  return block.name === "Write" || block.name === "Edit";
+}
+
 function isSearchTool(block: ToolBlockUi) {
   return block.name === "Glob" || block.name === "Grep" || block.name === "search_files" || isSearchShellCommand(block);
 }
@@ -721,14 +810,14 @@ function searchStaticLabel(block: ToolBlockUi) {
 function searchLabel(block: ToolBlockUi) {
   const prefix = block.name === "search_files" ? "Search" : "Grep";
   const pattern = stringValue(block.data?.pattern);
-  if (pattern) return `${prefix} ${pattern}`;
-  if (block.path) return `${prefix} ${block.path}`;
+  if (pattern) return `${prefix} - ${pattern}`;
+  if (block.path) return `${prefix} - ${block.path}`;
   return prefix;
 }
 
 function globLabel(block: ToolBlockUi) {
   const pattern = stringValue(block.data?.pattern);
-  return pattern ? `Glob ${pattern}` : "Glob";
+  return pattern ? `Glob - ${pattern}` : "Glob";
 }
 
 function webFetchLabel(block: ToolBlockUi) {

@@ -143,8 +143,10 @@ TOOL_PROMPTS: dict[str, str] = {
     ),
     "BrowserExtractContent": (
         "Extract structured readable content from a URL, page_id/window_id, or the last BrowserOpen "
-        "page. Use include_links when links may reveal deeper documentation, changelogs, pricing, "
-        "downloads, or examples. The tool caches page content for chunked reading."
+        "page. It prepares the rendered page before reading, so prefer page_id/window_id after "
+        "BrowserOpen. If content_chars is larger than the returned preview, continue with "
+        "BrowserReadContentChunk before synthesizing. Use include_links when links may reveal "
+        "deeper documentation, changelogs, pricing, downloads, or examples."
     ),
     "BrowserReadContentChunk": (
         "Read cached page chunks after BrowserExtractContent. Use chunk_count to read multiple "
@@ -155,6 +157,14 @@ TOOL_PROMPTS: dict[str, str] = {
     "BrowserGetHtml": (
         "Use raw HTML only when rendered text is insufficient, such as hidden metadata, script data, "
         "or page controls not present in extracted content."
+    ),
+    "BrowserGetElementMap": (
+        "Inspect the current browser page's mapped UI elements before interacting visually. Use "
+        "returned node_id values with BrowserAct."
+    ),
+    "BrowserAct": (
+        "Act on a mapped browser element by node_id. Use click, fill, submit, select, or press, "
+        "then inspect the updated page before continuing."
     ),
     "TodoWrite": (
         "Use TodoWrite for non-trivial writing, exploration, debugging, research, and validation. "

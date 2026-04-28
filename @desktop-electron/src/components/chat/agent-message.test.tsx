@@ -36,7 +36,7 @@ describe("AgentMessage Team Mode trace", () => {
   it("keeps the live streaming shell visible before the first chunk", () => {
     render(<AgentMessage message={{ ...emptyPersistedAgentMessage(), isStreaming: true }} />);
 
-    expect(screen.getByText("PersonAgent")).toBeInTheDocument();
+    expect(screen.queryByText("PersonAgent")).not.toBeInTheDocument();
     expect(screen.getByText("Thinking...")).toBeInTheDocument();
   });
 

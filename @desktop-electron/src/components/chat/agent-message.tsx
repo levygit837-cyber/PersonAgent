@@ -1,6 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import { memo, useState, type CSSProperties, type ReactElement } from "react";
-import { Brain, ChevronRight, Database, Hammer, MessageSquareText } from "lucide-react";
+import { AlertCircle, Brain, Check, ChevronRight, Database, GitBranchPlus, Hammer, Loader2, MessageSquareText, RotateCcw, ThumbsDown, ThumbsUp } from "lucide-react";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type {
@@ -16,6 +16,9 @@ import type {
   TeamTraceEventUi,
   ToolBlockUi,
 } from "../../types/chat";
+import { useChatStore } from "../../stores/chat-store";
+import { Button } from "../ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { ReasoningBlock } from "./reasoning-block";
 import { CompactToolGroupBlock, ToolBlock, isBrowserToolName, isSearchShellCommand, isTodoTool } from "./tool-block";
 import { CodeBlock } from "./code-block";
@@ -42,10 +45,10 @@ export const AgentMessage = memo(function AgentMessage({ message }: { message: C
     message.reasoning.trim().length > 0 &&
     !message.parts.some((part) => part.kind === "reasoning");
   const showExecutionStatus = message.isStreaming && !hasRenderableProgress(message);
+  const showActions = !message.isStreaming && hasVisibleAnswerContent;
 
   return (
-    <article className="mb-9 min-w-0 max-w-full">
-      <div className="mb-3 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-primary">PersonAgent</div>
+    <article className="group/agent-message mb-7 min-w-0 max-w-full">
       {showExecutionStatus ? <ChatExecutionStatus /> : null}
       {hasLegacyThinking ? (
         <ReasoningBlock
@@ -71,8 +74,9 @@ export const AgentMessage = memo(function AgentMessage({ message }: { message: C
       ) : null}
       {message.teamRun ? <TeamModeCompactTrace run={message.teamRun} /> : message.teamEvents.length > 0 ? <TeamTrace events={message.teamEvents} /> : null}
       {body.length > 0 ? (
-        <div className="min-w-0 max-w-full space-y-3">{body}</div>
+        <div className="min-w-0 max-w-full space-y-1.5">{body}</div>
       ) : null}
+      {showActions ? <AgentMessageActions message={message} /> : null}
     </article>
   );
 
@@ -133,6 +137,119 @@ export const AgentMessage = memo(function AgentMessage({ message }: { message: C
   }
 });
 
+function AgentMessageActions({ message }: { message: ChatMessageUi }) {
+  const isStreaming = useChatStore((state) => state.isStreaming);
+  const setAgentFeedback = useChatStore((state) => state.setAgentFeedback);
+  const regenerateAgentMessage = useChatStore((state) => state.regenerateAgentMessage);
+  const branchAgentMessage = useChatStore((state) => state.branchAgentMessage);
+  const feedback = stringMetadata(message.metadata?.feedback);
+  const worktreeStatus = stringMetadata(message.metadata?.worktree_status);
+  const worktreeError = stringMetadata(message.metadata?.worktree_error);
+  const worktreePath = stringMetadata(message.metadata?.worktree_path);
+  const worktreeBranch = stringMetadata(message.metadata?.worktree_branch);
+  const branchPending = worktreeStatus === "running";
+
+  return (
+    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 opacity-70 transition-opacity group-hover/agent-message:opacity-100 focus-within:opacity-100">
+      <TooltipIconButton
+        label={feedback === "positive" ? "Positive feedback selected" : "Positive feedback"}
+        active={feedback === "positive"}
+        activeClassName="bg-success/15 text-success"
+        disabled={isStreaming}
+        onClick={() => setAgentFeedback(message.id, "positive")}
+      >
+        <ThumbsUp className="h-3.5 w-3.5" />
+      </TooltipIconButton>
+      <TooltipIconButton
+        label={feedback === "negative" ? "Negative feedback selected" : "Negative feedback"}
+        active={feedback === "negative"}
+        activeClassName="bg-destructive/15 text-destructive"
+        disabled={isStreaming}
+        onClick={() => setAgentFeedback(message.id, "negative")}
+      >
+        <ThumbsDown className="h-3.5 w-3.5" />
+      </TooltipIconButton>
+      <TooltipIconButton
+        label="Regenerate"
+        disabled={isStreaming}
+        onClick={() => {
+          void regenerateAgentMessage(message.id);
+        }}
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+      </TooltipIconButton>
+      <TooltipIconButton
+        label={branchPending ? "Creating worktree" : "Branch to worktree"}
+        active={worktreeStatus === "ready"}
+        activeClassName="bg-primary/15 text-primary"
+        disabled={isStreaming || branchPending}
+        onClick={() => {
+          void branchAgentMessage(message.id);
+        }}
+      >
+        {branchPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitBranchPlus className="h-3.5 w-3.5" />}
+      </TooltipIconButton>
+      {feedback ? (
+        <span className="ml-1 inline-flex items-center gap-1 rounded-full border border-glass-border/30 bg-background/45 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+          <Check className="h-3 w-3" />
+          Feedback saved
+        </span>
+      ) : null}
+      {worktreeStatus === "ready" ? (
+        <span
+          className="ml-1 min-w-0 truncate rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 font-mono text-[10px] text-primary"
+          title={worktreePath}
+        >
+          Worktree: {worktreeBranch || compactMetadataPath(worktreePath)}
+        </span>
+      ) : null}
+      {worktreeStatus === "error" && worktreeError ? (
+        <span className="ml-1 inline-flex min-w-0 items-center gap-1 rounded-full border border-destructive/25 bg-destructive/10 px-2 py-0.5 font-mono text-[10px] text-destructive">
+          <AlertCircle className="h-3 w-3 shrink-0" />
+          <span className="truncate">{worktreeError}</span>
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function TooltipIconButton({
+  label,
+  active = false,
+  activeClassName = "bg-glass/80 text-foreground",
+  disabled = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  active?: boolean;
+  activeClassName?: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactElement;
+}) {
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="iconSm"
+            disabled={disabled}
+            aria-label={label}
+            onClick={onClick}
+            className={`h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground ${active ? activeClassName : ""}`}
+          >
+            {children}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 const GeneratedImageContent = memo(function GeneratedImageContent({ image }: { image: GeneratedImage }) {
   const mimeType = image.mime_type || "image/png";
   const src = `data:${mimeType};base64,${image.data}`;
@@ -165,6 +282,16 @@ function hasVisibleContent(message: ChatMessageUi) {
   return message.parts.some(
     (part) => (part.kind === "content" && Boolean(part.content?.trim())) || part.kind === "image",
   );
+}
+
+function stringMetadata(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function compactMetadataPath(path?: string) {
+  if (!path) return "ready";
+  const parts = path.split("/").filter(Boolean);
+  return parts.slice(-2).join("/") || path;
 }
 
 const TeamModeCompactTrace = memo(function TeamModeCompactTrace({ run }: { run: TeamRunUi }) {
@@ -756,18 +883,21 @@ export const MarkdownContent = memo(function MarkdownContent({
   isStreaming?: boolean;
 }) {
   return (
-    <div className="markdown-content prose prose-invert min-w-0 max-w-full overflow-hidden text-[15px] leading-7 prose-p:my-2 prose-code:rounded prose-code:bg-secondary prose-code:px-1 prose-code:py-0.5 prose-code:text-foreground prose-a:text-primary">
+    <div className="markdown-content prose prose-invert min-w-0 max-w-full overflow-hidden text-[14px] leading-6 prose-p:my-1.5 prose-code:rounded prose-code:bg-secondary prose-code:px-1 prose-code:py-0.5 prose-code:text-foreground prose-a:text-primary">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks, remarkBreakTags]}
         components={{
-          p: ({ children }) => <p className="my-2 min-w-0 break-words">{children}</p>,
+          h1: ({ children }) => <h1 className="my-3 text-[22px] font-semibold leading-8 text-foreground">{children}</h1>,
+          h2: ({ children }) => <h2 className="my-2.5 text-[18px] font-semibold leading-7 text-foreground">{children}</h2>,
+          h3: ({ children }) => <h3 className="my-2 text-[15px] font-semibold leading-6 text-foreground">{children}</h3>,
+          p: ({ children }) => <p className="my-1.5 min-w-0 break-words">{children}</p>,
           a: ({ children, ...props }) => (
             <a {...props} className="break-words text-primary">
               {children}
             </a>
           ),
-          ul: ({ children }) => <ul className="my-3 list-disc space-y-1 pl-5">{children}</ul>,
-          ol: ({ children }) => <ol className="my-3 list-decimal space-y-1 pl-5">{children}</ol>,
+          ul: ({ children }) => <ul className="my-2 list-disc space-y-0.5 pl-5">{children}</ul>,
+          ol: ({ children }) => <ol className="my-2 list-decimal space-y-0.5 pl-5">{children}</ol>,
           li: ({ children }) => <li className="min-w-0 break-words pl-1">{children}</li>,
           blockquote: ({ children }) => (
             <blockquote className="my-3 border-l border-glass-border/50 pl-4 text-muted-foreground">

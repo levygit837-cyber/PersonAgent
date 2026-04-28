@@ -22,6 +22,101 @@ import type {
 
 const fallbackBaseUrls = ["http://localhost:8000", "http://localhost:8001"];
 
+export interface ConversationForkMessagePayload {
+  role: "user" | "assistant" | "tool" | "system";
+  content: string;
+  metadata?: Record<string, unknown>;
+  tool_calls?: Array<Record<string, unknown>> | null;
+  tool_call_id?: string | null;
+}
+
+export interface SessionBrowserViewport {
+  width: number;
+  height: number;
+}
+
+export interface SessionBrowserElement {
+  node_id: string;
+  role?: string;
+  tag?: string;
+  text?: string;
+  selector?: string;
+  href?: string;
+  name?: string;
+  input_type?: string;
+  form_method?: string;
+  form_action?: string;
+  bounds?: { x: number; y: number; width: number; height: number };
+  visible?: boolean;
+}
+
+export interface SessionBrowserAnnotation {
+  id: string;
+  browser_id: string;
+  node_id: string;
+  body: string;
+  quote?: string;
+  url?: string;
+  title?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface SessionBrowserTimelineEvent {
+  id: string;
+  browser_id: string;
+  source: "user" | "agent" | "system";
+  event_type: string;
+  label: string;
+  payload?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SessionBrowserWorkspaceState {
+  active_browser_id?: string;
+  current_url?: string;
+  current_title?: string;
+  last_element_map?: SessionBrowserElement[];
+}
+
+export interface SessionBrowserSnapshot {
+  document_html: string;
+  url: string;
+  title: string;
+  render_mode?: "screenshot" | "html_mirror";
+  css_fidelity?: "pixel" | "original" | "embedded" | "fallback_html" | string;
+  fallback_reason?: string;
+  element_map?: SessionBrowserElement[];
+  annotations?: SessionBrowserAnnotation[];
+  timeline_events?: SessionBrowserTimelineEvent[];
+}
+
+export interface SessionBrowserView {
+  type: "browser_view";
+  browser_id: string;
+  url: string;
+  title: string;
+  html?: string;
+  document_html?: string;
+  render_mode?: "screenshot" | "html_mirror";
+  css_fidelity?: "pixel" | "original" | "embedded" | "fallback_html" | string;
+  fallback_reason?: string;
+  element_map?: SessionBrowserElement[];
+  annotations?: SessionBrowserAnnotation[];
+  timeline_events?: SessionBrowserTimelineEvent[];
+  browser_snapshot?: SessionBrowserSnapshot;
+  workspace_state?: SessionBrowserWorkspaceState;
+  last_action?: Record<string, unknown>;
+  user_agent?: string;
+  image_data: string;
+  image_mime_type: string;
+  screenshot_method: string;
+  screenshot_error?: string;
+  viewport_width: number;
+  viewport_height: number;
+  can_capture: boolean;
+}
+
 export async function resolveBackendUrl(current?: string | null) {
   const candidates = Array.from(new Set([current, ...fallbackBaseUrls].filter(Boolean))) as string[];
   for (const candidate of candidates) {
@@ -63,6 +158,25 @@ export function listConversations(baseUrl: string) {
 
 export function getConversation(baseUrl: string, id: string) {
   return requestJson<ConversationDetail>(baseUrl, `/conversations/${id}`);
+}
+
+export function forkConversation(
+  baseUrl: string,
+  id: string,
+  input: {
+    title?: string | null;
+    workspaceRoot?: string | null;
+    messages: ConversationForkMessagePayload[];
+  },
+) {
+  return requestJson<ConversationDetail>(baseUrl, `/conversations/${id}/fork`, {
+    method: "POST",
+    body: JSON.stringify({
+      title: input.title,
+      workspace_root: input.workspaceRoot,
+      messages: input.messages,
+    }),
+  });
 }
 
 export function deleteConversation(baseUrl: string, id: string) {
@@ -115,6 +229,149 @@ export function getSessionProjectDetail(
   const params = new URLSearchParams({ type: input.type, id: input.id });
   if (input.workspaceRoot?.trim()) params.set("workspace_root", input.workspaceRoot.trim());
   return requestJson<ProjectDetail>(baseUrl, `/sessions/${conversationId}/project/details?${params.toString()}`);
+}
+
+function sessionBrowserPath(browserId: string, suffix: string, conversationId?: string | null) {
+  const encodedBrowserId = encodeURIComponent(browserId);
+  if (conversationId?.trim()) {
+    return `/sessions/${encodeURIComponent(conversationId.trim())}/browser/${encodedBrowserId}${suffix}`;
+  }
+  return `/sessions/browser/${encodedBrowserId}${suffix}`;
+}
+
+export function getSessionBrowserView(
+  baseUrl: string,
+  browserId: string,
+  viewport: SessionBrowserViewport,
+  conversationId?: string | null,
+) {
+  const params = new URLSearchParams({
+    width: String(Math.round(viewport.width)),
+    height: String(Math.round(viewport.height)),
+  });
+  return requestJson<SessionBrowserView>(
+    baseUrl,
+    `${sessionBrowserPath(browserId, "/view", conversationId)}?${params.toString()}`,
+  );
+}
+
+export function navigateSessionBrowser(
+  baseUrl: string,
+  browserId: string,
+  input: SessionBrowserViewport & { url: string },
+  conversationId?: string | null,
+) {
+  return requestJson<SessionBrowserView>(baseUrl, sessionBrowserPath(browserId, "/navigate", conversationId), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function moveSessionBrowserHistory(
+  baseUrl: string,
+  browserId: string,
+  input: SessionBrowserViewport & { direction: -1 | 1 },
+  conversationId?: string | null,
+) {
+  return requestJson<SessionBrowserView>(baseUrl, sessionBrowserPath(browserId, "/history", conversationId), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function reloadSessionBrowser(
+  baseUrl: string,
+  browserId: string,
+  input: SessionBrowserViewport,
+  conversationId?: string | null,
+) {
+  return requestJson<SessionBrowserView>(baseUrl, sessionBrowserPath(browserId, "/reload", conversationId), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function clickSessionBrowser(
+  baseUrl: string,
+  browserId: string,
+  input: SessionBrowserViewport & { x: number; y: number; button?: "left" | "middle" | "right" },
+  conversationId?: string | null,
+) {
+  return requestJson<SessionBrowserView>(baseUrl, sessionBrowserPath(browserId, "/click", conversationId), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function keySessionBrowser(
+  baseUrl: string,
+  browserId: string,
+  input: SessionBrowserViewport & { text?: string; key?: string },
+  conversationId?: string | null,
+) {
+  return requestJson<SessionBrowserView>(baseUrl, sessionBrowserPath(browserId, "/key", conversationId), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function scrollSessionBrowser(
+  baseUrl: string,
+  browserId: string,
+  input: SessionBrowserViewport & { delta_x: number; delta_y: number },
+  conversationId?: string | null,
+) {
+  return requestJson<SessionBrowserView>(baseUrl, sessionBrowserPath(browserId, "/scroll", conversationId), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function actSessionBrowser(
+  baseUrl: string,
+  browserId: string,
+  input: SessionBrowserViewport & {
+    node_id: string;
+    action: "click" | "fill" | "submit" | "select" | "press";
+    value?: string;
+    key?: string;
+    source?: "user" | "agent" | "system";
+  },
+  conversationId: string,
+) {
+  return requestJson<SessionBrowserView>(baseUrl, sessionBrowserPath(browserId, "/action", conversationId), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function createSessionBrowserAnnotation(
+  baseUrl: string,
+  conversationId: string,
+  browserId: string,
+  input: { node_id: string; body: string; quote?: string; url?: string; title?: string },
+) {
+  return requestJson<{ annotation: SessionBrowserAnnotation; annotations: SessionBrowserAnnotation[]; timeline_events: SessionBrowserTimelineEvent[] }>(
+    baseUrl,
+    sessionBrowserPath(browserId, "/annotations", conversationId),
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function deleteSessionBrowserAnnotation(
+  baseUrl: string,
+  conversationId: string,
+  browserId: string,
+  annotationId: string,
+) {
+  return requestJson<{ annotations: SessionBrowserAnnotation[]; timeline_events: SessionBrowserTimelineEvent[] }>(
+    baseUrl,
+    `${sessionBrowserPath(browserId, "/annotations", conversationId)}/${encodeURIComponent(annotationId)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function listModels(baseUrl: string, provider: ModelProvider, capability?: string) {
@@ -216,6 +473,13 @@ export interface GitBranchesResponse {
   is_repo: boolean;
   current: string;
   branches: GitBranchInfo[];
+}
+
+export interface GitWorktreeCreateResponse {
+  success: boolean;
+  branch: string;
+  path: string;
+  output?: string;
 }
 
 export interface GitRecentAction {
@@ -339,6 +603,22 @@ export function gitCreateBranch(baseUrl: string, workspaceRoot: string, name: st
   return requestJson<{ success: boolean; branch: string; output?: string }>(baseUrl, "/workspace/git-branches", {
     method: "POST",
     body: JSON.stringify({ workspace_root: workspaceRoot, name }),
+  });
+}
+
+export function gitCreateWorktree(
+  baseUrl: string,
+  workspaceRoot: string,
+  input: { name?: string; branch?: string; sourceMessageId?: string },
+) {
+  return requestJson<GitWorktreeCreateResponse>(baseUrl, "/workspace/git-worktrees", {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_root: workspaceRoot,
+      name: input.name,
+      branch: input.branch,
+      source_message_id: input.sourceMessageId,
+    }),
   });
 }
 

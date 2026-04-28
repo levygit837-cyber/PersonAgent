@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getConversation, streamChatCompletion } from "../api/client";
-import { emptySessionUsage } from "../types/chat";
+import { emptySessionUsage, type ChatMessageUi } from "../types/chat";
 import { useAppStore } from "./app-store";
 import { useChatStore } from "./chat-store";
 
 const apiMocks = vi.hoisted(() => ({
+  forkConversation: vi.fn(),
   getConversation: vi.fn(),
+  gitCreateWorktree: vi.fn(),
   streamChatCompletion: vi.fn(),
 }));
 
@@ -13,7 +15,9 @@ vi.mock("../api/client", () => ({
   approvePlan: vi.fn(),
   cancelPlan: vi.fn(),
   continuePlan: vi.fn(),
+  forkConversation: apiMocks.forkConversation,
   getConversation: apiMocks.getConversation,
+  gitCreateWorktree: apiMocks.gitCreateWorktree,
   rejectTool: vi.fn(),
   streamApproveTool: vi.fn(),
   streamChatCompletion: apiMocks.streamChatCompletion,
@@ -24,8 +28,22 @@ describe("chat workspace routing", () => {
   beforeEach(() => {
     window.localStorage.clear();
     delete window.personAgent;
+    apiMocks.forkConversation.mockReset();
     apiMocks.getConversation.mockReset();
+    apiMocks.gitCreateWorktree.mockReset();
     apiMocks.streamChatCompletion.mockReset();
+    apiMocks.forkConversation.mockResolvedValue({
+      id: "conversation-fork",
+      title: "Eval Session",
+      messages: [],
+      created_at: "2026-04-27T00:00:00Z",
+      updated_at: "2026-04-27T00:00:00Z",
+    });
+    apiMocks.gitCreateWorktree.mockResolvedValue({
+      success: true,
+      branch: "personagent/message",
+      path: "/workspaces/PersonAgent-message",
+    });
     apiMocks.getConversation.mockResolvedValue({
       id: "conversation-eval",
       title: "Eval Session",
@@ -185,8 +203,104 @@ describe("chat workspace routing", () => {
     expect(useChatStore.getState().loadingConversationId).toBeUndefined();
     expect(useChatStore.getState().conversationId).toBe("conversation-eval");
   });
+
+  it("forks the persisted prefix before rewinding a user message", async () => {
+    apiMocks.streamChatCompletion.mockImplementation(() => emptyStream());
+    useChatStore.setState({
+      conversationId: "conversation-eval",
+      conversationTitle: "Eval Session",
+      messages: [
+        chatMessage({ id: "user-1", role: "user", content: "First prompt" }),
+        chatMessage({ id: "agent-1", role: "agent", content: "First answer" }),
+        chatMessage({
+          id: "user-2",
+          role: "user",
+          content: "Original prompt",
+          metadata: {
+            context_attachments: [
+              {
+                type: "file",
+                label: "@File",
+                display_path: "src/app.ts",
+              },
+            ],
+          },
+        }),
+        chatMessage({ id: "agent-2", role: "agent", content: "Second answer" }),
+      ],
+    });
+
+    await useChatStore.getState().rewindUserMessage("user-2", "Edited prompt");
+
+    expect(apiMocks.forkConversation).toHaveBeenCalledWith("http://localhost:8000", "conversation-eval", {
+      title: "Eval Session",
+      workspaceRoot: "/workspaces/WebPilot",
+      messages: [
+        expect.objectContaining({ role: "user", content: "First prompt" }),
+        expect.objectContaining({ role: "assistant", content: "First answer" }),
+      ],
+    });
+    expect(vi.mocked(streamChatCompletion)).toHaveBeenCalled();
+    const payload = vi.mocked(streamChatCompletion).mock.calls[0][1];
+    expect(payload).toMatchObject({
+      conversation_id: "conversation-fork",
+      message: "Edited prompt",
+      context_attachments: [
+        expect.objectContaining({
+          type: "file",
+          display_path: "src/app.ts",
+        }),
+      ],
+    });
+    expect(useChatStore.getState().messages.map((message) => message.content)).toEqual([
+      "First prompt",
+      "First answer",
+      "Edited prompt",
+      "",
+    ]);
+  });
+
+  it("creates a worktree for an agent message and switches to it", async () => {
+    useChatStore.setState({
+      conversationId: "conversation-eval",
+      messages: [chatMessage({ id: "agent-1", role: "agent", content: "Ready to branch" })],
+    });
+
+    await useChatStore.getState().branchAgentMessage("agent-1");
+
+    expect(apiMocks.gitCreateWorktree).toHaveBeenCalledWith(
+      "http://localhost:8000",
+      "/workspaces/WebPilot",
+      expect.objectContaining({
+        sourceMessageId: "agent-1",
+      }),
+    );
+    expect(useAppStore.getState().selectedWorkspace).toBe("/workspaces/PersonAgent-message");
+    expect(useChatStore.getState().messages[0].metadata).toMatchObject({
+      worktree_status: "ready",
+      worktree_branch: "personagent/message",
+      worktree_path: "/workspaces/PersonAgent-message",
+    });
+  });
 });
 
 async function* emptyStream() {
   return;
+}
+
+function chatMessage(overrides: Partial<ChatMessageUi>): ChatMessageUi {
+  return {
+    id: "message",
+    role: "user",
+    label: "You",
+    content: "",
+    reasoning: "",
+    reasoningBlocks: [],
+    toolBlocks: [],
+    teamEvents: [],
+    parts: [],
+    isStreaming: false,
+    isReasoningStreaming: false,
+    ...overrides,
+  };
 }

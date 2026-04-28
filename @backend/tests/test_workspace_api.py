@@ -277,6 +277,26 @@ async def test_git_create_branch_validates_name_and_switches(monkeypatch, tmp_pa
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
 @pytest.mark.asyncio
+async def test_git_create_worktree_adds_unique_branch_without_switching(monkeypatch, tmp_path):
+    repo = tmp_path / "Repo"
+    _init_committed_repo(repo)
+
+    async with _workspace_client(monkeypatch, tmp_path) as client:
+        response = await client.post(
+            "/workspace/git-worktrees",
+            json={"workspace_root": str(repo), "name": "agent-output"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["branch"] == "personagent/agent-output"
+    assert Path(payload["path"]).is_dir()
+    assert _run_git(repo, "branch", "--show-current").stdout.strip() == "main"
+    assert _run_git(Path(payload["path"]), "branch", "--show-current").stdout.strip() == "personagent/agent-output"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+@pytest.mark.asyncio
 async def test_git_checkout_switches_local_branch(monkeypatch, tmp_path):
     repo = tmp_path / "Repo"
     _init_committed_repo(repo)
