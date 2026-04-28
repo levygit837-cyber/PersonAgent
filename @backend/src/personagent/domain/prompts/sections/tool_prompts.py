@@ -1,4 +1,4 @@
-"""Rich tool prompt sections inspired by Claude Code tool guidance."""
+"""Rich tool prompt sections inspired by PersonAgent tool guidance."""
 
 from __future__ import annotations
 
@@ -109,7 +109,7 @@ TOOL_PROMPTS: dict[str, str] = {
     ),
     "Agent": (
         "Use Agent for bounded background or delegated work that needs a durable id/name. "
-        "AgentTool is an alias, but Agent is the preferred Claude-style name."
+        "AgentTool is an alias, but Agent is the preferred PersonAgent-style name."
     ),
     "SendMessage": (
         "Use SendMessage to communicate with an existing Agent/Task id. It is not the user-facing "

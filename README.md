@@ -24,7 +24,7 @@ PersonAgent/
 │
 ├── @desktop-electron/           ← Electron + React desktop client (official desktop app)
 │   ├── electron/                ← main/preload with isolated IPC
-│   └── src/                     ← React renderer, shadcn-style UI, Chat, Lab
+│   └── src/                     ← React renderer, shadcn-style UI, Chat
 │
 ├── docker-compose.yml           ← PostgreSQL
 ├── config.yaml                  ← Configuração YAML

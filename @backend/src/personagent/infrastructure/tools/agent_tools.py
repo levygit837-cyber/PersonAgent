@@ -1,4 +1,4 @@
-"""Claude-style Agent and SendMessage tools."""
+"""PersonAgent-style Agent and SendMessage tools."""
 
 from __future__ import annotations
 

@@ -96,9 +96,9 @@ class ToolPermissionContext:
         return self.system_context.get("git_branch")
 
     @property
-    def has_claude_md(self) -> bool:
+    def has_persona_md(self) -> bool:
         """Retorna se há persona.md."""
-        return bool(self.user_context.get("claude_md"))
+        return bool(self.user_context.get("persona_md"))
 
     def is_tool_allowed(self) -> bool:
         """Verifica se a ferramenta está na allowlist."""
@@ -120,7 +120,7 @@ class ToolPermissionContext:
             "permission_mode": self.permission_mode,
             "is_git_repo": self.is_git_repo,
             "git_branch": self.git_branch,
-            "has_claude_md": self.has_claude_md,
+            "has_persona_md": self.has_persona_md,
             "tool_name": self.tool_name,
             "tool_allowed": self.is_tool_allowed(),
             "tool_permission": self.get_tool_permission(),

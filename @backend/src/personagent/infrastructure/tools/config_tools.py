@@ -1,4 +1,4 @@
-"""Claude-style Config tool for controlled runtime/session settings."""
+"""PersonAgent-style Config tool for controlled runtime/session settings."""
 
 from __future__ import annotations
 

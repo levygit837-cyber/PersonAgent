@@ -28,11 +28,12 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+from sqlalchemy import text
 
 from personagent.application.services.operational_memory import project_slug_from_workspace
 from personagent.domain.tools import ToolCall, ToolExecutionStatus, ToolResult, ToolUseContext
 from personagent.infrastructure.config.settings import get_project_root
-from personagent.infrastructure.persistence.database import init_db
+from personagent.infrastructure.persistence.database import AsyncSessionLocal, init_db
 from personagent.interfaces.config.di_container import DIContainer, get_container
 
 PROJECT_ROOT = get_project_root()
@@ -126,6 +127,13 @@ class MemoryRagBenchmark:
             await self.live_long_context_dynamic_rag_delta(),
             await self.live_tool_project_build_quality(),
         ]
+        self.write_reports(results)
+        return results
+
+    async def run_single_session_live(self) -> list[BenchmarkResult]:
+        await init_db()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        results = [await self.live_single_session_persistent_rag()]
         self.write_reports(results)
         return results
 
@@ -805,6 +813,146 @@ class MemoryRagBenchmark:
             run,
         )
 
+    async def live_single_session_persistent_rag(self) -> BenchmarkResult:
+        async def run() -> dict[str, Any]:
+            if not self.live_chat:
+                return {"skipped": True, "reason": "pass --live-chat to call backend"}
+
+            started_at = datetime.now(UTC)
+            marker = f"SINGLE_SESSION_RAG_{self.run_id}"
+            bootstrap, conversation_id = await self._chat_turn(
+                (
+                    f"[{marker}] Inicie uma unica sessao persistente de benchmark. "
+                    "Responda apenas READY."
+                ),
+                rag=True,
+                workspace_root=self.workspace,
+                conversation_id=None,
+            )
+            if not conversation_id:
+                raise RuntimeError("backend did not return conversation_id for single-session run")
+            await asyncio.sleep(2)
+
+            await self._seed_live_project_memory(
+                conversation_id=conversation_id,
+                benchmark="single_session_live_project_memory",
+            )
+            await self._seed_live_long_context_memory(
+                conversation_id=conversation_id,
+                benchmark="single_session_live_long_context",
+            )
+
+            work_turns = [
+                "Registre que o objetivo da sessao e construir um console fullstack de incidentes. Responda em uma frase.",
+                "Prepare uma verificacao final de memoria operacional, sem revelar respostas ainda.",
+            ]
+            for index, turn in enumerate(work_turns, start=1):
+                _, returned_id = await self._chat_turn(
+                    f"[{marker}] Etapa {index}: {turn}",
+                    rag=True,
+                    workspace_root=self.workspace,
+                    conversation_id=conversation_id,
+                )
+                if returned_id != conversation_id:
+                    raise RuntimeError(
+                        f"conversation_id drifted during work turn {index}: {returned_id}"
+                    )
+                await asyncio.sleep(2)
+
+            await self._chat_with_tools(
+                (
+                    f"[{marker}] Use uma ferramenta de leitura ou shell read-only para verificar "
+                    "que @backend/scripts/memory_rag_benchmark.py existe. Responda curto."
+                ),
+                workspace=self.workspace,
+                conversation_id=conversation_id,
+            )
+            await asyncio.sleep(2)
+
+            questions: list[tuple[str, tuple[str, ...]]] = [
+                (
+                    "Qual arquivo frontend deve ser preservado porque ja contem o fetch wrapper?",
+                    ("frontend/src/lib/api.ts",),
+                ),
+                (
+                    "Qual header foi escolhido para evitar duplicar incidentes em retries?",
+                    ("X-Request-Fingerprint",),
+                ),
+                (
+                    "Qual decisao ativa substituiu JWT no localStorage?",
+                    ("httpOnly", "SameSite=Lax"),
+                ),
+                (
+                    "No historico enorme desta sessao, qual marcador identifica a regra inicial de isolamento entre tenant, project_slug e conversation_id?",
+                    ("LIVE_EARLY_CANARY",),
+                ),
+                (
+                    "Depois dos eventos intermediarios, qual decisao controla backpressure no stream de incidentes?",
+                    ("LIVE_MID_CANARY", "bounded queue"),
+                ),
+                (
+                    "Na ultima cautela operacional, qual regra de retry nao pode ser removida?",
+                    (
+                        "LIVE_LATE_CANARY",
+                        "retry budget",
+                        "PostgreSQL outbox stream processor",
+                    ),
+                ),
+            ]
+            hits = 0
+            question_results: list[dict[str, Any]] = []
+            for question, expected_terms in questions:
+                answer, returned_id = await self._chat_turn(
+                    question,
+                    rag=True,
+                    workspace_root=self.workspace,
+                    conversation_id=conversation_id,
+                )
+                if returned_id != conversation_id:
+                    raise RuntimeError(f"conversation_id drifted during recall query: {returned_id}")
+                hit = _contains_expected(answer, expected_terms)
+                hits += int(hit)
+                question_results.append(
+                    {
+                        "question": question,
+                        "expected_any": list(expected_terms),
+                        "hit": hit,
+                        "answer": answer[:600],
+                    }
+                )
+                await asyncio.sleep(2)
+
+            ended_at = datetime.now(UTC)
+            audit = await self._audit_single_session(
+                conversation_id=conversation_id,
+                started_at=started_at,
+                ended_at=ended_at,
+                marker=marker,
+            )
+            single_session_ok = (
+                audit["marker_conversations"] == 1
+                and audit["memory_event_conversations"] == 1
+                and audit["conversation_id"] == conversation_id
+            )
+            return {
+                "provider": self.live_provider,
+                "model": self.live_model,
+                "conversation_id": conversation_id,
+                "bootstrap_answer": bootstrap[:120],
+                "single_session_ok": single_session_ok,
+                "hits": hits,
+                "expected": len(questions),
+                "quality_score": hits / len(questions),
+                "question_results": question_results,
+                **audit,
+            }
+
+        return await self._measure(
+            "hard_live_single_session_persistent_rag",
+            "Hard: live single-session persistent RAG",
+            run,
+        )
+
     async def live_tool_project_build_quality(self) -> BenchmarkResult:
         async def run() -> dict[str, Any]:
             if not self.live_chat:
@@ -1338,25 +1486,37 @@ class MemoryRagBenchmark:
             )
         self._error_chain_seeded = True
 
-    async def _seed_live_project_memory(self) -> None:
+    async def _seed_live_project_memory(
+        self,
+        *,
+        conversation_id: str | None = None,
+        benchmark: str = "hard_live_project_memory",
+    ) -> None:
         live_project_slug = project_slug_from_workspace(str(self.workspace))
+        memory_conversation_id = conversation_id or self._live_project_memory_conversation_id
         await self.service.capture_turn_summary(
             project_slug=live_project_slug,
             workspace_root=str(self.workspace),
-            conversation_id=self._live_project_memory_conversation_id,
+            conversation_id=memory_conversation_id,
             summary=(
                 "Live hard RAG benchmark memory: in the created fullstack project, "
                 "frontend/src/lib/api.ts must be preserved because it contains the fetch wrapper. "
                 "The idempotency header is X-Request-Fingerprint. "
                 "The active auth decision is httpOnly SameSite=Lax cookie, replacing JWT in localStorage."
             ),
-            metadata={"benchmark": "hard_live_project_memory", "run_id": self.run_id},
+            metadata={"benchmark": benchmark, "run_id": self.run_id},
         )
 
-    async def _seed_live_long_context_memory(self) -> None:
+    async def _seed_live_long_context_memory(
+        self,
+        *,
+        conversation_id: str | None = None,
+        benchmark: str = "hard_live_long_context",
+    ) -> None:
         if self._live_long_context_seeded:
             return
         live_project_slug = project_slug_from_workspace(str(self.workspace))
+        memory_conversation_id = conversation_id or self._live_long_context_memory_conversation_id
         block = (
             "Live 1M benchmark operational filler: agent builds a fullstack incident console, "
             "captures diffs, tool outputs, architecture decisions, errors, dependency installs, "
@@ -1385,12 +1545,13 @@ class MemoryRagBenchmark:
             await self.service.capture_turn_summary(
                 project_slug=live_project_slug,
                 workspace_root=str(self.workspace),
-                conversation_id=self._live_long_context_memory_conversation_id,
+                conversation_id=memory_conversation_id,
                 summary=content,
                 metadata={
-                    "benchmark": "hard_live_long_context",
+                    "benchmark": benchmark,
+                    "run_id": self.run_id,
                     "index": index,
-                    "session_scope": self._live_long_context_memory_conversation_id,
+                    "session_scope": memory_conversation_id,
                 },
             )
             total += len(content)
@@ -1523,6 +1684,9 @@ class MemoryRagBenchmark:
             "provider": self.live_provider,
             "model": self.live_model,
             "stream": False,
+            "temperature": 0,
+            "max_tokens": 1200,
+            "prompt_mode": "exploring",
             "tools_enabled": False,
             "workspace_root": resolved_workspace,
             "tool_context": {"workspace_root": resolved_workspace},
@@ -1540,16 +1704,23 @@ class MemoryRagBenchmark:
             body = response.json()
             return str(body.get("content") or ""), body.get("conversation_id")
 
-    async def _chat_with_tools(self, message: str, *, workspace: Path) -> str:
+    async def _chat_with_tools(
+        self,
+        message: str,
+        *,
+        workspace: Path,
+        conversation_id: str | None = None,
+    ) -> str:
         payload = {
             "message": message,
             "provider": self.live_provider,
             "model": self.live_model,
             "stream": False,
             "temperature": 0.2,
-            "max_tokens": 12000,
+            "max_tokens": 1800,
+            "prompt_mode": "exploring",
             "tools_enabled": True,
-            "allowed_tools": ["Write", "Read", "shell"],
+            "allowed_tools": ["Read", "shell"],
             "workspace_root": str(workspace),
             "tool_context": {
                 "workspace_root": str(workspace),
@@ -1558,15 +1729,139 @@ class MemoryRagBenchmark:
             },
             "max_tool_iterations": 12,
             "system_prompt": (
-                "You are a coding agent. Use the provided write tools to create files in the "
-                "workspace. Keep code modular and production-oriented. Prefer concrete files "
-                "over explanations. After tool work, summarize what was created."
+                "You are a coding agent. Use the provided read-only tools to inspect the "
+                "workspace. Prefer concrete evidence from tools over unsupported claims. "
+                "After tool work, summarize what was checked."
             ),
         }
+        if conversation_id:
+            payload["conversation_id"] = conversation_id
         async with httpx.AsyncClient(timeout=360.0) as client:
             response = await client.post(f"{self.backend_url}/chat/completions", json=payload)
             response.raise_for_status()
             return str(response.json().get("content") or "")
+
+    async def _audit_single_session(
+        self,
+        *,
+        conversation_id: str,
+        started_at: datetime,
+        ended_at: datetime,
+        marker: str,
+    ) -> dict[str, Any]:
+        workspace_root = str(self.workspace)
+        async with AsyncSessionLocal() as session:
+            marker_rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT DISTINCT conversation_id
+                        FROM messages
+                        WHERE content LIKE :marker
+                        ORDER BY conversation_id
+                        """
+                    ),
+                    {"marker": f"%{marker}%"},
+                )
+            ).all()
+            window_message_conversations = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT DISTINCT conversation_id
+                        FROM messages
+                        WHERE timestamp >= :started_at
+                          AND timestamp <= :ended_at
+                          AND content LIKE :marker
+                        ORDER BY conversation_id
+                        """
+                    ),
+                    {
+                        "started_at": started_at,
+                        "ended_at": ended_at,
+                        "marker": f"%{marker}%",
+                    },
+                )
+            ).all()
+            message_counts = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT
+                            count(*) AS total,
+                            count(*) FILTER (WHERE role = 'user') AS users,
+                            count(*) FILTER (WHERE role = 'assistant') AS assistants,
+                            count(*) FILTER (WHERE role = 'tool') AS tool_messages,
+                            count(*) FILTER (
+                                WHERE role = 'assistant'
+                                  AND tool_calls IS NOT NULL
+                                  AND tool_calls <> '[]'::jsonb
+                            ) AS assistant_tool_call_messages
+                        FROM messages
+                        WHERE conversation_id = CAST(:conversation_id AS uuid)
+                        """
+                    ),
+                    {"conversation_id": conversation_id},
+                )
+            ).one()
+            marker_conversations = len(marker_rows)
+            memory_event_conversations = await session.scalar(
+                text(
+                    """
+                    SELECT count(DISTINCT conversation_id)
+                    FROM memory_events
+                    WHERE metadata ->> 'run_id' = :run_id
+                      AND metadata ->> 'benchmark' LIKE 'single_session_%'
+                    """
+                ),
+                {"run_id": self.run_id},
+            )
+            memory_events = await session.scalar(
+                text(
+                    """
+                    SELECT count(*)
+                    FROM memory_events
+                    WHERE conversation_id = CAST(:conversation_id AS uuid)
+                      AND metadata ->> 'run_id' = :run_id
+                    """
+                ),
+                {"conversation_id": conversation_id, "run_id": self.run_id},
+            )
+            recall_logs = await session.scalar(
+                text(
+                    """
+                    SELECT count(*)
+                    FROM memory_recall_logs
+                    WHERE project_slug = :project_slug
+                      AND created_at >= :started_at
+                      AND created_at <= :ended_at
+                    """
+                ),
+                {
+                    "project_slug": project_slug_from_workspace(workspace_root),
+                    "started_at": started_at,
+                    "ended_at": ended_at,
+                },
+            )
+        return {
+            "conversation_id": conversation_id,
+            "new_conversations_in_window": len(window_message_conversations),
+            "new_conversation_ids_in_window": [
+                str(row[0]) for row in window_message_conversations
+            ],
+            "marker_conversations": int(marker_conversations),
+            "marker_conversation_ids": [str(row[0]) for row in marker_rows],
+            "memory_event_conversations": int(memory_event_conversations or 0),
+            "memory_events_for_conversation": int(memory_events or 0),
+            "message_count": int(message_counts.total or 0),
+            "user_message_count": int(message_counts.users or 0),
+            "assistant_message_count": int(message_counts.assistants or 0),
+            "tool_message_count": int(message_counts.tool_messages or 0),
+            "assistant_tool_call_message_count": int(
+                message_counts.assistant_tool_call_messages or 0
+            ),
+            "recall_logs_in_window": int(recall_logs or 0),
+        }
 
     async def _stream_first_event_ms(self, *, rag: bool) -> int:
         workspace_root = str(self.workspace) if rag else str(self.workspace / ".benchmarks" / "no_memory_workspace")
@@ -1770,6 +2065,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Write the report and exit 0 even when quality scenarios fail.",
     )
+    parser.add_argument(
+        "--single-session-only",
+        action="store_true",
+        help="Run only the live benchmark that proves all chat turns use one conversation_id.",
+    )
     return parser.parse_args()
 
 
@@ -1786,7 +2086,7 @@ async def main() -> None:
         long_session_turns=args.long_session_turns,
         distractor_count=args.distractors,
     )
-    results = await runner.run()
+    results = await runner.run_single_session_live() if args.single_session_only else await runner.run()
     failed = [result for result in results if result.status == "failed"]
     if failed and not args.allow_failures:
         raise SystemExit(1)

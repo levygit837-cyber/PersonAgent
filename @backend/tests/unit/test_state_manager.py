@@ -136,19 +136,19 @@ class TestStateManager:
     def test_get_user_context(self):
         """Test get_user_context."""
         manager = StateManager.get_instance()
-        manager.set_user_context({"claude_md": "# Instructions"})
+        manager.set_user_context({"persona_md": "# Instructions"})
 
         context = manager.get_user_context()
 
         assert isinstance(context, dict)
-        assert context == {"claude_md": "# Instructions"}
+        assert context == {"persona_md": "# Instructions"}
 
     def test_set_user_context(self):
         """Test set_user_context."""
         manager = StateManager.get_instance()
-        manager.set_user_context({"claude_md": "# Instructions"})
+        manager.set_user_context({"persona_md": "# Instructions"})
 
-        assert manager.get_user_context()["claude_md"] == "# Instructions"
+        assert manager.get_user_context()["persona_md"] == "# Instructions"
 
     def test_add_allowed_tool(self):
         """Test add_allowed_tool."""

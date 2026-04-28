@@ -34,7 +34,7 @@ class TestPromptBuilder:
     def user_context(self):
         """Create a sample UserContext."""
         return UserContext(
-            claude_md="# Project Instructions\n\nThis is a test project.",
+            persona_md="# Project Instructions\n\nThis is a test project.",
             current_date="2024-01-15",
         )
 
@@ -148,9 +148,9 @@ class TestPromptBuilder:
         assert "Project Instructions" not in result.content
 
     @pytest.mark.asyncio
-    async def test_build_without_claude_md(self, system_context):
+    async def test_build_without_persona_md(self, system_context):
         """Test building prompt without persona.md."""
-        user_context = UserContext(claude_md=None)
+        user_context = UserContext(persona_md=None)
         builder = PromptBuilder(permission_mode="manual")
         result = await builder.build(system_context, user_context)
 
@@ -187,12 +187,12 @@ class TestPromptBuilder:
         assert result.metadata["permission_mode"] == "auto"
 
     @pytest.mark.asyncio
-    async def test_metadata_includes_has_claude_md(self, system_context, user_context):
-        """Test that metadata includes has_claude_md."""
+    async def test_metadata_includes_has_persona_md(self, system_context, user_context):
+        """Test that metadata includes has_persona_md."""
         builder = PromptBuilder(permission_mode="manual")
         result = await builder.build(system_context, user_context)
 
-        assert result.metadata["has_claude_md"] is True
+        assert result.metadata["has_persona_md"] is True
 
     @pytest.mark.asyncio
     async def test_metadata_includes_has_memory_files(self, system_context, user_context):

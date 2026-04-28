@@ -525,16 +525,38 @@ def _excerpt(text: str, limit: int = 420, query_terms: set[str] | None = None) -
         return compact
     if query_terms:
         lower = compact.lower()
-        positions = [lower.find(term) for term in query_terms if term and lower.find(term) >= 0]
-        if positions:
-            first_match = min(positions)
-            start = max(0, first_match - max(40, limit // 5))
+        best: tuple[int, int, int] | None = None
+        for term in query_terms:
+            if not term:
+                continue
+            position = lower.find(term)
+            while position >= 0:
+                start = max(0, position - max(40, limit // 5))
+                end = min(len(compact), start + limit)
+                if end - start < limit:
+                    start = max(0, end - limit)
+                window = lower[start:end]
+                matched_terms = sum(1 for candidate in query_terms if candidate in window)
+                identifier_bonus = 1 if _has_identifier(compact[start:end]) else 0
+                score = matched_terms + identifier_bonus
+                candidate_window = (score, position, start)
+                if best is None or candidate_window > best:
+                    best = candidate_window
+                position = lower.find(term, position + len(term))
+        if best is not None:
+            start = best[2]
             end = min(len(compact), start + limit)
-            if end - start < limit:
-                start = max(0, end - limit)
             prefix = "..." if start > 0 else ""
             suffix = "..." if end < len(compact) else ""
             return f"{prefix}{compact[start:end]}{suffix}"
     head_size = max(120, limit // 2 - 3)
     tail_size = max(120, limit - head_size - 5)
     return f"{compact[:head_size]} ... {compact[-tail_size:]}"
+
+
+def _has_identifier(text: str) -> bool:
+    for token in text.replace("`", " ").split():
+        stripped = token.strip(".,:;()[]{}'\"")
+        if "_" in stripped and stripped.upper() == stripped and len(stripped) >= 6:
+            return True
+    return False

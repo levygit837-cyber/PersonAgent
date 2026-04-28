@@ -17,10 +17,10 @@ class PersonaMdLoader:
     """Carrega arquivos persona.md com suporte a @include.
 
     A ordem de prioridade é:
-    1. Managed memory (/etc/claude-code/persona.md ou CLAUDE.md)
-    2. User memory (~/.claude/persona.md ou CLAUDE.md)
-    3. Project memory (persona.md/CLAUDE.md, .claude/*.md, .claude/rules/*.md)
-    4. Local memory (persona.local.md ou CLAUDE.local.md)
+    1. Managed memory (/etc/personagent/persona.md)
+    2. User memory (~/.personagent/persona.md)
+    3. Project memory (persona.md, PERSONA.md, .personagent/*.md, .personagent/rules/*.md)
+    4. Local memory (persona.local.md)
     """
 
     # Extensões de arquivo permitidas para @include
@@ -130,8 +130,8 @@ class PersonaMdLoader:
     def _load_managed_memory(self) -> MemoryFile | None:
         """Carrega managed memory."""
         for path in (
-            Path("/etc/claude-code/persona.md"),
-            Path("/etc/claude-code/CLAUDE.md"),
+            Path("/etc/personagent/persona.md"),
+            Path("/etc/personagent/PERSONA.md"),
         ):
             if not path.exists():
                 continue
@@ -143,8 +143,8 @@ class PersonaMdLoader:
     def _load_user_memory(self) -> MemoryFile | None:
         """Carrega user memory."""
         for path in (
-            Path.home() / ".claude" / "persona.md",
-            Path.home() / ".claude" / "CLAUDE.md",
+            Path.home() / ".personagent" / "persona.md",
+            Path.home() / ".personagent" / "PERSONA.md",
         ):
             if not path.exists():
                 continue
@@ -164,17 +164,17 @@ class PersonaMdLoader:
 
             for memory_path in (
                 root / "persona.md",
-                root / "CLAUDE.md",
-                root / ".claude" / "persona.md",
-                root / ".claude" / "CLAUDE.md",
+                root / "PERSONA.md",
+                root / ".personagent" / "persona.md",
+                root / ".personagent" / "PERSONA.md",
             ):
                 if memory_path.exists():
                     content = self._read_file_safely(memory_path)
                     if content:
                         files.append(MemoryFile.create(memory_path, content, priority=3))
 
-            # .claude/rules/*.md
-            rules_dir = root / ".claude" / "rules"
+            # .personagent/rules/*.md
+            rules_dir = root / ".personagent" / "rules"
             if rules_dir.exists() and rules_dir.is_dir():
                 for rule_file in sorted(rules_dir.glob("*.md")):
                     content = self._read_file_safely(rule_file)
@@ -187,7 +187,7 @@ class PersonaMdLoader:
         """Carrega local memory."""
         for path in (
             self._workspace_root / "persona.local.md",
-            self._workspace_root / "CLAUDE.local.md",
+            self._workspace_root / "PERSONA.local.md",
         ):
             if not path.exists():
                 continue

@@ -162,7 +162,6 @@ Desktop shell:
 - `Sidebar` is the single primary navigation rail.
 - `ChatWorkspace` owns chat header, feed, and floating composer.
 - `WorkspacePanel` is optional context, not a second navigation system.
-- `LabWorkspace` should inherit the same shell identity, but Chat UI is the current priority.
 
 Responsive rules:
 
@@ -285,8 +284,8 @@ Current path: `@desktop-electron/src/components/layout/sidebar.tsx`
 Rules:
 
 - Keep one primary sidebar.
-- Keep Chat and Lab as modes in the same shell.
-- Session and workflow lists must be compact and scannable.
+- Keep Chat as the primary shell mode.
+- Session lists must be compact and scannable.
 - Use icons for navigation and destructive actions where they improve recognition.
 - Use tooltips for icon-only collapsed controls.
 - Avoid adding a second heavy navigation column.
@@ -381,7 +380,7 @@ Every reusable component should have these states documented or tested:
 - Keep radius at `8px` or below unless a component token explicitly says otherwise.
 - Use `lucide-react` icons for recognizable controls.
 - Keep tool timelines icon-free unless a specific user-facing action needs an icon.
-- Do not introduce mock production states for Chat or Lab.
+- Do not introduce mock production states for Chat.
 - Preserve backend event order in UI rendering.
 - Preserve Markdown support for reasoning, final assistant output, and tool output where applicable.
 

@@ -4,7 +4,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  FlaskConical,
   FolderOpen,
   MessageSquare,
   Plug,
@@ -31,7 +30,6 @@ const MAX_VISIBLE_CONVERSATIONS = 4;
 export function Sidebar() {
   const collapsed = useAppStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useAppStore((state) => state.toggleSidebar);
-  const section = useAppStore((state) => state.section);
   const setSection = useAppStore((state) => state.setSection);
 
   if (collapsed) {
@@ -47,20 +45,6 @@ export function Sidebar() {
             </Button>
           </TooltipTrigger>
           <TooltipContent side="right">New Chat</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={section === "lab" ? "secondary" : "ghost"}
-              size="iconSm"
-              className={section === "lab" ? "mb-1 text-primary" : "mb-1"}
-              aria-label="Lab"
-              onClick={() => setSection("lab")}
-            >
-              <FlaskConical className="h-3.5 w-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">Lab</TooltipContent>
         </Tooltip>
         <div className="mt-auto">
           <Tooltip>
@@ -144,7 +128,6 @@ function SidebarHeader() {
 }
 
 function SidebarActions() {
-  const section = useAppStore((state) => state.section);
   const setSection = useAppStore((state) => state.setSection);
   const startNewConversation = useChatStore((state) => state.startNewConversation);
 
@@ -157,18 +140,6 @@ function SidebarActions() {
       >
         <Plus className="h-3.5 w-3.5" />
         <span>New Chat</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => setSection("lab")}
-        className={
-          section === "lab"
-            ? "flex w-full items-center gap-2 rounded-xl bg-accent/80 px-2 py-1.5 text-[13px] font-medium text-foreground shadow-soft"
-            : "flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-glass/80 hover:text-foreground"
-        }
-      >
-        <FlaskConical className="h-3.5 w-3.5" />
-        <span>Lab</span>
       </button>
     </div>
   );

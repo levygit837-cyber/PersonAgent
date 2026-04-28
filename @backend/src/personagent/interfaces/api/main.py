@@ -8,17 +8,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from personagent.application.jobs.memory_job import JobType
-from personagent.application.workflows.scheduler import get_scheduler
-from personagent.application.workflows.store import SqlAlchemyWorkflowStore
 from personagent.infrastructure.config.settings import get_settings
-from personagent.infrastructure.persistence.database import AsyncSessionLocal, init_db
+from personagent.infrastructure.persistence.database import init_db
 from personagent.interfaces.api.routes import (
     chat,
     conversations,
-    lab,
     memory,
     sessions,
-    workflows,
     workspace,
 )
 from personagent.interfaces.config.di_container import get_container
@@ -31,7 +27,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage the application lifecycle."""
     settings = get_settings()
     container = get_container()
-    workflow_session = None
 
     logger.info(
         "starting_personagent",
@@ -56,20 +51,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # LightPanda is optional at startup; browser tools report actionable errors when unavailable.
     await container.get_lightpanda_browser_worker().warmup()
 
+    memory_scheduler = None
     try:
-        # Initialize the workflow scheduler
-        workflow_session = AsyncSessionLocal()
-        scheduler = get_scheduler()
-        scheduler.initialize(
-            runner=container.get_workflow_runner(),
-            store=SqlAlchemyWorkflowStore(workflow_session),
-        )
-        await scheduler.load_scheduled_workflows()
-        scheduler.start()
-        logger.info("workflow_scheduler_started")
-
         # Initialize the memory job scheduler when enabled
-        memory_scheduler = None
         if container.settings.auto_memory_enabled:
             memory_scheduler = container.get_memory_job_scheduler()
             memory_scheduler.initialize()
@@ -94,11 +78,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     finally:
         # Shutdown
         logger.info("shutting_down_personagent")
-        scheduler.shutdown()
         if memory_scheduler is not None:
             memory_scheduler.shutdown()
-        if workflow_session is not None:
-            await workflow_session.close()
         if container._process_manager:
             container._process_manager.stop()
         await container.close_llm_backends()
@@ -147,8 +128,6 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(conversations.router)
     app.include_router(sessions.router)
-    app.include_router(lab.router)
-    app.include_router(workflows.router)
     app.include_router(memory.router)
     app.include_router(workspace.router)
 

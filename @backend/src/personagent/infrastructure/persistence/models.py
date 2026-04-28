@@ -51,53 +51,6 @@ class MessageORM(Base):
     conversation = relationship("ConversationORM", back_populates="messages")
 
 
-class LabGraphORM(Base):
-    """Tabela de grafos do Lab."""
-
-    __tablename__ = "lab_graphs"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    title = Column(String(255), nullable=False, default="Untitled Lab Graph")
-    graph = Column(JSONB, nullable=False, default=dict)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-    # Relationship with workflow runs
-    runs = relationship(
-        "WorkflowRunORM",
-        back_populates="workflow",
-        cascade="all, delete-orphan",
-        order_by="WorkflowRunORM.started_at.desc()",
-    )
-
-
-class WorkflowRunORM(Base):
-    """Tabela de execuções de workflows."""
-
-    __tablename__ = "workflow_runs"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    workflow_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("lab_graphs.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    trigger_mode = Column(String(20), default="manual")  # manual, cron, api
-    status = Column(String(20), default="running")  # running, completed, failed
-    input = Column(JSONB, nullable=True)
-    output = Column(JSONB, nullable=True)
-    trace_events = Column(JSONB, default=list)
-    error_message = Column(Text, nullable=True)
-    started_at = Column(DateTime(timezone=True), server_default=func.now())
-    finished_at = Column(DateTime(timezone=True), nullable=True)
-
-    workflow = relationship("LabGraphORM", back_populates="runs")
-
-
 class TeamRunORM(Base):
     """Tabela de execuções do Team Mode multi-agentes."""
 

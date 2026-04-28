@@ -15,7 +15,6 @@ import type {
   TeamRunEvent,
   buildTeamRunStart,
 } from "../types/chat";
-import type { LabGraphDocument, NodeCatalog, WorkflowRecord, WorkflowRunEvent } from "../types/lab";
 
 const fallbackBaseUrls = ["http://localhost:8000", "http://localhost:8001"];
 
@@ -298,54 +297,4 @@ function webSocketBaseUrl(baseUrl: string) {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString().replace(/\/$/, "");
-}
-
-export function listWorkflows(baseUrl: string) {
-  return requestJson<WorkflowRecord[]>(baseUrl, "/workflows");
-}
-
-export function getWorkflow(baseUrl: string, workflowId: string) {
-  return requestJson<WorkflowRecord>(baseUrl, `/workflows/${workflowId}`);
-}
-
-export function createWorkflow(baseUrl: string, title: string, workflow: LabGraphDocument) {
-  return requestJson<WorkflowRecord>(baseUrl, "/workflows", {
-    method: "POST",
-    body: JSON.stringify({ title, workflow }),
-  });
-}
-
-export function updateWorkflow(baseUrl: string, workflowId: string, title: string, workflow: LabGraphDocument) {
-  return requestJson<WorkflowRecord>(baseUrl, `/workflows/${workflowId}`, {
-    method: "PUT",
-    body: JSON.stringify({ title, workflow }),
-  });
-}
-
-export function deleteWorkflow(baseUrl: string, workflowId: string) {
-  return requestJson<{ deleted: boolean }>(baseUrl, `/workflows/${workflowId}`, { method: "DELETE" });
-}
-
-export function getNodeCatalog(baseUrl: string) {
-  return requestJson<NodeCatalog>(baseUrl, "/workflows/node-types");
-}
-
-export async function* runWorkflowStream(
-  baseUrl: string,
-  workflowId: string,
-  input: unknown,
-  toolContext: Record<string, unknown>,
-  signal?: AbortSignal,
-) {
-  const response = await fetch(`${baseUrl}/workflows/${workflowId}/runs/stream`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      "Cache-Control": "no-cache",
-    },
-    body: JSON.stringify({ input, tool_context: toolContext }),
-    signal,
-  });
-  yield* readSseStream<WorkflowRunEvent>(response, signal);
 }

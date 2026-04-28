@@ -251,3 +251,72 @@ async def test_project_snapshot_uses_git_repo_fallback_when_gh_fails(monkeypatch
     assert snapshot["project"]["repo"]["source"] == "git"
     assert snapshot["project"]["repo"]["name_with_owner"] == "acme/repo"
     assert any("gh repo view" in error for error in snapshot["project"]["errors"])
+
+
+@pytest.mark.asyncio
+async def test_project_snapshot_uses_clean_branch_ids(monkeypatch, tmp_path):
+    conversation = Conversation(title="Branch IDs")
+
+    def fake_run(command, cwd, timeout=5):
+        if command == ["git", "rev-parse", "--git-dir"]:
+            return session_panel._RunResult(0, ".git\n", "")
+        return session_panel._RunResult(1, "", f"unexpected command: {command}")
+
+    async def fake_run_async(command, cwd, timeout=5):
+        if command == ["gh", "repo", "view", "--json", "nameWithOwner,url,defaultBranchRef,pushedAt"]:
+            return session_panel._RunResult(
+                0,
+                json.dumps(
+                    {
+                        "nameWithOwner": "acme/repo",
+                        "url": "https://github.com/acme/repo",
+                        "defaultBranchRef": {"name": "main"},
+                        "pushedAt": "2026-04-27T22:12:44Z",
+                    }
+                ),
+                "",
+            )
+        if command == [
+            "gh",
+            "pr",
+            "list",
+            "--limit",
+            "5",
+            "--state",
+            "all",
+            "--json",
+            "number,title,state,author,createdAt,updatedAt,mergedAt,url,headRefName,baseRefName",
+        ]:
+            return session_panel._RunResult(0, "[]", "")
+        if command == [
+            "git",
+            "branch",
+            "--format=%(refname:short)%1f%(objectname:short)%1f%(committerdate:iso8601)%1f%(subject)",
+        ]:
+            return session_panel._RunResult(
+                0,
+                "main\x1f6c26f40\x1f2026-04-27 22:12:44 -0300\x1fRefine chat UI and backend streaming behavior\n",
+                "",
+            )
+        if command == ["git", "log", "-10", "--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s"]:
+            return session_panel._RunResult(
+                0,
+                "abc123\x1fabc1234\x1fDev\x1f2026-04-27T22:12:44-03:00\x1fFix bug\n",
+                "",
+            )
+        if command == ["git", "remote", "get-url", "origin"]:
+            return session_panel._RunResult(0, "https://github.com/acme/repo.git\n", "")
+        if command == ["git", "branch", "--show-current"]:
+            return session_panel._RunResult(0, "main\n", "")
+        if command == ["gh", "api", "repos/acme/repo/events"]:
+            return session_panel._RunResult(0, "[]", "")
+        return session_panel._RunResult(1, "", f"unexpected command: {command}")
+
+    monkeypatch.setattr(session_panel, "_run", fake_run)
+    monkeypatch.setattr(session_panel, "_run_async", fake_run_async)
+
+    snapshot = await SessionPanelService(tmp_path).panel_snapshot(conversation)
+
+    assert [branch["id"] for branch in snapshot["project"]["branches"]] == ["main"]
+    assert snapshot["project"]["branches"][0]["title"] == "main"
+    assert snapshot["project"]["branches"][0]["active"] is True

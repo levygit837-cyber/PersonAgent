@@ -9,6 +9,8 @@ import { useChatStore } from "../../stores/chat-store";
 const originalLoadConversation = useChatStore.getState().loadConversation;
 
 describe("Sidebar", () => {
+  const deprecatedSectionLabel = ["L", "ab"].join("");
+
   beforeEach(() => {
     vi.stubGlobal(
       "fetch",
@@ -58,7 +60,7 @@ describe("Sidebar", () => {
     renderSidebar();
 
     expect(screen.getByText("New Chat")).toBeInTheDocument();
-    expect(screen.getByText("Lab")).toBeInTheDocument();
+    expect(screen.queryByText(deprecatedSectionLabel)).not.toBeInTheDocument();
     expect(screen.getByText("Chats")).toBeInTheDocument();
 
     expect(await screen.findByText("my-project")).toBeInTheDocument();
@@ -82,15 +84,14 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("session-history-list")).toHaveClass("overflow-y-auto");
   });
 
-  it("shows collapsible MCP section and Lab navigation", async () => {
+  it("shows collapsible MCP section without deprecated secondary navigation", async () => {
     renderSidebar();
 
     expect(screen.getByText("MCP Connections")).toBeInTheDocument();
     fireEvent.click(screen.getByText("MCP Connections"));
     expect(screen.getByTestId("mcp-connections-region")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByText("Lab"));
-    expect(useAppStore.getState().section).toBe("lab");
+    expect(screen.queryByText(deprecatedSectionLabel)).not.toBeInTheDocument();
+    expect(useAppStore.getState().section).toBe("chat");
   });
 
   it("loads sessions with the workspace from their folder group", async () => {

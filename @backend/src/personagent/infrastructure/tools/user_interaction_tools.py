@@ -1,4 +1,4 @@
-"""Claude-style tools for visible user interaction."""
+"""PersonAgent-style tools for visible user interaction."""
 
 from __future__ import annotations
 

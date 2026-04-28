@@ -115,7 +115,7 @@ class TestUserContext:
         """Test UserContext creation with defaults."""
         context = UserContext()
 
-        assert context.claude_md is None
+        assert context.persona_md is None
         assert context.memory_files == ()
         assert context.current_date == ""
         assert context.user_settings == {}
@@ -127,29 +127,29 @@ class TestUserContext:
         memory_file = MemoryFile.create(Path("/test/file.md"), "content", 1)
 
         context = UserContext(
-            claude_md="# Instructions",
+            persona_md="# Instructions",
             memory_files=(memory_file,),
             current_date="2024-01-01",
             user_settings={"theme": "dark"},
             project_config={"name": "test"},
         )
 
-        assert context.claude_md == "# Instructions"
+        assert context.persona_md == "# Instructions"
         assert len(context.memory_files) == 1
         assert context.current_date == "2024-01-01"
         assert context.user_settings == {"theme": "dark"}
         assert context.project_config == {"name": "test"}
 
-    def test_has_claude_md_property(self):
-        """Test has_claude_md property."""
-        context_with_md = UserContext(claude_md="# Instructions")
-        assert context_with_md.has_claude_md is True
+    def test_has_persona_md_property(self):
+        """Test has_persona_md property."""
+        context_with_md = UserContext(persona_md="# Instructions")
+        assert context_with_md.has_persona_md is True
 
-        context_without_md = UserContext(claude_md=None)
-        assert context_without_md.has_claude_md is False
+        context_without_md = UserContext(persona_md=None)
+        assert context_without_md.has_persona_md is False
 
-        context_empty_md = UserContext(claude_md="   ")
-        assert context_empty_md.has_claude_md is False
+        context_empty_md = UserContext(persona_md="   ")
+        assert context_empty_md.has_persona_md is False
 
     def test_has_memory_files_property(self):
         """Test has_memory_files property."""
@@ -166,11 +166,11 @@ class TestUserContext:
         memory_file1 = MemoryFile.create(Path("/test/file1.md"), "content1", 1)
         memory_file2 = MemoryFile.create(Path("/test/file2.md"), "content2", 2)
 
-        context = UserContext(claude_md="# Instructions")
+        context = UserContext(persona_md="# Instructions")
         new_context = context.with_memory_files([memory_file1, memory_file2])
 
         assert len(new_context.memory_files) == 2
-        assert new_context.claude_md == "# Instructions"
+        assert new_context.persona_md == "# Instructions"
         # Original should be unchanged (frozen)
         assert len(context.memory_files) == 0
 
@@ -181,7 +181,7 @@ class TestContextBuildResult:
     def test_create_context_build_result(self):
         """Test ContextBuildResult creation."""
         system_context = SystemContext(git_branch="main")
-        user_context = UserContext(claude_md="# Instructions")
+        user_context = UserContext(persona_md="# Instructions")
 
         result = ContextBuildResult(
             system_context=system_context,
@@ -204,7 +204,7 @@ class TestContextBuildResult:
             workspace_root="/workspace",
         )
         user_context = UserContext(
-            claude_md="# Instructions",
+            persona_md="# Instructions",
             memory_files=(memory_file,),
         )
 

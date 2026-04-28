@@ -88,7 +88,7 @@ class UserContext:
     incluindo arquivos de memória e configurações personalizadas.
     """
 
-    claude_md: str | None = None
+    persona_md: str | None = None
     memory_files: tuple[MemoryFile, ...] = ()
     current_date: str = ""
     user_settings: dict[str, Any] = field(default_factory=dict)
@@ -99,9 +99,9 @@ class UserContext:
     relevant_memories: tuple[str, ...] = ()
 
     @property
-    def has_claude_md(self) -> bool:
+    def has_persona_md(self) -> bool:
         """Retorna True se há conteúdo persona.md."""
-        return bool(self.claude_md and self.claude_md.strip())
+        return bool(self.persona_md and self.persona_md.strip())
 
     @property
     def has_memory_files(self) -> bool:
@@ -121,7 +121,7 @@ class UserContext:
     def with_memory_files(self, files: list[MemoryFile]) -> UserContext:
         """Retorna uma cópia com novos arquivos de memória."""
         return type(self)(
-            claude_md=self.claude_md,
+            persona_md=self.persona_md,
             memory_files=tuple(files),
             current_date=self.current_date,
             user_settings=self.user_settings,
@@ -134,7 +134,7 @@ class UserContext:
     def with_relevant_memories(self, memories: list[str]) -> UserContext:
         """Retorna uma cópia com memórias relevantes selecionadas."""
         return type(self)(
-            claude_md=self.claude_md,
+            persona_md=self.persona_md,
             memory_files=self.memory_files,
             current_date=self.current_date,
             user_settings=self.user_settings,
@@ -160,6 +160,6 @@ class ContextBuildResult:
         import dataclasses
 
         system_size = len(str(dataclasses.asdict(self.system_context)))
-        user_size = len(self.user_context.claude_md or "")
+        user_size = len(self.user_context.persona_md or "")
         memory_size = sum(len(f.content) for f in self.user_context.memory_files)
         return system_size + user_size + memory_size

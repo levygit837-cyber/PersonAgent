@@ -198,7 +198,7 @@ class PromptBuilder:
                     "requested_mode": profile.requested_mode,
                 },
                 "prompt_surfaces_used": surfaces_used,
-                "has_claude_md": user_context.has_claude_md,
+                "has_persona_md": user_context.has_persona_md,
                 "has_memory_files": user_context.has_memory_files,
                 "has_session_memory": bool(session_memory and session_memory.strip()),
                 "is_git_repo": system_context.git_status is not None,
@@ -544,9 +544,9 @@ class PromptBuilder:
         if context.current_date:
             lines.append(f"Current Date: {context.current_date}")
 
-        if context.has_claude_md:
+        if context.has_persona_md:
             lines.append("\nUser Instructions (persona.md):")
-            lines.append(context.claude_md or "")
+            lines.append(context.persona_md or "")
 
         if context.has_memory_files:
             lines.append("\nMemory Files:")
