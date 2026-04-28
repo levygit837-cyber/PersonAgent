@@ -103,6 +103,27 @@ describe("Sidebar", () => {
     expect(useAppStore.getState().section).toBe("skills");
   });
 
+  it("switches to the Open PR section from the expanded sidebar", async () => {
+    renderSidebar();
+
+    expect(screen.getByRole("button", { name: /open pr/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /open pr/i }));
+
+    expect(useAppStore.getState().section).toBe("openPr");
+  });
+
+  it("shows Open PR as an icon action in the collapsed sidebar", async () => {
+    useAppStore.setState({ sidebarCollapsed: true });
+
+    renderSidebar();
+
+    const openPrButton = screen.getByRole("button", { name: /^open pr$/i });
+    expect(openPrButton).toBeInTheDocument();
+
+    fireEvent.click(openPrButton);
+    expect(useAppStore.getState().section).toBe("openPr");
+  });
+
   it("loads sessions with the workspace from their folder group", async () => {
     const loadConversation = vi.fn(async () => undefined);
     useChatStore.setState({ loadConversation });
