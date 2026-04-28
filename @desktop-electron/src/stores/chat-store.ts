@@ -9,6 +9,7 @@ import {
   streamTeamChat,
   streamChatCompletion,
 } from "../api/client";
+import { errorMessage } from "../api/errors";
 import { createThinkingTagState, splitThinkingTags, type ThinkingTagState } from "../lib/reasoning";
 import { useAppStore } from "./app-store";
 import {
@@ -154,7 +155,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       resetLiveTokenTotals();
     } catch (error) {
       if (get().loadingConversationId === id) {
-        set({ error: error instanceof Error ? error.message : String(error) });
+        set({ error: errorMessage(error) });
       }
     } finally {
       set((state) => ({
@@ -252,7 +253,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     } catch (error) {
       if (!controller.signal.aborted && isActiveGenerationState(get(), controller, agentId)) {
-        set({ error: error instanceof Error ? error.message : String(error) });
+        set({ error: errorMessage(error) });
       }
     } finally {
       flushTextBuffer(agentId, set);
@@ -282,7 +283,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const injected = response.injected_message?.trim();
       if (injected) await get().sendMessage(injected);
     } catch (error) {
-      set({ error: error instanceof Error ? error.message : String(error) });
+      set({ error: errorMessage(error) });
     }
   },
 
@@ -299,7 +300,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const message = response.suggested_message?.trim();
       if (message) await get().sendMessage(message);
     } catch (error) {
-      set({ error: error instanceof Error ? error.message : String(error) });
+      set({ error: errorMessage(error) });
     }
   },
 
@@ -314,7 +315,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
       set({ pendingPlanApproval: undefined, error: undefined });
     } catch (error) {
-      set({ error: error instanceof Error ? error.message : String(error) });
+      set({ error: errorMessage(error) });
     }
   },
 
@@ -368,7 +369,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     } catch (error) {
       if (!controller.signal.aborted && isActiveGenerationState(get(), controller, agentId)) {
-        set({ error: error instanceof Error ? error.message : String(error) });
+        set({ error: errorMessage(error) });
       }
     } finally {
       flushTextBuffer(agentId, set);
@@ -397,7 +398,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const injected = typeof response.injected_message === "string" ? response.injected_message.trim() : "";
       if (injected) await get().sendMessage(injected);
     } catch (error) {
-      set({ error: error instanceof Error ? error.message : String(error) });
+      set({ error: errorMessage(error) });
     }
   },
 
@@ -561,10 +562,11 @@ function handleChunk(
 ) {
   const chunk = normalizeStreamChunk(agentId, rawChunk);
   if (chunk.error) {
+    const message = chunk.error_detail?.message ?? chunk.error;
     flushTextBuffer(agentId, set);
     thinkingStates.delete(agentId);
     set((state) => ({
-      error: chunk.error,
+      error: message,
       isStreaming: state.activeAgentId === agentId ? false : state.isStreaming,
       isFinalizing: state.activeAgentId === agentId ? false : state.isFinalizing,
       activeController: state.activeAgentId === agentId ? undefined : state.activeController,
@@ -848,7 +850,7 @@ function handleTeamEvent(
       return applyTeamEventToMessage(item, event);
     }),
     isStreaming: !isTerminalTeamEvent(event),
-    error: event.event === "error" && !event.agent_id ? event.error : state.error,
+    error: event.event === "error" && !event.agent_id ? event.error_detail?.message ?? event.error : state.error,
   }));
 }
 

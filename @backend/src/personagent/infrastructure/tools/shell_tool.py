@@ -7,6 +7,7 @@ import json
 import shlex
 import shutil
 
+from personagent.domain.exceptions import ShellCommandFailedError, ShellTimeoutError
 from personagent.domain.tools import (
     Tool,
     ToolArguments,
@@ -236,6 +237,25 @@ def create_shell_tool() -> Tool:
             if timed_out or (process.returncode not in (0, None))
             else ToolExecutionStatus.COMPLETED
         )
+        metadata = {}
+        if timed_out:
+            metadata["error"] = ShellTimeoutError(
+                f"Shell command timed out after {timeout_ms}ms.",
+                metadata={
+                    "command": command,
+                    "cwd": str(cwd),
+                    "timeout_ms": timeout_ms,
+                },
+            ).to_envelope()
+        elif status == ToolExecutionStatus.ERROR:
+            metadata["error"] = ShellCommandFailedError(
+                f"Shell command exited with code {process.returncode}.",
+                metadata={
+                    "command": command,
+                    "cwd": str(cwd),
+                    "return_code": process.returncode,
+                },
+            ).to_envelope()
         return ToolResult(
             tool_call_id=call.id,
             tool_name="shell",
@@ -243,6 +263,7 @@ def create_shell_tool() -> Tool:
             status=status,
             is_error=status == ToolExecutionStatus.ERROR,
             data=data,
+            metadata=metadata,
         )
 
     return build_tool(

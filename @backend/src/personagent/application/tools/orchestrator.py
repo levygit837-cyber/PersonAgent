@@ -7,9 +7,20 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 from tempfile import gettempdir
+from typing import Any
 
 from personagent.application.tools.registry import ToolRegistry
 from personagent.application.tools.runtime_config import ToolRuntimeConfig
+from personagent.domain.exceptions import (
+    PersonAgentError,
+    ShellCommandDeniedError,
+    ToolError,
+    ToolInputValidationError,
+    ToolNotFoundError,
+    ToolPermissionDeniedError,
+    ToolPermissionRequiredError,
+    ToolTimeoutError,
+)
 from personagent.domain.tools import (
     ToolCall,
     ToolExecutionStatus,
@@ -202,32 +213,30 @@ class ToolOrchestrator:
     ) -> ToolExecutionEvent:
         tool = self._registry.get(call.name)
         if tool is None:
+            error = ToolNotFoundError(
+                f"No such tool available: {call.name}",
+                metadata={"tool_name": call.name},
+            )
             return ToolExecutionEvent(
                 event="tool_error",
                 call=call,
-                result=ToolResult(
-                    tool_call_id=call.id,
-                    tool_name=call.name,
-                    content=f"Error: no such tool available: {call.name}",
-                    status=ToolExecutionStatus.ERROR,
-                    is_error=True,
-                ),
+                result=self._error_result(call, call.name, error),
             )
 
         try:
             validation = await tool.validate_input(call.arguments, context)
             if validation is not None and not validation.allowed:
+                error = ToolInputValidationError(
+                    validation.message or "Input validation failed.",
+                    metadata={
+                        "tool_name": tool.definition.name,
+                        **validation.metadata,
+                    },
+                )
                 return ToolExecutionEvent(
                     event="tool_error",
                     call=call,
-                    result=ToolResult(
-                        tool_call_id=call.id,
-                        tool_name=tool.definition.name,
-                        content=validation.message or "Input validation failed",
-                        status=ToolExecutionStatus.ERROR,
-                        is_error=True,
-                        metadata=validation.metadata,
-                    ),
+                    result=self._error_result(call, tool.definition.name, error),
                 )
 
             permission = await tool.check_permissions(call.arguments, context)
@@ -242,16 +251,35 @@ class ToolOrchestrator:
                     if permission.behavior == ToolPermissionBehavior.ASK
                     else "tool_error"
                 )
+                if permission.behavior == ToolPermissionBehavior.ASK:
+                    error = ToolPermissionRequiredError(
+                        permission.message or "Tool call requires permission.",
+                        metadata={
+                            "tool_name": tool.definition.name,
+                            **permission.metadata,
+                        },
+                    )
+                else:
+                    error_class = (
+                        ShellCommandDeniedError
+                        if tool.definition.name == "shell"
+                        else ToolPermissionDeniedError
+                    )
+                    error = error_class(
+                        permission.message or "Tool call was denied.",
+                        metadata={
+                            "tool_name": tool.definition.name,
+                            **permission.metadata,
+                        },
+                    )
                 return ToolExecutionEvent(
                     event=event_name,
                     call=call,
-                    result=ToolResult(
-                        tool_call_id=call.id,
-                        tool_name=tool.definition.name,
-                        content=permission.message or "Tool call requires permission",
+                    result=self._error_result(
+                        call,
+                        tool.definition.name,
+                        error,
                         status=status,
-                        is_error=True,
-                        metadata=permission.metadata,
                     ),
                 )
 
@@ -263,14 +291,25 @@ class ToolOrchestrator:
                 )
             else:
                 result = await tool.call(updated_arguments, context, call)
-        except Exception as exc:
-            result = ToolResult(
-                tool_call_id=call.id,
-                tool_name=tool.definition.name,
-                content=f"Error calling tool {tool.definition.name}: {exc}",
-                status=ToolExecutionStatus.ERROR,
-                is_error=True,
+        except TimeoutError as exc:
+            timeout_ms = tool.definition.timeout_ms
+            error = ToolTimeoutError(
+                f"Tool {tool.definition.name} timed out.",
+                metadata={"tool_name": tool.definition.name, "timeout_ms": timeout_ms},
+                cause=exc,
             )
+            result = self._error_result(call, tool.definition.name, error)
+        except Exception as exc:
+            error = (
+                exc
+                if isinstance(exc, PersonAgentError)
+                else ToolError(
+                    f"Error calling tool {tool.definition.name}: {exc}",
+                    metadata={"tool_name": tool.definition.name},
+                    cause=exc,
+                )
+            )
+            result = self._error_result(call, tool.definition.name, error)
 
         result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
         if "max_result_size_chars" not in result_metadata:
@@ -280,6 +319,15 @@ class ToolOrchestrator:
                     **result_metadata,
                     "max_result_size_chars": tool.definition.max_result_size_chars,
                 },
+            )
+        if result.is_error and "error" not in result.metadata:
+            error = ToolError(
+                result.content or f"Tool {tool.definition.name} failed.",
+                metadata={"tool_name": tool.definition.name},
+            )
+            result = replace(
+                result,
+                metadata={**result.metadata, **self._error_metadata(error)},
             )
         result = self._cap_result(result, context)
         if result.is_error:
@@ -291,6 +339,26 @@ class ToolOrchestrator:
         else:
             event_name = "tool_result"
         return ToolExecutionEvent(event=event_name, call=call, result=result)
+
+    def _error_result(
+        self,
+        call: ToolCall,
+        tool_name: str,
+        error: PersonAgentError,
+        *,
+        status: ToolExecutionStatus = ToolExecutionStatus.ERROR,
+    ) -> ToolResult:
+        return ToolResult(
+            tool_call_id=call.id,
+            tool_name=tool_name,
+            content=error.user_message,
+            status=status,
+            is_error=True,
+            metadata=self._error_metadata(error),
+        )
+
+    def _error_metadata(self, error: PersonAgentError) -> dict[str, Any]:
+        return {"error": error.to_envelope()}
 
     def _activity_message(self, tool_name: str) -> str:
         if tool_name in {"Read", "read_file"}:
@@ -335,12 +403,20 @@ class ToolOrchestrator:
         )
 
     def _cap_result(self, result: ToolResult, context: ToolUseContext) -> ToolResult:
-        max_chars = min(
+        raw_result_limit = (
             result.metadata.get("max_result_size_chars", result.metadata.get("limit", 20_000))
             if isinstance(result.metadata, dict)
-            else 20_000,
-            int(context.limits.get("result_max_chars", 20_000)),
+            else 20_000
         )
+        try:
+            result_limit = 20_000 if raw_result_limit is None else int(raw_result_limit)
+        except (TypeError, ValueError):
+            result_limit = 20_000
+        try:
+            context_limit = int(context.limits.get("result_max_chars", 20_000))
+        except (TypeError, ValueError):
+            context_limit = 20_000
+        max_chars = max(1, min(result_limit, context_limit))
         if len(result.content) <= max_chars:
             return result
 

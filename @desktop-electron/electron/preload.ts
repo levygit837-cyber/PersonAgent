@@ -22,6 +22,22 @@ const api = {
     readFile: (filePath: string, workspaceRoot?: string) =>
       ipcRenderer.invoke("fs:read-file", filePath, workspaceRoot) as Promise<string>,
   },
+  terminal: {
+    create: (id: string, cwd?: string) => ipcRenderer.invoke("terminal:create", id, cwd) as Promise<boolean>,
+    write: (id: string, data: string) => ipcRenderer.invoke("terminal:write", id, data) as Promise<boolean>,
+    resize: (id: string, cols: number, rows: number) => ipcRenderer.invoke("terminal:resize", id, cols, rows) as Promise<boolean>,
+    kill: (id: string) => ipcRenderer.invoke("terminal:kill", id) as Promise<boolean>,
+    onData: (callback: (id: string, data: string) => void) => {
+      const handler = (_event: unknown, payload: { id: string; data: string }) => callback(payload.id, payload.data);
+      ipcRenderer.on("terminal:data", handler);
+      return () => ipcRenderer.off("terminal:data", handler);
+    },
+    onExit: (callback: (id: string) => void) => {
+      const handler = (_event: unknown, payload: { id: string }) => callback(payload.id);
+      ipcRenderer.on("terminal:exit", handler);
+      return () => ipcRenderer.off("terminal:exit", handler);
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld("personAgent", api);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, FolderOpen, LayoutGrid, PanelRight } from "lucide-react";
+import { ChevronRight, FolderOpen, LayoutGrid, PanelRight, Terminal } from "lucide-react";
 import { type DirEntry } from "../../lib/workspace-files";
 import { InputDock } from "./input-dock";
 import { FileViewerPanel, type WorkspaceFileTab } from "./file-viewer-panel";
@@ -9,14 +9,19 @@ import { WorkspacePanel } from "./workspace-panel";
 import { workspaceName } from "../../lib/utils";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
+import { useTerminalStore } from "../../stores/terminal-store";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { TerminalPanel, TERMINAL_HEIGHT } from "../terminal/terminal-panel";
+import { GitActionButton } from "../git/git-action-button";
 
 const FILE_VIEWER_TRANSITION_MS = 300;
 
 export function ChatWorkspace() {
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false);
+  const terminalOpen = useTerminalStore((state) => state.open);
+  const toggleTerminal = useTerminalStore((state) => state.toggleOpen);
   const [fileTabs, setFileTabs] = useState<WorkspaceFileTab[]>([]);
   const [activeFilePath, setActiveFilePath] = useState<string | undefined>();
   const [renderedFileTabs, setRenderedFileTabs] = useState<WorkspaceFileTab[]>([]);
@@ -126,12 +131,33 @@ export function ChatWorkspace() {
             </TooltipTrigger>
             <TooltipContent>Session Panel</TooltipContent>
           </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={terminalOpen ? "secondary" : "ghost"}
+                size="iconSm"
+                aria-label="Terminal"
+                onClick={() => toggleTerminal()}
+                className="rounded-xl border border-glass-border/35 bg-background/80 shadow-soft backdrop-blur"
+              >
+                <Terminal className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Terminal</TooltipContent>
+          </Tooltip>
+          <GitActionButton />
         </div>
       </header>
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="relative min-w-0 flex-1 overflow-hidden transition-[width,transform] duration-300 ease-out">
-          <MessageFeed />
-          <InputDock />
+          <MessageFeed extraBottomPadding={terminalOpen} />
+          <TerminalPanel open={terminalOpen} />
+          <div
+            className="pointer-events-none absolute inset-x-0 z-30 transition-[bottom] duration-300 ease-out"
+            style={{ bottom: terminalOpen ? TERMINAL_HEIGHT : 0 }}
+          >
+            <InputDock />
+          </div>
         </div>
         <div
           data-testid="file-viewer-shell"

@@ -34,6 +34,10 @@ from personagent.application.tools import (
     ToolRegistry,
     ToolRuntimeConfig,
 )
+from personagent.application.tools.runtime_config import (
+    DEFAULT_MAX_TOOL_ITERATIONS,
+    MAX_TOOL_ITERATIONS_HARD_CAP,
+)
 from personagent.application.use_cases.context import BuildContextUseCase
 from personagent.application.use_cases.memory.recall_memory import RecallMemoryUseCase
 from personagent.domain.context.models import ContextBuildResult, SystemContext, UserContext
@@ -53,7 +57,12 @@ from personagent.domain.prompts.commands import (
 from personagent.domain.prompts.compact import BASE_COMPACT_PROMPT
 from personagent.domain.prompts.services import PromptBuilder, PromptContextAnalyzer
 from personagent.domain.prompts.services.prompt_builder import estimate_text_tokens
-from personagent.domain.prompts.skills import SkillDefinition, discover_skills, find_skill
+from personagent.domain.prompts.skills import (
+    SkillDefinition,
+    discover_enabled_skills,
+    find_skill,
+    is_skill_enabled,
+)
 from personagent.domain.repositories.conversation_repository import ConversationRepository
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.domain.tools import (
@@ -159,7 +168,7 @@ class ChatCompletionUseCase:
         try:
             max_iterations = self._max_tool_iterations(request)
             iteration = 0
-            while max_iterations is None or iteration < max_iterations:
+            while iteration < max_iterations:
                 messages, _context_metadata = await self._prepare_messages_for_llm(
                     conversation,
                     request,
@@ -381,7 +390,7 @@ class ChatCompletionUseCase:
             iteration = 0
             tool_limit_exceeded = False
             prompt_context_emitted = False
-            while max_iterations is None or iteration < max_iterations:
+            while iteration < max_iterations:
                 messages, context_metadata = await self._prepare_messages_for_llm(
                     conversation,
                     request,
@@ -575,7 +584,7 @@ class ChatCompletionUseCase:
                 iteration += 1
                 if waiting_for_plan_approval or waiting_for_tool_approval:
                     break
-                if max_iterations is not None and iteration >= max_iterations:
+                if iteration >= max_iterations:
                     tool_limit_exceeded = True
 
             if tool_limit_exceeded:
@@ -921,8 +930,16 @@ class ChatCompletionUseCase:
             cwd=context_result.system_context.cwd or workspace_root,
             extra_roots=self._skill_roots(),
         )
-        if skill is not None and skill.user_invocable:
-            return self._preparation_from_skill(request, skill, parsed[1])
+        if skill is not None:
+            if not is_skill_enabled(
+                skill,
+                workspace_root=workspace_root,
+                cwd=context_result.system_context.cwd or workspace_root,
+                extra_roots=self._skill_roots(),
+            ):
+                raise ValueError(f"Skill is disabled: /{parsed[0]}")
+            if skill.user_invocable:
+                return self._preparation_from_skill(request, skill, parsed[1])
 
         raise ValueError(f"Unknown slash command: /{parsed[0]}")
 
@@ -1079,11 +1096,10 @@ class ChatCompletionUseCase:
     ) -> list[SkillDefinition]:
         workspace_root = context_result.system_context.workspace_root
         cwd = context_result.system_context.cwd or workspace_root
-        return discover_skills(
+        return discover_enabled_skills(
             workspace_root=workspace_root,
             cwd=cwd,
             extra_roots=self._skill_roots(),
-            include_global=False,
         )
 
     def _skill_roots(self) -> tuple[str | Path, ...]:
@@ -1096,12 +1112,15 @@ class ChatCompletionUseCase:
             raise RuntimeError("Tool runtime is not configured")
         return ToolOrchestrator(self._tool_registry, self._tool_runtime_config)
 
-    def _max_tool_iterations(self, request: ChatRequestDTO) -> int | None:
+    def _max_tool_iterations(self, request: ChatRequestDTO) -> int:
         if request.max_tool_iterations is not None:
-            return max(1, int(request.max_tool_iterations))
+            return min(MAX_TOOL_ITERATIONS_HARD_CAP, max(1, int(request.max_tool_iterations)))
         if self._tool_runtime_config is None:
-            return 1
-        return self._tool_runtime_config.max_tool_iterations
+            return DEFAULT_MAX_TOOL_ITERATIONS
+        return min(
+            MAX_TOOL_ITERATIONS_HARD_CAP,
+            max(1, int(self._tool_runtime_config.max_tool_iterations)),
+        )
 
     async def _build_context_result(
         self,

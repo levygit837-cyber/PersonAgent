@@ -57,12 +57,12 @@ class TestPersonaMdLoader:
     def test_load_memory_files_priority_order(self, temp_workspace):
         """Test priority order of memory files."""
         # Create project persona.md
-        project_claude = temp_workspace / "persona.md"
-        project_claude.write_text("Project content")
+        project_persona = temp_workspace / "persona.md"
+        project_persona.write_text("Project content")
 
-        # Create local CLAUDE.local.md
-        local_claude = temp_workspace / "CLAUDE.local.md"
-        local_claude.write_text("Local content")
+        # Create local PERSONA.local.md
+        local_persona = temp_workspace / "PERSONA.local.md"
+        local_persona.write_text("Local content")
 
         loader = PersonaMdLoader(temp_workspace, enable_persona_md=True)
         # Clear loaded paths to avoid home directory
@@ -74,13 +74,13 @@ class TestPersonaMdLoader:
         assert files[0].priority == 3  # Project
         assert files[1].priority == 4  # Local
 
-    def test_load_memory_files_with_claude_directory(self, temp_workspace):
-        """Test loading from .claude directory."""
-        claude_dir = temp_workspace / ".claude"
-        claude_dir.mkdir()
+    def test_load_memory_files_with_persona_directory(self, temp_workspace):
+        """Test loading from .personagent directory."""
+        persona_dir = temp_workspace / ".personagent"
+        persona_dir.mkdir()
 
-        persona_md = claude_dir / "persona.md"
-        persona_md.write_text(".claude content")
+        persona_md = persona_dir / "persona.md"
+        persona_md.write_text(".personagent content")
 
         loader = PersonaMdLoader(temp_workspace, enable_persona_md=True)
         # Clear loaded paths to avoid home directory
@@ -92,8 +92,8 @@ class TestPersonaMdLoader:
         assert files[0].priority == 3
 
     def test_load_memory_files_with_rules_directory(self, temp_workspace):
-        """Test loading from .claude/rules directory."""
-        rules_dir = temp_workspace / ".claude" / "rules"
+        """Test loading from .personagent/rules directory."""
+        rules_dir = temp_workspace / ".personagent" / "rules"
         rules_dir.mkdir(parents=True)
 
         rule1 = rules_dir / "rule1.md"
@@ -113,11 +113,11 @@ class TestPersonaMdLoader:
 
     def test_get_combined_content(self, temp_workspace):
         """Test getting combined content."""
-        project_claude = temp_workspace / "persona.md"
-        project_claude.write_text("Project content")
+        project_persona = temp_workspace / "persona.md"
+        project_persona.write_text("Project content")
 
-        local_claude = temp_workspace / "CLAUDE.local.md"
-        local_claude.write_text("Local content")
+        local_persona = temp_workspace / "PERSONA.local.md"
+        local_persona.write_text("Local content")
 
         loader = PersonaMdLoader(temp_workspace, enable_persona_md=True)
         # Clear loaded paths to avoid home directory
@@ -317,8 +317,8 @@ class TestPersonaMdLoader:
         additional_dir = temp_workspace / "additional"
         additional_dir.mkdir()
 
-        additional_claude = additional_dir / "persona.md"
-        additional_claude.write_text("Additional content")
+        additional_persona = additional_dir / "persona.md"
+        additional_persona.write_text("Additional content")
 
         loader = PersonaMdLoader(
             temp_workspace,

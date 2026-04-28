@@ -8,6 +8,7 @@ import {
   MessageSquare,
   Plug,
   Plus,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import { deleteConversation, listConversations } from "../../api/client";
@@ -31,6 +32,7 @@ export function Sidebar() {
   const collapsed = useAppStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useAppStore((state) => state.toggleSidebar);
   const setSection = useAppStore((state) => state.setSection);
+  const section = useAppStore((state) => state.section);
 
   if (collapsed) {
     return (
@@ -45,6 +47,20 @@ export function Sidebar() {
             </Button>
           </TooltipTrigger>
           <TooltipContent side="right">New Chat</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={section === "skills" ? "secondary" : "ghost"}
+              size="iconSm"
+              className="mb-1"
+              aria-label="Skills"
+              onClick={() => setSection("skills")}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">Skills</TooltipContent>
         </Tooltip>
         <div className="mt-auto">
           <Tooltip>
@@ -129,6 +145,7 @@ function SidebarHeader() {
 
 function SidebarActions() {
   const setSection = useAppStore((state) => state.setSection);
+  const section = useAppStore((state) => state.section);
   const startNewConversation = useChatStore((state) => state.startNewConversation);
 
   return (
@@ -140,6 +157,18 @@ function SidebarActions() {
       >
         <Plus className="h-3.5 w-3.5" />
         <span>New Chat</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => setSection("skills")}
+        className={
+          section === "skills"
+            ? "flex w-full items-center gap-2 rounded-xl bg-accent/80 px-2 py-1.5 text-[13px] text-foreground shadow-soft"
+            : "flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-glass/80 hover:text-foreground"
+        }
+      >
+        <Sparkles className="h-3.5 w-3.5" />
+        <span>Skills</span>
       </button>
     </div>
   );

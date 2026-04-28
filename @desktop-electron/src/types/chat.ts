@@ -40,6 +40,19 @@ export interface CodexAuthStatus {
   logout_started?: boolean;
 }
 
+export interface ApiErrorEnvelope {
+  code: string;
+  category: string;
+  severity?: string;
+  message: string;
+  status: number;
+  retryable: boolean;
+  correlation_id?: string;
+  safe_for_model?: boolean;
+  safe_for_telemetry?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
 export const localModel: LlmModel = {
   id: "local-model",
   name: "Local model",
@@ -109,6 +122,39 @@ export interface ChatCommandInfo {
   source: "command" | "skill" | string;
   path: string;
   user_invocable: boolean;
+}
+
+export interface SkillSummary {
+  name: string;
+  invocation_name: string;
+  slash_name: string;
+  description: string;
+  source: string;
+  path: string;
+  enabled: boolean;
+  user_invocable: boolean;
+  model_invocable: boolean;
+  allowed_tools: string[];
+  argument_hint?: string | null;
+  when_to_use?: string | null;
+  context: string;
+}
+
+export interface SkillDetail extends SkillSummary {
+  content: string;
+  frontmatter: Record<string, unknown>;
+}
+
+export interface SkillMarketplaceItem {
+  id: string;
+  name: string;
+  invocation_name: string;
+  slash_name: string;
+  description: string;
+  allowed_tools: string[];
+  argument_hint?: string | null;
+  when_to_use?: string | null;
+  installed: boolean;
 }
 
 export interface TeamAgent {
@@ -224,6 +270,7 @@ export interface TeamRunEvent {
   final_output?: string;
   reason?: string;
   error?: string;
+  error_detail?: ApiErrorEnvelope;
   status?: number | string;
   created_at?: string;
   started_at?: string;
@@ -377,6 +424,7 @@ export interface StreamChunk {
   images?: GeneratedImage[];
   is_thinking?: boolean;
   error?: string;
+  error_detail?: ApiErrorEnvelope;
   status?: number;
   tool_call_id?: string;
   tool_name?: string;
@@ -384,6 +432,7 @@ export interface StreamChunk {
   tool_message?: string;
   tool_result?: string;
   tool_error?: string;
+  metadata?: Record<string, unknown>;
   tool_input?: Record<string, unknown>;
   tool_data?: Record<string, unknown>;
   tool_approval?: ToolApprovalPayload;

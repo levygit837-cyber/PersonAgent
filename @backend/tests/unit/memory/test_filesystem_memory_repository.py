@@ -167,9 +167,9 @@ class TestFileSystemMemoryRepository:
     @pytest.mark.asyncio
     async def test_get_memory_dir_user_scope(self, repo):
         """Test getting user-scope memory directory."""
-        path = await repo.get_memory_dir("my-project", scope=MemoryScope.USER_SCOPE, agent_type="claude")
+        path = await repo.get_memory_dir("my-project", scope=MemoryScope.USER_SCOPE, agent_type="personagent")
         assert "agent-memory" in str(path)
-        assert "claude" in str(path)
+        assert "personagent" in str(path)
 
     @pytest.mark.asyncio
     async def test_list_by_type(self, repo, tmp_path: Path):

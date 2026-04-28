@@ -1,3 +1,5 @@
+import { PersonAgentApiError, extractApiErrorEnvelope } from "./errors";
+
 export function parseSsePayloads(buffer: string) {
   const payloads: unknown[] = [];
   const normalized = buffer.replace(/\r\n/g, "\n");
@@ -27,14 +29,15 @@ export async function* readSseStream<T>(
   signal?: AbortSignal,
 ): AsyncGenerator<T, void, unknown> {
   if (!response.ok) {
-    let detail = response.statusText;
+    let body: unknown;
     try {
-      const body = await response.json();
-      detail = String(body.detail ?? detail);
+      body = await response.json();
     } catch {
       // Keep status text when the response body is not JSON.
     }
-    throw new Error(detail || `HTTP ${response.status}`);
+    throw new PersonAgentApiError(
+      extractApiErrorEnvelope(body, response.status, response.statusText),
+    );
   }
 
   if (!response.body) {

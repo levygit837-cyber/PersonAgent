@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from personagent.application.tools.runtime_config import DEFAULT_MAX_TOOL_ITERATIONS
+from personagent.application.tools.runtime_config import (
+    DEFAULT_MAX_TOOL_ITERATIONS,
+    MAX_TOOL_ITERATIONS_HARD_CAP,
+)
 from personagent.domain.tools import (
     Tool,
     ToolArguments,
@@ -31,7 +34,7 @@ _SETTINGS: dict[str, dict[str, Any]] = {
         "source": "limits",
         "type": "integer",
         "min": 1,
-        "max": 64,
+        "max": MAX_TOOL_ITERATIONS_HARD_CAP,
         "default": DEFAULT_MAX_TOOL_ITERATIONS,
     },
     "max_concurrency": {"source": "limits", "type": "integer", "min": 1, "max": 16},
@@ -231,4 +234,3 @@ def _coerce_value(key: str, value: Any) -> Any:
 
 def _deny(message: str) -> ToolPermissionResult:
     return ToolPermissionResult(behavior=ToolPermissionBehavior.DENY, message=message)
-

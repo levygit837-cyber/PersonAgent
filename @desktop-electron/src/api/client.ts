@@ -1,4 +1,5 @@
 import { readSseStream } from "./sse";
+import { PersonAgentApiError, extractApiErrorEnvelope } from "./errors";
 import type {
   ChatRequestPayload,
   ChatCommandInfo,
@@ -10,6 +11,9 @@ import type {
   PlanDecisionResponse,
   ProjectDetail,
   SessionPanelSnapshot,
+  SkillDetail,
+  SkillMarketplaceItem,
+  SkillSummary,
   StreamChunk,
   TeamConfig,
   TeamRunEvent,
@@ -40,14 +44,15 @@ async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit)
     },
   });
   if (!response.ok) {
-    let detail = response.statusText;
+    let body: unknown;
     try {
-      const body = await response.json();
-      detail = String(body.detail ?? detail);
+      body = await response.json();
     } catch {
       // Non-JSON error bodies keep status text.
     }
-    throw new Error(detail || `HTTP ${response.status}`);
+    throw new PersonAgentApiError(
+      extractApiErrorEnvelope(body, response.status, response.statusText),
+    );
   }
   return (await response.json()) as T;
 }
@@ -114,6 +119,95 @@ export async function listChatCommands(baseUrl: string, workspaceRoot?: string |
   if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return requestJson<ChatCommandInfo[]>(baseUrl, `/chat/commands${suffix}`);
+}
+
+export function listSkills(baseUrl: string, workspaceRoot?: string | null) {
+  const params = new URLSearchParams();
+  if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<SkillSummary[]>(baseUrl, `/skills${suffix}`);
+}
+
+export function getSkillDetail(baseUrl: string, invocationName: string, workspaceRoot?: string | null) {
+  const params = new URLSearchParams();
+  if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<SkillDetail>(baseUrl, `/skills/${encodeURIComponent(invocationName)}${suffix}`);
+}
+
+export function setSkillActivation(
+  baseUrl: string,
+  invocationName: string,
+  enabled: boolean,
+  workspaceRoot?: string | null,
+) {
+  const params = new URLSearchParams();
+  if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<{ invocation_name: string; enabled: boolean }>(
+    baseUrl,
+    `/skills/${encodeURIComponent(invocationName)}/activation${suffix}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    },
+  );
+}
+
+export function listMarketplaceSkills(baseUrl: string, workspaceRoot?: string | null) {
+  const params = new URLSearchParams();
+  if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<SkillMarketplaceItem[]>(baseUrl, `/skills/marketplace${suffix}`);
+}
+
+export function installMarketplaceSkill(baseUrl: string, itemId: string, workspaceRoot?: string | null) {
+  const params = new URLSearchParams();
+  if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<{ item: SkillMarketplaceItem; installed_path: string }>(
+    baseUrl,
+    `/skills/marketplace/${encodeURIComponent(itemId)}/install${suffix}`,
+    { method: "POST" },
+  );
+}
+
+export interface GitStatus {
+  branch: string;
+  ahead: number;
+  behind: number;
+  modified_count: number;
+  untracked_count: number;
+  is_dirty: boolean;
+  remote_url?: string | null;
+}
+
+export function getGitStatus(baseUrl: string, workspaceRoot?: string | null) {
+  const params = new URLSearchParams();
+  if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<GitStatus>(baseUrl, `/workspace/git-status${suffix}`);
+}
+
+export function gitCommit(baseUrl: string, workspaceRoot: string, message: string) {
+  return requestJson<{ success: boolean; output?: string }>(baseUrl, "/workspace/git-commit", {
+    method: "POST",
+    body: JSON.stringify({ workspace_root: workspaceRoot, message }),
+  });
+}
+
+export function gitPush(baseUrl: string, workspaceRoot: string) {
+  return requestJson<{ success: boolean; output?: string }>(baseUrl, "/workspace/git-push", {
+    method: "POST",
+    body: JSON.stringify({ workspace_root: workspaceRoot }),
+  });
+}
+
+export function gitOpenPr(baseUrl: string, workspaceRoot: string) {
+  return requestJson<{ url: string | null; output?: string }>(baseUrl, "/workspace/git-pr", {
+    method: "POST",
+    body: JSON.stringify({ workspace_root: workspaceRoot }),
+  });
 }
 
 function normalizeModel(item: unknown, provider: ModelProvider): LlmModel {

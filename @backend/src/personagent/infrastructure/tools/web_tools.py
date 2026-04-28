@@ -6,10 +6,11 @@ import html
 import ipaddress
 import json
 import re
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from personagent.domain.exceptions import WebDomainBlockedError, WebError, WebFetchTimeoutError
 from personagent.domain.tools import (
     Tool,
     ToolArguments,
@@ -32,6 +33,7 @@ _TEXT_TYPES = (
     "application/xhtml+xml",
     "application/rss+xml",
 )
+_MAX_REDIRECTS = 10
 
 
 def create_web_fetch_tool() -> Tool:
@@ -64,21 +66,45 @@ def create_web_fetch_tool() -> Tool:
 
         try:
             async with httpx.AsyncClient(
-                follow_redirects=True,
+                follow_redirects=False,
                 timeout=httpx.Timeout(timeout_ms / 1000),
                 headers={"User-Agent": "PersonAgent-WebFetch/1.0"},
             ) as client:
-                response = await client.get(url)
+                response, redirect_count = await _request_with_redirects(client, url, context)
+        except httpx.TimeoutException as exc:
+            error = WebFetchTimeoutError(
+                f"WebFetch timed out after {timeout_ms}ms.",
+                metadata={"url": url, "timeout_ms": timeout_ms},
+                cause=exc,
+            )
+            return _error(call, error.user_message, error)
         except httpx.HTTPError as exc:
-            return _error(call, f"WebFetch failed: {exc}")
+            error = WebError(
+                f"WebFetch failed: {exc}",
+                metadata={"url": url},
+                cause=exc,
+            )
+            return _error(call, error.user_message, error)
+        except WebError as exc:
+            return _error(call, exc.user_message, exc)
 
         final_validation = _validate_url(str(response.url), context)
         if final_validation is not None:
-            return _error(call, final_validation.message or "Final URL is blocked.")
+            error = WebDomainBlockedError(
+                final_validation.message or "Final URL is blocked.",
+                metadata={"url": url, "final_url": str(response.url)},
+            )
+            return _error(call, error.user_message, error)
 
         content_type = response.headers.get("content-type", "").split(";")[0].lower()
         if content_type and not content_type.startswith(_TEXT_TYPES):
-            return _error(call, f"Unsupported content type: {content_type}")
+            error = WebError(
+                f"Unsupported content type: {content_type}",
+                code="web.unsupported_content_type",
+                http_status=415,
+                metadata={"url": url, "content_type": content_type},
+            )
+            return _error(call, error.user_message, error)
 
         body = response.content
         truncated = len(body) > max_bytes
@@ -94,7 +120,21 @@ def create_web_fetch_tool() -> Tool:
             "content_type": content_type,
             "content": extracted,
             "truncated": truncated,
+            "redirect_count": redirect_count,
         }
+        metadata = {}
+        if not response.is_success:
+            metadata["error"] = WebError(
+                f"WebFetch returned HTTP {response.status_code}.",
+                code="web.http_error",
+                http_status=response.status_code,
+                retryable=response.status_code in {408, 429, 500, 502, 503, 504},
+                metadata={
+                    "url": url,
+                    "final_url": str(response.url),
+                    "status_code": response.status_code,
+                },
+            ).to_envelope()
         return ToolResult(
             tool_call_id=call.id,
             tool_name="WebFetch",
@@ -104,6 +144,7 @@ def create_web_fetch_tool() -> Tool:
             else ToolExecutionStatus.ERROR,
             is_error=not response.is_success,
             data=data,
+            metadata=metadata,
         )
 
     return build_tool(
@@ -181,6 +222,38 @@ def validate_web_url(url: str, context: ToolUseContext) -> ToolPermissionResult 
     return _validate_url(url, context)
 
 
+async def _request_with_redirects(
+    client: httpx.AsyncClient,
+    url: str,
+    context: ToolUseContext,
+) -> tuple[httpx.Response, int]:
+    current_url = url
+    redirect_count = 0
+    while True:
+        response = await client.get(current_url)
+        if not response.is_redirect:
+            return response, redirect_count
+        if redirect_count >= _MAX_REDIRECTS:
+            raise WebError(
+                f"WebFetch redirect limit exceeded after {_MAX_REDIRECTS} redirects.",
+                code="web.redirect_limit_exceeded",
+                http_status=508,
+                metadata={"url": url, "last_url": str(response.url)},
+            )
+        location = response.headers.get("location")
+        if not location:
+            return response, redirect_count
+        next_url = urljoin(str(response.url), location)
+        validation = _validate_url(next_url, context)
+        if validation is not None:
+            raise WebDomainBlockedError(
+                validation.message or "Redirect URL is blocked.",
+                metadata={"url": url, "redirect_url": next_url},
+            )
+        current_url = next_url
+        redirect_count += 1
+
+
 def _validate_url(url: str, context: ToolUseContext) -> ToolPermissionResult | None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
@@ -226,13 +299,14 @@ def _deny(message: str) -> ToolPermissionResult:
     return ToolPermissionResult(behavior=ToolPermissionBehavior.DENY, message=message)
 
 
-def _error(call: ToolCall, content: str) -> ToolResult:
+def _error(call: ToolCall, content: str, error: WebError | None = None) -> ToolResult:
     return ToolResult(
         tool_call_id=call.id,
         tool_name="WebFetch",
         content=content,
         status=ToolExecutionStatus.ERROR,
         is_error=True,
+        metadata={"error": error.to_envelope()} if error is not None else {},
     )
 
 

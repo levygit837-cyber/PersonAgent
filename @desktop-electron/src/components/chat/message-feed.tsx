@@ -7,7 +7,7 @@ import { UserMessage } from "./user-message";
 const followThreshold = 120;
 const scrollUpKeys = new Set(["ArrowUp", "PageUp", "Home"]);
 
-export function MessageFeed() {
+export function MessageFeed({ extraBottomPadding = false }: { extraBottomPadding?: boolean }) {
   const messages = useChatStore((state) => state.messages);
   const conversationId = useChatStore((state) => state.conversationId);
   const error = useChatStore((state) => state.error);
@@ -109,7 +109,10 @@ export function MessageFeed() {
     <div
       ref={scrollerRef}
       data-testid="message-feed-scroller"
-      className="h-full overflow-x-hidden overflow-y-auto px-5 pb-44 pt-6"
+      className={[
+        "h-full overflow-x-hidden overflow-y-auto px-5 pt-6",
+        extraBottomPadding ? "pb-[340px]" : "pb-44",
+      ].join(" ")}
       style={{ overflowAnchor: "none" }}
       tabIndex={-1}
     >
