@@ -11,10 +11,13 @@ import {
 import { useGitStatus, useGitCommit, useGitPush, useGitOpenPr } from "../../stores/git-store";
 import { useAppStore } from "../../stores/app-store";
 
+type CommitDialogMode = "commit" | "commitAndPush";
+
 export function GitActionButton() {
   const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
   const [open, setOpen] = useState(false);
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
+  const [commitDialogMode, setCommitDialogMode] = useState<CommitDialogMode>("commit");
   const [commitMessage, setCommitMessage] = useState("");
 
   const { data: status, isLoading, isFetching } = useGitStatus(true);
@@ -22,7 +25,6 @@ export function GitActionButton() {
   const pushMutation = useGitPush();
   const prMutation = useGitOpenPr();
 
-  // Estados derivados
   const hasWorkspace = Boolean(workspaceRoot);
   const hasRepo = hasWorkspace && Boolean(status?.branch);
   const isDirty = status?.is_dirty ?? false;
@@ -30,9 +32,9 @@ export function GitActionButton() {
   const hasBehind = (status?.behind ?? 0) > 0;
   const modifiedCount = status?.modified_count ?? 0;
   const untrackedCount = status?.untracked_count ?? 0;
+  const changedCount = modifiedCount + untrackedCount;
   const branch = status?.branch || "";
 
-  // Classes base do botão pill
   const baseButtonClass =
     "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[11px] font-medium transition-all duration-200 border";
 
@@ -40,13 +42,10 @@ export function GitActionButton() {
   let showPulse = false;
 
   if (!hasWorkspace) {
-    // Sem workspace selecionado
     buttonClass += " border-glass-border/25 bg-transparent text-muted-foreground/50 cursor-not-allowed";
   } else if (isLoading) {
-    // Carregando status do workspace
     buttonClass += " border-glass-border/35 bg-background/80 text-muted-foreground";
   } else if (!hasRepo) {
-    // Tem workspace mas não é repo git
     buttonClass += " border-glass-border/25 bg-transparent text-muted-foreground/60";
   } else if (isDirty && hasAhead) {
     buttonClass += " border-warning/30 bg-warning/10 text-warning";
@@ -65,9 +64,14 @@ export function GitActionButton() {
   const handleCommit = async () => {
     if (!commitMessage.trim()) return;
     await commitMutation.mutateAsync(commitMessage.trim());
+    if (commitDialogMode === "commitAndPush") {
+      await pushMutation.mutateAsync();
+    }
     setCommitMessage("");
     setCommitDialogOpen(false);
   };
+
+  const isCommitActionPending = commitMutation.isPending || pushMutation.isPending;
 
   const buttonContent = (
     <>
@@ -80,24 +84,22 @@ export function GitActionButton() {
       )}
 
       {!hasWorkspace ? (
-        <span>Sem workspace</span>
+        <span>No workspace</span>
       ) : isLoading ? (
         <span className="flex items-center gap-1">
           <Loader2 className="h-2.5 w-2.5 animate-spin" />
           <span className="text-muted-foreground">Git</span>
         </span>
       ) : !hasRepo ? (
-        <span>Sem repositório</span>
+        <span>No repository</span>
       ) : (
         <span className="truncate">{branch}</span>
       )}
 
-      {/* Indicador de atualização em background */}
       {hasRepo && isFetching && !isLoading && (
         <Loader2 className="h-2.5 w-2.5 animate-spin text-muted-foreground/60" />
       )}
 
-      {/* Indicador de alterações não commitadas */}
       {hasRepo && isDirty && (
         <span className="relative flex h-3.5 items-center justify-center">
           <span
@@ -110,14 +112,12 @@ export function GitActionButton() {
         </span>
       )}
 
-      {/* Badge de commits ahead */}
       {hasRepo && hasAhead && !isDirty && status && (
         <span className="rounded-full bg-primary/20 px-1 text-[10px] font-semibold text-primary">
           ↑{status.ahead}
         </span>
       )}
 
-      {/* Badge de arquivos modificados */}
       {hasRepo && isDirty && modifiedCount > 0 && (
         <span className="rounded-full bg-warning/20 px-1 text-[10px] font-semibold text-warning">
           {modifiedCount}
@@ -136,10 +136,10 @@ export function GitActionButton() {
             disabled={!hasWorkspace}
             title={
               !hasWorkspace
-                ? "Selecione um workspace"
+                ? "Select a workspace"
                 : !hasRepo
-                  ? "Nenhum repositório Git detectado"
-                  : `${branch} — clique para ações`
+                  ? "No Git repository detected"
+                  : `${branch} - click for actions`
             }
           >
             {buttonContent}
@@ -155,26 +155,25 @@ export function GitActionButton() {
             Git Actions
           </DropdownMenuLabel>
 
-          {/* Status summary */}
           <div className="space-y-1.5 px-2 py-2 text-[11px] text-muted-foreground">
             {!hasWorkspace ? (
               <div className="flex items-center gap-2 text-muted-foreground/70">
                 <FolderX className="h-3 w-3 shrink-0" />
-                <span>Nenhum workspace selecionado</span>
+                <span>No workspace selected</span>
               </div>
             ) : isLoading ? (
               <div className="flex items-center gap-2">
                 <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-                <span>Carregando status...</span>
+                <span>Loading status...</span>
               </div>
             ) : !hasRepo ? (
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <GitBranchIcon className="h-3 w-3 shrink-0 opacity-50" />
-                  <span className="font-medium text-foreground">Sem repositório Git</span>
+                  <span className="font-medium text-foreground">No Git repository</span>
                 </div>
                 <p className="pl-5 text-[10px] leading-4 text-muted-foreground/70">
-                  Este diretório não é um repositório Git. Inicie um com "git init" ou selecione outro workspace.
+                  This directory is not a Git repository. Run "git init" or select another workspace.
                 </p>
               </div>
             ) : (
@@ -187,9 +186,9 @@ export function GitActionButton() {
                   <div className="flex items-center gap-2">
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warning" />
                     <span>
-                      {modifiedCount} modificado{modifiedCount !== 1 ? "s" : ""}
+                      {modifiedCount} modified
                       {untrackedCount > 0
-                        ? `, ${untrackedCount} não rastreado${untrackedCount !== 1 ? "s" : ""}`
+                        ? `, ${untrackedCount} untracked`
                         : ""}
                     </span>
                   </div>
@@ -197,19 +196,19 @@ export function GitActionButton() {
                 {hasAhead && status && (
                   <div className="flex items-center gap-2">
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                    <span>{status.ahead} commit(s) à frente do remote</span>
+                    <span>{status.ahead} commit(s) ahead of remote</span>
                   </div>
                 )}
                 {hasBehind && status && (
                   <div className="flex items-center gap-2">
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground" />
-                    <span>{status.behind} commit(s) atrás do remote</span>
+                    <span>{status.behind} commit(s) behind remote</span>
                   </div>
                 )}
                 {!isDirty && !hasAhead && !hasBehind && (
                   <div className="flex items-center gap-2">
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
-                    <span>Working tree limpo</span>
+                    <span>Working tree clean</span>
                   </div>
                 )}
               </>
@@ -223,28 +222,31 @@ export function GitActionButton() {
               e.preventDefault();
               if (!hasRepo) return;
               setOpen(false);
+              setCommitDialogMode("commit");
               setCommitDialogOpen(true);
             }}
-            disabled={!hasRepo || !isDirty || commitMutation.isPending}
+            disabled={!hasRepo || !isDirty || isCommitActionPending}
             className="gap-2 text-xs"
           >
             <GitCommit className="h-3.5 w-3.5" />
-            Commit alterações...
-            {commitMutation.isPending && <Loader2 className="ml-auto h-3 w-3 animate-spin" />}
+            Commit changes...
+            {commitDialogMode === "commit" && isCommitActionPending && <Loader2 className="ml-auto h-3 w-3 animate-spin" />}
           </DropdownMenuItem>
 
           <DropdownMenuItem
             onSelect={(e) => {
               e.preventDefault();
               if (!hasRepo) return;
-              void pushMutation.mutateAsync();
+              setOpen(false);
+              setCommitDialogMode("commitAndPush");
+              setCommitDialogOpen(true);
             }}
-            disabled={!hasRepo || !hasAhead || pushMutation.isPending}
+            disabled={!hasRepo || !isDirty || isCommitActionPending}
             className="gap-2 text-xs"
           >
             <Upload className="h-3.5 w-3.5" />
-            Fazer Push
-            {pushMutation.isPending && <Loader2 className="ml-auto h-3 w-3 animate-spin" />}
+            Commit and push...
+            {commitDialogMode === "commitAndPush" && isCommitActionPending && <Loader2 className="ml-auto h-3 w-3 animate-spin" />}
           </DropdownMenuItem>
 
           <DropdownMenuItem
@@ -257,24 +259,26 @@ export function GitActionButton() {
             className="gap-2 text-xs"
           >
             <GitPullRequest className="h-3.5 w-3.5" />
-            Abrir PR
+            Open PR
             {prMutation.isPending && <Loader2 className="ml-auto h-3 w-3 animate-spin" />}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* Commit Dialog Overlay */}
       {commitDialogOpen && hasRepo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl border border-glass-border/35 bg-card/95 p-4 shadow-floating backdrop-blur-xl">
-            <h3 className="text-sm font-semibold text-foreground">Commit alterações</h3>
+            <h3 className="text-sm font-semibold text-foreground">
+              {commitDialogMode === "commitAndPush" ? "Commit and push" : "Commit changes"}
+            </h3>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              {modifiedCount} arquivo(s) modificado(s) serão commitados.
+              {changedCount} changed file(s) will be committed
+              {commitDialogMode === "commitAndPush" ? " and pushed to the current branch." : "."}
             </p>
             <textarea
               value={commitMessage}
               onChange={(e) => setCommitMessage(e.target.value)}
-              placeholder="Mensagem do commit..."
+              placeholder="Commit message..."
               className="mt-3 min-h-[80px] w-full resize-none rounded-xl border border-glass-border/35 bg-background/60 px-3 py-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-primary/30 focus:ring-1 focus:ring-primary/20"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -292,15 +296,21 @@ export function GitActionButton() {
                 }}
                 className="rounded-lg px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-glass/60 hover:text-foreground"
               >
-                Cancelar
+                Cancel
               </button>
               <button
                 type="button"
-                disabled={!commitMessage.trim() || commitMutation.isPending}
+                disabled={!commitMessage.trim() || isCommitActionPending}
                 onClick={() => void handleCommit()}
                 className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
               >
-                {commitMutation.isPending ? "Commitando..." : "Commit"}
+                {isCommitActionPending
+                  ? commitDialogMode === "commitAndPush"
+                    ? "Committing and pushing..."
+                    : "Committing..."
+                  : commitDialogMode === "commitAndPush"
+                    ? "Commit and push"
+                    : "Commit"}
               </button>
             </div>
           </div>

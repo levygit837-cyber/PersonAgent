@@ -423,32 +423,35 @@ function ConversationItem({
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onLoad}
-      disabled={loading}
-      aria-busy={loading}
+    <div
       className={
         active
           ? "group flex w-full items-center gap-2 rounded-xl bg-accent/80 px-2 py-1.5 text-left text-[12px] text-foreground shadow-soft"
           : "group flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-[12px] text-muted-foreground hover:bg-glass/70 hover:text-foreground"
       }
     >
-      <MessageSquare className="h-3 w-3 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate">{conversation.title || "Untitled"}</span>
+      <button
+        type="button"
+        onClick={onLoad}
+        disabled={loading}
+        aria-busy={loading}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-wait disabled:opacity-70"
+      >
+        <MessageSquare className="h-3 w-3 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">{conversation.title || "Untitled"}</span>
+      </button>
       <button
         type="button"
         aria-label="Delete conversation"
         onClick={async (event) => {
-          event.stopPropagation();
           await deleteConversation(baseUrl, conversation.id);
           await queryClient.invalidateQueries({ queryKey: ["conversations"] });
         }}
-        className="opacity-0 text-muted-foreground hover:text-destructive group-hover:opacity-100"
+        className="shrink-0 rounded-md p-0.5 opacity-0 text-muted-foreground transition-opacity hover:bg-glass/60 hover:text-destructive focus:opacity-100 group-hover:opacity-100"
       >
         <Trash2 className="h-3 w-3" />
       </button>
-    </button>
+    </div>
   );
 }
 

@@ -157,6 +157,12 @@ async function createWindow() {
     revealMainWindow("ready-to-show");
   });
 
+  mainWindow.webContents.on("console-message", (_event, level, message, _line, sourceId) => {
+    const labels = ["verbose", "info", "warning", "error"];
+    const label = labels[level] ?? String(level);
+    console.log(`[renderer:${label}] ${sourceId}: ${message}`);
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: "deny" };

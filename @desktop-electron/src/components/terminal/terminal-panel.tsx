@@ -9,17 +9,16 @@ interface TerminalPanelProps {
 const TERMINAL_HEIGHT = 280;
 
 export function TerminalPanel({ open }: TerminalPanelProps) {
-  const addInstance = useTerminalStore((s) => s.addInstance);
-  const leftInstances = useTerminalStore((s) => s.leftPane.instances);
-  const rightInstances = useTerminalStore((s) => s.rightPane?.instances ?? []);
-  const totalInstances = leftInstances.length + rightInstances.length;
+  const leftInstanceCount = useTerminalStore((s) => s.leftPane.instances.length);
+  const rightInstanceCount = useTerminalStore((s) => s.rightPane?.instances.length ?? 0);
+  const totalInstances = leftInstanceCount + rightInstanceCount;
 
   // Ensure at least one terminal exists when panel opens
   useEffect(() => {
     if (open && totalInstances === 0) {
-      addInstance("left", "Shell");
+      useTerminalStore.getState().addInstance("left", "Shell");
     }
-  }, [open, totalInstances, addInstance]);
+  }, [open, totalInstances]);
 
   return (
     <div

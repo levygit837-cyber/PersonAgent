@@ -182,11 +182,47 @@ export interface GitStatus {
   remote_url?: string | null;
 }
 
+export interface GitBranchInfo {
+  name: string;
+  kind: "local" | "remote";
+  current: boolean;
+  upstream?: string | null;
+  last_commit_iso?: string | null;
+  last_commit_subject?: string | null;
+}
+
+export interface GitBranchesResponse {
+  is_repo: boolean;
+  current: string;
+  branches: GitBranchInfo[];
+}
+
 export function getGitStatus(baseUrl: string, workspaceRoot?: string | null) {
   const params = new URLSearchParams();
   if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return requestJson<GitStatus>(baseUrl, `/workspace/git-status${suffix}`);
+}
+
+export function listGitBranches(baseUrl: string, workspaceRoot?: string | null) {
+  const params = new URLSearchParams();
+  if (workspaceRoot?.trim()) params.set("workspace_root", workspaceRoot.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<GitBranchesResponse>(baseUrl, `/workspace/git-branches${suffix}`);
+}
+
+export function gitCreateBranch(baseUrl: string, workspaceRoot: string, name: string) {
+  return requestJson<{ success: boolean; branch: string; output?: string }>(baseUrl, "/workspace/git-branches", {
+    method: "POST",
+    body: JSON.stringify({ workspace_root: workspaceRoot, name }),
+  });
+}
+
+export function gitCheckoutBranch(baseUrl: string, workspaceRoot: string, name: string, kind: "local" | "remote") {
+  return requestJson<{ success: boolean; branch: string; output?: string }>(baseUrl, "/workspace/git-checkout", {
+    method: "POST",
+    body: JSON.stringify({ workspace_root: workspaceRoot, name, kind }),
+  });
 }
 
 export function gitCommit(baseUrl: string, workspaceRoot: string, message: string) {

@@ -26,6 +26,11 @@ def _run_git_command(cwd: Path, args: list[str], timeout: int = 10) -> subproces
     )
 
 
+def _is_git_repo(cwd: Path) -> bool:
+    result = _run_git_command(cwd, ["rev-parse", "--is-inside-work-tree"])
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
 def _is_relative_to(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -50,6 +55,46 @@ def _resolve_within_allowed_roots(raw_path: str, workspace_root: str | None = No
         roots = ", ".join(str(root) for root in allowed_roots)
         raise ValueError(f"Path '{raw_path}' is outside allowed roots: {roots}")
     return resolved
+
+
+def _resolve_workspace(workspace_root: str) -> Path:
+    try:
+        return _resolve_within_allowed_roots(workspace_root, workspace_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+def _git_error(message: str, result: subprocess.CompletedProcess[str]) -> str:
+    detail = result.stderr.strip() or result.stdout.strip()
+    return f"{message}: {detail}" if detail else message
+
+
+def _git_branch_item(line: str, current_branch: str, kind: str) -> dict[str, Any] | None:
+    parts = line.split("\x00", 3)
+    if len(parts) != 4:
+        return None
+    name, upstream, last_commit_iso, last_commit_subject = parts
+    if not name or name.endswith("/HEAD"):
+        return None
+    return {
+        "name": name,
+        "kind": kind,
+        "current": kind == "local" and name == current_branch,
+        "upstream": upstream or None,
+        "last_commit_iso": last_commit_iso or None,
+        "last_commit_subject": last_commit_subject or None,
+    }
+
+
+def _remote_tracking_branch_name(remote_ref: str) -> str:
+    if "/" not in remote_ref:
+        return remote_ref
+    return remote_ref.split("/", 1)[1]
+
+
+def _local_branch_exists(cwd: Path, branch_name: str) -> bool:
+    result = _run_git_command(cwd, ["show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}"])
+    return result.returncode == 0
 
 
 @router.get("/files")
@@ -123,12 +168,15 @@ async def get_git_status(
     workspace_root: str | None = Query(None, description="Workspace root path"),
 ) -> dict[str, Any]:
     """Return current git status for the workspace."""
-    try:
-        resolved = _resolve_within_allowed_roots(workspace_root or ".", workspace_root)
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if workspace_root:
+        resolved = _resolve_workspace(workspace_root)
+    else:
+        try:
+            resolved = _resolve_within_allowed_roots(".", None)
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    if not (resolved / ".git").exists() and not (resolved.parent / ".git").exists():
+    if not _is_git_repo(resolved):
         return {
             "branch": "",
             "ahead": 0,
@@ -186,6 +234,117 @@ async def get_git_status(
 class GitCommitRequest(BaseModel):
     workspace_root: str
     message: str
+
+
+class GitBranchCreateRequest(BaseModel):
+    workspace_root: str
+    name: str
+
+
+class GitCheckoutRequest(BaseModel):
+    workspace_root: str
+    name: str
+    kind: str = "local"
+
+
+@router.get("/git-branches")
+async def get_git_branches(
+    workspace_root: str | None = Query(None, description="Workspace root path"),
+) -> dict[str, Any]:
+    """Return local and remote branches for the workspace."""
+    if not workspace_root:
+        return {"is_repo": False, "current": "", "branches": []}
+
+    cwd = _resolve_workspace(workspace_root)
+    if not _is_git_repo(cwd):
+        return {"is_repo": False, "current": "", "branches": []}
+
+    current_result = _run_git_command(cwd, ["branch", "--show-current"])
+    current_branch = current_result.stdout.strip() if current_result.returncode == 0 else ""
+    format_spec = "%(refname:short)%00%(upstream:short)%00%(committerdate:iso8601-strict)%00%(contents:subject)"
+    branches: list[dict[str, Any]] = []
+    local_branch_names: set[str] = set()
+    local_upstreams: set[str] = set()
+
+    local_result = _run_git_command(
+        cwd,
+        ["for-each-ref", f"--format={format_spec}", "--sort=-committerdate", "refs/heads"],
+    )
+    if local_result.returncode == 0:
+        for line in local_result.stdout.splitlines():
+            item = _git_branch_item(line, current_branch, "local")
+            if item:
+                branches.append(item)
+                local_branch_names.add(str(item["name"]))
+                if item["upstream"]:
+                    local_upstreams.add(str(item["upstream"]))
+
+    remote_result = _run_git_command(
+        cwd,
+        ["for-each-ref", f"--format={format_spec}", "--sort=-committerdate", "refs/remotes"],
+    )
+    if remote_result.returncode == 0:
+        for line in remote_result.stdout.splitlines():
+            item = _git_branch_item(line, current_branch, "remote")
+            if item:
+                remote_name = str(item["name"])
+                if remote_name in local_upstreams:
+                    continue
+                if _remote_tracking_branch_name(remote_name) in local_branch_names:
+                    continue
+                branches.append(item)
+
+    return {"is_repo": True, "current": current_branch, "branches": branches}
+
+
+@router.post("/git-branches")
+async def git_create_branch(payload: GitBranchCreateRequest) -> dict[str, Any]:
+    """Create and switch to a new branch from the current HEAD."""
+    cwd = _resolve_workspace(payload.workspace_root)
+    if not _is_git_repo(cwd):
+        raise HTTPException(status_code=400, detail="No Git repository detected")
+
+    branch_name = payload.name.strip()
+    if not branch_name or branch_name.startswith("-"):
+        raise HTTPException(status_code=400, detail="Invalid branch name")
+
+    check_result = _run_git_command(cwd, ["check-ref-format", "--branch", branch_name])
+    if check_result.returncode != 0:
+        raise HTTPException(status_code=400, detail=_git_error("Invalid branch name", check_result))
+
+    switch_result = _run_git_command(cwd, ["switch", "-c", branch_name])
+    if switch_result.returncode != 0:
+        raise HTTPException(status_code=409, detail=_git_error("git switch failed", switch_result))
+
+    return {"success": True, "branch": branch_name, "output": switch_result.stdout.strip()}
+
+
+@router.post("/git-checkout")
+async def git_checkout_branch(payload: GitCheckoutRequest) -> dict[str, Any]:
+    """Switch to an existing local branch or create a tracking branch from a remote."""
+    cwd = _resolve_workspace(payload.workspace_root)
+    if not _is_git_repo(cwd):
+        raise HTTPException(status_code=400, detail="No Git repository detected")
+
+    branch_name = payload.name.strip()
+    if not branch_name or branch_name.startswith("-"):
+        raise HTTPException(status_code=400, detail="Invalid branch name")
+
+    if payload.kind == "local":
+        switch_args = ["switch", branch_name]
+    elif payload.kind == "remote":
+        tracking_branch = _remote_tracking_branch_name(branch_name)
+        switch_args = ["switch", tracking_branch] if _local_branch_exists(cwd, tracking_branch) else ["switch", "--track", branch_name]
+    else:
+        raise HTTPException(status_code=400, detail="Branch kind must be 'local' or 'remote'")
+
+    switch_result = _run_git_command(cwd, switch_args)
+    if switch_result.returncode != 0:
+        raise HTTPException(status_code=409, detail=_git_error("git switch failed", switch_result))
+
+    current_result = _run_git_command(cwd, ["branch", "--show-current"])
+    current_branch = current_result.stdout.strip() if current_result.returncode == 0 else branch_name
+    return {"success": True, "branch": current_branch, "output": switch_result.stdout.strip()}
 
 
 @router.post("/git-commit")

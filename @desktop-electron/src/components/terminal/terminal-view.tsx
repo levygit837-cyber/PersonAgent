@@ -15,8 +15,6 @@ export function TerminalView({ instanceId, focused }: TerminalViewProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const writeToTerminal = useTerminalStore((s) => s.writeToTerminal);
-  const resizeTerminal = useTerminalStore((s) => s.resizeTerminal);
   const setPendingSnippet = useTerminalStore((s) => s.setPendingSnippet);
 
   const [showButton, setShowButton] = useState(false);
@@ -27,6 +25,9 @@ export function TerminalView({ instanceId, focused }: TerminalViewProps) {
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    const writeToTerminal = useTerminalStore.getState().writeToTerminal;
+    const resizeTerminal = useTerminalStore.getState().resizeTerminal;
 
     const term = new Terminal({
       fontFamily: '"JetBrains Mono", ui-monospace, SFMono-Regular, monospace',
@@ -118,7 +119,7 @@ export function TerminalView({ instanceId, focused }: TerminalViewProps) {
       termRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [instanceId, writeToTerminal, resizeTerminal]);
+  }, [instanceId]);
 
   // Focus and refit when becoming active
   useEffect(() => {

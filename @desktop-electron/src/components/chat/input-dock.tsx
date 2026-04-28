@@ -7,6 +7,7 @@ import { useAppStore } from "../../stores/app-store";
 import { useChatStore, type ComposerAnnotation } from "../../stores/chat-store";
 import { useTerminalStore } from "../../stores/terminal-store";
 import { localModel, reasoningPresets, type ChatCommandInfo, type ChatMessageUi, type LlmModel, type ModelProvider, type ReasoningPreset, type ToolBlockStatus, type ToolBlockUi } from "../../types/chat";
+import { BranchSwitcherButton } from "../git/branch-switcher-button";
 import { Button } from "../ui/button";
 import { isTodoTool, todoItems, type TodoItem } from "./tool-block";
 import {
@@ -203,6 +204,7 @@ export function InputDock() {
           <TerminalSnippetTray snippet={pendingSnippet} onRemove={clearPendingSnippet} />
           <div className="flex items-end gap-2 px-2.5 py-2.5 sm:gap-2.5 sm:px-3">
             <FeatureMenu enabled={!disabled} />
+            <BranchSwitcherButton enabled={!disabled} />
             <textarea
               ref={textareaRef}
               value={text}
