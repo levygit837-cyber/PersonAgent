@@ -23,5 +23,4 @@ npm run build
 ## Scope
 
 - Chat uses the existing `POST /chat/completions/stream` SSE endpoint through `fetch` and `ReadableStream`.
-- Workflows use the existing `/workflows` REST and stream endpoints.
 - IPC is intentionally small: window controls, persisted settings, and native folder picker.

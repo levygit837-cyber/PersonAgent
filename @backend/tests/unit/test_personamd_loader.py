@@ -19,7 +19,7 @@ class TestPersonaMdLoader:
         yield Path(temp_dir)
         shutil.rmtree(temp_dir)
 
-    def test_load_memory_files_no_claude_md(self, temp_workspace):
+    def test_load_memory_files_no_persona_md(self, temp_workspace):
         """Test loading when no persona.md exists."""
         # Disable user memory to avoid loading from actual home directory
         loader = PersonaMdLoader(temp_workspace, enable_persona_md=True)
@@ -28,9 +28,9 @@ class TestPersonaMdLoader:
 
         # Only load project memory
         files = []
-        claude_md = temp_workspace / "persona.md"
-        if claude_md.exists():
-            content = loader._read_file_safely(claude_md)
+        persona_md = temp_workspace / "persona.md"
+        if persona_md.exists():
+            content = loader._read_file_safely(persona_md)
             if content:
                 files.append(loader._load_project_memory())
 
@@ -39,10 +39,10 @@ class TestPersonaMdLoader:
 
         assert files == []
 
-    def test_load_memory_files_with_project_claude_md(self, temp_workspace):
+    def test_load_memory_files_with_project_persona_md(self, temp_workspace):
         """Test loading project persona.md."""
-        claude_md = temp_workspace / "persona.md"
-        claude_md.write_text("# Project Instructions\n\nTest content")
+        persona_md = temp_workspace / "persona.md"
+        persona_md.write_text("# Project Instructions\n\nTest content")
 
         loader = PersonaMdLoader(temp_workspace, enable_persona_md=True)
         # Clear loaded paths to avoid home directory
@@ -79,8 +79,8 @@ class TestPersonaMdLoader:
         claude_dir = temp_workspace / ".claude"
         claude_dir.mkdir()
 
-        claude_md = claude_dir / "persona.md"
-        claude_md.write_text(".claude content")
+        persona_md = claude_dir / "persona.md"
+        persona_md.write_text(".claude content")
 
         loader = PersonaMdLoader(temp_workspace, enable_persona_md=True)
         # Clear loaded paths to avoid home directory
@@ -158,8 +158,8 @@ class TestPersonaMdLoader:
 
     def test_enable_persona_md_false(self, temp_workspace):
         """Test with enable_persona_md=False."""
-        claude_md = temp_workspace / "persona.md"
-        claude_md.write_text("Content")
+        persona_md = temp_workspace / "persona.md"
+        persona_md.write_text("Content")
 
         loader = PersonaMdLoader(temp_workspace, enable_persona_md=False)
         files = loader.load_memory_files()
@@ -265,10 +265,10 @@ class TestPersonaMdLoader:
 
     def test_file_size_limit(self, temp_workspace):
         """Test file size limit."""
-        claude_md = temp_workspace / "persona.md"
+        persona_md = temp_workspace / "persona.md"
         # Create file larger than 50KB limit
         large_content = "x" * 60_000
-        claude_md.write_text(large_content)
+        persona_md.write_text(large_content)
 
         loader = PersonaMdLoader(temp_workspace, enable_persona_md=True)
         # Clear loaded paths to avoid home directory

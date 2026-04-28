@@ -1,7 +1,7 @@
 """Context builder service.
 
 Este serviço orquestra a montagem do contexto completo (sistema + usuário)
-para uma conversa, usando os serviços especializados (Git, ClaudeMd, etc.).
+para uma conversa, usando os serviços especializados (Git, PersonaMd, etc.).
 """
 
 from __future__ import annotations
@@ -154,7 +154,7 @@ class ContextBuilder:
                 long_term_memory_index = index.content
 
         return UserContext(
-            claude_md=persona_md if persona_md else None,
+            persona_md=persona_md if persona_md else None,
             memory_files=tuple(memory_files),
             current_date=current_date,
             user_settings={},  # TODO: carregar de configurações

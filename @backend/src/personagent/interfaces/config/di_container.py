@@ -13,7 +13,6 @@ from personagent.application.services import (
 )
 from personagent.application.tools import ToolRegistry, ToolRuntimeConfig
 from personagent.application.use_cases.context import BuildContextUseCase
-from personagent.application.workflows.runner import WorkflowRunner
 from personagent.domain.prompts.commands import CommandRegistry
 from personagent.domain.prompts.services import PromptBuilder, PromptContextAnalyzer
 from personagent.domain.repositories.conversation_repository import ConversationRepository
@@ -416,14 +415,6 @@ class DIContainer:
                 max_sessions=self._settings.lightpanda_max_sessions,
             )
         return self._lightpanda_browser_worker
-
-    def get_workflow_runner(self) -> WorkflowRunner:
-        """Retorna o executor de workflows."""
-        return WorkflowRunner(
-            llm_backend=self.get_llm_backend(),
-            tool_registry=self.get_tool_registry(),
-            tool_runtime_config=self.get_tool_runtime_config(),
-        )
 
     def get_tool_runtime_config(self) -> ToolRuntimeConfig:
         """Return the tool runtime configuration."""

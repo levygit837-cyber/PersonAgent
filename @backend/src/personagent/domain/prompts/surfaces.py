@@ -1,6 +1,6 @@
 """Prompt surface registry.
 
-Claude Code-like prompt construction is easier to reason about when every
+PersonAgent prompt construction is easier to reason about when every
 prompt contributor is named as a surface. The registry here is intentionally
 small: it records what can participate in the prompt and lets the builder emit
 metadata for observability and tests.

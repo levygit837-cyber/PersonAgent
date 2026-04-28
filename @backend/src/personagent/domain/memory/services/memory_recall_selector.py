@@ -1,6 +1,6 @@
 """Serviço de seleção de memórias relevantes.
 
-Implementa o recall inteligente do Claude Code:
+Implementa o recall inteligente do PersonAgent:
 1. Scaneia o diretório de memória
 2. Constrói um manifesto com nomes/descrições
 3. Chama o LLM para selecionar até N memórias relevantes
@@ -23,7 +23,7 @@ from personagent.domain.memory.services.memory_scanner import MemoryScanner
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
 
-# Prompt do selector (adaptado do Claude Code)
+# Prompt do selector (adaptado do PersonAgent)
 _SELECTOR_SYSTEM_PROMPT = (
     "You are selecting memories that will be useful to PersonAgent as it processes "
     "a user's query. You will be given the user's query and a list of available "

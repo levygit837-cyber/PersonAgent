@@ -86,7 +86,8 @@ class SessionPanelService:
         # Run independent git/gh queries concurrently.
         repo_task = _run_async(["gh", "repo", "view", "--json", "nameWithOwner,url,defaultBranchRef,pushedAt"], workspace, timeout=5)
         prs_task = _run_async(["gh", "pr", "list", "--limit", "5", "--state", "all", "--json", "number,title,state,author,createdAt,updatedAt,mergedAt,url,headRefName,baseRefName"], workspace, timeout=5)
-        branch_task = _run_async(["git", "branch", "--format=%(refname:short)%x1f%(objectname:short)%x1f%(committerdate:iso8601)%x1f%(subject)"], workspace, timeout=5)
+        # git branch uses ref-filter formatting, so %1f emits the unit-separator byte here.
+        branch_task = _run_async(["git", "branch", "--format=%(refname:short)%1f%(objectname:short)%1f%(committerdate:iso8601)%1f%(subject)"], workspace, timeout=5)
         log_task = _run_async(["git", "log", "-10", "--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s"], workspace, timeout=5)
         remote_task = _run_async(["git", "remote", "get-url", "origin"], workspace, timeout=3)
         current_branch_task = _run_async(["git", "branch", "--show-current"], workspace, timeout=3)

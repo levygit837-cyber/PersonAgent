@@ -1,7 +1,7 @@
 """Serviço de extração automática de memórias.
 
 Analisa mensagens de uma conversa e extrai memórias duráveis,
-seguindo as regras do Claude Code sobre o que salvar e o que não salvar.
+seguindo as regras do PersonAgent sobre o que salvar e o que não salvar.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from personagent.domain.repositories.llm_backend_repository import LLMBackendRep
 
 logger = structlog.get_logger(__name__)
 
-# Prompt de extração (adaptado do Claude Code)
+# Prompt de extração (adaptado do PersonAgent)
 _EXTRACT_SYSTEM_PROMPT = (
     "You are a memory extraction assistant. Analyze the conversation below and "
     "extract durable memories that would be useful for future conversations.\n\n"

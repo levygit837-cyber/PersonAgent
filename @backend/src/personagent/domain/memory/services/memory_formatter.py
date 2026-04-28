@@ -1,7 +1,7 @@
 """Serviço de formatação de memórias para injeção no prompt.
 
 Converte RelevantMemory em strings formatadas para o contexto
-da conversa, seguindo o padrão do Claude Code.
+da conversa, seguindo o padrão do PersonAgent.
 """
 
 from __future__ import annotations

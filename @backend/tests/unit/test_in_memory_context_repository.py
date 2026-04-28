@@ -28,7 +28,7 @@ class TestInMemoryContextRepository:
     def user_context(self):
         """Create a sample UserContext."""
         return UserContext(
-            claude_md="# Instructions",
+            persona_md="# Instructions",
             current_date="2024-01-01",
         )
 
@@ -58,7 +58,7 @@ class TestInMemoryContextRepository:
         retrieved = await repository.get_user_context("conv-1")
 
         assert retrieved is not None
-        assert retrieved.claude_md == "# Instructions"
+        assert retrieved.persona_md == "# Instructions"
         assert retrieved.current_date == "2024-01-01"
 
     @pytest.mark.asyncio
@@ -135,12 +135,12 @@ class TestInMemoryContextRepository:
         await repository.save_user_context("conv-1", user_context)
 
         # Update context
-        updated_context = UserContext(claude_md="# New Instructions")
+        updated_context = UserContext(persona_md="# New Instructions")
         await repository.save_user_context("conv-1", updated_context)
 
         retrieved = await repository.get_user_context("conv-1")
 
-        assert retrieved.claude_md == "# New Instructions"
+        assert retrieved.persona_md == "# New Instructions"
 
     @pytest.mark.asyncio
     async def test_clear_one_conversation_does_not_affect_others(

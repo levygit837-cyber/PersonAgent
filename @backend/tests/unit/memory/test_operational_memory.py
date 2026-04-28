@@ -68,13 +68,16 @@ def test_formatter_outputs_relevant_execution_memory_section() -> None:
 
 def test_repository_excerpt_prefers_query_context_inside_long_chunk() -> None:
     text = (
-        "filler " * 120
+        "session incident filler " * 120
         + "LIVE_EARLY_CANARY TenantBoundary: isolate tenant_id, project_slug, "
         "workspace_root, and conversation_id before recall injection. "
         + "tail " * 120
     )
 
-    excerpt = _excerpt(text, query_terms={"tenant", "project_slug", "conversation_id"})
+    excerpt = _excerpt(
+        text,
+        query_terms={"session", "incident", "tenant", "project_slug", "conversation_id"},
+    )
 
     assert "LIVE_EARLY_CANARY" in excerpt
     assert "conversation_id" in excerpt

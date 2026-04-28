@@ -1,6 +1,6 @@
 """Tipos e escopos de memória.
 
-Taxonomia baseada no sistema de memória do Claude Code:
+Taxonomia baseada no sistema de memória do PersonAgent:
 - user: informações sobre o usuário
 - feedback: orientações de como trabalhar
 - project: contexto de projeto (bugs, deadlines, decisões)

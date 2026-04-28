@@ -107,7 +107,7 @@ class TestBuildContextUseCase:
         assert len(user_context) > 0
 
     @pytest.mark.asyncio
-    async def test_execute_with_claude_md_disabled(self, temp_workspace, repository):
+    async def test_execute_with_persona_md_disabled(self, temp_workspace, repository):
         """Test execute with persona.md disabled."""
         use_case = BuildContextUseCase(
             workspace_root=temp_workspace,
@@ -118,14 +118,14 @@ class TestBuildContextUseCase:
         result = await use_case.execute("conv-1")
 
         assert result is not None
-        assert result.user_context.claude_md is None or result.user_context.claude_md == ""
+        assert result.user_context.persona_md is None or result.user_context.persona_md == ""
 
     @pytest.mark.asyncio
-    async def test_execute_with_claude_md_enabled(self, temp_workspace, repository):
+    async def test_execute_with_persona_md_enabled(self, temp_workspace, repository):
         """Test execute with persona.md enabled."""
         # Create persona.md
-        claude_md = temp_workspace / "persona.md"
-        claude_md.write_text("# Instructions")
+        persona_md = temp_workspace / "persona.md"
+        persona_md.write_text("# Instructions")
 
         use_case = BuildContextUseCase(
             workspace_root=temp_workspace,
@@ -136,8 +136,8 @@ class TestBuildContextUseCase:
         result = await use_case.execute("conv-1")
 
         assert result is not None
-        assert result.user_context.claude_md is not None
-        assert "# Instructions" in result.user_context.claude_md
+        assert result.user_context.persona_md is not None
+        assert "# Instructions" in result.user_context.persona_md
 
     @pytest.mark.asyncio
     async def test_execute_without_repository(self, temp_workspace):

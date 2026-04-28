@@ -79,11 +79,11 @@ class TestContextBuilder:
         assert result.metadata["source"] == "built"
 
     @pytest.mark.asyncio
-    async def test_build_context_with_claude_md_disabled(self, temp_workspace, repository):
+    async def test_build_context_with_persona_md_disabled(self, temp_workspace, repository):
         """Test building context with persona.md disabled."""
         # Create persona.md file
-        claude_md = temp_workspace / "persona.md"
-        claude_md.write_text("# Instructions")
+        persona_md = temp_workspace / "persona.md"
+        persona_md.write_text("# Instructions")
 
         builder = ContextBuilder(
             workspace_root=temp_workspace,
@@ -93,14 +93,14 @@ class TestContextBuilder:
 
         result = await builder.build_context("conv-1", use_cache=False)
 
-        assert result.user_context.claude_md is None or result.user_context.claude_md == ""
+        assert result.user_context.persona_md is None or result.user_context.persona_md == ""
 
     @pytest.mark.asyncio
-    async def test_build_context_with_claude_md_enabled(self, temp_workspace, repository):
+    async def test_build_context_with_persona_md_enabled(self, temp_workspace, repository):
         """Test building context with persona.md enabled."""
         # Create persona.md file
-        claude_md = temp_workspace / "persona.md"
-        claude_md.write_text("# Instructions")
+        persona_md = temp_workspace / "persona.md"
+        persona_md.write_text("# Instructions")
 
         builder = ContextBuilder(
             workspace_root=temp_workspace,
@@ -110,8 +110,8 @@ class TestContextBuilder:
 
         result = await builder.build_context("conv-1", use_cache=False)
 
-        assert result.user_context.claude_md is not None
-        assert "# Instructions" in result.user_context.claude_md
+        assert result.user_context.persona_md is not None
+        assert "# Instructions" in result.user_context.persona_md
 
     @pytest.mark.asyncio
     async def test_build_context_includes_git_info(self, builder):

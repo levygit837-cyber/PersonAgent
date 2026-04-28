@@ -4,7 +4,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { App } from "./App";
 import "./styles.css";
-import "@xyflow/react/dist/style.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {
