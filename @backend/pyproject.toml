@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "personagent"
 version = "0.1.0"
-description = "Sistema de Agente Pessoal com llama.cpp + TurboQuant"
+description = "Personal agent system with llama.cpp + TurboQuant"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -24,38 +24,33 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "python-multipart>=0.0.20",
-    
-    # Configuração
+    # Configuration
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
     "pyyaml>=6.0.2",
     "python-dotenv>=1.0.1",
-    
     # HTTP Client
     "httpx>=0.28.0",
     "httpx-sse>=0.4.0",
     "google-auth>=2.40.0",
     "playwright>=1.56.0",
     "websockets>=15.0.0",
-    
-    # Banco de Dados
+    # Database
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30.0",
     "alembic>=1.14.0",
-    
     # CLI
     "typer>=0.15.0",
     "rich>=13.9.0",
-    
-    # Utilitários
+    # Utilities
     "orjson>=3.10.0",
     "structlog>=25.1.0",
     "tenacity>=9.0.0",
-    
-    # Validação
+    # Validation
     "email-validator>=2.2.0",
     # Scheduler
     "apscheduler>=3.11.0",
+    "pgvector>=0.4.1",
 ]
 
 [project.optional-dependencies]

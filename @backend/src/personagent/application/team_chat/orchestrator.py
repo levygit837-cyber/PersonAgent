@@ -1808,8 +1808,10 @@ class TeamChatOrchestrator:
             conversation = await self._conversation_repo.get_by_id(request.conversation_id)
             if conversation is None:
                 raise ValueError(f"Conversation {request.conversation_id} not found")
+            _apply_workspace_metadata(conversation, request.workspace_root, request.tool_context)
             return conversation
         conversation = Conversation()
+        _apply_workspace_metadata(conversation, request.workspace_root, request.tool_context)
         await self._conversation_repo.create(conversation)
         return conversation
 
@@ -2040,7 +2042,7 @@ class TeamChatOrchestrator:
                     "tool actions/proposals, and coherency scores. Required final contract: "
                     "direct answer, decisions, evidence used, risks/blockers, actions executed "
                     "or proposed, remaining gaps, and coherency_score. If workspace memory is "
-                    "present, include a concise memoria/snapshot note explaining which decision "
+                    "present, include a concise memory/snapshot note explaining which decision "
                     "was reused, why it is relevant, and which irrelevant contamination was ignored. "
                     "Do not expose internal voting mechanics unless uncertainty is necessary."
                 ),
@@ -2752,57 +2754,30 @@ def _is_real_blocker_text(text: str) -> bool:
         "vote response was not valid json",
         "partially parsed",
         "no blocker",
-        "sem blocker",
-        "sem bloqueador",
-        "nenhum bloqueio",
         "blocker=false",
-        "não há blocker",
-        "nao ha blocker",
-        "não há bloqueador",
-        "nao ha bloqueador",
-        "nenhum blocker",
-        "nenhum bloqueador",
-        "ausência de um domínio",
-        "ausencia de um dominio",
-        "pergunta de exemplo",
-        "ausência do resultado da leitura",
-        "ausencia do resultado da leitura",
+        "no blocker",
+        "no blocking issue",
+        "no block",
+        "missing domain",
+        "example question",
+        "missing read result",
         "missing tool_result",
         "need to execute the read tool",
-        "falta executar a ferramenta read",
-        "ausência do conteúdo lido",
-        "ausencia do conteudo lido",
-        "ausência de sinalização automática",
-        "ausencia de sinalizacao automatica",
-        "falta de sinalização automática",
-        "falta de sinalizacao automatica",
-        "ausência do texto da resposta baseada em opiniões",
-        "ausencia do texto da resposta baseada em opinioes",
-        "falta o texto da resposta baseada em opiniões",
-        "falta o texto da resposta baseada em opinioes",
-        "escassez de dados regionais",
-        "ausência de citações concretas",
-        "ausencia de citacoes concretas",
-        "token de aprovação explícita",
-        "token de aprovacao explicita",
-        "assinatura verificável",
-        "assinatura verificavel",
-        "ausência de identificador único",
-        "ausencia de identificador unico",
-        "ausência de um parser padronizado",
-        "ausencia de um parser padronizado",
-        "ausência de métricas quantitativas",
-        "ausencia de metricas quantitativas",
-        "ausência de mecanismo de notificação assíncrona",
-        "ausencia de mecanismo de notificacao assincrona",
-        "ausência de metadados padronizados",
-        "ausencia de metadados padronizados",
-        "não lista exaustivamente",
-        "nao lista exaustivamente",
-        "não lista exhaustivamente",
-        "nao lista exhaustivamente",
-        "tags visuais possíveis",
-        "tags visuais possiveis",
+        "missing read content",
+        "missing automatic signaling",
+        "lack of automatic signaling",
+        "missing opinion-based answer text",
+        "regional data scarcity",
+        "missing concrete citations",
+        "explicit approval token",
+        "verifiable signature",
+        "missing unique identifier",
+        "missing standardized parser",
+        "missing quantitative metrics",
+        "missing asynchronous notification mechanism",
+        "missing standardized metadata",
+        "does not list exhaustively",
+        "possible visual tags",
     )
     return not any(signal in normalized for signal in false_signals)
 
@@ -2817,10 +2792,6 @@ def _looks_mutating_text(text: str) -> bool:
             "delete",
             "remove",
             "mutating",
-            "destrut",
-            "escrita",
-            "delecao",
-            "deleção",
             "migra",
         )
     )
@@ -3048,3 +3019,13 @@ def _duration_ms(started: float) -> int:
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _apply_workspace_metadata(
+    conversation: Conversation,
+    workspace_root: str | None,
+    tool_context: dict[str, Any] | None,
+) -> None:
+    value = workspace_root or (tool_context or {}).get("workspace_root")
+    if isinstance(value, str) and value.strip():
+        conversation.metadata["workspace_root"] = value.strip()

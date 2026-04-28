@@ -349,7 +349,7 @@ export function FileViewerPanel({
   return (
     <aside className="relative flex h-full w-[min(720px,calc(100vw-420px))] min-w-[360px] flex-col overflow-hidden border-l border-glass-border/25 bg-card/95 shadow-[0_10px_24px_rgb(0_0_0_/_0.34),0_0_0_1px_rgb(237_141_78_/_0.018),inset_0_1px_0_rgb(255_236_214_/_0.018)]">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-glass-border/25 bg-card/80 px-2">
-        <div role="tablist" aria-label="Arquivos abertos" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        <div role="tablist" aria-label="Open files" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {tabs.map((tab) => {
             const selected = tab.path === activeTab.path;
             return (
@@ -375,7 +375,7 @@ export function FileViewerPanel({
                 </button>
                 <button
                   type="button"
-                  aria-label={`Fechar aba ${tab.name}`}
+                  aria-label={`Close tab ${tab.name}`}
                   onClick={() => onCloseTab(tab.path)}
                   className="mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 opacity-80 transition hover:bg-accent hover:text-foreground group-hover:opacity-100"
                 >
@@ -392,7 +392,7 @@ export function FileViewerPanel({
               <Button
                 variant="ghost"
                 size="iconSm"
-                aria-label="Adicionar arquivo"
+                aria-label="Add file"
                 onClick={() => setPickerOpen((value) => !value)}
                 disabled={!workspaceRoot}
                 className="rounded-xl"
@@ -400,7 +400,7 @@ export function FileViewerPanel({
                 <Plus className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Adicionar arquivo</TooltipContent>
+            <TooltipContent>Add file</TooltipContent>
           </Tooltip>
           {pickerOpen ? (
             <WorkspaceFilePicker
@@ -420,14 +420,14 @@ export function FileViewerPanel({
             <Button
               variant={annotationMode ? "secondary" : "ghost"}
               size="iconSm"
-              aria-label="Solicitar edições"
+              aria-label="Request edits"
               onClick={toggleAnnotationMode}
               className="rounded-xl"
             >
               <PencilLine className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Solicitar edições</TooltipContent>
+          <TooltipContent>Request edits</TooltipContent>
         </Tooltip>
 
         <FileModeActions
@@ -438,17 +438,17 @@ export function FileViewerPanel({
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="iconSm" aria-label="Fechar visualizador" onClick={onClose} className="rounded-xl">
+            <Button variant="ghost" size="iconSm" aria-label="Close viewer" onClick={onClose} className="rounded-xl">
               <X className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Fechar visualizador</TooltipContent>
+          <TooltipContent>Close viewer</TooltipContent>
         </Tooltip>
       </div>
 
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-glass-border/20 bg-card/80 px-3 font-mono text-[11px] text-muted-foreground">
         <span className="min-w-0 flex-1 truncate">{relativePath}</span>
-        {activeLineCount > 0 ? <span className="shrink-0">{activeLineCount} linhas</span> : null}
+        {activeLineCount > 0 ? <span className="shrink-0">{activeLineCount} lines</span> : null}
         {language !== "plaintext" ? <span className="shrink-0 uppercase text-muted-foreground/70">{language}</span> : null}
       </div>
       {activeAnnotations.length > 0 ? (
@@ -468,7 +468,7 @@ export function FileViewerPanel({
                 type="button"
                 variant="ghost"
                 size="iconSm"
-                aria-label={`Remover @Annotation#${annotation.id}`}
+                aria-label={`Remove @Annotation#${annotation.id}`}
                 onClick={() => removeComposerAnnotation(annotation.id)}
                 className="h-5 w-5 shrink-0 rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
               >
@@ -481,7 +481,7 @@ export function FileViewerPanel({
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {loading ? (
-          <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Carregando arquivo...</div>
+          <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Loading file...</div>
         ) : activeState?.error ? (
           <div className="flex h-full items-center justify-center px-6 text-center text-xs text-destructive">{activeState.error}</div>
         ) : activeMode === "html" ? (
@@ -531,28 +531,28 @@ function FileModeActions({
               <Button
                 variant={mode === "html" ? "secondary" : "ghost"}
                 size="iconSm"
-                aria-label="Visualizar HTML"
+                aria-label="Preview HTML"
                 onClick={() => onModeChange("html")}
                 className="rounded-xl"
               >
                 <Eye className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Visualizar HTML</TooltipContent>
+            <TooltipContent>Preview HTML</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant={mode === "code" ? "secondary" : "ghost"}
                 size="iconSm"
-                aria-label="Ver código"
+                aria-label="View code"
                 onClick={() => onModeChange("code")}
                 className="rounded-xl"
               >
                 <Code2 className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Ver código</TooltipContent>
+            <TooltipContent>View code</TooltipContent>
           </Tooltip>
         </>
       ) : null}
@@ -563,14 +563,14 @@ function FileModeActions({
             <Button
               variant={mode === "markdown" ? "secondary" : "ghost"}
               size="iconSm"
-              aria-label="Visualização markdown"
+              aria-label="Markdown preview"
               onClick={() => onModeChange(mode === "markdown" ? "code" : "markdown")}
               className="rounded-xl"
             >
               <BookOpen className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Visualização markdown</TooltipContent>
+          <TooltipContent>Markdown preview</TooltipContent>
         </Tooltip>
       ) : null}
     </div>
@@ -629,13 +629,13 @@ function AnnotationInputBar({
           variant="ghost"
           size="iconSm"
           type="button"
-          aria-label={`Cancelar seleção ${rangeLabel}`}
+          aria-label={`Cancel selection ${rangeLabel}`}
           onClick={onCancel}
           className="rounded-xl"
         >
           <X className="h-3.5 w-3.5" />
         </Button>
-        <Button size="iconSm" type="submit" aria-label={`Adicionar annotation ${rangeLabel}`} disabled={!value.trim()} className="rounded-xl">
+        <Button size="iconSm" type="submit" aria-label={`Add annotation ${rangeLabel}`} disabled={!value.trim()} className="rounded-xl">
           <ArrowUp className="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -705,7 +705,7 @@ function FileCodeContent({
                   >
                     <button
                       type="button"
-                      aria-label={`Selecionar linha ${lineNumber}`}
+                      aria-label={`Select line ${lineNumber}`}
                       disabled={!annotationMode || annotated}
                       onClick={() => onLinePick(lineNumber)}
                       className={cn(
@@ -870,21 +870,21 @@ function WorkspaceFilePicker({
   return (
     <div
       role="dialog"
-      aria-label="Arquivos do workspace"
+      aria-label="Workspace files"
       className="absolute right-0 top-10 z-50 flex h-[min(520px,calc(100vh-160px))] w-[340px] flex-col overflow-hidden rounded-xl border border-glass-border/35 bg-popover/98 shadow-floating backdrop-blur-xl"
     >
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-glass-border/25 px-3">
         <FolderOpen className="h-3.5 w-3.5 text-primary" />
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">Workspace</span>
-        <Button variant="ghost" size="iconSm" aria-label="Fechar seleção de arquivo" onClick={onClose} className="rounded-xl">
+        <Button variant="ghost" size="iconSm" aria-label="Close file picker" onClick={onClose} className="rounded-xl">
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-2">
         {!workspaceRoot ? (
-          <PickerEmpty text="Nenhum workspace selecionado." />
+          <PickerEmpty text="No workspace selected." />
         ) : loading ? (
-          <div className="flex h-28 items-center justify-center text-xs text-muted-foreground">Carregando arquivos...</div>
+          <div className="flex h-28 items-center justify-center text-xs text-muted-foreground">Loading files...</div>
         ) : error ? (
           <PickerEmpty text={error} />
         ) : (

@@ -64,6 +64,7 @@ class PostgresConversationRepository(ConversationRepository):
                 ConversationORM.title,
                 ConversationORM.created_at,
                 ConversationORM.updated_at,
+                ConversationORM.metadata_,
                 func.count(MessageORM.id).label("message_count"),
             )
             .outerjoin(MessageORM, MessageORM.conversation_id == ConversationORM.id)
@@ -79,6 +80,7 @@ class PostgresConversationRepository(ConversationRepository):
                 "created_at": row.created_at.isoformat(),
                 "updated_at": row.updated_at.isoformat(),
                 "message_count": int(row.message_count or 0),
+                "workspace_root": _workspace_root_from_metadata(row.metadata_),
             }
             for row in result
         ]
@@ -167,6 +169,7 @@ class PostgresConversationRepository(ConversationRepository):
                 ConversationORM.title,
                 ConversationORM.created_at,
                 ConversationORM.updated_at,
+                ConversationORM.metadata_,
                 func.count(MessageORM.id).label("message_count"),
             )
             .outerjoin(MessageORM, MessageORM.conversation_id == ConversationORM.id)
@@ -187,6 +190,7 @@ class PostgresConversationRepository(ConversationRepository):
                 "created_at": row.created_at.isoformat(),
                 "updated_at": row.updated_at.isoformat(),
                 "message_count": int(row.message_count or 0),
+                "workspace_root": _workspace_root_from_metadata(row.metadata_),
             }
             for row in result
         ]
@@ -231,3 +235,10 @@ class PostgresConversationRepository(ConversationRepository):
 
     def _message_key_from_orm(self, msg: MessageORM) -> tuple:
         return (msg.timestamp, msg.role, msg.tool_call_id or "")
+
+
+def _workspace_root_from_metadata(metadata: dict | None) -> str | None:
+    value = (metadata or {}).get("workspace_root")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None

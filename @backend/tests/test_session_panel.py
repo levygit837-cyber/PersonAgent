@@ -47,7 +47,7 @@ class FakeContainer:
 
 @pytest.mark.asyncio
 async def test_session_panel_aggregates_usage_files_sources_and_todos(tmp_path):
-    conversation = Conversation(title="Painel")
+    conversation = Conversation(title="Panel")
     conversation.add_message(
         Message(
             role=Role.ASSISTANT,

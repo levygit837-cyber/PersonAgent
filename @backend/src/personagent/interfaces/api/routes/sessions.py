@@ -35,7 +35,7 @@ async def verify_session_titles(
     container = get_container()
     service = getattr(container, "get_session_title_service", lambda: None)()
     if service is None:
-        raise HTTPException(status_code=409, detail="Verificação de nomes de sessão desativada.")
+        raise HTTPException(status_code=409, detail="Session title verification is disabled.")
     repo = await container.get_conversation_repo(session)
     result = await service.verify_all(
         repo,
@@ -59,7 +59,7 @@ async def dedupe_session_titles(
     container = get_container()
     service = getattr(container, "get_session_title_service", lambda: None)()
     if service is None:
-        raise HTTPException(status_code=409, detail="Verificação de nomes de sessão desativada.")
+        raise HTTPException(status_code=409, detail="Session title verification is disabled.")
     repo = await container.get_conversation_repo(session)
     result = await service.maybe_repair_duplicate_titles(repo, force=force, dry_run=dry_run)
     return result.to_dict()
@@ -97,8 +97,8 @@ async def _load_conversation(conversation_id: str, session: AsyncSession):
     try:
         parsed = UUID(conversation_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="conversation_id inválido.") from exc
+        raise HTTPException(status_code=400, detail="Invalid conversation_id.") from exc
     conversation = await repo.get_by_id(parsed)
     if conversation is None:
-        raise HTTPException(status_code=404, detail="Conversa não encontrada.")
+        raise HTTPException(status_code=404, detail="Conversation not found.")
     return conversation

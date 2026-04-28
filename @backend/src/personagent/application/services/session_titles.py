@@ -39,52 +39,30 @@ MAX_TITLE_WORDS = 9
 _GENERIC_TITLES = {
     "",
     "chat",
-    "conversa",
-    "nova conversa",
-    "nova sessao",
-    "nova sessão",
-    "sessao",
-    "sessão",
-    "sem titulo",
-    "sem título",
-    "teste",
+    "new chat",
+    "new conversation",
+    "session",
+    "test",
     "untitled",
 }
 
 _STOPWORDS = {
     "a",
-    "agora",
-    "ai",
-    "as",
-    "com",
-    "como",
-    "da",
-    "de",
-    "do",
-    "dos",
-    "e",
-    "em",
-    "essa",
-    "esse",
-    "esta",
-    "este",
-    "eu",
-    "for",
-    "me",
-    "na",
-    "no",
-    "nos",
-    "o",
-    "os",
-    "para",
-    "por",
-    "que",
-    "quero",
+    "an",
+    "and",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
     "the",
-    "uma",
-    "um",
-    "voce",
-    "você",
+    "this",
+    "to",
+    "with",
+    "you",
 }
 
 
@@ -674,7 +652,7 @@ class SessionTitleService:
                 title = _sanitize_title(message.content)
                 if not _is_generic_title(title):
                     return title
-        return _fit_title(f"Sessao {str(conversation.id).split('-', 1)[0]}")
+        return _fit_title(f"Session {str(conversation.id).split('-', 1)[0]}")
 
     def _distinctive_suffix(self, conversation: Conversation, base_title: str) -> str:
         base_tokens = set(_keyword_tokens(base_title))
@@ -858,9 +836,9 @@ _TITLE_SYSTEM_PROMPT = """You rename PersonAgent chat sessions.
 
 Rules:
 - Analyze the whole provided session history, not only the first message.
-- Produce one short natural-language phrase per session, preferably Portuguese when the session is Portuguese.
+- Produce one short natural-language phrase per session in English, even when the source history is in another language.
 - Keep each title under 9 words and under 72 characters.
-- Avoid generic titles such as "Nova Conversa", "Teste", "Chat", "Sessao", or titles based only on the first user message.
+- Avoid generic titles such as "New Chat", "Test", "Chat", "Session", or titles based only on the first user message.
 - Titles must be distinct from each other and from existing_titles. If two sessions discuss similar topics, include a concrete differentiator from the history.
 - Prefer concrete nouns from the actual task, repo, tool, provider, or bug discussed.
 - Do not invent projects, files, providers, or outcomes that are not present in the history.

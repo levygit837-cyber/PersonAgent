@@ -460,7 +460,7 @@ async def test_plan_decision_endpoints_approve_continue_and_cancel(monkeypatch):
             json={
                 "conversation_id": str(conversation.id),
                 "approval_id": "approval_1",
-                "feedback": "Inclua testes.",
+                "feedback": "Include tests.",
             },
         )
 
@@ -469,7 +469,7 @@ async def test_plan_decision_endpoints_approve_continue_and_cancel(monkeypatch):
         assert body["plan_status"] == "approved"
         assert body["plan_active"] is False
         assert body["injected_message"].startswith("Implement the following plan:")
-        assert "Inclua testes." in body["injected_message"]
+        assert "Include tests." in body["injected_message"]
 
         stored = await repo.get_by_id(conversation.id)
         assert stored is not None
@@ -488,14 +488,14 @@ async def test_plan_decision_endpoints_approve_continue_and_cancel(monkeypatch):
             json={
                 "conversation_id": str(conversation.id),
                 "approval_id": "approval_2",
-                "feedback": "Detalhe migração.",
+                "feedback": "Migration detail.",
             },
         )
         assert response.status_code == 200
         body = response.json()
         assert body["plan_status"] == "draft"
         assert body["plan_active"] is True
-        assert "Detalhe migração." in body["suggested_message"]
+        assert "Migration detail." in body["suggested_message"]
 
         stored = await repo.get_by_id(conversation.id)
         assert stored is not None

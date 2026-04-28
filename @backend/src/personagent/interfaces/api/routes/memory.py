@@ -1,4 +1,4 @@
-"""Rotas de gerenciamento de memória da API FastAPI."""
+"""FastAPI memory management routes."""
 
 from __future__ import annotations
 
@@ -20,13 +20,13 @@ from personagent.interfaces.config.di_container import DIContainer, get_containe
 router = APIRouter(prefix="/memory", tags=["memory"])
 logger = structlog.get_logger(__name__)
 
-# Reutilizado para validação de nomes
+# Reused for name validation
 _NAME_VALIDATOR = MemoryScanner()
 _SNAKE_CASE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def get_memory_repo() -> MemoryRepository:
-    """Factory para repositório de memória."""
+    """Factory for the memory repository."""
     return FileSystemMemoryRepository()
 
 
@@ -38,24 +38,24 @@ EVENT_LIMIT_QUERY = Query(default=50, ge=1, le=200)
 
 
 class MemoryCreateRequest(BaseModel):
-    """Request para criação de memória."""
+    """Request for memory creation."""
 
-    name: str = Field(..., description="Nome snake_case da memória")
-    description: str = Field(..., description="Descrição da memória")
-    content: str = Field(..., description="Conteúdo Markdown da memória")
-    memory_type: MemoryType = Field(default=MemoryType.PROJECT, description="Tipo de memória")
-    scope: MemoryScope = Field(default=MemoryScope.PRIVATE, description="Escopo de persistência")
+    name: str = Field(..., description="Memory snake_case name")
+    description: str = Field(..., description="Memory description")
+    content: str = Field(..., description="Memory Markdown content")
+    memory_type: MemoryType = Field(default=MemoryType.PROJECT, description="Memory type")
+    scope: MemoryScope = Field(default=MemoryScope.PRIVATE, description="Persistence scope")
 
 
 class MemoryUpdateRequest(BaseModel):
-    """Request para atualização de memória."""
+    """Request for memory updates."""
 
-    description: str | None = Field(default=None, description="Nova descrição")
-    content: str | None = Field(default=None, description="Novo conteúdo")
+    description: str | None = Field(default=None, description="New description")
+    content: str | None = Field(default=None, description="New content")
 
 
 class MemoryResponse(BaseModel):
-    """Response com dados de uma memória."""
+    """Response with memory data."""
 
     path: str
     name: str
@@ -68,29 +68,29 @@ class MemoryResponse(BaseModel):
 
 
 class MemoryListResponse(BaseModel):
-    """Response com lista de memórias."""
+    """Response with a memory list."""
 
     memories: list[dict[str, Any]]
     count: int
 
 
 class OperationalRecallRequest(BaseModel):
-    """Request para preview de recall RAG operacional."""
+    """Request for operational RAG recall preview."""
 
-    query: str = Field(..., description="Consulta semântica")
+    query: str = Field(..., description="Semantic query")
     top_k: int = Field(default=6, ge=1, le=20)
     provider: str | None = None
     model: str | None = None
 
 
 class OperationalReindexRequest(BaseModel):
-    """Request para reindexação operacional."""
+    """Request for operational reindexing."""
 
     source: str = Field(default="all", description="all, files, failed_embeddings")
 
 
 def _validate_memory_name(name: str) -> None:
-    """Valida que o nome de memória segue snake_case e é seguro para filesystem."""
+    """Validate that the memory name is snake_case and filesystem-safe."""
     if not name:
         raise HTTPException(status_code=400, detail="Memory name cannot be empty")
     if not _SNAKE_CASE_RE.match(name):
@@ -102,8 +102,8 @@ def _validate_memory_name(name: str) -> None:
         raise HTTPException(status_code=400, detail="Memory name contains invalid characters")
 
 
-# IMPORTANTE: rotas mais específicas devem vir ANTES das rotas com path params genéricos
-# FastAPI resolve na ordem de definição.
+# IMPORTANT: more specific routes must come before generic path-param routes.
+# FastAPI resolves routes in definition order.
 
 
 @router.get("/{project_slug}/index")
@@ -112,7 +112,7 @@ async def get_memory_index(
     scope: MemoryScope = PRIVATE_SCOPE_QUERY,
     repo: MemoryRepository = MEMORY_REPO_DEPENDENCY,
 ) -> dict[str, Any]:
-    """Lê o MEMORY.md de um projeto."""
+    """Read the MEMORY.md file for a project."""
     memory_dir = await repo.get_memory_dir(project_slug, scope=scope)
     index = await repo.read_index(memory_dir)
 
@@ -132,7 +132,7 @@ async def get_operational_memory_status(
     project_slug: str,
     container: DIContainer = CONTAINER_DEPENDENCY,
 ) -> dict[str, Any]:
-    """Status da memória operacional RAG."""
+    """Operational RAG memory status."""
     service = container.get_operational_memory_service()
     if service is None:
         return {"project_slug": project_slug, "enabled": False}
@@ -147,7 +147,7 @@ async def preview_operational_memory_recall(
     request: OperationalRecallRequest,
     container: DIContainer = CONTAINER_DEPENDENCY,
 ) -> dict[str, Any]:
-    """Preview do bloco de memória operacional que entraria no prompt."""
+    """Preview the operational memory block that would enter the prompt."""
     service = container.get_operational_memory_service()
     if service is None:
         raise HTTPException(status_code=404, detail="Operational memory is disabled")
@@ -172,7 +172,7 @@ async def list_operational_memory_events(
     limit: int = EVENT_LIMIT_QUERY,
     container: DIContainer = CONTAINER_DEPENDENCY,
 ) -> dict[str, Any]:
-    """Lista eventos operacionais recentes."""
+    """List recent operational events."""
     service = container.get_operational_memory_service()
     if service is None:
         raise HTTPException(status_code=404, detail="Operational memory is disabled")
@@ -186,10 +186,10 @@ async def reindex_operational_memory(
     request: OperationalReindexRequest,
     container: DIContainer = CONTAINER_DEPENDENCY,
 ) -> dict[str, Any]:
-    """Aceita pedido de reindexação operacional.
+    """Accept an operational reindex request.
 
-    O v1 já indexa em tempo real; este endpoint reserva o contrato público para
-    jobs de backfill/reembedding.
+    v1 already indexes in real time; this endpoint reserves the public contract
+    for backfill/reembedding jobs.
     """
     service = container.get_operational_memory_service()
     if service is None:
@@ -209,7 +209,7 @@ async def get_memory(
     scope: MemoryScope = PRIVATE_SCOPE_QUERY,
     repo: MemoryRepository = MEMORY_REPO_DEPENDENCY,
 ) -> MemoryResponse:
-    """Lê uma memória específica."""
+    """Read a specific memory."""
     _validate_memory_name(memory_name)
     memory_dir = await repo.get_memory_dir(project_slug, scope=scope)
     file_path = memory_dir / f"{memory_name}.md"
@@ -238,7 +238,7 @@ async def update_memory(
     scope: MemoryScope = PRIVATE_SCOPE_QUERY,
     repo: MemoryRepository = MEMORY_REPO_DEPENDENCY,
 ) -> dict[str, str]:
-    """Atualiza uma memória existente."""
+    """Update an existing memory."""
     _validate_memory_name(memory_name)
     from personagent.domain.memory.models.memory_file import MemoryFile
 
@@ -249,7 +249,7 @@ async def update_memory(
     if not existing:
         raise HTTPException(status_code=404, detail="Memory not found")
 
-    # Merge frontmatter: preserva extras, atualiza name/description/type
+    # Merge frontmatter: preserve extras and update name/description/type
     merged_frontmatter = dict(existing.frontmatter)
     merged_frontmatter.update({
         "name": existing.name,
@@ -280,7 +280,7 @@ async def delete_memory(
     scope: MemoryScope = PRIVATE_SCOPE_QUERY,
     repo: MemoryRepository = MEMORY_REPO_DEPENDENCY,
 ) -> dict[str, str]:
-    """Remove uma memória."""
+    """Delete a memory."""
     _validate_memory_name(memory_name)
     memory_dir = await repo.get_memory_dir(project_slug, scope=scope)
     file_path = memory_dir / f"{memory_name}.md"
@@ -289,7 +289,7 @@ async def delete_memory(
     if not deleted:
         raise HTTPException(status_code=404, detail="Memory not found")
 
-    # Atualiza índice
+    # Update index
     headers = await repo.scan(memory_dir)
     entries = [
         {
@@ -313,14 +313,14 @@ async def create_memory(
     request: MemoryCreateRequest,
     repo: MemoryRepository = MEMORY_REPO_DEPENDENCY,
 ) -> dict[str, str]:
-    """Cria uma nova memória."""
+    """Create a new memory."""
     _validate_memory_name(request.name)
     from personagent.domain.memory.models.memory_file import MemoryFile
 
     memory_dir = await repo.get_memory_dir(project_slug, scope=request.scope)
     file_path = memory_dir / f"{request.name}.md"
 
-    # Verifica duplicata
+    # Check duplicate
     if await repo.read(file_path):
         raise HTTPException(status_code=409, detail=f"Memory '{request.name}' already exists")
 
@@ -336,7 +336,7 @@ async def create_memory(
 
     written_path = await repo.write(memory)
 
-    # Atualiza índice
+    # Update index
     headers = await repo.scan(memory_dir)
     entries = [
         {
@@ -361,7 +361,7 @@ async def list_memories(
     memory_type: MemoryType | None = MEMORY_TYPE_QUERY,
     repo: MemoryRepository = MEMORY_REPO_DEPENDENCY,
 ) -> MemoryListResponse:
-    """Lista memórias de um projeto."""
+    """List memories for a project."""
     memory_dir = await repo.get_memory_dir(project_slug, scope=scope)
 
     if memory_type:

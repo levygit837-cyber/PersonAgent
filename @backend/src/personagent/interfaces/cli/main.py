@@ -1,4 +1,4 @@
-"""CLI do PersonAgent com Typer + Rich."""
+"""PersonAgent CLI with Typer + Rich."""
 
 import asyncio
 from uuid import UUID
@@ -22,7 +22,7 @@ from personagent.interfaces.config.di_container import get_container
 
 app = typer.Typer(
     name="personagent",
-    help="🤖 PersonAgent — Sistema de Agente Pessoal com llama.cpp + TurboQuant",
+    help="🤖 PersonAgent — Personal agent system with llama.cpp + TurboQuant",
     no_args_is_help=True,
 )
 console = Console()
@@ -31,14 +31,14 @@ logger = structlog.get_logger(__name__)
 
 @app.command()
 def chat(
-    message: str = typer.Option(..., "-m", "--message", help="Mensagem para o agente"),
-    conversation_id: str = typer.Option(None, "-c", "--conversation", help="ID da conversa"),
-    system_prompt: str = typer.Option(None, "-s", "--system", help="Prompt de sistema"),
-    temperature: float = typer.Option(0.7, "-t", "--temp", help="Temperatura"),
-    stream: bool = typer.Option(True, "--stream/--no-stream", help="Streaming de resposta"),
-    no_think: bool = typer.Option(False, "--no-think", help="Oculta reasoning/thinking"),
+    message: str = typer.Option(..., "-m", "--message", help="Message for the agent"),
+    conversation_id: str = typer.Option(None, "-c", "--conversation", help="Conversation ID"),
+    system_prompt: str = typer.Option(None, "-s", "--system", help="System prompt"),
+    temperature: float = typer.Option(0.7, "-t", "--temp", help="Temperature"),
+    stream: bool = typer.Option(True, "--stream/--no-stream", help="Response streaming"),
+    no_think: bool = typer.Option(False, "--no-think", help="Hide reasoning/thinking"),
 ) -> None:
-    """Envia uma mensagem para o agente e recebe a resposta."""
+    """Send a message to the agent and receive the response."""
     asyncio.run(_chat(message, conversation_id, system_prompt, temperature, stream, no_think))
 
 
@@ -50,10 +50,10 @@ async def _chat(
     stream: bool,
     no_think: bool,
 ) -> None:
-    """Implementação assíncrona do comando chat."""
+    """Asynchronous implementation of the chat command."""
     container = get_container()
 
-    # Inicializa banco
+        # Initialize the database
     await init_db()
 
     session = AsyncSessionLocal()
@@ -78,8 +78,8 @@ async def _chat(
         )
 
         if not stream:
-            # Modo síncrono
-            with console.status("[bold green]🤖 Pensando..."):
+            # Synchronous mode
+            with console.status("[bold green]🤖 Thinking..."):
                 result = await use_case.execute(dto)
 
             console.print(
@@ -89,9 +89,9 @@ async def _chat(
                     border_style="blue",
                 )
             )
-            console.print(f"\n[dim]Conversa: {result.conversation_id}[/dim]")
+            console.print(f"\n[dim]Conversation: {result.conversation_id}[/dim]")
         else:
-            # Modo streaming
+            # Streaming mode
             content_parts = []
             reasoning_parts = []
 
@@ -102,7 +102,7 @@ async def _chat(
                     if chunk.content:
                         content_parts.append(chunk.content)
 
-                    # Atualiza display
+                    # Update display
                     display = ""
                     if reasoning_parts and not no_think:
                         think_text = "".join(reasoning_parts)
@@ -117,10 +117,10 @@ async def _chat(
                         )
                     )
 
-                console.print(f"\n[dim]Conversa: {dto.conversation_id or 'nova'}[/dim]")
+                console.print(f"\n[dim]Conversation: {dto.conversation_id or 'new'}[/dim]")
 
     except PersonAgentError as exc:
-        console.print(f"[red]❌ Erro: {exc}[/red]")
+        console.print(f"[red]❌ Error: {exc}[/red]")
         raise typer.Exit(1) from exc
     finally:
         await session.close()
@@ -128,14 +128,14 @@ async def _chat(
 
 @app.command()
 def serve(
-    host: str = typer.Option("0.0.0.0", "--host", help="Host para o servidor"),
-    port: int = typer.Option(8000, "--port", help="Porta para o servidor"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Server host"),
+    port: int = typer.Option(8000, "--port", help="Server port"),
     reload: bool = typer.Option(False, "--reload", help="Hot reload (dev)"),
 ) -> None:
-    """Inicia o servidor API FastAPI."""
+    """Start the FastAPI server."""
     import uvicorn
 
-    console.print(f"[bold green]🚀 Iniciando PersonAgent API em http://{host}:{port}[/bold green]")
+    console.print(f"[bold green]🚀 Starting PersonAgent API at http://{host}:{port}[/bold green]")
     uvicorn.run(
         "personagent.interfaces.api.main:app",
         host=host,
@@ -147,15 +147,15 @@ def serve(
 
 @app.command()
 def model(
-    status: bool = typer.Option(False, "--status", help="Verifica status do modelo"),
-    info: bool = typer.Option(False, "--info", help="Mostra informações do modelo"),
+    status: bool = typer.Option(False, "--status", help="Check model status"),
+    info: bool = typer.Option(False, "--info", help="Show model information"),
 ) -> None:
-    """Gerencia o modelo LLM local."""
+    """Manage the local LLM model."""
     asyncio.run(_model(status, info))
 
 
 async def _model(status: bool, info: bool) -> None:
-    """Implementação assíncrona do comando model."""
+    """Asynchronous implementation of the model command."""
     container = get_container()
     llm = container.get_llm_backend()
 
@@ -163,12 +163,12 @@ async def _model(status: bool, info: bool) -> None:
 
     console.print(
         Panel.fit(
-            f"[bold]Modelo:[/bold] {settings.llama_model_path}\n"
-            f"[bold]Servidor:[/bold] {settings.llama_server_url}\n"
+            f"[bold]Model:[/bold] {settings.llama_model_path}\n"
+            f"[bold]Server:[/bold] {settings.llama_server_url}\n"
             f"[bold]TurboQuant:[/bold] K={settings.llama_cache_type_k}, V={settings.llama_cache_type_v}\n"
-            f"[bold]Contexto:[/bold] {settings.llama_ctx_size} tokens\n"
+            f"[bold]Context:[/bold] {settings.llama_ctx_size} tokens\n"
             f"[bold]GPU Layers:[/bold] {settings.llama_n_gpu_layers}",
-            title="📊 Configuração do Modelo",
+            title="📊 Model Configuration",
             border_style="cyan",
         )
     )
@@ -178,8 +178,8 @@ async def _model(status: bool, info: bool) -> None:
         is_healthy = health.get("status") == "healthy"
         console.print(
             Panel.fit(
-                f"[bold]Status:[/bold] {'✅ Saudável' if is_healthy else '❌ Indisponível'}\n"
-                f"[bold]Detalhes:[/bold] {health.get('details', 'N/A')}",
+                f"[bold]Status:[/bold] {'✅ Healthy' if is_healthy else '❌ Unavailable'}\n"
+                f"[bold]Details:[/bold] {health.get('details', 'N/A')}",
                 title="🏥 Health Check",
                 border_style="green" if is_healthy else "red",
             )
@@ -191,24 +191,24 @@ async def _model(status: bool, info: bool) -> None:
             console.print(
                 Panel.fit(
                     str(model_info),
-                    title="ℹ️ Informações do Modelo",
+                    title="ℹ️ Model Information",
                     border_style="blue",
                 )
             )
         else:
-            console.print("[yellow]⚠️ Não foi possível obter informações do modelo[/yellow]")
+            console.print("[yellow]⚠️ Could not retrieve model information[/yellow]")
 
 
 @app.command()
 def conversations_list(
-    limit: int = typer.Option(20, "--limit", help="Número máximo de resultados"),
+    limit: int = typer.Option(20, "--limit", help="Maximum number of results"),
 ) -> None:
-    """Lista todas as conversas."""
+    """List all conversations."""
     asyncio.run(_conversations_list(limit))
 
 
 async def _conversations_list(limit: int) -> None:
-    """Implementação assíncrona do comando conversations."""
+    """Asynchronous implementation of the conversations command."""
     await init_db()
     session = AsyncSessionLocal()
     try:
@@ -216,13 +216,13 @@ async def _conversations_list(limit: int) -> None:
         convs = await repo.list_all(limit=limit)
 
         if not convs:
-            console.print("[dim]Nenhuma conversa encontrada.[/dim]")
+            console.print("[dim]No conversations found.[/dim]")
             return
 
         for conv in convs:
             console.print(
                 f"[bold]{conv.title}[/bold] [dim]({conv.id})[/dim]\n"
-                f"  {len(conv.messages)} mensagens · {conv.updated_at.strftime('%Y-%m-%d %H:%M')}\n"
+                f"  {len(conv.messages)} messages · {conv.updated_at.strftime('%Y-%m-%d %H:%M')}\n"
             )
     finally:
         await session.close()
@@ -230,27 +230,27 @@ async def _conversations_list(limit: int) -> None:
 
 @app.command()
 def conversation_delete(
-    conversation_id: str = typer.Argument(..., help="ID da conversa para remover"),
+    conversation_id: str = typer.Argument(..., help="Conversation ID to delete"),
 ) -> None:
-    """Remove uma conversa."""
+    """Delete a conversation."""
     asyncio.run(_conversation_delete(conversation_id))
 
 
 async def _conversation_delete(conversation_id: str) -> None:
-    """Implementação assíncrona do comando delete."""
+    """Asynchronous implementation of the delete command."""
     await init_db()
     session = AsyncSessionLocal()
     try:
         repo = PostgresConversationRepository(session)
         deleted = await repo.delete(UUID(conversation_id))
         if deleted:
-            console.print(f"[green]✅ Conversa {conversation_id} removida[/green]")
+            console.print(f"[green]✅ Conversation {conversation_id} deleted[/green]")
         else:
-            console.print(f"[yellow]⚠️ Conversa {conversation_id} não encontrada[/yellow]")
+            console.print(f"[yellow]⚠️ Conversation {conversation_id} not found[/yellow]")
     finally:
         await session.close()
 
 
-# Entrypoint para `python -m personagent` ou `personagent`
+# Entrypoint for `python -m personagent` or `personagent`
 if __name__ == "__main__":
     app()

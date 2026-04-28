@@ -43,10 +43,10 @@ describe("FileViewerPanel", () => {
     renderFileViewer("tree.html", "/workspaces/Eval/tree.html");
 
     expect(await screen.findByTitle("Preview tree.html")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ver código" }));
+    fireEvent.click(screen.getByRole("button", { name: "View code" }));
 
     await waitFor(() => expect(screen.queryByTitle("Preview tree.html")).not.toBeInTheDocument());
-    expect(screen.getByText("1 linhas")).toBeInTheDocument();
+    expect(screen.getByText("1 lines")).toBeInTheDocument();
   });
 
   it("turns the active markdown file into a structured markdown view", async () => {
@@ -57,7 +57,7 @@ describe("FileViewerPanel", () => {
     });
 
     renderFileViewer("README.md", "/workspaces/Eval/README.md");
-    fireEvent.click(screen.getByRole("button", { name: "Visualização markdown" }));
+    fireEvent.click(screen.getByRole("button", { name: "Markdown preview" }));
 
     expect(await screen.findByRole("heading", { name: "Roadmap" })).toBeInTheDocument();
     expect(screen.getByText("First step")).toBeInTheDocument();
@@ -76,7 +76,7 @@ describe("FileViewerPanel", () => {
 
     renderFileViewer("README.md", "/workspaces/Eval/README.md", { onOpenFile });
 
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar arquivo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add file" }));
     fireEvent.click(await screen.findByRole("button", { name: "notes.txt" }));
 
     expect(onOpenFile).toHaveBeenCalledWith({
@@ -97,15 +97,15 @@ describe("FileViewerPanel", () => {
 
     renderFileViewer("hello.py", "/workspaces/Eval/hello.py");
 
-    fireEvent.click(screen.getByRole("button", { name: "Solicitar edições" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Selecionar linha 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Request edits" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select line 2" }));
     expect(screen.queryByPlaceholderText("Write a Annotation...")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select line 4" }));
     fireEvent.change(screen.getByPlaceholderText("Write a Annotation..."), {
       target: { value: "Refactor this block" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar annotation 2-4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add annotation 2-4" }));
 
     expect(screen.getAllByText("@Annotation#1").length).toBeGreaterThan(0);
     expect(sendMessage).not.toHaveBeenCalled();
@@ -131,15 +131,15 @@ describe("FileViewerPanel", () => {
 
     renderFileViewer("hello.py", "/workspaces/Eval/hello.py");
 
-    fireEvent.click(screen.getByRole("button", { name: "Solicitar edições" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Selecionar linha 2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Request edits" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select line 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select line 4" }));
     fireEvent.change(screen.getByPlaceholderText("Write a Annotation..."), {
       target: { value: "Refactor this block" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar annotation 2-4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add annotation 2-4" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Remover @Annotation#1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove @Annotation#1" }));
 
     expect(useChatStore.getState().composerAnnotations).toEqual([]);
     expect(screen.queryByText("@Annotation#1")).not.toBeInTheDocument();
@@ -154,13 +154,13 @@ describe("FileViewerPanel", () => {
 
     renderFileViewer("hello.py", "/workspaces/Eval/hello.py");
 
-    fireEvent.click(screen.getByRole("button", { name: "Solicitar edições" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Selecionar linha 2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Request edits" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select line 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select line 4" }));
     fireEvent.change(screen.getByPlaceholderText("Write a Annotation..."), {
       target: { value: "Refactor this block" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar annotation 2-4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add annotation 2-4" }));
 
     act(() => useChatStore.getState().removeComposerAnnotation(1));
 
@@ -176,24 +176,24 @@ describe("FileViewerPanel", () => {
 
     renderFileViewer("hello.py", "/workspaces/Eval/hello.py");
 
-    fireEvent.click(screen.getByRole("button", { name: "Solicitar edições" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Selecionar linha 2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Request edits" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select line 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select line 4" }));
     fireEvent.change(screen.getByPlaceholderText("Write a Annotation..."), {
       target: { value: "Refactor this block" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar annotation 2-4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add annotation 2-4" }));
 
-    expect(screen.getByRole("button", { name: "Selecionar linha 2" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 1" }));
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 5" }));
+    expect(screen.getByRole("button", { name: "Select line 2" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Select line 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select line 5" }));
 
     expect(screen.queryByText("L1-5")).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText("Write a Annotation...")).not.toBeInTheDocument();
     expect(useChatStore.getState().composerAnnotations).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 5" }));
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 6" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select line 5" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select line 6" }));
 
     expect(screen.getByText("L5-6")).toBeInTheDocument();
   });
@@ -207,32 +207,32 @@ describe("FileViewerPanel", () => {
 
     renderFileViewer("notes.md", "/workspaces/Eval/notes.md");
 
-    fireEvent.click(screen.getByRole("button", { name: "Solicitar edições" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Selecionar linha 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Request edits" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select line 2" }));
     expect(screen.queryByPlaceholderText("Write a Annotation...")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 45" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select line 45" }));
 
     expect(screen.getByText("L2-45")).toBeInTheDocument();
-    const line45Row = screen.getByRole("button", { name: "Selecionar linha 45" }).closest("tr");
+    const line45Row = screen.getByRole("button", { name: "Select line 45" }).closest("tr");
     const draftRow = screen.getByRole("row", { name: /L2-45/ });
     expect(line45Row).not.toBeNull();
     expect(draftRow.compareDocumentPosition(line45Row as HTMLTableRowElement) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 63" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select line 63" }));
     expect(screen.getAllByPlaceholderText("Write a Annotation...")).toHaveLength(1);
     expect(screen.getByText("L2-45")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 102" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select line 102" }));
     expect(screen.getByText("L63-102")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 56" }));
-    fireEvent.click(screen.getByRole("button", { name: "Selecionar linha 98" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select line 56" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select line 98" }));
 
     expect(screen.getByText("L56-98")).toBeInTheDocument();
     expect(screen.getAllByPlaceholderText("Write a Annotation...")).toHaveLength(3);
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancelar seleção 63-102" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel selection 63-102" }));
 
     expect(screen.queryByText("L63-102")).not.toBeInTheDocument();
     expect(screen.getByText("L2-45")).toBeInTheDocument();

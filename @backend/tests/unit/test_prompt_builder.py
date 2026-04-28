@@ -433,7 +433,7 @@ class TestPromptBuilder:
         assert llm.calls == []
 
     @pytest.mark.asyncio
-    async def test_prompt_context_analyzer_fallback_has_no_keyword_matching(self):
+    async def test_prompt_context_analyzer_fallback_uses_local_heuristic(self):
         llm = FakeAnalysisLLM("not json")
         analyzer = PromptContextAnalyzer(llm)
 
@@ -442,8 +442,9 @@ class TestPromptBuilder:
             requested_mode="auto",
         )
 
-        assert profile.primary_mode == "exploring"
-        assert profile.source == "fallback"
+        assert profile.primary_mode == "writing"
+        assert profile.source == "fallback_heuristic"
+        assert profile.raw["reason"] == "invalid_response"
 
     @pytest.mark.asyncio
     async def test_prompt_context_analyzer_treats_missing_mode_as_exploring(self):
@@ -479,19 +480,60 @@ class TestPromptBuilder:
         first = await analyzer.analyze(
             message="Pesquise fontes recentes",
             requested_mode="auto",
-            provider="nvidia",
+            provider="test",
             model="slow-model",
         )
         second = await analyzer.analyze(
             message="Implemente a correcao",
             requested_mode="auto",
-            provider="nvidia",
+            provider="test",
             model="slow-model",
         )
 
-        assert first.source == "fallback"
-        assert second.source == "fallback"
+        assert first.source == "fallback_heuristic"
+        assert second.source == "fallback_heuristic"
         assert len(llm.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_prompt_context_analyzer_extends_timeout_for_long_context(self):
+        llm = SlowAnalysisLLM()
+        analyzer = PromptContextAnalyzer(
+            llm,
+            timeout_seconds=0.01,
+            long_timeout_seconds=1,
+            failure_cooldown_seconds=60,
+            long_context_chars=100,
+        )
+
+        profile = await analyzer.analyze(
+            message="Pesquise fontes recentes",
+            requested_mode="auto",
+            provider="vertex",
+            model="gemini-3.1-pro-preview",
+            context_size_chars=500_000,
+            conversation_message_count=120,
+        )
+
+        assert profile.primary_mode == "research"
+        assert profile.source == "llm"
+        assert len(llm.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_prompt_context_analyzer_truncates_large_payload(self):
+        llm = FakeAnalysisLLM({"primary_mode": "exploring"})
+        analyzer = PromptContextAnalyzer(llm, max_payload_chars=1_000)
+
+        await analyzer.analyze(
+            message="A" * 3_000,
+            requested_mode="auto",
+            provider="vertex",
+            model="gemini-2.5-flash",
+        )
+
+        payload = json.loads(llm.calls[0]["messages"][1]["content"])
+        assert payload["message_was_truncated"] is True
+        assert payload["message_chars"] == 3_000
+        assert len(payload["message"]) < 1_200
 
     @pytest.mark.asyncio
     async def test_prompt_mode_override(self, system_context, user_context):

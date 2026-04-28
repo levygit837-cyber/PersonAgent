@@ -52,6 +52,7 @@ export interface ConversationSummary {
   created_at: string;
   updated_at: string;
   message_count: number;
+  workspace_root?: string | null;
 }
 
 export type PersistedMessageRole = "system" | "user" | "assistant" | "tool";

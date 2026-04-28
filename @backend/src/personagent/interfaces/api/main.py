@@ -1,4 +1,4 @@
-"""Aplicação FastAPI principal do PersonAgent."""
+"""Main PersonAgent FastAPI application."""
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -28,7 +28,7 @@ logger = structlog.get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Gerencia o ciclo de vida da aplicação."""
+    """Manage the application lifecycle."""
     settings = get_settings()
     container = get_container()
     workflow_session = None
@@ -40,11 +40,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         env=settings.app_env,
     )
 
-    # Inicializa banco de dados
+    # Initialize the database
     logger.info("initializing_database")
     await init_db()
 
-    # Inicia llama-server se configurado
+    # Start llama-server when configured
     if settings.llama_auto_start:
         pm = container.get_process_manager()
         started = await pm.start()
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await container.get_lightpanda_browser_worker().warmup()
 
     try:
-        # Inicializa workflow scheduler
+        # Initialize the workflow scheduler
         workflow_session = AsyncSessionLocal()
         scheduler = get_scheduler()
         scheduler.initialize(
@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         scheduler.start()
         logger.info("workflow_scheduler_started")
 
-        # Inicializa memory job scheduler (se habilitado)
+        # Initialize the memory job scheduler when enabled
         memory_scheduler = None
         if container.settings.auto_memory_enabled:
             memory_scheduler = container.get_memory_job_scheduler()
@@ -106,13 +106,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app() -> FastAPI:
-    """Factory para criar a aplicação FastAPI."""
+    """Factory for creating the FastAPI application."""
     settings = get_settings()
 
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
-        description="Sistema de Agente Pessoal com llama.cpp + TurboQuant",
+        description="Personal agent system with llama.cpp + TurboQuant",
         lifespan=lifespan,
         docs_url="/docs" if settings.app_env == "development" else None,
         redoc_url="/redoc" if settings.app_env == "development" else None,
@@ -143,7 +143,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Rotas
+    # Routes
     app.include_router(chat.router)
     app.include_router(conversations.router)
     app.include_router(sessions.router)
@@ -154,7 +154,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health_check() -> dict:
-        """Endpoint de health check."""
+        """Health check endpoint."""
         container = get_container()
         default_provider = "llama" if settings.llama_auto_start else "nvidia"
         llm_health = await container.get_llm_backend(default_provider).health_check()
@@ -168,7 +168,7 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     async def root() -> dict:
-        """Endpoint raiz."""
+        """Root endpoint."""
         return {
             "name": settings.app_name,
             "version": settings.app_version,

@@ -58,7 +58,7 @@ type BrowserState = {
 
 const summaryTab: BrowserTab = {
   id: "summary",
-  title: "Resumo",
+  title: "Summary",
   closeable: false,
 };
 
@@ -348,18 +348,18 @@ export function SessionPanel({
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-glass-border/25 bg-card/80 px-3">
         <PanelRightClose className="h-4 w-4 text-primary" />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-foreground">Painel da Sessão</div>
+          <div className="truncate text-sm font-medium text-foreground">Session Panel</div>
           <div className="truncate text-[11px] text-muted-foreground">
-            {snapshot?.title || (conversationId ? "Sessão ativa" : "Sem conversa")}
+            {snapshot?.title || (conversationId ? "Active session" : "No conversation")}
           </div>
         </div>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="iconSm" aria-label="Fechar painel da sessão" onClick={onClose}>
+            <Button variant="ghost" size="iconSm" aria-label="Close session panel" onClick={onClose}>
               <PanelRightClose className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Fechar</TooltipContent>
+          <TooltipContent>Close</TooltipContent>
         </Tooltip>
       </div>
 
@@ -382,7 +382,7 @@ export function SessionPanel({
             onBrowserRefresh={() => refreshBrowser(activeTab.id)}
           />
         ) : !conversationId ? (
-          <EmptyPanel text="Inicie ou abra uma conversa para ver dados da sessão." />
+          <EmptyPanel text="Start or open a conversation to view session data." />
         ) : panel.isLoading ? (
           <PanelSkeleton />
         ) : panel.error ? (
@@ -424,7 +424,7 @@ function BrowserTabStrip({
   onAdd: () => void;
 }) {
   return (
-    <div className="flex h-11 shrink-0 items-end border-b border-glass-border/25 bg-background/80 px-2 pt-1.5" role="tablist" aria-label="Abas do painel da sessão">
+    <div className="flex h-11 shrink-0 items-end border-b border-glass-border/25 bg-background/80 px-2 pt-1.5" role="tablist" aria-label="Session panel tabs">
       <div className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto">
         {tabs.map((tab) => {
           const active = tab.id === activeTabId;
@@ -447,7 +447,7 @@ function BrowserTabStrip({
               {tab.closeable ? (
                 <span
                   role="button"
-                  aria-label={`Fechar aba ${tab.title}`}
+                  aria-label={`Close tab ${tab.title}`}
                   tabIndex={0}
                   className="grid h-4 w-4 shrink-0 place-items-center rounded text-muted-foreground opacity-0 hover:bg-accent hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
                   onClick={(event) => {
@@ -472,14 +472,14 @@ function BrowserTabStrip({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label="Nova aba do painel"
+              aria-label="New panel tab"
               className="mb-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
             >
               <Plus className="h-3.5 w-3.5" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="right" align="start" sideOffset={8} className="w-48 rounded-xl">
-            <DropdownMenuLabel>Nova aba</DropdownMenuLabel>
+            <DropdownMenuLabel>New tab</DropdownMenuLabel>
             <DropdownMenuItem onClick={onAdd} className="gap-2 rounded-lg">
               <Globe2 className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="min-w-0 flex-1">Browser</span>
@@ -510,10 +510,10 @@ function SummaryContent({
     <div className="space-y-5">
       <MetricBand
         items={[
-          ["Arquivos", snapshot?.changed_files.length ?? 0],
-          ["Fontes", snapshot?.sources.length ?? 0],
+          ["Files", snapshot?.changed_files.length ?? 0],
+          ["Sources", snapshot?.sources.length ?? 0],
           ["Tools", usage.tool_calls.value],
-          ["Planos", usage.plans_created.value],
+          ["Plans", usage.plans_created.value],
         ]}
       />
       <UsageSection usage={usage} />
@@ -564,8 +564,8 @@ function FilesSection({
 }) {
   return (
     <section className="border-t border-glass-border/25 pt-3">
-      <SectionTitle icon={<FilePenLine className="h-3.5 w-3.5" />} title="Arquivos Alterados" />
-      {files.length === 0 ? <EmptyList text="Nenhum arquivo alterado nesta sessão." /> : null}
+      <SectionTitle icon={<FilePenLine className="h-3.5 w-3.5" />} title="Changed Files" />
+      {files.length === 0 ? <EmptyList text="No changed files in this session." /> : null}
       <div className="mt-2 divide-y divide-glass-border/25">
         {files.map((file) => (
           <button
@@ -608,8 +608,8 @@ function SourcesSection({
 }) {
   return (
     <section className="border-t border-glass-border/25 pt-3">
-      <SectionTitle icon={<ExternalLink className="h-3.5 w-3.5" />} title="Fontes" />
-      {sources.length === 0 ? <EmptyList text="Nenhuma fonte registrada." /> : null}
+      <SectionTitle icon={<ExternalLink className="h-3.5 w-3.5" />} title="Sources" />
+      {sources.length === 0 ? <EmptyList text="No sources registered." /> : null}
       <div className="mt-2 divide-y divide-glass-border/25">
         {sources.map((source) => (
           <button
@@ -658,7 +658,7 @@ function ProjectSection({
     return (
       <section className="border-t border-glass-border/25 pt-3">
         <SectionTitle icon={<GitBranch className="h-3.5 w-3.5" />} title="Project Details" />
-        <EmptyList text="Projeto indisponível." />
+        <EmptyList text="Project unavailable." />
       </section>
     );
   }
@@ -667,8 +667,8 @@ function ProjectSection({
       <SectionTitle icon={<GitBranch className="h-3.5 w-3.5" />} title="Project Details" />
       <div className="mt-2 space-y-4">
         <div className="space-y-1 text-xs text-muted-foreground">
-          <div className="truncate">{project.repo?.name_with_owner || "Repositório não detectado"}</div>
-          <div className="truncate">Branch padrão: {project.repo?.default_branch || "N/A"}</div>
+          <div className="truncate">{project.repo?.name_with_owner || "Repository not detected"}</div>
+          <div className="truncate">Default branch: {project.repo?.default_branch || "N/A"}</div>
         </div>
         <ProjectGroup icon={<GitPullRequest className="h-3.5 w-3.5" />} title="Last PR's" items={project.prs} loadingDetailId={loadingDetailId} onOpen={onOpenProjectDetail} />
         <ProjectGroup icon={<GitBranch className="h-3.5 w-3.5" />} title="Branches" items={project.branches} loadingDetailId={loadingDetailId} onOpen={onOpenProjectDetail} />
@@ -701,7 +701,7 @@ function ProjectGroup({
     <div>
       <SectionTitle icon={icon} title={title} />
       <div className="mt-2 divide-y divide-glass-border/25 rounded-xl border border-glass-border/35">
-        {items.length === 0 ? <div className="py-2 text-[11px] text-muted-foreground">Sem dados.</div> : null}
+        {items.length === 0 ? <div className="py-2 text-[11px] text-muted-foreground">No data.</div> : null}
         {items.map((item) => {
           const loading = loadingDetailId === `${item.type}:${item.id}`;
           return (
@@ -754,7 +754,7 @@ function DetailTabContent({
       />
     );
   }
-  if (!tab.detail) return <EmptyPanel text="Aba vazia." />;
+  if (!tab.detail) return <EmptyPanel text="Empty tab." />;
   const detail = tab.detail;
   return (
     <div className="space-y-3">
@@ -763,7 +763,7 @@ function DetailTabContent({
         {detail.subtitle ? <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{detail.subtitle}</div> : null}
         {detail.url ? (
           <a href={detail.url} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
-            Abrir URL
+            Open URL
             <ExternalLink className="h-3 w-3" />
           </a>
         ) : null}
@@ -806,13 +806,13 @@ function BrowserTabContent({
   return (
     <div className="flex min-h-[calc(100vh-170px)] flex-col">
       <div className="-mx-3 -mt-3 flex h-11 shrink-0 items-center gap-1.5 border-b border-glass-border/25 bg-background/70 px-3">
-        <BrowserNavButton label="Voltar" disabled={!canGoBack} onClick={onBack}>
+        <BrowserNavButton label="Back" disabled={!canGoBack} onClick={onBack}>
           {"<"}
         </BrowserNavButton>
-        <BrowserNavButton label="Avançar" disabled={!canGoForward} onClick={onForward}>
+        <BrowserNavButton label="Forward" disabled={!canGoForward} onClick={onForward}>
           {">"}
         </BrowserNavButton>
-        <BrowserNavButton label="Recarregar página" disabled={!canRefresh} onClick={onRefresh}>
+        <BrowserNavButton label="Reload page" disabled={!canRefresh} onClick={onRefresh}>
           <RefreshCw className="h-3.5 w-3.5" />
         </BrowserNavButton>
         <form
@@ -823,9 +823,9 @@ function BrowserTabContent({
           }}
         >
           <input
-            aria-label="Digite sua url"
+            aria-label="Enter URL"
             className="h-8 w-full rounded-full border border-glass-border/35 bg-card/70 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:bg-background"
-            placeholder="digite sua url"
+            placeholder="enter url"
             value={browser.draftUrl}
             onChange={(event) => onDraftChange(event.currentTarget.value)}
           />
@@ -842,7 +842,7 @@ function BrowserTabContent({
         </div>
       ) : (
         <div className="flex min-h-[260px] flex-1 items-center justify-center px-8 text-center text-xs leading-5 text-muted-foreground">
-          Digite uma URL para abrir uma página nesta aba.
+          Enter a URL to open a page in this tab.
         </div>
       )}
     </div>

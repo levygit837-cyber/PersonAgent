@@ -1,4 +1,4 @@
-"""Rotas de chat da API FastAPI."""
+"""FastAPI chat routes."""
 
 import asyncio
 import json
@@ -83,58 +83,58 @@ def resolve_next_step_suggestion_service(
 
 
 class ChatRequest(BaseModel):
-    """Request body para chat completion."""
+    """Request body for chat completion."""
 
-    conversation_id: str | None = Field(default=None, description="ID da conversa existente")
-    message: str = Field(..., min_length=1, description="Mensagem do usuário")
-    system_prompt: str | None = Field(default=None, description="Prompt de sistema")
-    stream: bool = Field(default=True, description="Se deve retornar em streaming")
+    conversation_id: str | None = Field(default=None, description="Existing conversation ID")
+    message: str = Field(..., min_length=1, description="User message")
+    system_prompt: str | None = Field(default=None, description="System prompt")
+    stream: bool = Field(default=True, description="Whether to return a streaming response")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=-1, ge=-1)
     provider: str = Field(
         default="llama",
-        description="Provider de inferência: llama, nvidia, vertex, kimi ou codex",
+        description="Inference provider: llama, nvidia, vertex, kimi, or codex",
     )
-    model: str = Field(default="local-model", description="Modelo a ser usado para inferência")
+    model: str = Field(default="local-model", description="Model to use for inference")
     prompt_mode: str = Field(
         default="auto",
-        description="Modo de system prompt: auto, writing, exploring ou research.",
+        description="System prompt mode: auto, writing, exploring, or research.",
     )
     workspace_root: str | None = Field(
         default=None,
-        description="Workspace local selecionado para ferramentas.",
+        description="Selected local workspace for tools.",
     )
     reasoning_level: str | None = Field(
         default=None,
-        description="Nível de reasoning: low, medium, high, xhigh ou max",
+        description="Reasoning level: low, medium, high, xhigh, or max",
     )
     reasoning_budget_tokens: int | None = Field(
         default=None,
         ge=0,
         le=32768,
-        description="Orçamento de tokens para thinking/reasoning",
+        description="Token budget for thinking/reasoning",
     )
     tools_enabled: bool = Field(
         default=True,
-        description="Se o modelo pode chamar ferramentas locais.",
+        description="Whether the model can call local tools.",
     )
     allowed_tools: list[str] | None = Field(
         default=None,
-        description="Allowlist opcional de ferramentas.",
+        description="Optional tool allowlist.",
     )
     tool_context: dict | None = Field(
         default=None,
-        description="Contexto opcional de ferramentas: cwd e allowed_roots.",
+        description="Optional tool context: cwd and allowed_roots.",
     )
     max_tool_iterations: int | None = Field(
         default=None,
         ge=1,
-        description="Limite de ciclos modelo -> ferramentas -> modelo.",
+        description="Limit for model -> tools -> model cycles.",
     )
 
 
 class ChatResponse(BaseModel):
-    """Response body para chat completion."""
+    """Response body for chat completion."""
 
     conversation_id: str
     message_id: str
@@ -186,35 +186,35 @@ class TeamRunStartRequest(ChatRequest):
 
 
 class PlanDecisionRequest(BaseModel):
-    """Decisão do usuário sobre um plano pendente."""
+    """User decision for a pending plan."""
 
-    conversation_id: str = Field(..., description="ID da conversa")
-    approval_id: str | None = Field(default=None, description="ID da aprovação pendente")
-    feedback: str | None = Field(default=None, description="Feedback opcional do usuário")
+    conversation_id: str = Field(..., description="Conversation ID")
+    approval_id: str | None = Field(default=None, description="Pending approval ID")
+    feedback: str | None = Field(default=None, description="Optional user feedback")
 
 
 class ToolApprovalDecisionRequest(BaseModel):
-    """Decisão do usuário sobre uma ferramenta pendente."""
+    """User decision for a pending tool."""
 
-    conversation_id: str = Field(..., description="ID da conversa")
-    approval_id: str = Field(..., description="ID da aprovação pendente")
+    conversation_id: str = Field(..., description="Conversation ID")
+    approval_id: str = Field(..., description="Pending approval ID")
 
 
 class UserQuestionResponseRequest(BaseModel):
-    """Resposta do usuário para AskUserQuestion."""
+    """User answer for AskUserQuestion."""
 
-    conversation_id: str = Field(..., description="ID da conversa")
-    approval_id: str = Field(..., description="ID da pergunta pendente")
-    answers: dict[str, Any] | list[Any] | str = Field(..., description="Respostas do usuário")
+    conversation_id: str = Field(..., description="Conversation ID")
+    approval_id: str = Field(..., description="Pending question ID")
+    answers: dict[str, Any] | list[Any] | str = Field(..., description="User answers")
 
 
 def encode_sse(data: dict) -> str:
-    """Codifica um payload JSON como evento SSE."""
+    """Encode a JSON payload as an SSE event."""
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
-    """Dependency para obter sessão de banco de dados."""
+    """Dependency that provides a database session."""
     session = AsyncSessionLocal()
     try:
         yield session
@@ -226,7 +226,7 @@ DB_SESSION_DEPENDENCY = Depends(get_db)
 
 
 def resolve_reasoning_budget(request: ChatRequest) -> int | None:
-    """Resolve o orçamento de reasoning a partir do nível ou valor explícito."""
+    """Resolve the reasoning budget from the level or explicit value."""
     if request.reasoning_budget_tokens is not None:
         return request.reasoning_budget_tokens
 
@@ -237,24 +237,24 @@ def resolve_reasoning_budget(request: ChatRequest) -> int | None:
     if level not in REASONING_BUDGETS:
         raise HTTPException(
             status_code=400,
-            detail=("reasoning_level inválido. Use low, medium, high, xhigh ou max."),
+            detail=("Invalid reasoning_level. Use low, medium, high, xhigh, or max."),
         )
     return REASONING_BUDGETS[level]
 
 
 def resolve_provider(provider: str) -> str:
-    """Normaliza e valida o provider de inferência."""
+    """Normalize and validate the inference provider."""
     normalized = provider.strip().lower()
     if normalized not in {"llama", "nvidia", "vertex", "kimi", "codex"}:
         raise HTTPException(
             status_code=400,
-            detail="provider inválido. Use llama, nvidia, vertex, kimi ou codex.",
+            detail="Invalid provider. Use llama, nvidia, vertex, kimi, or codex.",
         )
     return normalized
 
 
 def resolve_model(provider: str, model: str) -> str:
-    """Resolve modelo default por provider sem quebrar o default local existente."""
+    """Resolve the default model per provider without breaking the existing local default."""
     if provider == "nvidia" and (not model or model == "local-model"):
         return get_container().settings.nvidia_default_model
     if provider == "vertex" and (not model or model == "local-model"):
@@ -267,7 +267,7 @@ def resolve_model(provider: str, model: str) -> str:
 
 
 def resolve_context_window_tokens(container: DIContainer, provider: str) -> int:
-    """Resolve janela de contexto usada para orçamento/compactação por provider."""
+    """Resolve the context window used for provider-specific budgeting/compaction."""
     if provider == "kimi":
         return container.settings.kimi_context_window
     if provider == "codex":
@@ -276,7 +276,7 @@ def resolve_context_window_tokens(container: DIContainer, provider: str) -> int:
 
 
 def resolve_default_output_tokens(container: DIContainer, provider: str) -> int:
-    """Resolve saída default por provider."""
+    """Resolve the default output budget per provider."""
     if provider == "nvidia":
         return container.settings.nvidia_max_tokens
     if provider == "vertex":
@@ -289,18 +289,18 @@ def resolve_default_output_tokens(container: DIContainer, provider: str) -> int:
 
 
 def resolve_prompt_mode(prompt_mode: str | None) -> str:
-    """Normaliza e valida o modo de prompt."""
+    """Normalize and validate the prompt mode."""
     normalized = (prompt_mode or "auto").strip().lower()
     if normalized not in {"auto", "writing", "exploring", "research"}:
         raise HTTPException(
             status_code=400,
-            detail="prompt_mode inválido. Use auto, writing, exploring ou research.",
+            detail="Invalid prompt_mode. Use auto, writing, exploring, or research.",
         )
     return normalized
 
 
 def resolve_tool_context(request: ChatRequest) -> dict:
-    """Normaliza o contexto de ferramentas vindo do cliente."""
+    """Normalize the tool context received from the client."""
     tool_context = dict(request.tool_context or {})
     if request.workspace_root:
         tool_context.setdefault("workspace_root", request.workspace_root)
@@ -310,13 +310,13 @@ def resolve_tool_context(request: ChatRequest) -> dict:
 
 
 def resolve_context_workspace_root(request: ChatRequest) -> str:
-    """Resolve o workspace que deve alimentar contexto e prompt."""
+    """Resolve the workspace that should feed context and prompts."""
     tool_context = resolve_tool_context(request)
     return resolve_context_workspace_root_from_tool_context(tool_context)
 
 
 def resolve_context_workspace_root_from_tool_context(tool_context: dict[str, Any]) -> str:
-    """Resolve o workspace para fluxos que já têm tool_context persistido."""
+    """Resolve the workspace for flows that already have persisted tool_context."""
     workspace_root = tool_context.get("workspace_root")
     if isinstance(workspace_root, str) and workspace_root.strip():
         return workspace_root
@@ -342,10 +342,10 @@ async def _load_conversation_for_decision(
     try:
         parsed_id = UUID(conversation_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="conversation_id inválido.") from exc
+        raise HTTPException(status_code=400, detail="Invalid conversation_id.") from exc
     conversation = await conv_repo.get_by_id(parsed_id)
     if conversation is None:
-        raise HTTPException(status_code=404, detail="Conversa não encontrada.")
+        raise HTTPException(status_code=404, detail="Conversation not found.")
     return conversation, conv_repo
 
 
@@ -355,39 +355,39 @@ def _require_plan_approval(
     request: PlanDecisionRequest,
 ) -> dict[str, Any]:
     if state.get("status") != "awaiting_approval":
-        raise HTTPException(status_code=409, detail="Não há plano aguardando aprovação.")
+        raise HTTPException(status_code=409, detail="There is no plan awaiting approval.")
     if request.approval_id and state.get("approval_id") != request.approval_id:
         raise HTTPException(
-            status_code=409, detail="A aprovação do plano não corresponde ao estado atual."
+            status_code=409, detail="The plan approval does not match the current state."
         )
     if not state.get("approval_id"):
-        raise HTTPException(status_code=409, detail="Plano pendente sem approval_id.")
+        raise HTTPException(status_code=409, detail="Pending plan has no approval_id.")
     return state
 
 
 def _require_tool_approval(metadata: dict[str, Any], approval_id: str) -> dict[str, Any]:
     pending = metadata.get(PENDING_TOOL_APPROVAL_KEY)
     if not isinstance(pending, dict):
-        raise HTTPException(status_code=409, detail="Não há ferramenta aguardando aprovação.")
+        raise HTTPException(status_code=409, detail="There is no tool awaiting approval.")
     if pending.get("approval_id") != approval_id:
         raise HTTPException(
-            status_code=409, detail="A aprovação da ferramenta não corresponde ao estado atual."
+            status_code=409, detail="The tool approval does not match the current state."
         )
     if pending.get("status") != "awaiting_approval":
-        raise HTTPException(status_code=409, detail="A ferramenta não está aguardando aprovação.")
+        raise HTTPException(status_code=409, detail="The tool is not awaiting approval.")
     return dict(pending)
 
 
 def _require_user_question(metadata: dict[str, Any], approval_id: str) -> dict[str, Any]:
     pending = metadata.get(PENDING_USER_QUESTION_KEY)
     if not isinstance(pending, dict):
-        raise HTTPException(status_code=409, detail="Não há pergunta aguardando resposta.")
+        raise HTTPException(status_code=409, detail="There is no question awaiting an answer.")
     if pending.get("approval_id") != approval_id:
         raise HTTPException(
-            status_code=409, detail="A pergunta pendente não corresponde ao estado atual."
+            status_code=409, detail="The pending question does not match the current state."
         )
     if pending.get("status") != "awaiting_answer":
-        raise HTTPException(status_code=409, detail="A pergunta não está aguardando resposta.")
+        raise HTTPException(status_code=409, detail="The question is not awaiting an answer.")
     return dict(pending)
 
 
@@ -502,7 +502,7 @@ async def _approve_pending_tool_call(
     tool = container.get_tool_registry().get(str(pending["tool_name"]))
     if tool is None:
         raise HTTPException(
-            status_code=404, detail=f"Ferramenta não encontrada: {pending['tool_name']}"
+            status_code=404, detail=f"Tool not found: {pending['tool_name']}"
         )
 
     context = use_case._build_tool_context(resume_request, conversation)
@@ -510,7 +510,7 @@ async def _approve_pending_tool_call(
     validation = await tool.validate_input(arguments, context)
     if validation is not None and not validation.allowed:
         raise HTTPException(
-            status_code=400, detail=validation.message or "Entrada da ferramenta inválida."
+            status_code=400, detail=validation.message or "Invalid tool input."
         )
 
     call = ToolCall(
@@ -611,18 +611,18 @@ async def list_teams() -> dict[str, Any]:
 
 @router.get("/models")
 async def list_models(
-    provider: str = Query(default="llama", description="Provider: llama, nvidia, vertex, kimi ou codex"),
-    capability: str | None = Query(default=None, description="Filtro de capability"),
-    refresh: bool = Query(default=False, description="Ignora cache do catálogo"),
+    provider: str = Query(default="llama", description="Provider: llama, nvidia, vertex, kimi, or codex"),
+    capability: str | None = Query(default=None, description="Capability filter"),
+    refresh: bool = Query(default=False, description="Ignore the catalog cache"),
 ) -> dict:
-    """Lista os modelos disponíveis no backend LLM."""
+    """List the models available from the LLM backend."""
     container = get_container()
     resolved_provider = resolve_provider(provider)
     llm_backend = container.get_llm_backend(resolved_provider)
     if resolved_provider in {"nvidia", "vertex", "kimi", "codex"}:
         list_provider_models = getattr(llm_backend, "list_models", None)
         if list_provider_models is None:
-            raise HTTPException(status_code=500, detail=f"{resolved_provider} provider sem catálogo")
+            raise HTTPException(status_code=500, detail=f"{resolved_provider} provider has no catalog")
         return await list_provider_models(capability=capability, refresh=refresh)
 
     models_info = await llm_backend.get_model_info()
@@ -631,7 +631,7 @@ async def list_models(
 
 @router.get("/auth/codex/status")
 async def codex_auth_status() -> dict[str, Any]:
-    """Retorna estado de autenticação do Codex CLI sem expor tokens."""
+    """Return Codex CLI authentication state without exposing tokens."""
     container = get_container()
     llm_backend = container.get_llm_backend("codex")
     auth_status = getattr(llm_backend, "auth_status", None)
@@ -720,7 +720,7 @@ async def prompt_preview(
     try:
         conversation_id = UUID(request.conversation_id) if request.conversation_id else None
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="conversation_id inválido.") from exc
+        raise HTTPException(status_code=400, detail="Invalid conversation_id.") from exc
     dto = ChatRequestDTO(
         conversation_id=conversation_id,
         message=request.message,
@@ -752,7 +752,7 @@ async def chat_completion(
     request: ChatRequest,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> ChatResponse:
-    """Envia uma mensagem e recebe uma resposta completa (não-streaming)."""
+    """Send a message and receive a complete non-streaming response."""
     container = get_container()
     provider = resolve_provider(request.provider)
     model = resolve_model(provider, request.model)
@@ -840,7 +840,7 @@ async def chat_completion_stream(
     request: ChatRequest,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> StreamingResponse:
-    """Envia uma mensagem e recebe a resposta em streaming (Server-Sent Events)."""
+    """Send a message and receive the response as Server-Sent Events."""
     container = get_container()
     provider = resolve_provider(request.provider)
     model = resolve_model(provider, request.model)
@@ -935,7 +935,7 @@ async def chat_completion_stream(
             yield encode_sse(
                 {
                     "event": "error",
-                    "error": f"Erro inesperado no stream de chat: {exc}",
+                    "error": f"Unexpected error in chat stream: {exc}",
                     "status": 500,
                 }
             )
@@ -958,7 +958,7 @@ async def approve_plan(
     request: PlanDecisionRequest,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> dict[str, Any]:
-    """Aprova um plano pendente e retorna a mensagem de execução a ser injetada."""
+    """Approve a pending plan and return the execution message to inject."""
 
     conversation, conv_repo = await _load_conversation_for_decision(
         request.conversation_id, session
@@ -968,7 +968,7 @@ async def approve_plan(
     )
     plan_content = str(state.get("plan_content") or "").strip()
     if not plan_content:
-        raise HTTPException(status_code=400, detail="Plano pendente sem conteúdo renderizável.")
+        raise HTTPException(status_code=400, detail="Pending plan has no renderable content.")
 
     injected_message = f"Implement the following plan:\n\n{plan_content}"
     feedback = (request.feedback or "").strip()
@@ -999,7 +999,7 @@ async def continue_plan(
     request: PlanDecisionRequest,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> dict[str, Any]:
-    """Mantém o PlanMode ativo para revisão do plano."""
+    """Keep PlanMode active for plan revision."""
 
     conversation, conv_repo = await _load_conversation_for_decision(
         request.conversation_id, session
@@ -1036,7 +1036,7 @@ async def cancel_plan(
     request: PlanDecisionRequest,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> dict[str, Any]:
-    """Cancela o PlanMode sem executar o plano."""
+    """Cancel PlanMode without executing the plan."""
 
     conversation, conv_repo = await _load_conversation_for_decision(
         request.conversation_id, session
@@ -1044,7 +1044,7 @@ async def cancel_plan(
     state = normalize_plan_state(conversation.metadata)
     if request.approval_id and state.get("approval_id") != request.approval_id:
         raise HTTPException(
-            status_code=409, detail="A aprovação do plano não corresponde ao estado atual."
+            status_code=409, detail="The plan approval does not match the current state."
         )
     state.update(
         {
@@ -1066,7 +1066,7 @@ async def approve_tool(
     request: ToolApprovalDecisionRequest,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> dict[str, Any]:
-    """Aprova e executa uma ferramenta previamente pausada por permissão."""
+    """Approve and execute a tool previously paused by permission handling."""
 
     conversation, conv_repo = await _load_conversation_for_decision(
         request.conversation_id, session
@@ -1093,7 +1093,7 @@ async def approve_tool_stream(
     request: ToolApprovalDecisionRequest,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> StreamingResponse:
-    """Aprova uma ferramenta, persiste o tool_result e retoma o modelo via SSE."""
+    """Approve a tool, persist the tool_result, and resume the model over SSE."""
 
     async def event_generator() -> AsyncIterator[str]:
         try:
@@ -1165,7 +1165,7 @@ async def approve_tool_stream(
             yield encode_sse(
                 {
                     "event": "error",
-                    "error": f"Erro inesperado ao aprovar ferramenta: {exc}",
+                    "error": f"Unexpected error while approving tool: {exc}",
                     "status": 500,
                 }
             )
@@ -1188,7 +1188,7 @@ async def reject_tool(
     request: ToolApprovalDecisionRequest,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> dict[str, Any]:
-    """Rejeita uma ferramenta pendente."""
+    """Reject a pending tool."""
 
     conversation, conv_repo = await _load_conversation_for_decision(
         request.conversation_id, session
@@ -1226,7 +1226,7 @@ async def answer_user_question_stream(
     request: UserQuestionResponseRequest,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> StreamingResponse:
-    """Persiste uma resposta de AskUserQuestion e retoma o modelo via SSE."""
+    """Persist an AskUserQuestion answer and resume the model over SSE."""
 
     async def event_generator() -> AsyncIterator[str]:
         try:
@@ -1297,7 +1297,7 @@ async def answer_user_question_stream(
             yield encode_sse(
                 {
                     "event": "error",
-                    "error": f"Erro inesperado ao responder pergunta: {exc}",
+                    "error": f"Unexpected error while answering question: {exc}",
                     "status": 500,
                 }
             )

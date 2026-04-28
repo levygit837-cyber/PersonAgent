@@ -6,6 +6,7 @@ from personagent.domain.memory.services.operational_memory import (
     OperationalMemoryFormatter,
     OperationalMemoryRedactor,
 )
+from personagent.infrastructure.persistence.operational_memory_repository import _excerpt
 
 
 def test_redactor_removes_known_secret_shapes() -> None:
@@ -64,3 +65,17 @@ def test_formatter_outputs_relevant_execution_memory_section() -> None:
     assert "src/agents/orchestrator.ts" in formatted
     assert "Source ids: chunk-1" in formatted
 
+
+def test_repository_excerpt_prefers_query_context_inside_long_chunk() -> None:
+    text = (
+        "filler " * 120
+        + "LIVE_EARLY_CANARY TenantBoundary: isolate tenant_id, project_slug, "
+        "workspace_root, and conversation_id before recall injection. "
+        + "tail " * 120
+    )
+
+    excerpt = _excerpt(text, query_terms={"tenant", "project_slug", "conversation_id"})
+
+    assert "LIVE_EARLY_CANARY" in excerpt
+    assert "conversation_id" in excerpt
+    assert len(excerpt) <= 426

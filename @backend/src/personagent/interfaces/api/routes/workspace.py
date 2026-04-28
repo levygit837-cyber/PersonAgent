@@ -1,4 +1,4 @@
-"""Rotas para navegação de workspace no filesystem."""
+"""Routes for workspace filesystem navigation."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ async def list_workspace_files(
     path: str = Query(..., description="Absolute path to the directory to list"),
     workspace_root: str | None = Query(None, description="Optional workspace root to allow browsing outside default tool roots"),
 ) -> list[dict[str, str | bool]]:
-    """Lista arquivos e diretórios de um caminho dentro dos roots permitidos."""
+    """List files and directories for a path inside allowed roots."""
     try:
         resolved = _resolve_within_allowed_roots(path, workspace_root)
     except ValueError as exc:
@@ -80,7 +80,7 @@ async def read_workspace_file(
     path: str = Query(..., description="Absolute path to the file to read"),
     workspace_root: str | None = Query(None, description="Optional workspace root to allow browsing outside default tool roots"),
 ) -> dict[str, str]:
-    """Lê um arquivo de texto dentro do workspace ativo."""
+    """Read a text file inside the active workspace."""
     try:
         resolved = _resolve_within_allowed_roots(path, workspace_root)
     except ValueError as exc:

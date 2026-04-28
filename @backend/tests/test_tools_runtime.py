@@ -305,11 +305,11 @@ async def test_chat_completion_executes_tool_loop(tmp_path):
         tool_runtime_config=config,
     )
 
-    response = await use_case.execute(ChatRequestDTO(message="Leia notes.txt", tools_enabled=True))
+    response = await use_case.execute(ChatRequestDTO(message="Read notes.txt", tools_enabled=True))
 
     conversation = await repo.get_by_id(response.conversation_id)
     assert conversation is not None
-    assert response.content == "O arquivo contém alpha e beta."
+    assert response.content == "The file contains alpha and beta."
     assert [message.role.value for message in conversation.messages] == [
         "user",
         "assistant",
@@ -695,7 +695,7 @@ async def test_prompt_preview_returns_final_prompt_metrics_without_completion(tm
 
     preview = await use_case.preview_prompt(
         ChatRequestDTO(
-            message="Implemente e valide a mudança",
+            message="Implement and validate the change",
             provider="nvidia",
             model="hosted-model",
             prompt_mode="writing",
@@ -734,7 +734,7 @@ async def test_chat_prompt_includes_deferred_tool_prompts(tmp_path):
         ),
     )
 
-    await use_case.execute(ChatRequestDTO(message="Analise skills disponíveis", tools_enabled=True))
+    await use_case.execute(ChatRequestDTO(message="Analyze available skills", tools_enabled=True))
 
     messages = llm.calls[0]["messages"]
     assert "## Skill" in messages[0]["content"]
@@ -907,7 +907,7 @@ class FakeToolCallingLLM(LLMBackendRepository):
                     }
                 ],
             )
-        return InferenceResult(content="O arquivo contém alpha e beta.")
+        return InferenceResult(content="The file contains alpha and beta.")
 
     async def chat_completion_stream(self, *args, **kwargs):
         yield StreamChunk(content="unused")

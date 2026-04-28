@@ -34,7 +34,7 @@ export function PlanApprovalPanel({ approval }: { approval: PlanApprovalUi }) {
 
       <Textarea
         className="mt-3 min-h-16"
-        placeholder="Feedback opcional"
+        placeholder="Optional feedback"
         value={feedback}
         onChange={(event) => setFeedback(event.target.value)}
         disabled={disabled}
@@ -43,7 +43,7 @@ export function PlanApprovalPanel({ approval }: { approval: PlanApprovalUi }) {
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={() => void proceed(feedback)} disabled={disabled}>
           <Check className="h-3.5 w-3.5" />
-          Proceder
+          Proceed
         </Button>
         <Button
           size="sm"
@@ -52,11 +52,11 @@ export function PlanApprovalPanel({ approval }: { approval: PlanApprovalUi }) {
           disabled={disabled}
         >
           <PencilLine className="h-3.5 w-3.5" />
-          Continuar planejando
+          Continue planning
         </Button>
         <Button size="sm" variant="ghost" onClick={() => void cancel(feedback)} disabled={disabled}>
           <X className="h-3.5 w-3.5" />
-          Cancelar
+          Cancel
         </Button>
       </div>
     </section>
@@ -88,11 +88,11 @@ export function ToolApprovalPanel({ approval }: { approval: ToolApprovalUi }) {
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={() => void approve()} disabled={disabled}>
           <Check className="h-3.5 w-3.5" />
-          Aprovar
+          Approve
         </Button>
         <Button size="sm" variant="ghost" onClick={() => void reject()} disabled={disabled}>
           <X className="h-3.5 w-3.5" />
-          Rejeitar
+          Reject
         </Button>
       </div>
     </section>
