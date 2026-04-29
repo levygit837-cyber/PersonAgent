@@ -99,6 +99,8 @@ const curatedHostedModels: ModelOption[] = [
   { id: "deepseek/deepseek-v4-pro-free", provider: "zenmux", label: "DeepSeek V4 Pro Free", group: ZENMUX_GROUP, contextLength: 1000000 },
   { id: "deepseek-ai/deepseek-v4-flash", provider: "nvidia", label: "DeepSeek V4 Flash", group: DEEPSEEK_NVIDIA_GROUP },
   { id: "deepseek-ai/deepseek-v4-pro", provider: "nvidia", label: "DeepSeek V4 Pro", group: DEEPSEEK_NVIDIA_GROUP },
+  { id: "mistralai/mistral-medium-3.5-128b", provider: "nvidia", label: "Mistral Medium 3.5 128B", group: "Mistral" },
+  { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", provider: "nvidia", label: "Nemotron 3 Nano Omni 30B", group: "NVIDIA" },
   { id: "gemini-3.1-pro-preview", provider: "vertex", label: "Gemini 3.1 Pro", group: "Google Vertex" },
   { id: "gemini-3.1-pro-preview-customtools", provider: "vertex", label: "Gemini 3.1 Pro Custom Tools", group: "Google Vertex" },
   { id: "gemini-3.1-flash-lite-preview", provider: "vertex", label: "Gemini 3.1 Flash-Lite", group: "Google Vertex" },
@@ -1657,6 +1659,8 @@ function formatModelLabel(value: string) {
     "deepseek-ai/deepseek-v4-flash": "DeepSeek V4 Flash",
     "deepseek-ai/deepseek-v4-pro": "DeepSeek V4 Pro",
     "nvidia/nemotron-3-nano-30b-a3b": "Nemotron 3 Nano 30B",
+    "mistralai/mistral-medium-3.5-128b": "Mistral Medium 3.5 128B",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": "Nemotron 3 Nano Omni 30B",
     "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
     "gemini-3.1-pro-preview-customtools": "Gemini 3.1 Pro Custom Tools",
     "gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash-Lite",
@@ -1760,17 +1764,17 @@ function ContextWindowIndicator() {
     modelOptions.find((item) => item.provider === provider && item.id === selectedModelId) ??
     modelOptions.find((item) => item.id === selectedModelId);
 
-  const contextLength = selectedOption?.contextLength ?? 131072; // 128K default
+  const contextLength = latestContextWindowEstimate(messages) ?? selectedOption?.contextLength ?? 131072; // 128K default
 
   const usedTokens = useMemo(() => {
-    const fromMessages = messages.reduce((acc, msg) => {
-      const contentTokens = msg.content ? Math.max(1, Math.ceil(msg.content.length / 4)) : 0;
-      const reasoningTokens = msg.reasoning ? Math.max(1, Math.ceil(msg.reasoning.length / 4)) : 0;
-      return acc + contentTokens + reasoningTokens;
-    }, 0);
-    const fromLive = liveSessionUsage.agent_output_tokens.value + liveSessionUsage.thinking_output_tokens.value;
-    // Use the larger estimate to account for streaming content not yet flushed into messages
-    return Math.max(fromMessages, fromLive);
+    const fromMessages = estimateConversationContextTokens(messages);
+    const promptContext = Math.max(
+      latestContextTokenEstimate(messages),
+      liveSessionUsage.context_tokens.value,
+    );
+    const liveGenerated =
+      liveSessionUsage.agent_output_tokens.value + liveSessionUsage.thinking_output_tokens.value;
+    return Math.max(fromMessages, promptContext + liveGenerated);
   }, [messages, liveSessionUsage]);
 
   const totalK = Math.round(contextLength / 1024);
@@ -1830,6 +1834,87 @@ function ContextWindowIndicator() {
       </Tooltip>
     </TooltipProvider>
   );
+}
+
+function latestContextTokenEstimate(messages: ChatMessageUi[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const metadata = messages[index].metadata;
+    const value =
+      numberFromUnknown(metadata?.context_tokens_after_turn_estimated) ??
+      numberFromUnknown(metadata?.context_tokens_estimated) ??
+      numberFromUnknown(metadata?.prompt_tokens_estimated);
+    if (value !== undefined) return value;
+  }
+  return 0;
+}
+
+function latestContextWindowEstimate(messages: ChatMessageUi[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const value = numberFromUnknown(messages[index].metadata?.context_window_tokens);
+    if (value !== undefined && value > 0) return value;
+  }
+  return undefined;
+}
+
+function estimateConversationContextTokens(messages: ChatMessageUi[]) {
+  return messages.reduce((total, message) => {
+    const roleTokens = estimateTextTokens(message.role) + 4;
+    const contentTokens = estimateTextTokens(message.content);
+    const reasoningTokens = estimateTextTokens(message.reasoning);
+    const toolTokens = message.toolBlocks.reduce(
+      (sum, block) =>
+        sum +
+        estimateTextTokens(block.name) +
+        estimateTextTokens(block.path) +
+        estimateTextTokens(block.content) +
+        estimateUnknownTokens(block.data),
+      0,
+    );
+    const attachmentTokens = Array.isArray(message.metadata?.context_attachments)
+      ? message.metadata.context_attachments.reduce(
+          (sum, item) => sum + estimateAttachmentTokens(item),
+          0,
+        )
+      : 0;
+    return total + roleTokens + contentTokens + reasoningTokens + toolTokens + attachmentTokens;
+  }, 0);
+}
+
+function estimateAttachmentTokens(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
+  const attachment = value as ContextAttachment;
+  const explicitText =
+    estimateTextTokens(attachment.text) +
+    estimateTextTokens(attachment.content) +
+    estimateTextTokens(attachment.content_preview) +
+    estimateTextTokens(attachment.quote);
+  const charCount = numberFromUnknown(attachment.content_char_count);
+  return explicitText || (charCount ? Math.max(1, Math.ceil(charCount / 4)) : estimateUnknownTokens(attachment));
+}
+
+function estimateUnknownTokens(value: unknown) {
+  if (value === undefined || value === null) return 0;
+  if (typeof value === "string") return estimateTextTokens(value);
+  if (typeof value === "number" || typeof value === "boolean") return estimateTextTokens(String(value));
+  try {
+    return estimateTextTokens(JSON.stringify(value));
+  } catch {
+    return 0;
+  }
+}
+
+function estimateTextTokens(value: unknown) {
+  if (typeof value !== "string" || value.length === 0) return 0;
+  return Math.max(1, Math.ceil(value.length / 4));
+}
+
+function numberFromUnknown(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
 }
 
 function formatVendorLabel(value: string) {

@@ -1469,6 +1469,7 @@ function SummaryContent({
 
 function UsageSection({ usage }: { usage: SessionUsage }) {
   const rows: Array<[string, SessionUsageMetric]> = [
+    ["Context Tokens", usage.context_tokens],
     ["Agent Output Tokens", usage.agent_output_tokens],
     ["Thinking Output Tokens", usage.thinking_output_tokens],
     ["Tool Calls", usage.tool_calls],
@@ -2805,6 +2806,15 @@ function mergeUsage(snapshot: SessionUsage | undefined, live: SessionUsage): Ses
   const base = snapshot ?? emptySessionUsage();
   const next = emptySessionUsage();
   for (const key of Object.keys(next) as Array<keyof SessionUsage>) {
+    if (key === "context_tokens") {
+      const snapshotValue = base[key]?.value ?? 0;
+      const liveValue = live[key]?.value ?? 0;
+      next[key] = {
+        value: Math.max(snapshotValue, liveValue),
+        estimated: Boolean(base[key]?.estimated || live[key]?.estimated),
+      };
+      continue;
+    }
     next[key] = {
       value: (base[key]?.value ?? 0) + (live[key]?.value ?? 0),
       estimated: Boolean(base[key]?.estimated || live[key]?.estimated),

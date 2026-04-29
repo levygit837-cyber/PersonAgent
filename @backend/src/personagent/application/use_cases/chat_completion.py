@@ -442,7 +442,7 @@ class ChatCompletionUseCase:
         try:
             iteration = 0
             executed_tools = False
-            prompt_context_emitted = False
+            last_prompt_context_metadata: dict[str, Any] = {}
             while True:
                 messages, context_metadata = await self._prepare_messages_for_llm(
                     conversation,
@@ -450,17 +450,17 @@ class ChatCompletionUseCase:
                     prompt_package,
                     tools,
                 )
-                if not prompt_context_emitted:
-                    yield StreamChunk(
-                        metadata={
-                            "event": "prompt_context",
-                            **context_metadata,
-                        }
-                    )
-                    prompt_context_emitted = True
+                last_prompt_context_metadata = context_metadata
+                yield StreamChunk(
+                    metadata={
+                        "event": "prompt_context",
+                        **context_metadata,
+                    }
+                )
                 assistant_state = _AssistantStreamState(
                     model=request.model,
                     provider=request.provider,
+                    metadata=_context_usage_metadata(context_metadata),
                 )
 
                 async for forwarded_chunk in self._stream_assistant_pass(
@@ -554,6 +554,8 @@ class ChatCompletionUseCase:
                             "model": assistant_state.model,
                             "provider": assistant_state.provider,
                             "images": [image.to_dict() for image in assistant_state.images],
+                            **_context_usage_metadata(context_metadata),
+                            **_context_after_turn_metadata(context_metadata, assistant_state),
                             **assistant_state.metadata,
                         },
                     )
@@ -681,6 +683,17 @@ class ChatCompletionUseCase:
 
         await self._refresh_session_title(conversation, was_empty=was_empty)
 
+        saved_context_metadata = _context_usage_metadata(last_prompt_context_metadata)
+        if last_assistant is not None:
+            saved_context_metadata.update(
+                _context_usage_metadata(last_assistant.metadata or {})
+            )
+            after_turn_tokens = _optional_int(
+                (last_assistant.metadata or {}).get("context_tokens_after_turn_estimated")
+            )
+            if after_turn_tokens is not None:
+                saved_context_metadata["context_tokens_after_turn_estimated"] = after_turn_tokens
+
         yield StreamChunk(
             metadata={
                 "event": "conversation_saved",
@@ -691,6 +704,7 @@ class ChatCompletionUseCase:
                 "model": final_model,
                 "provider": final_provider,
                 "next_step_suggestion": next_step_suggestion,
+                **saved_context_metadata,
             }
         )
 
@@ -984,6 +998,7 @@ class ChatCompletionUseCase:
             reasoning_level=request.reasoning_level,
             reasoning_budget_tokens=request.reasoning_budget_tokens,
         ):
+            chunk = self._normalize_provider_stream_chunk(request, state, chunk)
             chunk_metadata = {
                 "provider": request.provider,
                 "model": request.model,
@@ -1006,7 +1021,7 @@ class ChatCompletionUseCase:
                 {
                     key: value
                     for key, value in chunk_metadata.items()
-                    if key.startswith(("vertex_", "kimi_", "zenmux_"))
+                    if key.startswith(("vertex_", "kimi_", "zenmux_", "deepseek_"))
                 }
             )
             if chunk.finish_reason:
@@ -1042,6 +1057,32 @@ class ChatCompletionUseCase:
                     is_thinking=chunk.is_thinking,
                     metadata=chunk_metadata,
                 )
+
+    def _normalize_provider_stream_chunk(
+        self,
+        request: ChatRequestDTO,
+        state: _AssistantStreamState,
+        chunk: StreamChunk,
+    ) -> StreamChunk:
+        if (
+            request.provider != "deepseek"
+            or not state.content
+            or not chunk.reasoning_content
+            or chunk.content
+            or chunk.tool_calls
+            or chunk.images
+        ):
+            return chunk
+        return replace(
+            chunk,
+            content=chunk.reasoning_content,
+            reasoning_content="",
+            is_thinking=False,
+            metadata={
+                **chunk.metadata,
+                "deepseek_reasoning_rerouted_to_content": True,
+            },
+        )
 
     def _messages_with_final_answer_reminder(
         self,
@@ -2275,6 +2316,68 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+_CONTEXT_USAGE_METADATA_KEYS = (
+    "context_tokens_estimated",
+    "context_window_tokens",
+    "context_compacted",
+    "prompt_tokens_estimated",
+)
+
+
+def _context_usage_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: metadata[key]
+        for key in _CONTEXT_USAGE_METADATA_KEYS
+        if metadata.get(key) is not None
+    }
+
+
+def _context_after_turn_metadata(
+    context_metadata: dict[str, Any],
+    state: _AssistantStreamState,
+) -> dict[str, Any]:
+    total_tokens = _usage_int(
+        state.usage,
+        ("total_tokens", "totalTokenCount", "total_token_count"),
+    )
+    if total_tokens is not None:
+        return {"context_tokens_after_turn_estimated": total_tokens}
+
+    base_tokens = _optional_int(context_metadata.get("context_tokens_estimated"))
+    if base_tokens is None:
+        return {}
+
+    output_tokens = _usage_int(
+        state.usage,
+        ("completion_tokens", "output_tokens", "candidatesTokenCount", "candidates_token_count"),
+    )
+    if output_tokens is None:
+        output_text = state.content + state.reasoning_content
+        output_tokens = estimate_text_tokens(output_text)
+        if state.tool_calls:
+            output_tokens += estimate_text_tokens(json.dumps(state.tool_calls, ensure_ascii=False))
+    return {"context_tokens_after_turn_estimated": base_tokens + max(0, output_tokens)}
+
+
+def _usage_int(usage: dict[str, int] | None, keys: tuple[str, ...]) -> int | None:
+    if not isinstance(usage, dict):
+        return None
+    for key in keys:
+        parsed = _optional_int(usage.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        if value is None or value == "-":
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _apply_workspace_metadata(conversation: Conversation, tool_context: dict[str, Any] | None) -> None:

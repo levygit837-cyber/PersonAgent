@@ -487,6 +487,11 @@ export interface StreamChunk {
   model?: string;
   provider?: string;
   usage?: Record<string, unknown>;
+  context_tokens_estimated?: number;
+  context_tokens_after_turn_estimated?: number;
+  context_window_tokens?: number;
+  context_compacted?: boolean;
+  prompt_tokens_estimated?: number;
   images?: GeneratedImage[];
   is_thinking?: boolean;
   error?: string;
@@ -513,6 +518,7 @@ export interface SessionUsageMetric {
 }
 
 export interface SessionUsage {
+  context_tokens: SessionUsageMetric;
   agent_output_tokens: SessionUsageMetric;
   thinking_output_tokens: SessionUsageMetric;
   tool_calls: SessionUsageMetric;
@@ -684,6 +690,7 @@ export interface ChatMessageUi {
 
 export function emptySessionUsage(): SessionUsage {
   return {
+    context_tokens: { value: 0, estimated: false },
     agent_output_tokens: { value: 0, estimated: false },
     thinking_output_tokens: { value: 0, estimated: false },
     tool_calls: { value: 0, estimated: false },

@@ -51,6 +51,7 @@ KNOWN_REASONING_CHAT_MODELS = {
     "deepseek-ai/deepseek-v3.1-terminus",
     # NVIDIA Nemotron models
     "nvidia/nemotron-3-nano-30b-a3b",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
     "nvidia/llama-3.3-nemotron-super-49b-v1.5",
     "nvidia/nemotron-4-340b-instruct",
     "nvidia/nemotron-4-340b-reward",
@@ -61,10 +62,11 @@ KNOWN_REASONING_CHAT_MODELS = {
     "moonshotai/kimi-k2-instruct-0905",
     "moonshotai/kimi-k2-thinking",
     "moonshotai/kimi-k2.5",
-    # Mistral Large models (675B params)
+    # Mistral models
     "mistralai/mistral-large-3-675b-instruct-2512",
     "mistralai/mistral-large-2-instruct",
     "mistralai/mistral-large",
+    "mistralai/mistral-medium-3.5-128b",
     # Meta Llama 405B
     "meta/llama-3.1-405b-instruct",
     # Qwen large models (480B+)

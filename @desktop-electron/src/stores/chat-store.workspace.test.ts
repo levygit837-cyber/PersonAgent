@@ -161,6 +161,43 @@ describe("chat workspace routing", () => {
     expect(agentMessage?.isStreaming).toBe(false);
   });
 
+  it("stores prompt context estimates from stream events on the active agent message", async () => {
+    apiMocks.streamChatCompletion.mockImplementation(() =>
+      eventStream([
+        {
+          event: "prompt_context",
+          context_tokens_estimated: 2048,
+          context_window_tokens: 1000000,
+        },
+        { content: "Visible " },
+        {
+          event: "prompt_context",
+          context_tokens_estimated: 8192,
+          context_window_tokens: 1000000,
+        },
+        { content: "answer", finish_reason: "stop" },
+        {
+          event: "conversation_saved",
+          conversation_id: "conversation-context",
+          title: "Context",
+          context_tokens_estimated: 8192,
+          context_tokens_after_turn_estimated: 9000,
+          context_window_tokens: 1000000,
+        },
+      ]),
+    );
+
+    await useChatStore.getState().sendMessage("Read files and answer");
+
+    const agentMessage = useChatStore.getState().messages.find((message) => message.role === "agent");
+    expect(agentMessage?.content).toBe("Visible answer");
+    expect(agentMessage?.metadata).toMatchObject({
+      context_tokens_estimated: 8192,
+      context_tokens_after_turn_estimated: 9000,
+      context_window_tokens: 1000000,
+    });
+  });
+
   it("switches the active workspace before loading a mapped conversation", async () => {
     await useChatStore.getState().loadConversation("conversation-eval");
 

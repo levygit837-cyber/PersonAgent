@@ -397,6 +397,41 @@ async def test_stream_allows_long_tool_loop_until_model_returns_final_answer(tmp
 
 
 @pytest.mark.asyncio
+async def test_stream_reemits_prompt_context_after_tool_results(tmp_path):
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text("alpha\nbeta\n", encoding="utf-8")
+    repo = MemoryConversationRepository()
+    llm = RepeatingStreamingToolCallingLLM(final_after=2)
+    registry = ToolRegistry([create_read_file_tool()])
+    config = ToolRuntimeConfig.from_values(workspace_root=tmp_path)
+    use_case = ChatCompletionUseCase(
+        conversation_repo=repo,
+        llm_backend=llm,
+        tool_registry=registry,
+        tool_runtime_config=config,
+    )
+
+    chunks = [
+        chunk
+        async for chunk in use_case.execute_stream(
+            ChatRequestDTO(message="Leia notes.txt", tools_enabled=True)
+        )
+    ]
+
+    prompt_contexts = [
+        chunk.metadata for chunk in chunks if chunk.metadata.get("event") == "prompt_context"
+    ]
+    assert len(prompt_contexts) == 2
+    assert prompt_contexts[1]["context_tokens_estimated"] > prompt_contexts[0]["context_tokens_estimated"]
+
+    saved = next(chunk for chunk in chunks if chunk.metadata.get("event") == "conversation_saved")
+    conversation = await repo.get_by_id(UUID(saved.metadata["conversation_id"]))
+    assert conversation is not None
+    assert conversation.messages[-1].metadata["context_tokens_estimated"] == prompt_contexts[-1]["context_tokens_estimated"]
+    assert conversation.messages[-1].metadata["context_tokens_after_turn_estimated"] >= prompt_contexts[-1]["context_tokens_estimated"]
+
+
+@pytest.mark.asyncio
 async def test_stream_recovers_when_provider_stops_empty_after_tool_result(tmp_path):
     file_path = tmp_path / "notes.txt"
     file_path.write_text("alpha\nbeta\n", encoding="utf-8")
@@ -682,6 +717,39 @@ async def test_stream_saved_event_does_not_replay_reasoning_payload():
     assert conversation is not None
     assert conversation.messages[-1].metadata["reasoning_content"] == "hidden analysis"
     assert conversation.messages[-1].content == "final answer"
+
+
+@pytest.mark.asyncio
+async def test_deepseek_reasoning_after_visible_output_is_preserved_as_output():
+    repo = MemoryConversationRepository()
+    use_case = ChatCompletionUseCase(
+        conversation_repo=repo,
+        llm_backend=DeepSeekMisroutedOutputLLM(),
+    )
+
+    chunks = [
+        chunk
+        async for chunk in use_case.execute_stream(
+            ChatRequestDTO(
+                message="Use DeepSeek",
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                tools_enabled=False,
+            )
+        )
+    ]
+
+    visible_chunks = [chunk.content for chunk in chunks if chunk.content]
+    reasoning_chunks = [chunk.reasoning_content for chunk in chunks if chunk.reasoning_content]
+    assert visible_chunks == ["Correct output. ", "This paragraph is final output."]
+    assert reasoning_chunks == ["private analysis"]
+
+    saved = next(chunk for chunk in chunks if chunk.metadata.get("event") == "conversation_saved")
+    conversation = await repo.get_by_id(UUID(saved.metadata["conversation_id"]))
+    assert conversation is not None
+    assert conversation.messages[-1].content == "Correct output. This paragraph is final output."
+    assert conversation.messages[-1].metadata["reasoning_content"] == "private analysis"
+    assert conversation.messages[-1].metadata["deepseek_reasoning_rerouted_to_content"] is True
 
 
 @pytest.mark.asyncio
@@ -1319,6 +1387,23 @@ class ReasoningStreamingLLM(LLMBackendRepository):
         yield StreamChunk(reasoning_content="hidden ", is_thinking=True)
         yield StreamChunk(reasoning_content="analysis", is_thinking=True)
         yield StreamChunk(content="final answer")
+        yield StreamChunk(finish_reason="stop")
+
+    async def health_check(self) -> dict:
+        return {"status": "healthy"}
+
+    async def get_model_info(self) -> dict:
+        return {}
+
+
+class DeepSeekMisroutedOutputLLM(LLMBackendRepository):
+    async def chat_completion(self, *args, **kwargs) -> InferenceResult:
+        return InferenceResult(content="unused")
+
+    async def chat_completion_stream(self, *args, **kwargs):
+        yield StreamChunk(reasoning_content="private analysis", is_thinking=True)
+        yield StreamChunk(content="Correct output. ")
+        yield StreamChunk(reasoning_content="This paragraph is final output.", is_thinking=True)
         yield StreamChunk(finish_reason="stop")
 
     async def health_check(self) -> dict:

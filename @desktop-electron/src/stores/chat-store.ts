@@ -997,6 +997,7 @@ function permissionsCommandText() {
 function usageCommandText(usage: SessionUsage) {
   return [
     "Live session usage:",
+    `Context tokens: ${usageLabel(usage.context_tokens)}`,
     `Agent output tokens: ${usageLabel(usage.agent_output_tokens)}`,
     `Thinking tokens: ${usageLabel(usage.thinking_output_tokens)}`,
     `Tool calls: ${usageLabel(usage.tool_calls)}`,
@@ -1191,6 +1192,11 @@ function handleChunk(
     return;
   }
 
+  if (chunk.event === "prompt_context") {
+    applyPromptContextChunk(chunk, agentId, set);
+    return;
+  }
+
   if (chunk.event === "plan_approval_requested") {
     incrementLiveUsage(set, "plans_created", 1);
     flushTextBuffer(agentId, set);
@@ -1241,7 +1247,8 @@ function handleChunk(
           chunk.reasoning_content && item.reasoning.trim().length === 0
             ? appendReasoningChunk(item, chunk.reasoning_content)
             : item;
-        return closeActiveReasoning(withReasoning, false);
+        const withContext = attachContextMetadata(withReasoning, chunk);
+        return closeActiveReasoning(withContext, false);
       }),
     }));
     thinkingStates.delete(agentId);
@@ -1295,6 +1302,33 @@ function handleChunk(
   queueTextChunk(agentId, chunk, set);
 }
 
+function applyPromptContextChunk(
+  chunk: StreamChunk,
+  agentId: string,
+  set: (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
+) {
+  const metadata = contextMetadataFromChunk(chunk);
+  const contextTokens =
+    numberValue(metadata.context_tokens_after_turn_estimated) ??
+    numberValue(metadata.context_tokens_estimated) ??
+    numberValue(metadata.prompt_tokens_estimated);
+  set((state) => ({
+    liveSessionUsage:
+      contextTokens === undefined
+        ? state.liveSessionUsage
+        : {
+            ...state.liveSessionUsage,
+            context_tokens: {
+              value: contextTokens,
+              estimated: true,
+            },
+          },
+    messages: state.messages.map((item) =>
+      item.id === agentId ? attachContextMetadata(item, chunk) : item,
+    ),
+  }));
+}
+
 function withVisibleTerminalNotice(chunk: StreamChunk): StreamChunk {
   if (chunk.content || chunk.reasoning_content) return chunk;
   if (chunk.event === "tool_iterations_exceeded") {
@@ -1315,6 +1349,37 @@ function withVisibleTerminalNotice(chunk: StreamChunk): StreamChunk {
     };
   }
   return chunk;
+}
+
+const contextMetadataKeys = [
+  "context_tokens_estimated",
+  "context_tokens_after_turn_estimated",
+  "context_window_tokens",
+  "context_compacted",
+  "prompt_tokens_estimated",
+] as const;
+
+function attachContextMetadata(message: ChatMessageUi, chunk: StreamChunk): ChatMessageUi {
+  const metadata = contextMetadataFromChunk(chunk);
+  if (Object.keys(metadata).length === 0) return message;
+  return {
+    ...message,
+    metadata: {
+      ...(message.metadata ?? {}),
+      ...metadata,
+    },
+  };
+}
+
+function contextMetadataFromChunk(chunk: StreamChunk): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {};
+  const topLevel = chunk as Record<string, unknown>;
+  const nested = isRecord(chunk.metadata) ? chunk.metadata : {};
+  for (const key of contextMetadataKeys) {
+    const value = topLevel[key] ?? nested[key];
+    if (value !== undefined && value !== null) metadata[key] = value;
+  }
+  return metadata;
 }
 
 function queueTextChunk(

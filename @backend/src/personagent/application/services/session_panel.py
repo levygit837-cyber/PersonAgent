@@ -245,6 +245,7 @@ class SessionPanelService:
 
     def _usage(self, conversation: Conversation) -> dict[str, Any]:
         usage = {
+            "context_tokens": _metric(),
             "agent_output_tokens": _metric(),
             "thinking_output_tokens": _metric(),
             "tool_calls": _metric(),
@@ -351,6 +352,32 @@ class SessionPanelService:
             _add(usage["thinking_output_tokens"], _estimate_tokens(reasoning), estimated=True)
         else:
             _add(usage["thinking_output_tokens"], exact_thinking)
+
+        context_tokens = _first_int(
+            metadata,
+            (
+                "context_tokens_after_turn_estimated",
+                "context_tokens_estimated",
+                "prompt_tokens_estimated",
+            ),
+        )
+        if context_tokens is None and isinstance(raw_usage, dict):
+            context_tokens = _first_int(
+                raw_usage,
+                (
+                    "total_tokens",
+                    "totalTokenCount",
+                    "prompt_tokens",
+                    "input_tokens",
+                    "promptTokenCount",
+                ),
+            )
+        if context_tokens is not None:
+            usage["context_tokens"]["value"] = max(
+                int(usage["context_tokens"].get("value") or 0),
+                context_tokens,
+            )
+            usage["context_tokens"]["estimated"] = True
 
     def _changed_files(self, conversation: Conversation, workspace: Path) -> list[dict[str, Any]]:
         files: dict[str, dict[str, Any]] = {}
