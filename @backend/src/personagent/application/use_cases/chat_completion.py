@@ -1,8 +1,9 @@
 """Caso de uso: Chat Completion."""
 
+import asyncio
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -426,7 +427,10 @@ class ChatCompletionUseCase:
             relevant_memories=relevant_memories,
         )
         if append_user_message:
-            await self._capture_operational_user_message(request, context_result, conversation)
+            self._schedule_background(
+                self._capture_operational_user_message(request, context_result, conversation),
+                task_name="operational_user_capture",
+            )
 
         tool_context = self._build_tool_context(request, conversation, preparation) if tools else None
         final_finish_reason = None
@@ -604,6 +608,7 @@ class ChatCompletionUseCase:
                     if event.result is not None and self._is_plan_approval_result(event.result):
                         self._apply_tool_state_result(event.result, conversation)
                         state = self._plan_state_from_result(event.result, conversation)
+                        _attach_plan_approval_artifact(conversation, state)
                         yield StreamChunk(
                             metadata=plan_mode_event(
                                 str(conversation.id),
@@ -1258,10 +1263,16 @@ class ChatCompletionUseCase:
         context_size_chars: int = 0,
         conversation_message_count: int = 0,
     ):
-        if request.provider == "llama" and request.prompt_mode == "auto":
+        if request.provider in {"llama", "zenmux"} and request.prompt_mode == "auto":
             from personagent.domain.prompts.services.context_analyzer import fallback_prompt_profile
 
-            return fallback_prompt_profile()
+            return fallback_prompt_profile(
+                message=request.message,
+                available_tools=available_tools,
+                workspace_root=workspace_root,
+                context_size_chars=context_size_chars,
+                reason=f"{request.provider}_auto_prompt_analysis_skipped",
+            )
         if self._prompt_context_analyzer is None:
             from personagent.domain.prompts.services.context_analyzer import fallback_prompt_profile
 
@@ -1331,6 +1342,19 @@ class ChatCompletionUseCase:
         if self._tool_registry is None or self._tool_runtime_config is None:
             raise RuntimeError("Tool runtime is not configured")
         return ToolOrchestrator(self._tool_registry, self._tool_runtime_config)
+
+    def _schedule_background(self, coro: Awaitable[Any], *, task_name: str) -> None:
+        task = asyncio.create_task(coro, name=task_name)
+
+        def _log_failure(done: asyncio.Task) -> None:
+            try:
+                done.result()
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                logger.warning("background_task_failed", task_name=task_name, exc_info=True)
+
+        task.add_done_callback(_log_failure)
 
     async def _build_context_result(
         self,
@@ -2167,7 +2191,8 @@ def _browser_target_from_context_attachments(
             or ""
         ).strip()
         browser_id = str(attachment.get("browser_id") or "").strip()
-        if not page_id and not browser_id:
+        url = str(attachment.get("url") or "").strip()
+        if not page_id and not browser_id and not url:
             continue
         return {
             "type": "browser_tab",
@@ -2175,7 +2200,7 @@ def _browser_target_from_context_attachments(
             "page_id": page_id,
             "window_id": page_id,
             "tab_id": str(attachment.get("tab_id") or page_id).strip(),
-            "url": str(attachment.get("url") or "").strip(),
+            "url": url,
             "title": str(attachment.get("title") or "").strip(),
             "label": str(attachment.get("label") or "@Browser").strip(),
         }
@@ -2185,11 +2210,34 @@ def _browser_target_from_context_attachments(
 def _browser_target_reminder(target: dict[str, Any] | None) -> str | None:
     if not target:
         return None
+    page_id = str(target.get("page_id") or target.get("window_id") or target.get("tab_id") or "").strip()
+    url = str(target.get("url") or "").strip()
+    if page_id:
+        return (
+            "# Browser Tab Target\n\n"
+            "The latest user message attached a specific shared Browser tab. For this turn, "
+            "Browser tools must default to this page_id/window_id, and actions must stay on "
+            "this referenced tab unless the user attaches another Browser tab.\n\n"
+            "```json\n"
+            + json.dumps(target, ensure_ascii=False, indent=2)
+            + "\n```"
+        )
+    if not url:
+        return (
+            "# Browser Window Target\n\n"
+            "The latest user message attached the shared Browser window. For this turn, "
+            "Browser tools should operate inside this conversation's shared Browser workspace. "
+            "Use BrowserListTabs or the current Browser workspace context when a concrete page "
+            "identifier is needed.\n\n"
+            "```json\n"
+            + json.dumps(target, ensure_ascii=False, indent=2)
+            + "\n```"
+        )
     return (
-        "# Browser Tab Target\n\n"
-        "The latest user message attached a specific shared Browser tab. For this turn, "
-        "Browser tools must default to this page_id/window_id, and actions must stay on "
-        "this referenced tab unless the user attaches another Browser tab.\n\n"
+        "# Browser Window Target\n\n"
+        "The latest user message attached a shared Browser window or URL target. For this turn, "
+        "use BrowserOpen with the target URL in this conversation's shared Browser workspace "
+        "before browser work if the workspace is not already on that page.\n\n"
         "```json\n"
         + json.dumps(target, ensure_ascii=False, indent=2)
         + "\n```"
@@ -2238,3 +2286,24 @@ def _apply_workspace_metadata(conversation: Conversation, tool_context: dict[str
 def _set_session_status(conversation: Conversation, status: str) -> None:
     if status in {"idle", "error", "pending", "running"}:
         conversation.metadata["session_status"] = status
+
+
+def _attach_plan_approval_artifact(conversation: Conversation, state: dict[str, Any]) -> None:
+    approval_id = str(state.get("approval_id") or "")
+    plan_content = str(state.get("plan_content") or "")
+    if not approval_id or not plan_content:
+        return
+    last_assistant = next(
+        (message for message in reversed(conversation.messages) if message.role == Role.ASSISTANT),
+        None,
+    )
+    if last_assistant is None:
+        return
+    last_assistant.metadata["plan_approval"] = {
+        "conversationId": str(conversation.id),
+        "approvalId": approval_id,
+        "planId": str(state.get("plan_id") or ""),
+        "planContent": plan_content,
+        "planStatus": str(state.get("status") or "awaiting_approval"),
+        "feedback": state.get("feedback"),
+    }

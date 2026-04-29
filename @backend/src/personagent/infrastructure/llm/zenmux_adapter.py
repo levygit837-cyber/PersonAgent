@@ -367,10 +367,12 @@ class ZenMuxAdapter(NvidiaNimAdapter):
 
     def _responses_reasoning_effort(self, level: Any) -> str:
         normalized = str(level or "medium").strip().lower()
-        if normalized in {"none", "minimal", "low", "medium", "high", "xhigh"}:
+        if normalized in {"low", "medium", "high", "xhigh"}:
             return normalized
         if normalized == "max":
             return "xhigh"
+        if normalized in {"none", "minimal"}:
+            return "low"
         return "medium"
 
     def _messages_with_reasoning(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

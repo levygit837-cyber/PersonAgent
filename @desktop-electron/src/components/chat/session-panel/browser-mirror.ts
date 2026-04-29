@@ -43,10 +43,10 @@ export function browserMirrorSrcDoc(
 	  transform: translate3d(0, 0, 0) !important;
 	  transition: left 110ms ease, top 110ms ease, width 110ms ease, height 110ms ease, border-radius 110ms ease, opacity 100ms ease !important;
 	}
-	.pa-inspector-fill.is-hidden {
-	  opacity: 0 !important;
-	}
-	.pa-inspector-tooltip {
+		.pa-inspector-fill.is-hidden {
+		  opacity: 0 !important;
+		}
+		.pa-inspector-tooltip {
 	  position: fixed !important;
 	  z-index: 2147483647 !important;
 	  left: 0;
@@ -179,8 +179,8 @@ export function browserMirrorSrcDoc(
 	  const ignoredTags = new Set(["HTML", "BODY", "HEAD", "SCRIPT", "STYLE", "META", "LINK", "BASE", "TITLE", "NOSCRIPT", "TEMPLATE"]);
 	  const voidTags = new Set(["AREA", "BASE", "BR", "COL", "EMBED", "HR", "IMG", "INPUT", "LINK", "META", "PARAM", "SOURCE", "TRACK", "WBR"]);
 	  let activeTarget = null;
-	  let highlightOverlay = null;
-	  let tooltip = null;
+		  let highlightOverlay = null;
+		  let tooltip = null;
 	  let selectionToolbar = null;
 	  let lastSelectionMetadata = null;
 	  let pendingMouse = null;
@@ -621,14 +621,14 @@ export function browserMirrorSrcDoc(
 	    (document.body || document.documentElement).appendChild(tooltip);
 	    return tooltip;
 	  };
-	  const createHighlightOverlay = () => {
-	    if (highlightOverlay) return highlightOverlay;
-	    highlightOverlay = document.createElement("div");
-	    highlightOverlay.className = "pa-inspector-fill is-hidden";
-	    (document.body || document.documentElement).appendChild(highlightOverlay);
-	    return highlightOverlay;
-	  };
-	  const positionHighlightOverlay = (element) => {
+		  const createHighlightOverlay = () => {
+		    if (highlightOverlay) return highlightOverlay;
+		    highlightOverlay = document.createElement("div");
+		    highlightOverlay.className = "pa-inspector-fill is-hidden";
+		    (document.body || document.documentElement).appendChild(highlightOverlay);
+		    return highlightOverlay;
+		  };
+		  const positionHighlightOverlay = (element) => {
 	    const overlay = createHighlightOverlay();
 	    if (!element) {
 	      overlay.classList.add("is-hidden");
@@ -675,8 +675,8 @@ export function browserMirrorSrcDoc(
 	    if (!isTransparentColor(metadata.background)) values.push(compactColor(metadata.background));
 	    return values.filter(Boolean).join(" / ");
 	  };
-	  const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
-	  const tooltipPositionFor = (element, width, height) => {
+		  const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+		  const tooltipPositionFor = (element, width, height) => {
 	    const rect = element.getBoundingClientRect();
 	    const margin = 8;
 	    const gap = 8;
@@ -1027,10 +1027,11 @@ export function browserMirrorSrcDoc(
 	  } catch {
 	    // Intersection observation is best-effort.
 	  }
-	  window.addEventListener("message", (event) => {
-	    const data = event.data || {};
-	    if (!data || data.browserId !== browserId || data.type !== "personagent-session-browser:state") return;
-	    applyMode(data.mode);
+		  window.addEventListener("message", (event) => {
+		    const data = event.data || {};
+		    if (!data || data.browserId !== browserId) return;
+		    if (data.type !== "personagent-session-browser:state") return;
+		    applyMode(data.mode);
 	    cooperationEnabled = Boolean(data.cooperationEnabled);
 	    if (!cooperationEnabled) {
 	      eventBuffer = [];

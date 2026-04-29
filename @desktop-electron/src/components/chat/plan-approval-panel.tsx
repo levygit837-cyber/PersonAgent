@@ -6,13 +6,13 @@ import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { MarkdownContent } from "./agent-message";
 
-export function PlanApprovalPanel({ approval }: { approval: PlanApprovalUi }) {
+export function PlanApprovalPanel({ approval, active = true }: { approval: PlanApprovalUi; active?: boolean }) {
   const [feedback, setFeedback] = useState("");
   const isStreaming = useChatStore((state) => state.isStreaming);
   const proceed = useChatStore((state) => state.approvePendingPlan);
   const continuePlanning = useChatStore((state) => state.continuePendingPlan);
   const cancel = useChatStore((state) => state.cancelPendingPlan);
-  const disabled = isStreaming || !approval.approvalId;
+  const disabled = !active || isStreaming || !approval.approvalId;
 
   return (
     <section className="mb-9 rounded-2xl border border-primary/25 bg-card/80 p-4 shadow-soft">
@@ -32,33 +32,37 @@ export function PlanApprovalPanel({ approval }: { approval: PlanApprovalUi }) {
         <MarkdownContent content={approval.planContent || "No plan content was provided."} />
       </div>
 
-      <Textarea
-        className="mt-3 min-h-16"
-        placeholder="Optional feedback"
-        value={feedback}
-        onChange={(event) => setFeedback(event.target.value)}
-        disabled={disabled}
-      />
-
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={() => void proceed(feedback)} disabled={disabled}>
-          <Check className="h-3.5 w-3.5" />
-          Proceed
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void continuePlanning(feedback)}
+      {active ? (
+        <Textarea
+          className="mt-3 min-h-16"
+          placeholder="Optional feedback"
+          value={feedback}
+          onChange={(event) => setFeedback(event.target.value)}
           disabled={disabled}
-        >
-          <PencilLine className="h-3.5 w-3.5" />
-          Continue planning
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => void cancel(feedback)} disabled={disabled}>
-          <X className="h-3.5 w-3.5" />
-          Cancel
-        </Button>
-      </div>
+        />
+      ) : null}
+
+      {active ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={() => void proceed(feedback)} disabled={disabled}>
+            <Check className="h-3.5 w-3.5" />
+            Proceed
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void continuePlanning(feedback)}
+            disabled={disabled}
+          >
+            <PencilLine className="h-3.5 w-3.5" />
+            Continue planning
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => void cancel(feedback)} disabled={disabled}>
+            <X className="h-3.5 w-3.5" />
+            Cancel
+          </Button>
+        </div>
+      ) : null}
     </section>
   );
 }

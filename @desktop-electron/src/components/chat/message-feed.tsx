@@ -3,6 +3,7 @@ import { useChatStore } from "../../stores/chat-store";
 import { AgentMessage } from "./agent-message";
 import { PlanApprovalPanel, ToolApprovalPanel } from "./plan-approval-panel";
 import { UserMessage } from "./user-message";
+import type { ChatMessageUi, PlanApprovalUi } from "../../types/chat";
 
 const followThreshold = 120;
 const scrollUpKeys = new Set(["ArrowUp", "PageUp", "Home"]);
@@ -119,18 +120,46 @@ export function MessageFeed({ extraBottomPadding = false, compact = false }: { e
     >
       <div className={compact ? "mx-auto flex w-full min-w-0 max-w-[720px] flex-col" : "mx-auto flex w-full min-w-0 max-w-[820px] flex-col"}>
         {error ? <ErrorBanner message={error} /> : null}
-        {messages.map((message) =>
-          message.role === "user" ? (
-            <UserMessage key={message.id} message={message} />
-          ) : (
-            <AgentMessage key={message.id} message={message} />
-          ),
-        )}
-        {pendingPlanApproval ? <PlanApprovalPanel approval={pendingPlanApproval} /> : null}
+        {messages.map((message) => {
+          const planApproval = planApprovalArtifact(message);
+          const isActivePlan = Boolean(
+            pendingPlanApproval &&
+              planApproval &&
+              pendingPlanApproval.approvalId === planApproval.approvalId,
+          );
+          return (
+            <div key={message.id}>
+              {message.role === "user" ? (
+                <UserMessage message={message} />
+              ) : (
+                <AgentMessage message={message} />
+              )}
+              {planApproval ? <PlanApprovalPanel approval={planApproval} active={isActivePlan} /> : null}
+            </div>
+          );
+        })}
+        {pendingPlanApproval && !messages.some((message) => planApprovalArtifact(message)?.approvalId === pendingPlanApproval.approvalId) ? (
+          <PlanApprovalPanel approval={pendingPlanApproval} />
+        ) : null}
         {pendingToolApproval ? <ToolApprovalPanel approval={pendingToolApproval} /> : null}
       </div>
     </div>
   );
+}
+
+function planApprovalArtifact(message: ChatMessageUi): PlanApprovalUi | undefined {
+  const raw = message.metadata?.plan_approval;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const value = raw as Partial<PlanApprovalUi>;
+  if (!value.approvalId || !value.planContent) return undefined;
+  return {
+    conversationId: String(value.conversationId ?? ""),
+    approvalId: String(value.approvalId),
+    planId: String(value.planId ?? ""),
+    planContent: String(value.planContent),
+    planStatus: String(value.planStatus ?? "awaiting_approval"),
+    feedback: value.feedback,
+  };
 }
 
 function isNearLatest(scroller: HTMLDivElement) {

@@ -394,6 +394,29 @@ def _require_plan_approval(
     return state
 
 
+def _update_plan_approval_artifact(
+    conversation: Any,
+    approval_id: str,
+    state: dict[str, Any],
+) -> None:
+    if not approval_id:
+        return
+    for message in reversed(getattr(conversation, "messages", []) or []):
+        if getattr(message, "role", None) != Role.ASSISTANT:
+            continue
+        metadata = getattr(message, "metadata", None)
+        if not isinstance(metadata, dict):
+            continue
+        artifact = metadata.get("plan_approval")
+        if not isinstance(artifact, dict):
+            continue
+        if str(artifact.get("approvalId") or "") != approval_id:
+            continue
+        artifact["planStatus"] = str(state.get("status") or artifact.get("planStatus") or "")
+        artifact["feedback"] = state.get("feedback")
+        return
+
+
 def _require_tool_approval(metadata: dict[str, Any], approval_id: str) -> dict[str, Any]:
     pending = metadata.get(PENDING_TOOL_APPROVAL_KEY)
     if not isinstance(pending, dict):
@@ -1018,7 +1041,7 @@ async def approve_plan(
     request: PlanDecisionRequest,
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> dict[str, Any]:
-    """Approve a pending plan and return the execution message to inject."""
+    """Approve a pending plan and return the execution instruction to inject."""
 
     conversation, conv_repo = await _load_conversation_for_decision(
         request.conversation_id, session
@@ -1030,7 +1053,8 @@ async def approve_plan(
     if not plan_content:
         raise HTTPException(status_code=400, detail="Pending plan has no renderable content.")
 
-    injected_message = f"Implement the following plan:\n\n{plan_content}"
+    approval_id = str(state.get("approval_id") or "")
+    injected_message = "Implement the plan"
     feedback = (request.feedback or "").strip()
     if feedback:
         injected_message = f"{injected_message}\n\nUser feedback:\n\n{feedback}"
@@ -1046,6 +1070,7 @@ async def approve_plan(
         }
     )
     write_plan_state(conversation.metadata, state)
+    _update_plan_approval_artifact(conversation, approval_id, state)
     conversation.metadata["session_status"] = "idle"
     await conv_repo.update(conversation)
 
@@ -1068,6 +1093,7 @@ async def continue_plan(
     state = _require_plan_approval(
         state=normalize_plan_state(conversation.metadata), request=request
     )
+    approval_id = str(state.get("approval_id") or "")
     feedback = (request.feedback or "").strip()
     state.update(
         {
@@ -1079,6 +1105,7 @@ async def continue_plan(
         }
     )
     write_plan_state(conversation.metadata, state)
+    _update_plan_approval_artifact(conversation, approval_id, state)
     conversation.metadata["session_status"] = "idle"
     await conv_repo.update(conversation)
 
@@ -1108,6 +1135,7 @@ async def cancel_plan(
         raise HTTPException(
             status_code=409, detail="The plan approval does not match the current state."
         )
+    approval_id = str(state.get("approval_id") or request.approval_id or "")
     state.update(
         {
             "active": False,
@@ -1118,6 +1146,7 @@ async def cancel_plan(
         }
     )
     write_plan_state(conversation.metadata, state)
+    _update_plan_approval_artifact(conversation, approval_id, state)
     conversation.metadata["session_status"] = "idle"
     await conv_repo.update(conversation)
 

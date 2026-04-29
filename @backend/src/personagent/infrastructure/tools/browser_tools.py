@@ -251,6 +251,7 @@ def create_browser_open_tool(worker: LightPandaBrowserWorker) -> Tool:
     async def handler(
         arguments: ToolArguments, context: ToolUseContext, call: ToolCall
     ) -> ToolResult:
+        browser_id = _browser_session_id(context)
         target = _normalize_browser_open_arguments(arguments)
         target_url = target["url"]
         target_result_index = target["result_index"]
@@ -264,6 +265,7 @@ def create_browser_open_tool(worker: LightPandaBrowserWorker) -> Tool:
             call,
             "Opening page with LightPanda...",
             {
+                "browser_id": browser_id,
                 "url": target_url,
                 "result_index": target_result_index,
                 "search_id": target_search_id,
@@ -272,12 +274,14 @@ def create_browser_open_tool(worker: LightPandaBrowserWorker) -> Tool:
         )
         try:
             data = await worker.open(
-                conversation_id=_browser_session_id(context),
+                conversation_id=browser_id,
                 url=target_url,
                 result_index=target_result_index,
                 search_id=target_search_id,
                 tool_call_id=call.id,
             )
+            data = dict(data)
+            data.setdefault("browser_id", browser_id)
             final_validation = validate_web_url(str(data.get("final_url") or ""), context)
             if final_validation is not None:
                 return _error(
@@ -454,27 +458,38 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
         )
         if target_error:
             return _target_error_result(call, "BrowserExtractContent", target_error)
+        browser_id = _browser_session_id(context)
+        explicit_url = str(url).strip() if isinstance(url, str) and url.strip() else None
+        explicit_target_id = _coerce_page_or_window_id(page_id, window_id) or _browser_target_page_id(
+            _browser_target(context)
+        )
+        workspace_content_url = (
+            _browser_workspace_current_url(context)
+            if not explicit_url and not explicit_target_id
+            else None
+        )
         max_chars = int(arguments.get("max_chars") or _browser_result_max_chars(context))
         include_links = bool(arguments.get("include_links", False))
         await _progress(
             context,
             call,
             "Extracting page content with LightPanda...",
-            {"url": url, "page_id": page_id, "window_id": window_id},
+            {"browser_id": browser_id, "url": url, "page_id": page_id, "window_id": window_id},
         )
         try:
             data = await worker.extract_content(
-                conversation_id=_browser_session_id(context),
-                url=str(url).strip() if isinstance(url, str) and url.strip() and not target_id else None,
-                page_id=target_id,
+                conversation_id=browser_id,
+                url=explicit_url if explicit_url and not target_id else workspace_content_url,
+                page_id=None if workspace_content_url else target_id,
                 max_chars=max_chars,
                 include_links=include_links,
             )
         except Exception as exc:
             return _error(call, "BrowserExtractContent", str(exc), exc)
         data = dict(data)
+        data.setdefault("browser_id", browser_id)
         data = _prepare_extracted_content_response(
-            conversation_id=_browser_session_id(context),
+            conversation_id=browser_id,
             data=data,
             include_links=include_links,
         )
@@ -554,10 +569,11 @@ def create_browser_read_content_chunk_tool() -> Tool:
     async def handler(
         arguments: ToolArguments, context: ToolUseContext, call: ToolCall
     ) -> ToolResult:
-        cache_key = _resolve_cache_key(_browser_session_id(context), arguments.get("cache_key"))
+        browser_id = _browser_session_id(context)
+        cache_key = _resolve_cache_key(browser_id, arguments.get("cache_key"))
         if not cache_key:
             return _error(call, "BrowserReadContentChunk", "No cached browser page.")
-        entry = _PAGE_CACHE.get(_browser_session_id(context), {}).get(cache_key)
+        entry = _PAGE_CACHE.get(browser_id, {}).get(cache_key)
         if not entry:
             return _error(call, "BrowserReadContentChunk", f"No cached page for {cache_key}.")
 
@@ -575,6 +591,7 @@ def create_browser_read_content_chunk_tool() -> Tool:
         returned_links = entry.get("links", []) if include_links else []
         data = {
             "type": "browser_content_chunks",
+            "browser_id": browser_id,
             "cache_key": cache_key,
             "url": entry["url"],
             "title": entry["title"],
@@ -699,22 +716,34 @@ def create_browser_get_html_tool(worker: LightPandaBrowserWorker) -> Tool:
         )
         if target_error:
             return _target_error_result(call, "BrowserGetHtml", target_error)
+        browser_id = _browser_session_id(context)
+        explicit_url = str(url).strip() if isinstance(url, str) and url.strip() else None
+        explicit_target_id = _coerce_page_or_window_id(page_id, window_id) or _browser_target_page_id(
+            _browser_target(context)
+        )
+        workspace_content_url = (
+            _browser_workspace_current_url(context)
+            if not explicit_url and not explicit_target_id
+            else None
+        )
         max_chars = int(arguments.get("max_chars") or _browser_result_max_chars(context))
         await _progress(
             context,
             call,
             "Reading raw page HTML with LightPanda...",
-            {"url": url, "page_id": page_id, "window_id": window_id},
+            {"browser_id": browser_id, "url": url, "page_id": page_id, "window_id": window_id},
         )
         try:
             data = await worker.get_html(
-                conversation_id=_browser_session_id(context),
-                url=str(url).strip() if isinstance(url, str) and url.strip() and not target_id else None,
-                page_id=target_id,
+                conversation_id=browser_id,
+                url=explicit_url if explicit_url and not target_id else workspace_content_url,
+                page_id=None if workspace_content_url else target_id,
                 max_chars=max_chars,
             )
         except Exception as exc:
             return _error(call, "BrowserGetHtml", str(exc), exc)
+        data = dict(data)
+        data.setdefault("browser_id", browser_id)
         return _json_result(call, "BrowserGetHtml", data)
 
     return build_tool(
@@ -794,30 +823,41 @@ def create_browser_get_element_map_tool(worker: LightPandaBrowserWorker) -> Tool
         )
         if target_error:
             return _target_error_result(call, "BrowserGetElementMap", target_error)
+        browser_id = _browser_session_id(context)
         await _progress(
             context,
             call,
             "Mapping browser elements...",
-            {"page_id": target_id, "width": width, "height": height},
+            {"browser_id": browser_id, "page_id": target_id, "width": width, "height": height},
         )
         try:
             if target_id:
                 await worker.switch_tab(
-                    conversation_id=_browser_session_id(context),
+                    conversation_id=browser_id,
                     page_id=target_id,
                     max_tabs=20,
                 )
             view = await worker.view_snapshot(
-                browser_id=_browser_session_id(context),
+                browser_id=browser_id,
                 width=width,
                 height=height,
             )
+            workspace_url = _browser_workspace_current_url(context)
+            if _browser_view_is_about_blank(view) and workspace_url:
+                view = await worker.view_navigate(
+                    browser_id=browser_id,
+                    url=workspace_url,
+                    width=width,
+                    height=height,
+                    cache_mode="prefer_live",
+                    wait_for_styles=True,
+                )
         except Exception as exc:
             return _error(call, "BrowserGetElementMap", str(exc), exc)
         elements = _summarize_element_map(view.get("element_map"))
         data = {
             "type": "browser_element_map",
-            "browser_id": view.get("browser_id") or _browser_session_id(context),
+            "browser_id": view.get("browser_id") or browser_id,
             "page_id": target_id or view.get("active_tab_id") or "",
             "window_id": target_id or view.get("active_tab_id") or "",
             "url": view.get("url") or "",
@@ -907,16 +947,17 @@ def create_browser_click_tool(worker: LightPandaBrowserWorker) -> Tool:
         )
         if target_error:
             return _target_error_result(call, "BrowserClick", target_error)
+        browser_id = _browser_session_id(context)
         node_id = str(arguments.get("node_id") or "").strip() or None
         await _progress(
             context,
             call,
             "Clicking browser page...",
-            {"page_id": target_id, "node_id": node_id, "x": arguments.get("x"), "y": arguments.get("y")},
+            {"browser_id": browser_id, "page_id": target_id, "node_id": node_id, "x": arguments.get("x"), "y": arguments.get("y")},
         )
         try:
             data = await worker.click(
-                conversation_id=_browser_session_id(context),
+                conversation_id=browser_id,
                 page_id=target_id,
                 node_id=node_id,
                 x=float(arguments["x"]) if isinstance(arguments.get("x"), int | float) else None,
@@ -2290,12 +2331,59 @@ def _browser_session_id(context: ToolUseContext) -> str:
     target_browser_id = str(target.get("browser_id") or "").strip()
     if target_browser_id:
         return target_browser_id
-    workspace = context.metadata.get("browser_workspace")
-    if isinstance(workspace, Mapping):
-        active_browser_id = str(workspace.get("active_browser_id") or "").strip()
-        if active_browser_id:
-            return active_browser_id
+    active_browser_id = str(_browser_workspace(context).get("active_browser_id") or "").strip()
+    if active_browser_id:
+        return active_browser_id
     return context.conversation_id
+
+
+def _browser_workspace(context: ToolUseContext) -> Mapping[str, Any]:
+    workspace = context.metadata.get("browser_workspace")
+    return workspace if isinstance(workspace, Mapping) else {}
+
+
+def _browser_workspace_active_tab_id(context: ToolUseContext) -> str | None:
+    workspace = _browser_workspace(context)
+    active_tab_id = str(workspace.get("active_tab_id") or "").strip()
+    if active_tab_id:
+        return active_tab_id
+    tabs = _workspace_browser_tabs(workspace, browser_id=_browser_session_id(context))
+    active = next(
+        (
+            tab
+            for tab in tabs
+            if bool(tab.get("active") or tab.get("is_active") or tab.get("is_current_page"))
+        ),
+        None,
+    )
+    if active:
+        return str(active.get("page_id") or active.get("window_id") or active.get("tab_id") or "").strip() or None
+    return None
+
+
+def _browser_workspace_current_url(context: ToolUseContext) -> str | None:
+    workspace = _browser_workspace(context)
+    url = str(workspace.get("current_url") or "").strip()
+    if not url:
+        tabs = _workspace_browser_tabs(workspace, browser_id=_browser_session_id(context))
+        active = next(
+            (
+                tab
+                for tab in tabs
+                if bool(tab.get("active") or tab.get("is_active") or tab.get("is_current_page"))
+            ),
+            tabs[0] if tabs else None,
+        )
+        url = str((active or {}).get("final_url") or (active or {}).get("url") or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return url
+    return None
+
+
+def _browser_view_is_about_blank(view: Mapping[str, Any]) -> bool:
+    url = str(view.get("url") or "").strip()
+    return not url or url == "about:blank"
 
 
 def _merge_shared_browser_workspace_tabs(
@@ -2403,11 +2491,14 @@ def _resolve_browser_page_target(
 ) -> tuple[str | None, str | None]:
     requested = _coerce_page_or_window_id(arguments.get("page_id"), arguments.get("window_id"))
     requested_browser_id = str(arguments.get("browser_id") or "").strip()
+    has_url_argument = isinstance(arguments.get("url"), str) and bool(arguments["url"].strip())
     if arguments.get("browser_id") is not None and not requested_browser_id:
         return requested, f"{tool_name} browser_id must be a non-empty string."
     target = _browser_target(context)
     target_id = _browser_target_page_id(target)
     target_browser_id = str(target.get("browser_id") or "").strip()
+    workspace_browser_id = str(_browser_workspace(context).get("active_browser_id") or "").strip()
+    workspace_target_id = _browser_workspace_active_tab_id(context)
     if requested_browser_id and target_browser_id and requested_browser_id != target_browser_id:
         return (
             requested,
@@ -2421,8 +2512,14 @@ def _resolve_browser_page_target(
     elif requested and requested.startswith("browser:"):
         context.metadata["_browser_session_id_override"] = requested
     if not target_id:
-        return requested, None
-    if block_url_argument and isinstance(arguments.get("url"), str) and arguments["url"].strip():
+        if requested:
+            return requested, None
+        if workspace_target_id and not has_url_argument and (
+            not requested_browser_id or not workspace_browser_id or requested_browser_id == workspace_browser_id
+        ):
+            return workspace_target_id, None
+        return None, None
+    if block_url_argument and has_url_argument:
         return (
             requested or target_id,
             (

@@ -119,6 +119,7 @@ describe("chat workspace routing", () => {
     expect(vi.mocked(streamChatCompletion)).not.toHaveBeenCalled();
     expect(useChatStore.getState().messages.some((message) => message.content.includes("Reasoning effort changed"))).toBe(true);
     expect(useChatStore.getState().messages.some((message) => message.content.includes("Model changed"))).toBe(true);
+    expect(useChatStore.getState().messages.some((message) => message.role === "user" && message.content.startsWith("/"))).toBe(false);
   });
 
   it("opens the skills workspace locally", async () => {

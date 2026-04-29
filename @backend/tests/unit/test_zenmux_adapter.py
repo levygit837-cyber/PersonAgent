@@ -152,6 +152,16 @@ def test_zenmux_responses_parser_maps_reasoning_and_output_text():
     assert result.metadata["zenmux_responses_reasoning"][0]["type"] == "reasoning"
 
 
+def test_zenmux_responses_reasoning_effort_uses_supported_values():
+    adapter = ZenMuxAdapter(api_key="key")
+
+    assert adapter._responses_reasoning_effort("low") == "low"
+    assert adapter._responses_reasoning_effort("max") == "xhigh"
+    assert adapter._responses_reasoning_effort("none") == "low"
+    assert adapter._responses_reasoning_effort("minimal") == "low"
+    assert adapter._responses_reasoning_effort("unknown") == "medium"
+
+
 def test_zenmux_model_catalog_marks_deepseek_free_models_as_reasoning_chat():
     adapter = ZenMuxAdapter(api_key="key")
 

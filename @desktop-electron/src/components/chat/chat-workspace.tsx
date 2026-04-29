@@ -11,6 +11,7 @@ import { useAppStore } from "../../stores/app-store";
 import { ChatStoreProvider, createChatStore, getDefaultChatStore, useChatStore, type ChatStoreApi } from "../../stores/chat-store";
 import { CHAT_SESSION_DRAG_MIME, MAIN_CHAT_PANE_ID, useChatLayoutStore, type ChatPane } from "../../stores/chat-layout-store";
 import { useTerminalStore } from "../../stores/terminal-store";
+import type { ChatMessageUi } from "../../types/chat";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { TerminalPanel, TERMINAL_HEIGHT } from "../terminal/terminal-panel";
@@ -20,6 +21,23 @@ const FILE_VIEWER_TRANSITION_MS = 300;
 const SESSION_PANEL_DEFAULT_WIDTH = 430;
 const SESSION_PANEL_MIN_WIDTH = 320;
 const SESSION_PANEL_MIN_CHAT_WIDTH = 360;
+const BROWSER_VIEWPORT_TOOL_NAMES = new Set([
+  "BrowserOpen",
+  "BrowserListTabs",
+  "BrowserGetElementMap",
+  "BrowserExtractContent",
+  "BrowserReadContentChunk",
+  "BrowserGetHtml",
+  "BrowserClick",
+  "BrowserType",
+  "BrowserScreenshot",
+  "BrowserScroll",
+  "BrowserReload",
+  "BrowserHistory",
+  "BrowserSwitchTab",
+  "BrowserWait",
+  "BrowserAct",
+]);
 
 function clampSessionPanelWidth(width: number) {
   if (typeof window === "undefined") return width;
@@ -158,6 +176,13 @@ export function ChatPaneSurface({
   const [renderedActiveFilePath, setRenderedActiveFilePath] = useState<string | undefined>();
   const globalSelectedWorkspace = useAppStore((state) => state.selectedWorkspace);
   const paneWorkspaceRoot = useChatStore((state) => state.workspaceRoot);
+  const chatMessages = useChatStore((state) => state.messages);
+  const chatStreaming = useChatStore((state) => state.isStreaming);
+  const browserToolActivityKey = useMemo(
+    () => latestBrowserViewportToolActivityKey(chatMessages, chatStreaming),
+    [chatMessages, chatStreaming],
+  );
+  const browserToolActivityRef = useRef("");
   const selectedWorkspace = (paneId === MAIN_CHAT_PANE_ID
     ? globalSelectedWorkspace || paneWorkspaceRoot
     : paneWorkspaceRoot || globalSelectedWorkspace) || undefined;
@@ -265,6 +290,12 @@ export function ChatPaneSurface({
     setRenderedFileTabs([]);
     setRenderedActiveFilePath(undefined);
   }, [paneId, selectedWorkspace]);
+
+  useEffect(() => {
+    if (!browserToolActivityKey || browserToolActivityRef.current === browserToolActivityKey) return;
+    browserToolActivityRef.current = browserToolActivityKey;
+    setSessionPanelOpen(true);
+  }, [browserToolActivityKey]);
 
   useEffect(() => {
     if (!sessionPanelOpen) {
@@ -514,4 +545,20 @@ export function ChatPaneSurface({
       </div>
     </section>
   );
+}
+
+function latestBrowserViewportToolActivityKey(messages: ChatMessageUi[], isStreaming: boolean) {
+  for (const message of [...messages].reverse()) {
+    if (message.role !== "agent") continue;
+    for (const block of [...message.toolBlocks].reverse()) {
+      if (!isBrowserViewportToolName(block.name)) continue;
+      if (block.status === "completed" && !isStreaming && !message.isStreaming) continue;
+      return `${message.id}:${block.id}:${block.name}:${block.status}`;
+    }
+  }
+  return "";
+}
+
+function isBrowserViewportToolName(name?: string) {
+  return Boolean(name && BROWSER_VIEWPORT_TOOL_NAMES.has(name));
 }

@@ -1,4 +1,4 @@
-import { ArrowUp, BookOpen, Brain, ChevronDown, ChevronRight, ChevronUp, Command, FileText, Folder, Globe, LogOut, Plus, Sparkles, Square, Terminal, UsersRound, X } from "lucide-react";
+import { ArrowUp, BookOpen, Brain, ChevronDown, ChevronRight, ChevronUp, Command, FileText, Folder, Globe, ListChecks, LogOut, Plus, Sparkles, Square, Terminal, UsersRound, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
@@ -33,6 +33,11 @@ const DEEPSEEK_API_GROUP = "DeepSeek API";
 const DEEPSEEK_NVIDIA_GROUP = "DeepSeek NVIDIA";
 const ZENMUX_GROUP = "ZenMux";
 const MODEL_CATALOG_STALE_MS = 10 * 60_000;
+const PLAN_MODE_SYSTEM_PROMPT = [
+  "The user enabled Plan Mode from the composer UI for this turn.",
+  "Enter PlanMode before doing workspace-changing work.",
+  "Research and inspect what is needed, then write a concrete plan and request approval instead of making changes.",
+].join("\n");
 const CODEX_AUTH_STALE_MS = 2 * 60_000;
 
 type ComposerMentionKind = "file" | "directory" | "skill" | "browser_tab";
@@ -146,6 +151,7 @@ const GROUP_ICON_SLUG: Record<string, string> = {
   IBM: "ibm",
 };
 const TODO_DOCK_EXIT_MS = 280;
+const BROWSER_MENTION_RE = /(^|\s)(@Browser(?::([^\s"]+))?)/gi;
 
 function providerIconUrl(group: string): string | null {
   const slug = GROUP_ICON_SLUG[group];
@@ -194,6 +200,8 @@ export function InputDock({
   const conversationId = useChatStore((state) => state.conversationId);
   const nextStepSuggestion = useChatStore((state) => state.nextStepSuggestion);
   const composerAnnotations = useChatStore((state) => state.composerAnnotations);
+  const composerPlanMode = useChatStore((state) => state.composerPlanMode);
+  const setComposerPlanMode = useChatStore((state) => state.setComposerPlanMode);
   const removeComposerAnnotation = useChatStore((state) => state.removeComposerAnnotation);
   const clearComposerAnnotations = useChatStore((state) => state.clearComposerAnnotations);
   const pendingSnippet = useTerminalStore((state) => state.pendingSnippet);
@@ -240,8 +248,9 @@ export function InputDock({
       skillMentionSuggestions.data ?? [],
       browserTabMentionSuggestions.data ?? [],
       mentionTrigger?.query ?? "",
+      conversationId,
     ),
-    [browserTabMentionSuggestions.data, mentionTrigger?.query, skillMentionSuggestions.data, workspaceMentionSuggestions.data],
+    [browserTabMentionSuggestions.data, conversationId, mentionTrigger?.query, skillMentionSuggestions.data, workspaceMentionSuggestions.data],
   );
   const visibleMentionSuggestions = mentionOpen ? mentionSuggestions : [];
   const canSend = Boolean(text.trim()) || selectedMentions.length > 0 || composerAnnotations.length > 0 || Boolean(pendingSnippet);
@@ -312,11 +321,19 @@ export function InputDock({
     }
     const value = text.trim();
     if (!value && selectedMentions.length === 0 && composerAnnotations.length === 0 && !pendingSnippet) return;
+    const slashInvocation = parseComposerSlashInvocation(value);
+    if (slashInvocation?.name === "plan" && selectedMentions.length === 0 && composerAnnotations.length === 0 && !pendingSnippet) {
+      setComposerPlanMode(true);
+      setText("");
+      setCursorPosition(0);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+      return;
+    }
     const mentionsForSubmit = autoResolveBrowserMentions(
       value,
       selectedMentions,
       browserTabMentionSuggestions.data ?? [],
-      browserMentionQuery,
+      conversationId,
     );
     const { requestAttachments, displayAttachments } = buildComposerContextAttachments(
       composerAnnotations,
@@ -324,10 +341,15 @@ export function InputDock({
       mentionsForSubmit,
     );
     const visibleMessage = value || attachmentOnlyMessage(composerAnnotations, pendingSnippet, mentionsForSubmit);
-    const sendOptions = requestAttachments.length
-      ? { contextAttachments: requestAttachments, displayAttachments }
+    const isSlashCommand = slashInvocation !== null;
+    const sendOptions = requestAttachments.length || isSlashCommand
+      ? {
+          ...(requestAttachments.length ? { contextAttachments: requestAttachments, displayAttachments } : {}),
+          ...(isSlashCommand ? { hideUserMessage: true } : {}),
+        }
       : undefined;
-    void sendMessage(visibleMessage, undefined, sendOptions);
+    void sendMessage(visibleMessage, composerPlanMode ? PLAN_MODE_SYSTEM_PROMPT : undefined, sendOptions);
+    if (composerPlanMode) setComposerPlanMode(false);
     setText("");
     setCursorPosition(0);
     setSelectedMentions([]);
@@ -362,6 +384,7 @@ export function InputDock({
             onPickMention={pickMentionSuggestion}
           />
           <ComposerAnnotationTray annotations={composerAnnotations} onRemove={removeComposerAnnotation} />
+          <ComposerPlanModeBanner active={composerPlanMode} onDismiss={() => setComposerPlanMode(false)} />
           <ComposerMentionTray mentions={selectedMentions} onRemove={removeMention} />
           <TerminalSnippetTray snippet={pendingSnippet} onRemove={clearPendingSnippet} />
           <div className={compact ? "flex items-end gap-1.5 px-2 py-2" : "flex items-end gap-2 px-2.5 py-2.5 sm:gap-2.5 sm:px-3"}>
@@ -461,6 +484,27 @@ function TerminalSnippetTray({
           <X className="h-3 w-3" />
         </Button>
       </div>
+    </div>
+  );
+}
+
+function ComposerPlanModeBanner({ active, onDismiss }: { active: boolean; onDismiss: () => void }) {
+  if (!active) return null;
+
+  return (
+    <div className="flex items-center gap-2 border-b border-amber-400/20 bg-amber-400/10 px-3 py-2 text-amber-100" data-testid="composer-plan-mode">
+      <ListChecks className="h-4 w-4 shrink-0 text-amber-200" />
+      <span className="min-w-0 flex-1 text-xs font-medium">Plan Mode</span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="iconSm"
+        aria-label="Exit Plan Mode"
+        onClick={onDismiss}
+        className="h-6 w-6 shrink-0 rounded-lg text-amber-100 hover:bg-amber-400/15 hover:text-amber-50"
+      >
+        <X className="h-3.5 w-3.5" />
+      </Button>
     </div>
   );
 }
@@ -866,6 +910,14 @@ function slashTokenFromText(value: string) {
   return token;
 }
 
+function parseComposerSlashInvocation(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("/") || trimmed === "/") return null;
+  const head = trimmed.slice(1).split(/\s+/, 1)[0];
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/.test(head)) return null;
+  return { name: head.toLowerCase() };
+}
+
 function filterSlashCommands(commands: ChatCommandInfo[], slashToken: string | null) {
   if (slashToken === null) return [];
   const normalized = slashToken.toLowerCase();
@@ -898,6 +950,7 @@ function buildMentionSuggestions(
   skills: SkillSummary[],
   browserTabs: BrowserTabMentionSuggestion[],
   query: string,
+  conversationId?: string,
 ): MentionSuggestion[] {
   const normalizedQuery = query.trim().toLowerCase();
   const skillQuery = normalizedQuery.startsWith("skill:")
@@ -928,7 +981,10 @@ function buildMentionSuggestions(
       .map((skill, index) => mentionSuggestionFromSkill(skill, index))
     : [];
   const browserItems = includeBrowser
-    ? browserTabs.map((tab) => mentionSuggestionFromBrowserTab(tab))
+    ? [
+        ...browserTabs.map((tab) => mentionSuggestionFromBrowserTab(tab)),
+        browserTargetMentionSuggestion(query, conversationId),
+      ].filter((item): item is MentionSuggestion => Boolean(item))
     : [];
 
   return [...browserItems, ...fileItems, ...skillItems]
@@ -945,9 +1001,9 @@ function browserMentionQueryFromText(query: string): string | null {
   return null;
 }
 
-function mentionSuggestionFromBrowserTab(tab: BrowserTabMentionSuggestion): MentionSuggestion {
+function mentionSuggestionFromBrowserTab(tab: BrowserTabMentionSuggestion, tokenOverride?: string): MentionSuggestion {
   const domain = tab.domain || domainFromUrl(tab.url || "") || "tab";
-  const token = `@Browser:${domain}`;
+  const token = tokenOverride || tab.token || `@Browser:${domain}`;
   const mention: ComposerMention = {
     id: tab.id || `browser_tab:${tab.browser_id}:${tab.page_id || tab.tab_id}`,
     type: "browser_tab",
@@ -973,6 +1029,42 @@ function mentionSuggestionFromBrowserTab(tab: BrowserTabMentionSuggestion): Ment
     token,
     mention,
     score: tab.score,
+  };
+}
+
+function browserTargetMentionSuggestion(query: string, conversationId?: string): MentionSuggestion | null {
+  const target = browserMentionQueryFromText(query);
+  if (target === null) return null;
+  const token = target ? `@Browser:${target}` : "@Browser";
+  const mention = mentionFromBrowserTarget(target, token, conversationId);
+  return {
+    id: mention.id,
+    type: mention.type,
+    primary: target ? `Browser: ${target}` : "Browser",
+    secondary: target ? "Open or target this URL in the shared Browser window" : "Shared Browser window",
+    token,
+    mention,
+    score: target ? 1.25 : 0.25,
+  };
+}
+
+function mentionFromBrowserTarget(target: string, token: string, conversationId?: string): ComposerMention {
+  const normalizedTarget = target.trim();
+  const url = normalizeBrowserMentionUrl(normalizedTarget);
+  const displayPath = normalizedTarget ? url || normalizedTarget : "Shared Browser window";
+  const targetId = normalizedTarget
+    ? normalizedTarget.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "target"
+    : "active";
+  return {
+    id: `browser_tab:${conversationId || "pending"}:${targetId}`,
+    type: "browser_tab",
+    label: "@Browser",
+    token,
+    displayPath,
+    browserId: conversationId,
+    url,
+    title: normalizedTarget ? `Browser target: ${normalizedTarget}` : "Shared Browser window",
+    active: !normalizedTarget,
   };
 }
 
@@ -1030,13 +1122,22 @@ function autoResolveBrowserMentions(
   value: string,
   mentions: ComposerMention[],
   browserTabs: BrowserTabMentionSuggestion[],
-  activeQuery: string | null,
+  conversationId?: string,
 ): ComposerMention[] {
-  if (mentions.some((mention) => mention.type === "browser_tab")) return mentions;
-  const match = value.match(/(^|\s)@Browser:([^\s"]+)/i);
-  if (!match || activeQuery === null || browserTabs.length !== 1) return mentions;
-  const suggestion = mentionSuggestionFromBrowserTab(browserTabs[0]).mention;
-  return [...mentions, suggestion];
+  const selectedBrowserMentions = mentions.filter((mention) => mention.type === "browser_tab");
+  const parsedBrowserMentions = browserMentionsFromText(
+    value,
+    browserTabs,
+    selectedBrowserMentions,
+    conversationId,
+  );
+  if (parsedBrowserMentions.length > 0) {
+    return dedupeMentions([
+      ...mentions.filter((mention) => mention.type !== "browser_tab"),
+      ...parsedBrowserMentions,
+    ]);
+  }
+  return mentions;
 }
 
 function domainFromUrl(url: string) {
@@ -1045,6 +1146,92 @@ function domainFromUrl(url: string) {
   } catch {
     return "";
   }
+}
+
+function browserMentionsFromText(
+  value: string,
+  browserTabs: BrowserTabMentionSuggestion[],
+  selectedBrowserMentions: ComposerMention[],
+  conversationId?: string,
+): ComposerMention[] {
+  const mentions: ComposerMention[] = [];
+  const seen = new Set<string>();
+  for (const match of value.matchAll(BROWSER_MENTION_RE)) {
+    const token = match[2] || "";
+    if (!token || seen.has(token.toLowerCase())) continue;
+    seen.add(token.toLowerCase());
+    const target = (match[3] || "").trim();
+    const selectedMention = findSelectedBrowserMention(token, target, selectedBrowserMentions);
+    if (selectedMention) {
+      mentions.push(selectedMention);
+      continue;
+    }
+    const matchedTab = target
+      ? findBrowserTabMention(target, browserTabs)
+      : browserTabs.find((tab) => tab.active || tab.is_active) || browserTabs[0];
+    mentions.push(
+      matchedTab
+        ? mentionSuggestionFromBrowserTab(matchedTab, token).mention
+        : mentionFromBrowserTarget(target, token, conversationId),
+    );
+  }
+  return mentions;
+}
+
+function findSelectedBrowserMention(
+  token: string,
+  target: string,
+  selectedBrowserMentions: ComposerMention[],
+) {
+  const normalizedToken = token.toLowerCase();
+  const normalizedTarget = target.trim().toLowerCase();
+  return selectedBrowserMentions.find((mention) => {
+    if (mention.token.toLowerCase() === normalizedToken) return true;
+    if (!normalizedTarget) return false;
+    const domain = domainFromUrl(mention.url || "").toLowerCase();
+    const haystack = [domain, mention.url, mention.title, mention.displayPath, mention.pageId, mention.tabId, mention.windowId]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return domain === normalizedTarget || domain.startsWith(normalizedTarget) || haystack.includes(normalizedTarget);
+  });
+}
+
+function findBrowserTabMention(target: string, browserTabs: BrowserTabMentionSuggestion[]) {
+  const normalized = target.trim().toLowerCase();
+  if (!normalized) return undefined;
+  return browserTabs.find((tab) => {
+    const domain = (tab.domain || domainFromUrl(tab.url || "")).toLowerCase();
+    const haystack = [domain, tab.url, tab.title, tab.page_id, tab.tab_id, tab.window_id]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return domain === normalized || domain.startsWith(normalized) || haystack.includes(normalized);
+  });
+}
+
+function normalizeBrowserMentionUrl(target: string) {
+  const trimmed = target.trim();
+  if (!trimmed) return undefined;
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(withScheme);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+    if (!parsed.hostname || (!parsed.hostname.includes(".") && parsed.hostname !== "localhost")) return undefined;
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function dedupeMentions(mentions: ComposerMention[]) {
+  const seen = new Set<string>();
+  return mentions.filter((mention) => {
+    const key = `${mention.type}:${mention.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function mentionTokenForPath(displayPath: string) {

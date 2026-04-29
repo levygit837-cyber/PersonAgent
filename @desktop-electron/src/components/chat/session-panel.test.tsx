@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -413,12 +413,7 @@ describe("SessionPanel", () => {
   it("opens and closes an empty browser-style tab from the plus button", async () => {
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
-    await screen.findByText("Agent Usage");
-    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
-    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
-    fireEvent.click(addTabButton);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+    await openBrowserPanelTab();
 
     expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
@@ -494,12 +489,7 @@ describe("SessionPanel", () => {
 
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
-    await screen.findByText("Agent Usage");
-    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
-    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
-    fireEvent.click(addTabButton);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+    await openBrowserPanelTab();
 
     expect(await screen.findByRole("button", { name: "Tracing" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Browser cooperation mode" })).toHaveTextContent("Observe");
@@ -535,13 +525,13 @@ describe("SessionPanel", () => {
       visible: true,
       interactable: true,
     };
-	    getSessionBrowserViewMock.mockResolvedValue(
-	      browserView("https://github.com/", "conversation-1", "GitHub", {
-	        element_map: [signInElement],
-	        active_tab_id: "conversation-1",
-	        render_cache_status: "hit",
-	      }),
-	    );
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://github.com/", "conversation-1", "GitHub", {
+        element_map: [signInElement],
+        active_tab_id: "conversation-1",
+        render_cache_status: "hit",
+      }),
+    );
     useChatStore.setState({
       messages: [
         {
@@ -582,20 +572,18 @@ describe("SessionPanel", () => {
 
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
-    await screen.findByText("Agent Usage");
-    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
-    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
-    fireEvent.click(addTabButton);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+    await openBrowserPanelTab();
 
-	    expect(await screen.findByTestId("browser-tool-highlight-pa_signin")).toBeInTheDocument();
-	    expect(await screen.findByTestId("browser-ghost-cursor")).toBeInTheDocument();
-	    expect(screen.getByTitle("Browser https://github.com/")).toHaveAttribute("src", "data:image/png;base64,iVBORw0KGgo=");
-	    expect(screen.queryByText("Mapped 1 elements")).not.toBeInTheDocument();
-	  });
+    expect(await screen.findByTitle("Browser https://github.com/")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,iVBORw0KGgo=",
+    );
+    expect(screen.queryByTestId("browser-tool-highlight-pa_signin")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("browser-ghost-cursor")).not.toBeInTheDocument();
+    expect(screen.queryByText("Mapped 1 elements")).not.toBeInTheDocument();
+  });
 
-  it("renders a running browser click cursor by resolving node_id against the current element map", async () => {
+  it("keeps running browser click effects hidden while resolving node_id against the current element map", async () => {
     const signInElement = {
       node_id: "pa_signin",
       text: "Sign in",
@@ -648,16 +636,538 @@ describe("SessionPanel", () => {
 
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
-    await screen.findByText("Agent Usage");
-    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
-    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
-    fireEvent.click(addTabButton);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+    await openBrowserPanelTab();
 
-    const highlight = await screen.findByTestId("browser-tool-highlight-pa_signin");
-    expect(highlight).toHaveAttribute("data-browser-tool-effect", "click");
-    expect(await screen.findByTestId("browser-ghost-cursor")).toBeInTheDocument();
+    expect(await screen.findByTitle("Browser https://github.com/")).toBeInTheDocument();
+    expect(screen.queryByTestId("browser-tool-highlight-pa_signin")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("browser-ghost-cursor")).not.toBeInTheDocument();
+  });
+
+  it("automatically opens the browser panel surface for active Browser tool usage", async () => {
+    const signInElement = {
+      node_id: "pa_signin",
+      text: "Sign in",
+      role: "link",
+      tag: "a",
+      selector: "a[href='/login']",
+      bounds: { x: 930, y: 24, width: 76, height: 34 },
+      visible: true,
+    };
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://github.com/", "conversation-1", "GitHub", {
+        element_map: [signInElement],
+        active_tab_id: "conversation-1",
+      }),
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      messages: [
+        {
+          id: "agent-browser-auto-open",
+          role: "agent",
+          label: "PersonAgent",
+          content: "",
+          reasoning: "",
+          reasoningBlocks: [],
+          toolBlocks: [
+            {
+              id: "call_click_running",
+              name: "BrowserClick",
+              status: "running",
+              title: "Clicking Sign in",
+              message: "Clicking Sign in",
+              content: "",
+              isCollapsed: false,
+              data: {
+                type: "browser_click",
+                browser_id: "conversation-1",
+                page_id: "conversation-1",
+                node_id: "pa_signin",
+                url: "https://github.com/",
+              },
+            },
+          ],
+          teamEvents: [],
+          parts: [],
+          isStreaming: true,
+          isReasoningStreaming: false,
+        },
+      ],
+    });
+
+    renderWithProviders(<ChatWorkspace />);
+
+    expect(await screen.findByRole("tab", { name: "Browser" })).toBeInTheDocument();
+    expect(await screen.findByTitle("Browser https://github.com/")).toBeInTheDocument();
+    expect(screen.queryByTestId("browser-tool-highlight-pa_signin")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("browser-ghost-cursor")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-panel-shell")).not.toHaveClass("w-0");
+  });
+
+  it("hydrates the visible browser tab from a completed BrowserOpen tool result", async () => {
+    getSessionBrowserViewMock
+      .mockResolvedValueOnce(
+        browserView("about:blank", "conversation-1", "", {
+          active_tab_id: "",
+          image_data: "",
+          image_mime_type: "",
+          can_capture: false,
+        }),
+      )
+      .mockResolvedValue(
+        browserView("https://github.com/login", "conversation-1", "Sign in to GitHub", {
+          active_tab_id: "page_login",
+          render_cache_status: "hit",
+        }),
+      );
+    useChatStore.setState({
+      messages: [
+        {
+          id: "agent-browser-open",
+          role: "agent",
+          label: "PersonAgent",
+          content: "",
+          reasoning: "",
+          reasoningBlocks: [],
+          toolBlocks: [
+            {
+              id: "call_open",
+              name: "BrowserOpen",
+              status: "completed",
+              title: "Opened GitHub",
+              message: "Opened GitHub",
+              content: "",
+              isCollapsed: false,
+              data: {
+                type: "browser_open",
+                browser_id: "conversation-1",
+                page_id: "page_login",
+                window_id: "page_login",
+                url: "https://github.com",
+                final_url: "https://github.com/login",
+                title: "Sign in to GitHub",
+              },
+            },
+          ],
+          teamEvents: [],
+          parts: [],
+          isStreaming: false,
+          isReasoningStreaming: false,
+        },
+      ],
+    });
+
+    renderWithProviders(<ChatWorkspace />);
+
+    await openBrowserPanelTab();
+
+    await waitFor(
+      () => expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://github.com/login"),
+      { timeout: 2000 },
+    );
+    await waitFor(
+      () =>
+        expect(getSessionBrowserViewMock).toHaveBeenCalledWith(
+          "http://localhost:8000",
+          "conversation-1",
+          expect.objectContaining({ height: expect.any(Number), width: expect.any(Number) }),
+          "conversation-1",
+        ),
+      { timeout: 2500 },
+    );
+  });
+
+  it("does not replace the current browser page with about:blank for passive element mapping", async () => {
+    const repoElement = {
+      node_id: "pa_repo",
+      text: "PersonAgent",
+      role: "link",
+      tag: "a",
+      selector: "a[href='/levy/PersonAgent']",
+      href: "https://github.com/levy/PersonAgent",
+      bounds: { x: 120, y: 80, width: 180, height: 32 },
+      visible: true,
+      interactable: true,
+    };
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://github.com/levy/PersonAgent", "conversation-1", "PersonAgent", {
+        active_tab_id: "page_github",
+        element_map: [repoElement],
+        render_cache_status: "hit",
+      }),
+    );
+
+    renderWithProviders(<ChatWorkspace />);
+
+    await openBrowserPanelTab();
+    expect(await screen.findByTitle("Browser https://github.com/levy/PersonAgent")).toBeInTheDocument();
+    getSessionBrowserViewMock.mockClear();
+
+    act(() => {
+      useChatStore.setState({
+        messages: [
+          {
+            id: "agent-browser-map-blank",
+            role: "agent",
+            label: "PersonAgent",
+            content: "",
+            reasoning: "",
+            reasoningBlocks: [],
+            toolBlocks: [
+              {
+                id: "call_map_blank",
+                name: "BrowserGetElementMap",
+                status: "completed",
+                title: "Mapped browser elements",
+                message: "Mapped browser elements",
+                content: "",
+                isCollapsed: false,
+                data: {
+                  type: "browser_element_map",
+                  browser_id: "conversation-1",
+                  page_id: "page_github",
+                  active_tab_id: "page_github",
+                  url: "about:blank",
+                  title: "",
+                  element_count: 1,
+                  elements: [repoElement],
+                },
+              },
+            ],
+            teamEvents: [],
+            parts: [],
+            isStreaming: false,
+            isReasoningStreaming: false,
+          },
+        ],
+      });
+    });
+
+    expect(screen.queryByTestId("browser-tool-highlight-pa_repo")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("browser-ghost-cursor")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://github.com/levy/PersonAgent");
+    expect(screen.getByTitle("Browser https://github.com/levy/PersonAgent")).toBeInTheDocument();
+    expect(screen.queryByText("Preparando o ambiente...")).not.toBeInTheDocument();
+    await new Promise((resolve) => window.setTimeout(resolve, 800));
+    expect(getSessionBrowserViewMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps BrowserListTabs from reloading the visible browser page", async () => {
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://github.com/levy/PersonAgent", "conversation-1", "PersonAgent", {
+        active_tab_id: "page_github",
+        render_cache_status: "hit",
+      }),
+    );
+
+    renderWithProviders(<ChatWorkspace />);
+
+    await openBrowserPanelTab();
+    expect(await screen.findByTitle("Browser https://github.com/levy/PersonAgent")).toBeInTheDocument();
+    getSessionBrowserViewMock.mockClear();
+
+    act(() => {
+      useChatStore.setState({
+        messages: [
+          {
+            id: "agent-browser-list-tabs",
+            role: "agent",
+            label: "PersonAgent",
+            content: "",
+            reasoning: "",
+            reasoningBlocks: [],
+            toolBlocks: [
+              {
+                id: "call_list_tabs",
+                name: "BrowserListTabs",
+                status: "completed",
+                title: "Listed browser tabs",
+                message: "Listed browser tabs",
+                content: "",
+                isCollapsed: false,
+                data: {
+                  type: "browser_tabs",
+                  browser_id: "conversation-1",
+                  active_tab_id: "page_github",
+                  tabs: [{ page_id: "page_github", url: "https://github.com/levy/PersonAgent", title: "PersonAgent" }],
+                },
+              },
+            ],
+            teamEvents: [],
+            parts: [],
+            isStreaming: false,
+            isReasoningStreaming: false,
+          },
+        ],
+      });
+    });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+
+    expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://github.com/levy/PersonAgent");
+    expect(screen.getByTitle("Browser https://github.com/levy/PersonAgent")).toBeInTheDocument();
+    expect(screen.queryByText("Preparando o ambiente...")).not.toBeInTheDocument();
+    expect(getSessionBrowserViewMock).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates BrowserListTabs against an already rendered browser URL", async () => {
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://github.com/", "conversation-1", "GitHub", {
+        active_tab_id: "conversation-1",
+        render_cache_status: "hit",
+      }),
+    );
+
+    renderWithProviders(<ChatWorkspace />);
+
+    await openBrowserPanelTab();
+    expect(await screen.findByTitle("Browser https://github.com/")).toHaveAttribute("src", "data:image/png;base64,iVBORw0KGgo=");
+    getSessionBrowserViewMock.mockClear();
+
+    act(() => {
+      useChatStore.setState({
+        messages: [
+          {
+            id: "agent-browser-list-tabs-duplicate-url",
+            role: "agent",
+            label: "PersonAgent",
+            content: "",
+            reasoning: "",
+            reasoningBlocks: [],
+            toolBlocks: [
+              {
+                id: "call_list_tabs_duplicate_url",
+                name: "BrowserListTabs",
+                status: "completed",
+                title: "Listed browser tabs",
+                message: "Listed browser tabs",
+                content: "",
+                isCollapsed: false,
+                data: {
+                  type: "browser_tabs",
+                  browser_id: "conversation-1",
+                  active_tab_id: "page_github_from_list",
+                  tabs: [
+                    {
+                      page_id: "page_github_from_list",
+                      tab_id: "page_github_from_list",
+                      url: "https://github.com",
+                      final_url: "https://github.com",
+                      title: "GitHub",
+                      active: true,
+                    },
+                  ],
+                },
+              },
+            ],
+            teamEvents: [],
+            parts: [],
+            isStreaming: false,
+            isReasoningStreaming: false,
+          },
+        ],
+      });
+    });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+
+    expect(screen.getAllByRole("tab", { name: "GitHub" })).toHaveLength(1);
+    expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://github.com");
+    expect(screen.getByTitle("Browser https://github.com")).toHaveAttribute("src", "data:image/png;base64,iVBORw0KGgo=");
+    expect(getSessionBrowserViewMock).not.toHaveBeenCalled();
+  });
+
+  it("syncs BrowserListTabs results into visible browser panel tabs", async () => {
+    renderWithProviders(<ChatWorkspace />);
+
+    act(() => {
+      useChatStore.setState({
+        messages: [
+          {
+            id: "agent-browser-tabs-sync",
+            role: "agent",
+            label: "PersonAgent",
+            content: "",
+            reasoning: "",
+            reasoningBlocks: [],
+            toolBlocks: [
+              {
+                id: "call_list_tabs_sync",
+                name: "BrowserListTabs",
+                status: "running",
+                title: "Listed browser tabs",
+                message: "Listed browser tabs",
+                content: "",
+                isCollapsed: false,
+                data: {
+                  type: "browser_tabs",
+                  browser_id: "conversation-1",
+                  active_tab_id: "page_docs",
+                  tabs: [
+                    {
+                      page_id: "page_docs",
+                      tab_id: "page_docs",
+                      url: "https://docs.example.com/guide",
+                      title: "Docs Guide",
+                      active: true,
+                    },
+                    {
+                      page_id: "page_api",
+                      tab_id: "page_api",
+                      url: "https://api.example.com/reference",
+                      title: "API Reference",
+                      active: false,
+                    },
+                  ],
+                },
+              },
+            ],
+            teamEvents: [],
+            parts: [],
+            isStreaming: true,
+            isReasoningStreaming: false,
+          },
+        ],
+        isStreaming: true,
+      });
+    });
+
+    const shell = await screen.findByTestId("session-panel-shell");
+    await waitFor(() => expect(shell).not.toHaveClass("w-0"));
+    expect(await screen.findByRole("tab", { name: "Docs Guide" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "API Reference" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://docs.example.com/guide");
+  });
+
+  it("does not create a blank browser tab for passive element mapping without a page URL", async () => {
+    getSessionBrowserViewMock.mockClear();
+
+    act(() => {
+      useChatStore.setState({
+        messages: [
+          {
+            id: "agent-browser-map-without-page",
+            role: "agent",
+            label: "PersonAgent",
+            content: "",
+            reasoning: "",
+            reasoningBlocks: [],
+            toolBlocks: [
+              {
+                id: "call_map_without_page",
+                name: "BrowserGetElementMap",
+                status: "completed",
+                title: "Mapped browser elements",
+                message: "Mapped browser elements",
+                content: "",
+                isCollapsed: false,
+                data: {
+                  type: "browser_element_map",
+                  browser_id: "page_github",
+                  page_id: "page_github",
+                  active_tab_id: "page_github",
+                  url: "about:blank",
+                  title: "",
+                  element_count: 1,
+                  elements: [
+                    {
+                      node_id: "pa_repo",
+                      text: "PersonAgent",
+                      role: "link",
+                      tag: "a",
+                      bounds: { x: 120, y: 80, width: 180, height: 32 },
+                      visible: true,
+                    },
+                  ],
+                },
+              },
+            ],
+            teamEvents: [],
+            parts: [],
+            isStreaming: false,
+            isReasoningStreaming: false,
+          },
+        ],
+      });
+    });
+
+    renderWithProviders(<ChatWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+    await screen.findByRole("tab", { name: "Summary" });
+    await new Promise((resolve) => window.setTimeout(resolve, 300));
+
+    expect(screen.queryByRole("tab", { name: "Browser" })).not.toBeInTheDocument();
+    expect(getSessionBrowserViewMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps browser read-content chunk effects hidden on the current page", async () => {
+    const contentBlock = {
+      node_id: "pa_article",
+      text: "Repository content",
+      role: "article",
+      tag: "main",
+      selector: "main",
+      bounds: { x: 120, y: 96, width: 720, height: 420 },
+      visible: true,
+    };
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://github.com/levy/PersonAgent", "conversation-1", "PersonAgent", {
+        active_tab_id: "page_repo",
+        element_map: [contentBlock],
+        render_cache_status: "hit",
+      }),
+    );
+
+    renderWithProviders(<ChatWorkspace />);
+
+    await openBrowserPanelTab();
+    expect(await screen.findByTitle("Browser https://github.com/levy/PersonAgent")).toBeInTheDocument();
+    getSessionBrowserViewMock.mockClear();
+
+    act(() => {
+      useChatStore.setState({
+        messages: [
+          {
+            id: "agent-browser-read-chunk",
+            role: "agent",
+            label: "PersonAgent",
+            content: "",
+            reasoning: "",
+            reasoningBlocks: [],
+            toolBlocks: [
+              {
+                id: "call_chunk",
+                name: "BrowserReadContentChunk",
+                status: "completed",
+                title: "Read content chunk",
+                message: "Read content chunk",
+                content: "",
+                isCollapsed: false,
+                data: {
+                  type: "browser_content_chunks",
+                  browser_id: "conversation-1",
+                  page_id: "page_repo",
+                  window_id: "page_repo",
+                  url: "https://github.com/levy/PersonAgent",
+                  title: "PersonAgent",
+                  chunks: [{ index: 1, content: "Repository content", char_start: 0, char_end: 18 }],
+                },
+              },
+            ],
+            teamEvents: [],
+            parts: [],
+            isStreaming: false,
+            isReasoningStreaming: false,
+          },
+        ],
+      });
+    });
+
+    expect(screen.queryByTestId("browser-tool-highlight-pa_article")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("browser-ghost-cursor")).not.toBeInTheDocument();
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    expect(getSessionBrowserViewMock).not.toHaveBeenCalled();
   });
 
   it("updates the visible browser tab from a completed click snapshot after navigation", async () => {
@@ -730,12 +1240,7 @@ describe("SessionPanel", () => {
 
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
-    await screen.findByText("Agent Usage");
-    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
-    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
-    fireEvent.click(addTabButton);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+    await openBrowserPanelTab();
 
     await waitFor(() =>
       expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://github.com/login"),
@@ -757,12 +1262,12 @@ describe("SessionPanel", () => {
     };
     getSessionBrowserViewMock
       .mockResolvedValueOnce(
-	        browserView("https://github.com/", "conversation-1", "GitHub", {
-	          active_tab_id: "browser:panel-tab",
-	          element_map: [signInElement],
-	          render_cache_status: "hit",
-	        }),
-	      )
+        browserView("https://github.com/", "conversation-1", "GitHub", {
+          active_tab_id: "browser:panel-tab",
+          element_map: [signInElement],
+          render_cache_status: "hit",
+        }),
+      )
       .mockResolvedValue(
         browserView("https://github.com/login", "browser:panel-tab", "Sign in to GitHub", {
           active_tab_id: "browser:panel-tab",
@@ -819,17 +1324,11 @@ describe("SessionPanel", () => {
 
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
-    await screen.findByText("Agent Usage");
-    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
-    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
-    fireEvent.click(addTabButton);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+    await openBrowserPanelTab();
 
     await waitFor(() =>
       expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://github.com/login"),
     );
-    expect(await screen.findByTestId("browser-ghost-cursor")).toBeInTheDocument();
     await waitFor(() =>
       expect(getSessionBrowserViewMock).toHaveBeenCalledWith(
         "http://localhost:8000",
@@ -842,6 +1341,8 @@ describe("SessionPanel", () => {
       "src",
       "data:image/png;base64,iVBORw0KGgo=",
     );
+    expect(screen.queryByTestId("browser-ghost-cursor")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("browser-tool-highlight-pa_signin")).not.toBeInTheDocument();
   });
 
   it("hides the empty browser hint while a navigation is rendering and shows the loaded url after", async () => {
@@ -862,12 +1363,7 @@ describe("SessionPanel", () => {
 
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
-    await screen.findByText("Agent Usage");
-    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
-    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
-    fireEvent.click(addTabButton);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+    await openBrowserPanelTab();
 
     await screen.findByText("Preparando o ambiente...");
 
@@ -889,12 +1385,7 @@ describe("SessionPanel", () => {
   it("uses stored URLs for browser back, forward, and reload controls", async () => {
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
-    await screen.findByText("Agent Usage");
-    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
-    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
-    fireEvent.click(addTabButton);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+    await openBrowserPanelTab();
 
     const urlInput = screen.getByRole("textbox", { name: "Enter URL" });
     fireEvent.change(urlInput, { target: { value: "example.com" } });
@@ -955,12 +1446,7 @@ describe("SessionPanel", () => {
 
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
-    await screen.findByText("Agent Usage");
-    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
-    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
-    fireEvent.click(addTabButton);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+    await openBrowserPanelTab();
 
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://example.com"));
     fireEvent.click(screen.getByRole("button", { name: "Inspect and annotate" }));
@@ -1029,12 +1515,7 @@ describe("SessionPanel", () => {
     try {
       renderWithProviders(<ChatWorkspace />);
 
-      fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
-      await screen.findByText("Agent Usage");
-      const addTabButton = screen.getByRole("button", { name: "New panel tab" });
-      fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
-      fireEvent.click(addTabButton);
-      fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+      await openBrowserPanelTab();
 
       const iframe = (await screen.findByTitle("Browser https://example.com")) as HTMLIFrameElement;
       expect(iframe).toHaveClass("opacity-0");
@@ -1072,12 +1553,7 @@ describe("SessionPanel", () => {
 
     renderWithProviders(<ChatWorkspace />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
-    await screen.findByText("Agent Usage");
-    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
-    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
-    fireEvent.click(addTabButton);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+    await openBrowserPanelTab();
 
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://github.com"));
     fireEvent(
@@ -1194,6 +1670,10 @@ describe("browser mirror sanitizer", () => {
     expect(srcDoc).toContain('<base href="https://example.com/page">');
     expect(srcDoc).toContain("waitForStylesReady");
     expect(srcDoc).toContain("stylesheetLoadedCount");
+    expect(srcDoc).not.toContain("personagent-session-browser:tool-visual");
+    expect(srcDoc).not.toContain("personagent-session-browser:tool-point");
+    expect(srcDoc).not.toContain("pa-tool-highlight");
+    expect(srcDoc).not.toContain("scrollIntoView");
     expect(srcDoc).not.toContain('data-pa-browser-mode="action"');
     expect(srcDoc).not.toContain('mode === "action"');
   });
@@ -1231,6 +1711,37 @@ function renderWithProviders(ui: ReactNode) {
       <TooltipProvider>{ui}</TooltipProvider>
     </QueryClientProvider>,
   );
+}
+
+async function openBrowserPanelTab() {
+  const shell = screen.getByTestId("session-panel-shell");
+  if (shell.classList.contains("w-0")) {
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+  }
+  await waitFor(() => expect(shell).not.toHaveClass("w-0"));
+
+  const browserTab = screen.queryAllByRole("tab", { name: "Browser" })[0];
+  if (browserTab) {
+    if (browserTab.getAttribute("aria-selected") !== "true") {
+      fireEvent.click(browserTab);
+    }
+    return;
+  }
+  const existingBrowserTab = screen
+    .queryAllByRole("tab")
+    .find((tab) => tab.getAttribute("aria-label") && tab.getAttribute("aria-label") !== "Summary");
+  if (existingBrowserTab) {
+    if (existingBrowserTab.getAttribute("aria-selected") !== "true") {
+      fireEvent.click(existingBrowserTab);
+    }
+    return;
+  }
+
+  const addTabButton = await screen.findByRole("button", { name: "New panel tab" });
+  fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
+  fireEvent.click(addTabButton);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+  await screen.findByRole("tab", { name: "Browser" });
 }
 
 function sessionPanelCacheKey(baseUrl: string, conversationId: string, workspaceRoot?: string | null) {

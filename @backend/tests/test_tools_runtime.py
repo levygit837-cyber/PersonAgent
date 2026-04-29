@@ -653,6 +653,11 @@ async def test_stream_exit_plan_mode_requests_visual_approval(tmp_path):
     assert state["active"] is True
     assert state["status"] == "awaiting_approval"
     assert state["approval_id"] == approval.metadata["approval_id"]
+    assistant = next(message for message in conversation.messages if message.role == Role.ASSISTANT)
+    artifact = assistant.metadata["plan_approval"]
+    assert artifact["approvalId"] == approval.metadata["approval_id"]
+    assert artifact["planContent"] == approval.metadata["plan_content"]
+    assert artifact["planStatus"] == "awaiting_approval"
 
 
 @pytest.mark.asyncio
@@ -731,6 +736,66 @@ async def test_local_llama_auto_prompt_mode_skips_llm_prompt_analysis(tmp_path):
 
     assert len(llm.calls) == 1
     assert "# Mode Overlay: Exploring" in llm.calls[0]["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_zenmux_auto_prompt_mode_skips_llm_prompt_analysis(tmp_path):
+    llm = CapturingLLM()
+    use_case = ChatCompletionUseCase(
+        conversation_repo=MemoryConversationRepository(),
+        llm_backend=llm,
+        prompt_context_analyzer=PromptContextAnalyzer(llm),
+        build_context_use_case=BuildContextUseCase(
+            workspace_root=tmp_path,
+            context_repository=InMemoryContextRepository(),
+        ),
+    )
+
+    await use_case.execute(
+        ChatRequestDTO(
+            message="Ola",
+            provider="zenmux",
+            model="deepseek/deepseek-v4-pro-free",
+            prompt_mode="auto",
+            tools_enabled=False,
+        )
+    )
+
+    assert len(llm.calls) == 1
+    assert "# Mode Overlay: Exploring" in llm.calls[0]["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_streaming_does_not_wait_for_operational_user_capture(tmp_path):
+    llm = CapturingLLM()
+    memory = SlowOperationalMemory()
+    use_case = ChatCompletionUseCase(
+        conversation_repo=MemoryConversationRepository(),
+        llm_backend=llm,
+        build_context_use_case=BuildContextUseCase(
+            workspace_root=tmp_path,
+            context_repository=InMemoryContextRepository(),
+        ),
+        operational_memory_service=memory,
+    )
+    stream = use_case.execute_stream(
+        ChatRequestDTO(message="Ola", prompt_mode="exploring", tools_enabled=False)
+    ).__aiter__()
+
+    while True:
+        chunk = await asyncio.wait_for(stream.__anext__(), timeout=0.2)
+        if chunk.content:
+            assert chunk.content == "ok"
+            break
+
+    assert not memory.release_capture.is_set()
+    memory.release_capture.set()
+
+    while True:
+        try:
+            await asyncio.wait_for(stream.__anext__(), timeout=0.2)
+        except StopAsyncIteration:
+            break
 
 
 @pytest.mark.asyncio
@@ -1025,6 +1090,27 @@ class CapturingLLM(LLMBackendRepository):
 
     async def get_model_info(self) -> dict:
         return {}
+
+
+class EmptyOperationalPackage:
+    formatted = ""
+
+    def metadata(self) -> dict:
+        return {}
+
+
+class SlowOperationalMemory:
+    def __init__(self):
+        self.release_capture = asyncio.Event()
+
+    async def recall_package_for_prompt(self, *args, **kwargs):
+        return EmptyOperationalPackage()
+
+    async def capture_user_message(self, *args, **kwargs):
+        await self.release_capture.wait()
+
+    async def capture_assistant_message(self, *args, **kwargs):
+        return None
 
 
 class ApprovalResumeLLM(CapturingLLM):

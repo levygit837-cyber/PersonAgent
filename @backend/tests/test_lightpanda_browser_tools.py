@@ -1165,7 +1165,9 @@ async def test_browser_tools_preserve_state_by_conversation(tmp_path):
         arguments={"result_index": 1},
     )
     open_result = await tools["BrowserOpen"].call(open_call.arguments, context, open_call)
-    assert json.loads(open_result.content)["final_url"] == "https://example.com/"
+    open_data = json.loads(open_result.content)
+    assert open_data["browser_id"] == "conversation-a"
+    assert open_data["final_url"] == "https://example.com/"
 
     tabs_call = ToolCall(id="call_tabs", name="BrowserListTabs", arguments={})
     tabs_result = await tools["BrowserListTabs"].call(tabs_call.arguments, context, tabs_call)
@@ -1179,6 +1181,7 @@ async def test_browser_tools_preserve_state_by_conversation(tmp_path):
         content_call,
     )
     content_data = json.loads(content_result.content)
+    assert content_data["browser_id"] == "conversation-a"
     assert "Example Domain" in content_data["content"]
     assert content_data["cache_key"]
     assert content_data["chunk_count"] == 1
@@ -1194,6 +1197,7 @@ async def test_browser_tools_preserve_state_by_conversation(tmp_path):
         chunk_call,
     )
     chunk_data = json.loads(chunk_result.content)
+    assert chunk_data["browser_id"] == "conversation-a"
     assert chunk_data["total_chunks"] == 1
     assert chunk_data["chunk_size"] == 3_000
     assert chunk_data["returned_chars"] == chunk_data["chunks"][0]["char_count"]
@@ -1202,7 +1206,9 @@ async def test_browser_tools_preserve_state_by_conversation(tmp_path):
 
     html_call = ToolCall(id="call_html", name="BrowserGetHtml", arguments={})
     html_result = await tools["BrowserGetHtml"].call(html_call.arguments, context, html_call)
-    assert "<h1>Example Domain</h1>" in json.loads(html_result.content)["html"]
+    html_data = json.loads(html_result.content)
+    assert html_data["browser_id"] == "conversation-a"
+    assert "<h1>Example Domain</h1>" in html_data["html"]
     assert worker.sessions["conversation-a"]["opened"] == "https://example.com/"
 
 
@@ -1387,6 +1393,122 @@ async def test_browser_element_map_and_act_tools(tmp_path):
     assert act_data["type"] == "browser_action"
     assert act_data["last_action"]["node_id"] == "pa_link"
     assert act_data["last_action"]["action"] == "click"
+
+
+@pytest.mark.asyncio
+async def test_browser_element_map_uses_active_workspace_tab_when_session_is_blank(tmp_path):
+    class BlankFirstMapWorker(FakeBrowserWorker):
+        def __init__(self) -> None:
+            super().__init__()
+            self.navigated_urls: list[str] = []
+
+        async def view_snapshot(self, *, browser_id: str, width: int, height: int):
+            return {
+                "type": "browser_view",
+                "browser_id": browser_id,
+                "url": "about:blank",
+                "title": "",
+                "element_map": [],
+            }
+
+        async def view_navigate(
+            self,
+            *,
+            browser_id: str,
+            url: str,
+            width: int,
+            height: int,
+            cache_mode: str = "prefer_live",
+            wait_for_styles: bool = True,
+        ):
+            self.navigated_urls.append(url)
+            return {
+                "type": "browser_view",
+                "browser_id": browser_id,
+                "url": url,
+                "title": "PersonAgent",
+                "active_tab_id": "page_github",
+                "element_map": [
+                    {
+                        "node_id": "pa_repo",
+                        "role": "link",
+                        "tag": "a",
+                        "text": "PersonAgent",
+                        "href": url,
+                        "selector": "a[href='/levy/PersonAgent']",
+                    }
+                ],
+            }
+
+    worker = BlankFirstMapWorker()
+    tools = {tool.definition.name: tool for tool in create_browser_tools(worker)}
+    context = _tool_context(tmp_path, conversation_id="conversation-a")
+    context.metadata["browser_workspace"] = {
+        "active_browser_id": "conversation-a",
+        "active_tab_id": "page_github",
+        "current_url": "https://github.com/levy/PersonAgent",
+        "current_title": "PersonAgent",
+        "tabs": [
+            {
+                "page_id": "page_github",
+                "window_id": "page_github",
+                "url": "https://github.com/levy/PersonAgent",
+                "final_url": "https://github.com/levy/PersonAgent",
+                "title": "PersonAgent",
+                "active": True,
+            }
+        ],
+    }
+
+    map_call = ToolCall(id="call_map", name="BrowserGetElementMap", arguments={})
+    map_result = await tools["BrowserGetElementMap"].call(map_call.arguments, context, map_call)
+    map_data = json.loads(map_result.content)
+
+    assert map_result.status == ToolExecutionStatus.COMPLETED
+    assert worker.navigated_urls == ["https://github.com/levy/PersonAgent"]
+    assert map_data["page_id"] == "page_github"
+    assert map_data["url"] == "https://github.com/levy/PersonAgent"
+    assert map_data["elements"][0]["node_id"] == "pa_repo"
+
+
+@pytest.mark.asyncio
+async def test_browser_extract_and_html_default_to_workspace_current_url(tmp_path):
+    worker = FakeBrowserWorker()
+    tools = {tool.definition.name: tool for tool in create_browser_tools(worker)}
+    context = _tool_context(tmp_path, conversation_id="conversation-a")
+    context.metadata["browser_workspace"] = {
+        "active_browser_id": "conversation-a",
+        "active_tab_id": "page_github",
+        "current_url": "https://github.com/levy/PersonAgent",
+        "tabs": [
+            {
+                "page_id": "page_github",
+                "window_id": "page_github",
+                "url": "https://github.com/levy/PersonAgent",
+                "final_url": "https://github.com/levy/PersonAgent",
+                "title": "PersonAgent",
+                "active": True,
+            }
+        ],
+    }
+
+    extract_call = ToolCall(id="call_extract", name="BrowserExtractContent", arguments={})
+    html_call = ToolCall(id="call_html", name="BrowserGetHtml", arguments={})
+    extract_result = await tools["BrowserExtractContent"].call(
+        extract_call.arguments,
+        context,
+        extract_call,
+    )
+    html_result = await tools["BrowserGetHtml"].call(html_call.arguments, context, html_call)
+    extract_data = json.loads(extract_result.content)
+    html_data = json.loads(html_result.content)
+
+    assert extract_result.status == ToolExecutionStatus.COMPLETED
+    assert html_result.status == ToolExecutionStatus.COMPLETED
+    assert extract_data["browser_id"] == "conversation-a"
+    assert html_data["browser_id"] == "conversation-a"
+    assert extract_data["url"] == "https://github.com/levy/PersonAgent"
+    assert html_data["url"] == "https://github.com/levy/PersonAgent"
 
 
 @pytest.mark.asyncio
@@ -1596,6 +1718,20 @@ class FakeBrowserWorker:
                 }
             ],
         }
+
+    async def view_navigate(
+        self,
+        *,
+        browser_id: str,
+        url: str,
+        width: int,
+        height: int,
+        cache_mode: str = "prefer_live",
+        wait_for_styles: bool = True,
+    ):
+        session = self.sessions.setdefault(browser_id, {})
+        session["opened"] = url
+        return await self.view_snapshot(browser_id=browser_id, width=width, height=height)
 
     async def view_act(
         self,

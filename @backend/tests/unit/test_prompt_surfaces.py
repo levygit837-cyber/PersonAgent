@@ -191,6 +191,30 @@ def test_context_attachments_expand_browser_tab_targets(tmp_path):
     assert "page_github" in result.reminders[0]
 
 
+def test_context_attachments_expand_browser_url_targets_without_page_id(tmp_path):
+    result = resolve_context_attachments(
+        [
+            {
+                "type": "browser_tab",
+                "id": "browser_tab:conversation-1:github.com",
+                "label": "@Browser",
+                "browser_id": "conversation-1",
+                "url": "https://github.com/",
+                "title": "Browser target: github.com",
+                "display_path": "https://github.com/",
+            }
+        ],
+        workspace_root=tmp_path,
+    )
+
+    assert result.metadata[0]["type"] == "browser_tab"
+    assert result.metadata[0]["browser_id"] == "conversation-1"
+    assert result.metadata[0]["page_id"] == ""
+    assert result.metadata[0]["url"] == "https://github.com/"
+    assert "shared Browser window" in result.reminders[0]
+    assert "BrowserOpen with the URL above" in result.reminders[0]
+
+
 def test_context_attachments_reject_paths_outside_workspace(tmp_path):
     outside = tmp_path.parent / "outside.txt"
     outside.write_text("outside", encoding="utf-8")

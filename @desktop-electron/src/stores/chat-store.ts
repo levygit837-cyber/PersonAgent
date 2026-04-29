@@ -102,6 +102,7 @@ interface ChatState {
   activeController?: AbortController;
   activeAgentId?: string;
   pendingPlanApproval?: PlanApprovalUi;
+  composerPlanMode: boolean;
   pendingToolApproval?: ToolApprovalUi;
   nextStepSuggestion?: string;
   liveSessionUsage: SessionUsage;
@@ -110,6 +111,7 @@ interface ChatState {
   addComposerAnnotation: (annotation: ComposerAnnotation) => void;
   removeComposerAnnotation: (id: number) => void;
   clearComposerAnnotations: () => void;
+  setComposerPlanMode: (active: boolean) => void;
   loadConversation: (id: string, workspaceRoot?: string | null) => Promise<void>;
   startNewConversation: () => void;
   sendMessage: (text: string, systemPrompt?: string, options?: SendMessageOptions) => Promise<void>;
@@ -129,6 +131,7 @@ interface ChatState {
 interface SendMessageOptions {
   contextAttachments?: ContextAttachment[];
   displayAttachments?: ContextAttachment[];
+  hideUserMessage?: boolean;
 }
 
 export type ChatStoreApi = StoreApi<ChatState>;
@@ -147,6 +150,7 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
   workspaceRoot: options.initialWorkspaceRoot,
   messages: [],
   composerAnnotations: [],
+  composerPlanMode: false,
   isStreaming: false,
   isFinalizing: false,
   conversationStatuses: {},
@@ -164,6 +168,8 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
   })),
 
   clearComposerAnnotations: () => set({ composerAnnotations: [] }),
+
+  setComposerPlanMode: (active) => set({ composerPlanMode: active }),
 
   loadConversation: async (id, workspaceRoot) => {
     if (get().loadingConversationId === id) return;
@@ -191,6 +197,7 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
           .filter(isRenderablePersistedMessage)
           .map(messageFromPersisted),
         pendingPlanApproval: undefined,
+        composerPlanMode: false,
         pendingToolApproval: undefined,
         nextStepSuggestion: undefined,
         composerAnnotations: [],
@@ -221,6 +228,7 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
       conversationId: undefined,
       conversationTitle: undefined,
       pendingPlanApproval: undefined,
+      composerPlanMode: false,
       pendingToolApproval: undefined,
       nextStepSuggestion: undefined,
       liveSessionUsage: emptySessionUsage(),
@@ -243,22 +251,24 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
     const workspaceRoot = getEffectiveWorkspaceRoot(get());
     const contextAttachments = options?.contextAttachments ?? [];
     const displayAttachments = options?.displayAttachments ?? contextAttachments;
-    const userMessage: ChatMessageUi = {
-      id: `${Date.now()}_user`,
-      role: "user",
-      label: "You",
-      content: message,
-      reasoning: "",
-      reasoningBlocks: [],
-      toolBlocks: [],
-      teamEvents: [],
-      parts: [],
-      isStreaming: false,
-      isReasoningStreaming: false,
-      metadata: displayAttachments.length
-        ? { context_attachments: displayAttachments }
-        : undefined,
-    };
+    const userMessage: ChatMessageUi | null = options?.hideUserMessage
+      ? null
+      : {
+          id: `${Date.now()}_user`,
+          role: "user",
+          label: "You",
+          content: message,
+          reasoning: "",
+          reasoningBlocks: [],
+          toolBlocks: [],
+          teamEvents: [],
+          parts: [],
+          isStreaming: false,
+          isReasoningStreaming: false,
+          metadata: displayAttachments.length
+            ? { context_attachments: displayAttachments }
+            : undefined,
+        };
     const agentId = `${paneId}_${Date.now()}_${Math.random().toString(36).slice(2)}_agent`;
     const agentMessage: ChatMessageUi = {
       id: agentId,
@@ -276,7 +286,7 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
     const controller = new AbortController();
     resetLiveTokenTotals();
     set((state) => ({
-      messages: [...state.messages, userMessage, agentMessage],
+      messages: [...state.messages, ...(userMessage ? [userMessage] : []), agentMessage],
       isStreaming: true,
       isFinalizing: false,
       activeController: controller,
@@ -341,7 +351,11 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
         approvalId: pending.approvalId,
         feedback,
       });
-      set({ pendingPlanApproval: undefined, error: undefined });
+      set((state) => ({
+        pendingPlanApproval: undefined,
+        error: undefined,
+        messages: updatePlanApprovalArtifact(state.messages, pending.approvalId, response.plan_status ?? "approved", feedback),
+      }));
       setConversationStatus(set, pending.conversationId, "running");
       const injected = response.injected_message?.trim();
       if (injected) await get().sendMessage(injected);
@@ -360,7 +374,11 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
         approvalId: pending.approvalId,
         feedback,
       });
-      set({ pendingPlanApproval: undefined, error: undefined });
+      set((state) => ({
+        pendingPlanApproval: undefined,
+        error: undefined,
+        messages: updatePlanApprovalArtifact(state.messages, pending.approvalId, response.plan_status ?? "draft", feedback),
+      }));
       setConversationStatus(set, pending.conversationId, "running");
       const message = response.suggested_message?.trim();
       if (message) await get().sendMessage(message);
@@ -379,7 +397,11 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
         approvalId: pending.approvalId,
         feedback,
       });
-      set({ pendingPlanApproval: undefined, error: undefined });
+      set((state) => ({
+        pendingPlanApproval: undefined,
+        error: undefined,
+        messages: updatePlanApprovalArtifact(state.messages, pending.approvalId, "cancelled", feedback),
+      }));
       setConversationStatus(set, pending.conversationId, "idle");
     } catch (error) {
       set({ error: errorMessage(error) });
@@ -842,7 +864,7 @@ function handleLocalSlashCommand(
     response = statusCommandText(get(), app);
   }
 
-  appendLocalCommandResult(set, message, response || `Command /${parsed.name} completed.`);
+  appendLocalCommandResult(set, response || `Command /${parsed.name} completed.`);
   return true;
 }
 
@@ -854,29 +876,9 @@ function parseLocalSlashCommand(message: string) {
   return { name: head.toLowerCase(), args: rest };
 }
 
-function appendLocalCommandResult(set: ChatSet, command: string, content: string) {
+function appendLocalCommandResult(set: ChatSet, content: string) {
   const now = Date.now();
-  const userId = `${now}_command_user`;
   const agentId = `${now}_command_result`;
-  const userMessage: ChatMessageUi = {
-    id: userId,
-    role: "user",
-    label: "You",
-    content: command,
-    reasoning: "",
-    reasoningBlocks: [],
-    toolBlocks: [],
-    teamEvents: [],
-    parts: [],
-    isStreaming: false,
-    isReasoningStreaming: false,
-    metadata: {
-      slash_command: {
-        source: "builtin",
-        should_query: false,
-      },
-    },
-  };
   const agentMessage: ChatMessageUi = {
     id: agentId,
     role: "agent",
@@ -894,7 +896,7 @@ function appendLocalCommandResult(set: ChatSet, command: string, content: string
     },
   };
   set((state) => ({
-    messages: [...state.messages, userMessage, agentMessage],
+    messages: [...state.messages, agentMessage],
     error: undefined,
     pendingPlanApproval: undefined,
     pendingToolApproval: undefined,
@@ -1193,13 +1195,16 @@ function handleChunk(
     incrementLiveUsage(set, "plans_created", 1);
     flushTextBuffer(agentId, set);
     thinkingStates.delete(agentId);
+    const approval = planApprovalFromChunk(chunk);
     set((state) => ({
       isStreaming: state.activeAgentId === agentId ? false : state.isStreaming,
       isFinalizing: state.activeAgentId === agentId ? true : state.isFinalizing,
       activeController: state.activeAgentId === agentId ? undefined : state.activeController,
       activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
-      pendingPlanApproval: planApprovalFromChunk(chunk),
-      messages: state.messages.map((item) => (item.id === agentId ? closeActiveReasoning(item, false) : item)),
+      pendingPlanApproval: approval,
+      messages: state.messages.map((item) =>
+        item.id === agentId ? attachPlanApprovalArtifact(closeActiveReasoning(item, false), approval) : item,
+      ),
     }));
     setConversationStatus(set, chunk.conversation_id, "pending");
     return;
@@ -1391,6 +1396,41 @@ function planApprovalFromChunk(chunk: StreamChunk): PlanApprovalUi {
     planStatus: String(chunk.plan_status ?? "awaiting_approval"),
     feedback: chunk.feedback,
   };
+}
+
+function attachPlanApprovalArtifact(message: ChatMessageUi, approval: PlanApprovalUi): ChatMessageUi {
+  return {
+    ...message,
+    metadata: {
+      ...(message.metadata ?? {}),
+      plan_approval: approval,
+    },
+  };
+}
+
+function updatePlanApprovalArtifact(
+  messages: ChatMessageUi[],
+  approvalId: string,
+  planStatus: string,
+  feedback?: string,
+): ChatMessageUi[] {
+  return messages.map((message) => {
+    const raw = message.metadata?.plan_approval;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return message;
+    const approval = raw as Partial<PlanApprovalUi>;
+    if (approval.approvalId !== approvalId) return message;
+    return {
+      ...message,
+      metadata: {
+        ...(message.metadata ?? {}),
+        plan_approval: {
+          ...approval,
+          planStatus,
+          feedback: feedback?.trim() || approval.feedback,
+        },
+      },
+    };
+  });
 }
 
 function toolApprovalFromChunk(chunk: StreamChunk): ToolApprovalUi {
@@ -2910,6 +2950,7 @@ function isRenderablePersistedMessage(message: PersistedMessage) {
   if (message.content.trim().length > 0) return true;
   if ((message.reasoning_content ?? "").trim().length > 0) return true;
   if (imageListFromMetadata(message.metadata?.images).length > 0) return true;
+  if (isRecord(message.metadata?.plan_approval)) return true;
   return false;
 }
 

@@ -217,12 +217,36 @@ def _resolve_browser_tab(raw: dict[str, Any], *, index: int) -> tuple[str, dict[
         "selected_element": selected_element,
         "updated_at": updated_at,
     }
+    has_page_target = bool(page_id or tab_id)
+    has_url_target = bool(url)
+    if has_page_target:
+        guidance = (
+            "This is a reference to the user's shared Browser panel tab. The Browser panel and "
+            "Browser tools operate on the same Browser workspace for this conversation. Treat "
+            "the page_id/window_id above as the target tab for Browser tools in this turn. Do "
+            "not open a separate copy of this page just because it was mentioned; inspect or "
+            "act on the referenced tab when browser work is needed."
+        )
+    elif has_url_target:
+        guidance = (
+            "This is a reference to the user's shared Browser window. If the shared Browser "
+            "workspace is not already on the target URL, use BrowserOpen with the URL above "
+            "inside this conversation's shared Browser workspace before browser work is needed. "
+            "Do not treat this Browser mention as plain message text."
+        )
+    else:
+        guidance = (
+            "This is a reference to the user's shared Browser window. Browser tools operate "
+            "on the same Browser workspace for this conversation. Inspect or act on the "
+            "active Browser workspace when browser work is needed, and do not treat this "
+            "Browser mention as plain message text."
+        )
     reminder = _wrap_attached_context(
         "browser_tab",
         [
             f"Label: {label}",
             f"Browser ID: {browser_id or '(unknown)'}",
-            f"Page ID: {page_id or tab_id or '(unknown)'}",
+            f"Page ID: {page_id or tab_id or '(new or active Browser window)'}",
             f"URL: {url or '(unknown)'}",
             f"Title: {title or '(untitled)'}",
             f"Runtime: {runtime or '(unknown)'}",
@@ -231,11 +255,7 @@ def _resolve_browser_tab(raw: dict[str, Any], *, index: int) -> tuple[str, dict[
             f"Viewport: {viewport or {}}",
             f"Selected element: {selected_element or {}}",
             "",
-            "This is a reference to the user's shared Browser panel tab. The Browser panel and "
-            "Browser tools operate on the same Browser workspace for this conversation. Treat "
-            "the page_id/window_id above as the target tab for Browser tools in this turn. Do "
-            "not open a separate copy of this page just because it was mentioned; inspect or "
-            "act on the referenced tab when browser work is needed.",
+            guidance,
         ],
     )
     return reminder, metadata

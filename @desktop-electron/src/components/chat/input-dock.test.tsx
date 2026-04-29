@@ -406,6 +406,51 @@ describe("InputDock", () => {
     expect(await screen.findByText("/review")).toBeInTheDocument();
   });
 
+  it("turns /plan into composer Plan Mode instead of sending it", () => {
+    const sendMessage = vi.fn();
+    useChatStore.setState({ sendMessage });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/ask the local agent/i), {
+      target: { value: "/plan" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByTestId("composer-plan-mode")).toBeInTheDocument();
+    expect(screen.getByText("Plan Mode")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/ask the local agent/i)).toHaveValue("");
+  });
+
+  it("sends the next real message with Plan Mode instructions after /plan", () => {
+    const sendMessage = vi.fn();
+    useChatStore.setState({ sendMessage });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    const input = screen.getByPlaceholderText(/ask the local agent/i);
+    fireEvent.change(input, { target: { value: "/plan" } });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    fireEvent.change(input, { target: { value: "Investigate the login bug" } });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "Investigate the login bug",
+      expect.stringContaining("enabled Plan Mode"),
+      undefined,
+    );
+    expect(screen.queryByTestId("composer-plan-mode")).not.toBeInTheDocument();
+  });
+
   it("shows the next-step suggestion chip", () => {
     useChatStore.setState({ nextStepSuggestion: "Run focused tests" });
 
@@ -678,6 +723,54 @@ describe("InputDock", () => {
             page_id: "page_github",
             url: "https://github.com/personagent/personagent",
             active: true,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("offers Browser as an @ autocomplete target without existing tabs", async () => {
+    useChatStore.setState({ conversationId: "conversation-1" });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    const input = screen.getByPlaceholderText(/ask the local agent/i);
+    fireEvent.change(input, { target: { value: "Use @Bro" } });
+
+    expect(await screen.findByText("Browser")).toBeInTheDocument();
+    expect(screen.getByText("Shared Browser window")).toBeInTheDocument();
+  });
+
+  it("turns typed @Browser URL mentions into browser target context attachments", async () => {
+    const sendMessage = vi.fn();
+    useChatStore.setState({ sendMessage, conversationId: "conversation-1" });
+    listBrowserTabMentionsMock.mockResolvedValue([]);
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    const input = screen.getByPlaceholderText(/ask the local agent/i);
+    fireEvent.change(input, { target: { value: "Open @Browser:github.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "Open @Browser:github.com",
+      undefined,
+      expect.objectContaining({
+        contextAttachments: [
+          expect.objectContaining({
+            type: "browser_tab",
+            label: "@Browser",
+            browser_id: "conversation-1",
+            url: "https://github.com/",
+            display_path: "https://github.com/",
           }),
         ],
       }),
