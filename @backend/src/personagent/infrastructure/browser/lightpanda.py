@@ -1624,7 +1624,7 @@ class LightPandaBrowserWorker:
 
         session = await self._get_session(browser_id)
         target_url = _normalize_navigation_url(url)
-        await self._goto(browser_id, session, target_url, allow_partial=True)
+        await self._goto(browser_id, session, target_url, allow_partial=True, wait_for_styles=wait_for_styles)
         final_url = _clean_browser_url(str(getattr(session.page, "url", target_url) or target_url))
         session.current_url = final_url
         session.last_open_url = final_url
@@ -1659,7 +1659,10 @@ class LightPandaBrowserWorker:
         if not callable(operation):
             raise BrowserUnavailableError("LightPanda history navigation is unavailable.")
         with suppress(Exception):
-            await operation(wait_until="load", timeout=self.timeout_ms)
+            await operation(
+                wait_until="load" if wait_for_styles else "domcontentloaded",
+                timeout=self.timeout_ms,
+            )
         if wait_for_styles:
             await self._wait_for_page_visual_ready(page)
         final_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
@@ -1697,15 +1700,18 @@ class LightPandaBrowserWorker:
         operation = getattr(page, "reload", None)
         if callable(operation):
             try:
-                await operation(wait_until="load", timeout=self.timeout_ms)
+                await operation(
+                    wait_until="load" if wait_for_styles else "domcontentloaded",
+                    timeout=self.timeout_ms,
+                )
             except Exception as exc:
                 if current_url.startswith(("http://", "https://")):
                     logger.warning("lightpanda_reload_falling_back_to_goto", url=current_url, error=str(exc))
-                    await self._goto_page(page, current_url, allow_partial=True)
+                    await self._goto_page(page, current_url, allow_partial=True, wait_for_styles=wait_for_styles)
                 else:
                     raise BrowserUnavailableError("LightPanda reload is unavailable.") from exc
         elif current_url.startswith(("http://", "https://")):
-            await self._goto_page(page, current_url, allow_partial=True)
+            await self._goto_page(page, current_url, allow_partial=True, wait_for_styles=wait_for_styles)
         else:
             raise BrowserUnavailableError("LightPanda reload is unavailable.")
         if wait_for_styles:
@@ -1747,13 +1753,14 @@ class LightPandaBrowserWorker:
             min(max(float(y), 0.0), float(viewport_height)),
             button=safe_button,
         )
-        await self._wait_for_page_visual_ready(page)
+        await self._wait_for_page_load_complete(page, timeout_ms=1_500)
         session.touch()
         return await self._browser_view_snapshot(
             browser_id,
             session,
             width=viewport_width,
             height=viewport_height,
+            wait_for_styles=False,
         )
 
     async def view_key(
@@ -1783,9 +1790,9 @@ class LightPandaBrowserWorker:
             if not callable(press_key):
                 raise BrowserUnavailableError("LightPanda key input is unavailable.")
             await press_key(key)
-        await self._wait_for_page_visual_ready(page)
+        await self._wait_for_page_load_complete(page, timeout_ms=1_500)
         session.touch()
-        return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
+        return await self._browser_view_snapshot(browser_id, session, width=width, height=height, wait_for_styles=False)
 
     async def view_scroll(
         self,
@@ -1814,7 +1821,7 @@ class LightPandaBrowserWorker:
         with suppress(Exception):
             await page.wait_for_timeout(120)
         session.touch()
-        return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
+        return await self._browser_view_snapshot(browser_id, session, width=width, height=height, wait_for_styles=False)
 
     async def view_act(
         self,
@@ -1913,13 +1920,14 @@ class LightPandaBrowserWorker:
             if isinstance(result, Mapping):
                 reason = str(result.get("reason") or "")
             raise BrowserError(reason or "Browser action failed.")
-        await self._wait_for_page_visual_ready(page)
+        await self._wait_for_page_load_complete(page, timeout_ms=1_500)
         session.touch()
         view = await self._browser_view_snapshot(
             browser_id,
             session,
             width=viewport_width,
             height=viewport_height,
+            wait_for_styles=False,
         )
         view["last_action"] = {
             "node_id": normalized_node_id,
@@ -2017,7 +2025,7 @@ class LightPandaBrowserWorker:
                         min(max(float(y), 0.0), float(viewport_height)),
                         **kwargs,
                     )
-            await self._wait_for_page_visual_ready(page)
+            await self._wait_for_page_load_complete(page, timeout_ms=1_500)
             if safe_wait_ms:
                 with suppress(Exception):
                     await page.wait_for_timeout(safe_wait_ms)
@@ -2027,6 +2035,7 @@ class LightPandaBrowserWorker:
                 session,
                 width=viewport_width,
                 height=viewport_height,
+                wait_for_styles=False,
             )
         after_url = _clean_browser_url(str(getattr(page, "url", "") or view.get("url") or ""))
         view.update(
@@ -2140,13 +2149,14 @@ class LightPandaBrowserWorker:
                 press_key = getattr(keyboard, "press", None)
                 if callable(press_key):
                     await press_key("Enter")
-            await self._wait_for_page_visual_ready(page)
+            await self._wait_for_page_load_complete(page, timeout_ms=1_500)
             session.touch()
             view = await self._browser_view_snapshot(
                 conversation_id,
                 session,
                 width=viewport_width,
                 height=viewport_height,
+                wait_for_styles=False,
             )
         if submit and node_id and normalized_mode in {"fill", "press"}:
             keyboard = getattr(session.page, "keyboard", None)
@@ -2154,12 +2164,13 @@ class LightPandaBrowserWorker:
             if callable(press_key):
                 with suppress(Exception):
                     await press_key("Enter")
-                await self._wait_for_page_visual_ready(session.page)
+                await self._wait_for_page_load_complete(session.page, timeout_ms=1_500)
                 view = await self._browser_view_snapshot(
                     conversation_id,
                     session,
                     width=viewport_width,
                     height=viewport_height,
+                    wait_for_styles=False,
                 )
         after_url = _clean_browser_url(str(getattr(page, "url", "") or view.get("url") or ""))
         view.update(
@@ -2676,8 +2687,11 @@ class LightPandaBrowserWorker:
             viewport_width,
             viewport_height,
         )
+        render_cache_url_key = self._render_snapshot_url_cache_key(browser_id, current_url)
         if cache_mode == "prefer_cached":
-            cached_snapshot = self._read_render_snapshot_cache(render_cache_key)
+            cached_snapshot = self._read_render_snapshot_cache(render_cache_key) or self._read_render_snapshot_cache(
+                render_cache_url_key
+            )
             if cached_snapshot is not None:
                 return cached_snapshot
         style_metrics = (
@@ -2690,19 +2704,27 @@ class LightPandaBrowserWorker:
                 "fonts_ready": True,
             }
         )
+        element_map_source = (
+            self._browser_element_map(page)
+            if wait_for_styles
+            else asyncio.sleep(0, result=list(self._element_map_cache.get(browser_id, [])))
+        )
         title, user_agent, raw_element_map, html, scroll_state = await asyncio.gather(
             self._safe_title(page),
             self._safe_user_agent(page),
-            self._browser_element_map(page),
+            element_map_source,
             self._safe_html(page),
             self._safe_scroll_state(page),
         )
-        element_map = self._enrich_browser_element_map(
-            raw_element_map,
-            browser_id=browser_id,
-            tab_id=session.current_page_id or browser_id,
-        )
-        self._element_map_cache[browser_id] = element_map
+        if wait_for_styles:
+            element_map = self._enrich_browser_element_map(
+                raw_element_map,
+                browser_id=browser_id,
+                tab_id=session.current_page_id or browser_id,
+            )
+            self._element_map_cache[browser_id] = element_map
+        else:
+            element_map = [dict(item) for item in raw_element_map if isinstance(item, Mapping)]
         html_from_fallback = False
         if not html.strip() and current_url.startswith(("http://", "https://")):
             html, _html_method = await self._html_or_empty_page(page, fallback_url=current_url)
@@ -2782,7 +2804,11 @@ class LightPandaBrowserWorker:
         if css_fidelity == "computed":
             fallback_reason = "Original CSS was not confirmed; using a computed-style DOM snapshot."
         tabs = self._browser_tabs_snapshot(browser_id, session, current_url=current_url, title=title, runtime=runtime)
-        frame_tree = await self._browser_frame_tree_snapshot(page, current_url=current_url, title=title)
+        frame_tree = (
+            await self._browser_frame_tree_snapshot(page, current_url=current_url, title=title)
+            if wait_for_styles
+            else [{"frame_id": "main", "url": current_url, "title": title, "parent_frame_id": ""}]
+        )
         cooperation_events = await self._drain_cooperation_events(page, browser_id, active_tab_id)
         browser_snapshot = {
             "document_html": html,
@@ -2844,7 +2870,7 @@ class LightPandaBrowserWorker:
             "viewport_height": viewport_height,
             "can_capture": bool(image_data),
         }
-        self._store_render_snapshot_cache(render_cache_key, view)
+        self._store_render_snapshot_cache(render_cache_key, view, aliases=[render_cache_url_key])
         return view
 
     def _enrich_browser_element_map(
@@ -3096,12 +3122,12 @@ class LightPandaBrowserWorker:
             await page.wait_for_timeout(120)
         return metrics
 
-    async def _wait_for_page_load_complete(self, page: Any) -> None:
+    async def _wait_for_page_load_complete(self, page: Any, *, timeout_ms: int | None = None) -> None:
         wait_for_load_state = getattr(page, "wait_for_load_state", None)
         if not callable(wait_for_load_state):
             return
         with suppress(Exception):
-            await wait_for_load_state("load", timeout=min(self.timeout_ms, 5_000))
+            await wait_for_load_state("load", timeout=min(timeout_ms or self.timeout_ms, 5_000))
 
     @staticmethod
     def _render_snapshot_cache_key(
@@ -3122,7 +3148,14 @@ class LightPandaBrowserWorker:
         )
         return "::".join([browser_id or "browser", hashlib.sha256(raw.encode("utf-8")).hexdigest()])
 
+    @staticmethod
+    def _render_snapshot_url_cache_key(browser_id: str, current_url: str) -> str:
+        raw = "|".join([browser_id or "browser", _clean_browser_url(current_url or "about:blank")])
+        return "::".join([browser_id or "browser", "url", hashlib.sha256(raw.encode("utf-8")).hexdigest()])
+
     def _read_render_snapshot_cache(self, cache_key: str) -> dict[str, Any] | None:
+        if not cache_key:
+            return None
         now = time.time()
         cached = self._render_snapshot_cache.get(cache_key)
         if cached is None:
@@ -3133,15 +3166,24 @@ class LightPandaBrowserWorker:
             return None
         return self._clone_render_snapshot(view, status="hit")
 
-    def _store_render_snapshot_cache(self, cache_key: str, view: dict[str, Any]) -> None:
+    def _store_render_snapshot_cache(
+        self,
+        cache_key: str,
+        view: dict[str, Any],
+        *,
+        aliases: list[str] | None = None,
+    ) -> None:
         if not cache_key or not view.get("url") or view.get("url") == "about:blank":
             return
         now = time.time()
-        self._render_snapshot_cache.pop(cache_key, None)
-        self._render_snapshot_cache[cache_key] = (
-            now + _RENDER_SNAPSHOT_CACHE_TTL_SECONDS,
-            self._clone_render_snapshot(view, status="stored"),
-        )
+        for key in [cache_key, *(aliases or [])]:
+            if not key:
+                continue
+            self._render_snapshot_cache.pop(key, None)
+            self._render_snapshot_cache[key] = (
+                now + _RENDER_SNAPSHOT_CACHE_TTL_SECONDS,
+                self._clone_render_snapshot(view, status="stored"),
+            )
         if len(self._render_snapshot_cache) > _MAX_RENDER_SNAPSHOT_CACHE_ENTRIES:
             expired = [key for key, (expires_at, _) in self._render_snapshot_cache.items() if expires_at <= now]
             for key in expired:
@@ -4094,9 +4136,10 @@ class LightPandaBrowserWorker:
         url: str,
         *,
         allow_partial: bool = False,
+        wait_for_styles: bool = True,
     ) -> None:
         try:
-            await self._goto_page(session.page, url, allow_partial=allow_partial)
+            await self._goto_page(session.page, url, allow_partial=allow_partial, wait_for_styles=wait_for_styles)
         except Exception:
             await self._close_session(conversation_id, session)
             raise
@@ -4107,11 +4150,17 @@ class LightPandaBrowserWorker:
         url: str,
         *,
         allow_partial: bool = False,
+        wait_for_styles: bool = True,
     ) -> None:
         clean_url = _clean_browser_url(url)
         try:
-            await page.goto(clean_url, wait_until="load", timeout=self.timeout_ms)
-            await self._wait_for_page_visual_ready(page)
+            await page.goto(
+                clean_url,
+                wait_until="load" if wait_for_styles else "domcontentloaded",
+                timeout=self.timeout_ms,
+            )
+            if wait_for_styles:
+                await self._wait_for_page_visual_ready(page)
             await self._install_console_capture(page)
         except Exception as exc:
             page_url = _clean_browser_url(str(getattr(page, "url", "") or ""))

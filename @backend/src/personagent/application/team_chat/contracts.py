@@ -66,13 +66,15 @@ def default_team_config() -> TeamConfig:
     """Return the built-in 4-agent team preset."""
 
     agents = (
-            TeamAgentConfig(
+        TeamAgentConfig(
             id="analyst",
             name="Analyst",
             role="Analysis",
             system_prompt=(
-                "You are the Analyst in a PersonAgent team. Identify the task, constraints, "
-                "missing context, and the strongest direct answer path. Be concise and factual."
+                "You are the Analyst in a PersonAgent team. Establish the objective, constraints, "
+                "success criteria, missing context, and the smallest evidence path. Use tools for "
+                "grounding when available, separate facts from hypotheses, and publish concise "
+                "findings that other agents can build on."
             ),
             temperature=0.2,
             tools_enabled=True,
@@ -83,7 +85,8 @@ def default_team_config() -> TeamConfig:
             role="Risk Review",
             system_prompt=(
                 "You are the Critic in a PersonAgent team. Challenge weak assumptions, find "
-                "failure modes, and point out what would make the answer unsafe or incomplete."
+                "failure modes, missing validation, unsafe actions, stale memory, and incomplete "
+                "tool evidence. Prefer concrete blocker/risk statements over generic skepticism."
             ),
             temperature=0.25,
             tools_enabled=True,
@@ -94,7 +97,9 @@ def default_team_config() -> TeamConfig:
             role="Solution",
             system_prompt=(
                 "You are the Builder in a PersonAgent team. Turn the analysis into a concrete, "
-                "usable answer or implementation direction while respecting prior critiques."
+                "usable implementation direction or answer. Respect critiques, preserve user work, "
+                "identify dependent edits/contracts/tests, and do not claim completion without a "
+                "validation path."
             ),
             temperature=0.25,
             tools_enabled=True,
@@ -105,7 +110,8 @@ def default_team_config() -> TeamConfig:
             role="Final Review",
             system_prompt=(
                 "You are the Reviewer in a PersonAgent team. Check coherence, completeness, "
-                "and whether the team is ready to synthesize a final answer."
+                "evidence quality, tool-result interpretation, and whether success criteria are "
+                "satisfied. Call out exact remaining gaps before final synthesis."
             ),
             temperature=0.2,
             tools_enabled=True,
@@ -117,7 +123,8 @@ def default_team_config() -> TeamConfig:
         role="Final Synthesis",
         system_prompt=(
             "You are the Coordinator in a PersonAgent team. Synthesize the final report "
-            "from the blackboard, votes, evidence, blockers, and decisions. Do not vote."
+            "from the blackboard, votes, evidence, blockers, and decisions. Lead with the outcome, "
+            "separate verified facts from uncertainty, include validation status, and do not vote."
         ),
         temperature=0.2,
         max_tokens=4096,

@@ -9,9 +9,13 @@ import pytest
 from personagent.domain.context.models import SystemContext, UserContext
 from personagent.domain.models.inference_result import InferenceResult, StreamChunk
 from personagent.domain.prompts import infer_prompt_mode
-from personagent.domain.prompts.models import SystemPromptSection
+from personagent.domain.prompts.models import AgentStateProfile, PromptProfile, SystemPromptSection
 from personagent.domain.prompts.prompt import PROMPT_DYNAMIC_BOUNDARY, get_mode_prompt_section
-from personagent.domain.prompts.services import PromptBuilder, PromptContextAnalyzer
+from personagent.domain.prompts.services import (
+    AgentStateResolver,
+    PromptBuilder,
+    PromptContextAnalyzer,
+)
 from personagent.domain.prompts.skills import discover_skills
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
@@ -284,6 +288,103 @@ class TestPromptBuilder:
         assert "# Parallel Tool Use" in multiple_tools.content
         assert "# Parallel Tool Use" in provider_supported.content
         assert "parallel_tool_use" in multiple_tools.sections_used
+
+    @pytest.mark.asyncio
+    async def test_build_includes_agent_state_sections_and_metadata(
+        self, system_context, user_context
+    ):
+        """State overlays should be appended after mode overlays and surfaced in metadata."""
+        builder = PromptBuilder(permission_mode="manual")
+        agent_state_profile = AgentStateProfile(
+            states=("intake", "implementation", "runtime_validation", "finalization"),
+            source="test",
+            reason="explicit test",
+            confidence=1.0,
+        )
+
+        result = await builder.build(
+            system_context,
+            user_context,
+            prompt_mode="writing",
+            agent_state_profile=agent_state_profile,
+            available_tools=["Read"],
+        )
+
+        assert "# Mode Overlay: Writing" in result.content
+        assert "# Agent State: Implementation" in result.content
+        assert "# Agent State: Runtime Validation" in result.content
+        assert "state_implementation" in result.sections_used
+        assert result.metadata["agent_states"] == [
+            "intake",
+            "implementation",
+            "runtime_validation",
+            "finalization",
+        ]
+        assert result.metadata["agent_state_source"] == "test"
+        assert result.metadata["agent_state_reason"] == "explicit test"
+        assert result.metadata["state_sections_used"] == [
+            "state_intake",
+            "state_implementation",
+            "state_runtime_validation",
+            "state_finalization",
+        ]
+        assert "agent_state" in result.metadata["prompt_surfaces_used"]
+        assert "state:implementation" in result.metadata["prompt_surfaces_used"]
+
+    def test_agent_state_resolver_maps_writing_tools_and_validation(self):
+        """Implementation requests with tools and validation terms should activate work states."""
+        resolver = AgentStateResolver()
+
+        profile = resolver.resolve(
+            message="Implemente e valide com testes",
+            prompt_profile=PromptProfile(
+                primary_mode="writing",
+                intent="implement and validate",
+                confidence=0.8,
+                source="llm",
+            ),
+            available_tools=["Read", "Edit", "TodoWrite"],
+        )
+
+        assert "intake" in profile.states
+        assert "implementation" in profile.states
+        assert "tool_execution" in profile.states
+        assert "runtime_validation" in profile.states
+        assert "finalization" in profile.states
+        assert profile.source == "heuristic"
+        assert profile.reason
+
+    def test_agent_state_resolver_detects_debug_long_context_memory_and_plan_mode(self):
+        """Resolver should combine execution states from metadata, context, errors, and memory."""
+        resolver = AgentStateResolver()
+
+        profile = resolver.resolve(
+            message="Analise a causa do erro em uma tarefa complexa",
+            prompt_profile=PromptProfile(
+                primary_mode="exploring",
+                intent="inspect complex failure",
+                confidence=0.6,
+                source="fallback",
+            ),
+            conversation_metadata={
+                "plan_mode": {"active": True},
+                "context_compaction": {"compacted": True},
+            },
+            context_size_chars=250_000,
+            conversation_message_count=90,
+            recent_error_count=1,
+            has_session_memory=True,
+            has_relevant_memories=True,
+        )
+
+        assert "plan_mode" in profile.states
+        assert "planning" in profile.states
+        assert "context_discovery" in profile.states
+        assert "debug_recovery" in profile.states
+        assert "context_compaction" in profile.states
+        assert "memory_recall" in profile.states
+        assert "user_checkpoint" in profile.states
+        assert "finalization" in profile.states
 
     @pytest.mark.asyncio
     async def test_provider_boundary_changes_by_provider(self, system_context, user_context):

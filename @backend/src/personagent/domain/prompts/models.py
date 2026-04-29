@@ -14,6 +14,20 @@ from typing import Any, Literal
 ComputeFn = Callable[[], str | None | Awaitable[str | None]]
 PromptMode = Literal["auto", "writing", "exploring", "research"]
 ConcretePromptMode = Literal["writing", "exploring", "research"]
+AgentState = Literal[
+    "intake",
+    "context_discovery",
+    "planning",
+    "implementation",
+    "tool_execution",
+    "debug_recovery",
+    "runtime_validation",
+    "context_compaction",
+    "memory_recall",
+    "user_checkpoint",
+    "finalization",
+    "plan_mode",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +79,36 @@ class PromptProfile:
                 seen.add(mode)
                 modes.append(mode)
         return tuple(modes)
+
+
+@dataclass(frozen=True, slots=True)
+class AgentStateProfile:
+    """Resolved execution states for a single agent turn.
+
+    PromptMode answers what kind of user intent this is. AgentState answers
+    how the agent should behave right now while executing that intent.
+    """
+
+    states: tuple[AgentState, ...] = ("intake", "context_discovery", "finalization")
+    source: str = "fallback"
+    reason: str = ""
+    confidence: float = 0.0
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        unique: list[AgentState] = []
+        for state in self.states:
+            if state not in unique:
+                unique.append(state)
+        if not unique:
+            unique = ["intake", "finalization"]
+        object.__setattr__(self, "states", tuple(unique))
+
+    @property
+    def section_names(self) -> tuple[str, ...]:
+        """Return prompt section names generated from these states."""
+
+        return tuple(f"state_{state}" for state in self.states)
 
 
 @dataclass(frozen=True, slots=True)

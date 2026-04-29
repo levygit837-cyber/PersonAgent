@@ -759,6 +759,7 @@ async def test_chat_custom_system_prompt_is_appended_to_dynamic_prompt(tmp_path)
     assert messages[0]["role"] == "system"
     assert "# Mode Overlay: Writing" in messages[0]["content"]
     assert "# Custom System Instructions" in messages[0]["content"]
+    assert "agent-state policy" in messages[0]["content"]
     assert "CUSTOM SYSTEM" in messages[0]["content"]
     assert "Keep user context." in messages[1]["content"]
 
@@ -796,10 +797,15 @@ async def test_prompt_preview_returns_final_prompt_metrics_without_completion(tm
     assert preview["estimated_tokens"] > 0
     assert preview["provider_data_boundary"] == "hosted_model_external_provider_local_tools"
     assert preview["mode"] == "writing"
+    assert "implementation" in preview["agent_states"]
+    assert "runtime_validation" in preview["agent_states"]
+    assert "state_implementation" in preview["state_sections_used"]
     assert "todo_write_policy" in preview["sections"]
     assert "parallel_tool_use" in preview["sections"]
+    assert "agent_state" in preview["surfaces"]
     assert "todo" in preview["surfaces"]
     assert "parallel_tool_use" in preview["surfaces"]
+    assert "# Agent State: Implementation" in preview["system_prompt"]
     assert "# TodoWrite Policy" in preview["system_prompt"]
     assert "# Parallel Tool Use" in preview["system_prompt"]
 

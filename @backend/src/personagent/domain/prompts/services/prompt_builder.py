@@ -13,6 +13,7 @@ from typing import Any
 from personagent.domain.context.models import SystemContext, UserContext
 from personagent.domain.prompts.commands import PromptCommand
 from personagent.domain.prompts.models import (
+    AgentStateProfile,
     BuiltSystemPrompt,
     PromptMode,
     PromptProfile,
@@ -31,10 +32,14 @@ from personagent.domain.prompts.prompt import (
 )
 from personagent.domain.prompts.sections import (
     get_agent_sections,
+    get_agent_state_sections,
     get_execution_sections,
     get_tool_sections,
 )
 from personagent.domain.prompts.sections.tool_prompts import get_rich_tool_prompt_sections
+from personagent.domain.prompts.services.agent_state_resolver import (
+    fallback_agent_state_profile,
+)
 from personagent.domain.prompts.skills import SkillDefinition
 from personagent.domain.prompts.surfaces import PromptSurfaceRegistry
 from personagent.domain.tools import ToolDefinition
@@ -72,6 +77,7 @@ class PromptBuilder:
         *,
         prompt_mode: str | None = "auto",
         prompt_profile: PromptProfile | None = None,
+        agent_state_profile: AgentStateProfile | None = None,
         user_message: str = "",
         conversation_id: str | None = None,
         available_tool_definitions: list[ToolDefinition] | None = None,
@@ -102,6 +108,11 @@ class PromptBuilder:
         profile = self._resolve_profile(normalized_mode, prompt_profile)
         resolved_mode = profile.primary_mode
         all_tool_names = self._prompt_tool_names(available_tools, available_tool_definitions)
+        state_profile = agent_state_profile or fallback_agent_state_profile(
+            prompt_profile=profile,
+            available_tools=sorted(all_tool_names),
+            has_memory=bool(session_memory and session_memory.strip()) or bool(relevant_memories),
+        )
         can_use_todos = "TodoWrite" in all_tool_names
         can_use_parallel_tools = (
             bool(supports_parallel_tool_calls)
@@ -129,6 +140,8 @@ class PromptBuilder:
 
         # Obtém seções do agente
         agent_sections = tuple(get_mode_prompt_section(mode) for mode in profile.all_modes)
+        state_sections = get_agent_state_sections(state_profile.states)
+        agent_sections += state_sections
         if self._enable_agent_sections:
             agent_sections += get_agent_sections()
         agent_sections += self._command_sections(command_inventory)
@@ -151,6 +164,7 @@ class PromptBuilder:
             system_context=system_context,
             available_tools=sorted(all_tool_names),
             prompt_mode=resolved_mode,
+            agent_states=state_profile.states,
             provider=provider,
             model=model,
         )
@@ -198,6 +212,22 @@ class PromptBuilder:
                     "requested_mode": profile.requested_mode,
                 },
                 "prompt_surfaces_used": surfaces_used,
+                "agent_states": list(state_profile.states),
+                "agent_state_source": state_profile.source,
+                "agent_state_reason": state_profile.reason,
+                "agent_state_confidence": state_profile.confidence,
+                "agent_state_profile": {
+                    "states": list(state_profile.states),
+                    "source": state_profile.source,
+                    "reason": state_profile.reason,
+                    "confidence": state_profile.confidence,
+                    "raw": state_profile.raw,
+                },
+                "state_sections_used": [
+                    section.name
+                    for section, _content in resolved_sections
+                    if section.name.startswith("state_")
+                ],
                 "has_persona_md": user_context.has_persona_md,
                 "has_memory_files": user_context.has_memory_files,
                 "has_session_memory": bool(session_memory and session_memory.strip()),
@@ -242,6 +272,15 @@ class PromptBuilder:
         for mode in ("writing", "exploring", "research"):
             if f"mode_{mode}" in sections:
                 add(f"mode:{mode}")
+        state_sections = sorted(
+            name.removeprefix("state_")
+            for name in sections
+            if name.startswith("state_")
+        )
+        if state_sections:
+            add("agent_state")
+            for state in state_sections:
+                add(f"state:{state}")
         if sections.intersection({"tool_usage", "file_operations", "shell"}):
             add("tool")
         if "tool_prompts" in sections:
@@ -566,12 +605,17 @@ class PromptBuilder:
         system_context: SystemContext,
         available_tools: list[str] | None,
         prompt_mode: PromptMode,
+        agent_states: tuple[str, ...],
         provider: str,
         model: str,
     ) -> str:
         tools = ",".join(sorted(available_tools or ()))
+        states = ",".join(agent_states)
         workspace = system_context.workspace_root or ""
-        raw = f"{workspace}|{prompt_mode}|{self._permission_mode}|{provider}|{model}|{tools}"
+        raw = (
+            f"{workspace}|{prompt_mode}|{states}|"
+            f"{self._permission_mode}|{provider}|{model}|{tools}"
+        )
         digest = sha256(raw.encode("utf-8")).hexdigest()[:16]
         return f"system-prompt:{digest}"
 

@@ -201,7 +201,9 @@ const BROWSER_LOADING_MESSAGES = [
   "Mapeando elementos clicaveis...",
 ];
 const BROWSER_RENDER_CACHE_LIMIT = 32;
+const BROWSER_TOOL_VISUAL_SETTLE_MS = 650;
 const browserRenderCache = new Map<string, SessionBrowserView>();
+const browserRenderCacheByUrl = new Map<string, string>();
 let composerAnnotationSequence = 0;
 
 function createEmptyBrowserState(browserId = `browser:${Date.now()}`): BrowserState {
@@ -239,6 +241,10 @@ function browserRenderCacheKey(
   );
 }
 
+function browserRenderUrlCacheKey(browserId: string, url: string) {
+  return [browserId || "browser", "url", normalizeComparableUrl(url || "about:blank")].join("::");
+}
+
 function browserRenderCacheKeyFromView(browserId: string, view: SessionBrowserView) {
   const viewRecord = recordValue(view);
   return (
@@ -257,7 +263,8 @@ function browserRenderCacheKeyFromView(browserId: string, view: SessionBrowserVi
 
 function rememberBrowserRenderView(browserId: string, view: SessionBrowserView) {
   if (!view.url || view.url === "about:blank") return;
-  const key = browserRenderCacheKeyFromView(browserId, view);
+  const resolvedBrowserId = browserId || view.browser_id;
+  const key = browserRenderCacheKeyFromView(resolvedBrowserId, view);
   const fallbackKey = browserRenderCacheKey(browserId || view.browser_id, view.url, {
     width: view.viewport_width || 1024,
     height: view.viewport_height || 720,
@@ -267,10 +274,14 @@ function rememberBrowserRenderView(browserId: string, view: SessionBrowserView) 
     browserRenderCache.delete(cacheKey);
     browserRenderCache.set(cacheKey, cachedView);
   }
+  browserRenderCacheByUrl.set(browserRenderUrlCacheKey(resolvedBrowserId, view.url), key);
   while (browserRenderCache.size > BROWSER_RENDER_CACHE_LIMIT) {
     const oldest = browserRenderCache.keys().next().value;
     if (!oldest) break;
     browserRenderCache.delete(oldest);
+    for (const [urlKey, cacheKey] of browserRenderCacheByUrl.entries()) {
+      if (cacheKey === oldest) browserRenderCacheByUrl.delete(urlKey);
+    }
   }
 }
 
@@ -282,11 +293,25 @@ function readBrowserRenderCache(
 ) {
   if (!url || url === "about:blank") return undefined;
   const key = browserRenderCacheKey(browserId, url, viewport, pageId);
-  const cached = browserRenderCache.get(key);
-  if (!cached) return undefined;
-  browserRenderCache.delete(key);
-  browserRenderCache.set(key, cached);
-  return { ...cached, render_cache_key: cached.render_cache_key || key, render_cache_status: "hit" };
+  const urlKey = browserRenderUrlCacheKey(browserId, url);
+  const urlAlias = browserRenderCacheByUrl.get(urlKey);
+  const normalizedUrl = normalizeComparableUrl(url);
+  const scannedKey =
+    urlAlias ??
+    Array.from(browserRenderCache.entries()).find(
+      ([, value]) => value.browser_id === browserId && normalizeComparableUrl(value.url || "") === normalizedUrl,
+    )?.[0];
+  for (const candidateKey of Array.from(new Set([key, urlAlias, scannedKey])).filter(
+    (candidateKey): candidateKey is string => Boolean(candidateKey),
+  )) {
+    const cached = browserRenderCache.get(candidateKey);
+    if (!cached) continue;
+    browserRenderCache.delete(candidateKey);
+    browserRenderCache.set(candidateKey, cached);
+    browserRenderCacheByUrl.set(urlKey, candidateKey);
+    return { ...cached, render_cache_key: cached.render_cache_key || candidateKey, render_cache_status: "hit" };
+  }
+  return undefined;
 }
 
 function isBrowserCooperationEvent(value: unknown): value is SessionBrowserCooperationEvent {
@@ -324,6 +349,7 @@ export function SessionPanel({
   const browserRequestIdsRef = useRef<Record<string, number>>({});
   const browserWorkspacePersistKeysRef = useRef<Record<string, string>>({});
   const cooperationSocketsRef = useRef<Record<string, WebSocket>>({});
+  const tabsRef = useRef<BrowserTab[]>(tabs);
   const cachedPanel = useMemo(
     () => readSessionPanelCache(baseUrl, conversationId, workspaceRoot),
     [baseUrl, conversationId, workspaceRoot],
@@ -364,6 +390,10 @@ export function SessionPanel({
   const browserVisualEvents = useMemo(() => browserVisualEventsFromMessages(chatMessages), [chatMessages]);
   const browserToolVisual = browserVisualEvents[0];
   const appliedBrowserToolViewRef = useRef("");
+
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
 
   const openDetailTab = (detail: SessionDetailView) => {
     const tab: BrowserTab = {
@@ -446,10 +476,15 @@ export function SessionPanel({
 
   const browserForTab = (tabId: string) => tabs.find((tab) => tab.id === tabId)?.browser;
 
-  const startBrowserRequest = (tabId: string) => {
+  const startBrowserRequest = (tabId: string, options: { showLoading?: boolean } = {}) => {
     const requestId = (browserRequestIdsRef.current[tabId] ?? 0) + 1;
     browserRequestIdsRef.current[tabId] = requestId;
-    updateBrowserTab(tabId, (browser) => ({ ...browser, requestId, loading: true, error: undefined }));
+    updateBrowserTab(tabId, (browser) => ({
+      ...browser,
+      requestId,
+      loading: options.showLoading === false ? browser.loading : true,
+      error: undefined,
+    }));
     return requestId;
   };
 
@@ -459,7 +494,7 @@ export function SessionPanel({
     options: { addHistory?: boolean; historyIndex?: number } = {},
     requestId?: number,
   ) => {
-    rememberBrowserRenderView(view.browser_id || browserForTab(tabId)?.browserId || tabId, view);
+    rememberBrowserRenderView(browserForTab(tabId)?.browserId || view.browser_id || tabId, view);
     updateBrowserTab(tabId, (browser) => {
       if (requestId !== undefined && browserRequestIdsRef.current[tabId] !== requestId) return browser;
       const nextUrl = view.url && view.url !== "about:blank" ? view.url : browser.currentUrl;
@@ -494,25 +529,56 @@ export function SessionPanel({
 
   useEffect(() => {
     if (!browserToolVisual || browserToolVisual.status !== "completed") return;
-    const view = browserViewFromToolVisual(browserToolVisual);
-    if (!view) return;
-    const browserTabs = tabs.filter(isBrowserTab);
+    const browserTabs = tabsRef.current.filter(isBrowserTab);
     const matchingTab = browserTabs.find((tab) => {
       if (!isBrowserTab(tab)) return false;
       return browserToolVisualAppliesToBrowser(browserToolVisual, tab.browser ?? createEmptyBrowserState(tab.id));
     }) ?? browserTabs.find((tab) => tab.id === activeTabId) ?? (browserTabs.length === 1 ? browserTabs[0] : undefined);
     if (!matchingTab) return;
+    if (!browserToolShouldHydrateView(browserToolVisual)) return;
+    const view = browserViewFromToolVisual(browserToolVisual);
     const applyKey = [
       browserToolVisual.id,
-      view.url || "",
-      view.title || "",
-      view.active_tab_id || "",
+      browserStringValue(browserToolVisual.data.url) || browserToolVisual.url || "",
+      browserStringValue(browserToolVisual.data.title) || "",
+      browserStringValue(browserToolVisual.data.active_tab_id) || browserToolVisual.pageId || "",
       browserToolVisual.data.image_data ? String(browserToolVisual.data.image_data).length : "",
     ].join(":");
     if (appliedBrowserToolViewRef.current === applyKey) return;
     appliedBrowserToolViewRef.current = applyKey;
-    applyBrowserView(matchingTab.id, view, { addHistory: browserToolVisual.effect !== "map" });
-  }, [activeTabId, browserToolVisual, tabs]);
+    const hydratedBrowserId =
+      browserStringValue(browserToolVisual.data.browser_id) || browserToolVisual.browserId || matchingTab.browser?.browserId || matchingTab.id;
+    const hydratedUrl = browserStringValue(browserToolVisual.data.url) || browserToolVisual.url || view?.url || "";
+    const viewportWidth = numericValue(browserToolVisual.data.viewport_width) || view?.viewport_width || matchingTab.browser?.view?.viewport_width || 1024;
+    const viewportHeight = numericValue(browserToolVisual.data.viewport_height) || view?.viewport_height || matchingTab.browser?.view?.viewport_height || 720;
+    const timer = window.setTimeout(() => {
+      if (view) {
+        applyBrowserView(
+          matchingTab.id,
+          { ...view, render_cache_status: view.render_cache_status || "hit" },
+          { addHistory: browserToolVisual.effect !== "map" },
+        );
+      }
+      if (!baseUrl || !hydratedBrowserId || !hydratedUrl || hydratedUrl === "about:blank") return;
+      void getSessionBrowserView(
+        baseUrl,
+        hydratedBrowserId,
+        {
+          width: viewportWidth,
+          height: viewportHeight,
+          cache_mode: "prefer_cached",
+          wait_for_styles: false,
+        },
+        conversationId,
+      )
+        .then((nextView) => {
+          if (hydratedUrl && normalizeComparableUrl(nextView.url || "") !== normalizeComparableUrl(hydratedUrl)) return;
+          applyBrowserView(matchingTab.id, { ...nextView, render_cache_status: "hit" }, { addHistory: false });
+        })
+        .catch(() => undefined);
+    }, BROWSER_TOOL_VISUAL_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [activeTabId, baseUrl, browserToolVisual, conversationId]);
 
   useEffect(() => {
     if (!baseUrl || !conversationId) return;
@@ -531,6 +597,7 @@ export function SessionPanel({
         view.viewport_height || 720,
       ].join(":");
       if (browserWorkspacePersistKeysRef.current[tab.id] === persistKey) return;
+      if (view.render_cache_status === "hit" || view.render_cache_status === "stored") return;
       browserWorkspacePersistKeysRef.current[tab.id] = persistKey;
       void getSessionBrowserView(
         baseUrl,
@@ -563,16 +630,25 @@ export function SessionPanel({
   const loadBrowserView = async (tabId: string, viewport: SessionBrowserViewport) => {
     const browser = browserForTab(tabId);
     if (!browser || !baseUrl) return;
-    const requestId = startBrowserRequest(tabId);
-    if (browser.currentUrl) {
-      const cached = readBrowserRenderCache(browser.browserId, browser.currentUrl, viewport, browser.view?.active_tab_id);
-      if (cached) applyBrowserView(tabId, cached, { historyIndex: browser.historyIndex }, requestId);
-    }
+    const cached = browser.currentUrl
+      ? readBrowserRenderCache(browser.browserId, browser.currentUrl, viewport, browser.view?.active_tab_id)
+      : undefined;
+    const requestId = startBrowserRequest(tabId, { showLoading: !cached });
+    if (cached) applyBrowserView(tabId, cached, { historyIndex: browser.historyIndex }, requestId);
     try {
-      const view = await getSessionBrowserView(baseUrl, browser.browserId, viewport, conversationId);
+      const view = await getSessionBrowserView(
+        baseUrl,
+        browser.browserId,
+        {
+          ...viewport,
+          cache_mode: cached ? "prefer_cached" : "prefer_live",
+          wait_for_styles: !cached,
+        },
+        conversationId,
+      );
       applyBrowserView(tabId, view, {}, requestId);
     } catch (error) {
-      setBrowserError(tabId, error, requestId);
+      if (!cached) setBrowserError(tabId, error, requestId);
     }
   };
 
@@ -580,14 +656,24 @@ export function SessionPanel({
     const browser = browserForTab(tabId);
     const normalized = normalizeBrowserUrl(rawUrl);
     if (!browser || !normalized || !baseUrl) return;
-    const requestId = startBrowserRequest(tabId);
     const cached = readBrowserRenderCache(browser.browserId, normalized, viewport);
+    const requestId = startBrowserRequest(tabId, { showLoading: !cached });
     if (cached) applyBrowserView(tabId, cached, { addHistory: true }, requestId);
     try {
-      const view = await navigateSessionBrowser(baseUrl, browser.browserId, { url: normalized, ...viewport }, conversationId);
+      const view = await navigateSessionBrowser(
+        baseUrl,
+        browser.browserId,
+        {
+          url: normalized,
+          ...viewport,
+          cache_mode: cached ? "prefer_cached" : "prefer_live",
+          wait_for_styles: false,
+        },
+        conversationId,
+      );
       applyBrowserView(tabId, view, { addHistory: true }, requestId);
     } catch (error) {
-      setBrowserError(tabId, error, requestId);
+      if (!cached) setBrowserError(tabId, error, requestId);
     }
   };
 
@@ -597,33 +683,47 @@ export function SessionPanel({
     const historyIndex = browser.historyIndex + direction;
     const targetUrl = browser.history[historyIndex];
     if (!targetUrl) return;
-    const requestId = startBrowserRequest(tabId);
     const cached = readBrowserRenderCache(browser.browserId, targetUrl, viewport, browser.view?.active_tab_id);
+    const requestId = startBrowserRequest(tabId, { showLoading: !cached });
     if (cached) applyBrowserView(tabId, cached, { historyIndex }, requestId);
     try {
       const view = await moveSessionBrowserHistory(
         baseUrl,
         browser.browserId,
-        { direction, ...viewport },
+        {
+          direction,
+          ...viewport,
+          cache_mode: cached ? "prefer_cached" : "prefer_live",
+          wait_for_styles: false,
+        },
         conversationId,
       );
       applyBrowserView(tabId, view, { historyIndex }, requestId);
     } catch (error) {
-      setBrowserError(tabId, error, requestId);
+      if (!cached) setBrowserError(tabId, error, requestId);
     }
   };
 
   const refreshBrowser = async (tabId: string, viewport: SessionBrowserViewport) => {
     const browser = browserForTab(tabId);
     if (!browser || !baseUrl || !browser.currentUrl) return;
-    const requestId = startBrowserRequest(tabId);
     const cached = readBrowserRenderCache(browser.browserId, browser.currentUrl, viewport, browser.view?.active_tab_id);
+    const requestId = startBrowserRequest(tabId, { showLoading: !cached });
     if (cached) applyBrowserView(tabId, cached, { historyIndex: browser.historyIndex }, requestId);
     try {
-      const view = await reloadSessionBrowser(baseUrl, browser.browserId, viewport, conversationId);
+      const view = await reloadSessionBrowser(
+        baseUrl,
+        browser.browserId,
+        {
+          ...viewport,
+          cache_mode: cached ? "prefer_cached" : "prefer_live",
+          wait_for_styles: false,
+        },
+        conversationId,
+      );
       applyBrowserView(tabId, view, { historyIndex: browser.historyIndex }, requestId);
     } catch (error) {
-      setBrowserError(tabId, error, requestId);
+      if (!cached) setBrowserError(tabId, error, requestId);
     }
   };
 
@@ -2867,21 +2967,34 @@ function browserToolVisualAppliesToBrowser(visual: BrowserToolVisual | undefined
     .map((value) => (typeof value === "string" ? value.trim() : ""))
     .filter(Boolean);
   if (visualIds.length && visualIds.some((id) => browserIds.has(id))) return true;
-  if (!visualIds.length) return true;
   if (visual.url && browser.currentUrl) {
     return normalizeComparableUrl(visual.url) === normalizeComparableUrl(browser.currentUrl);
   }
+  if (visualIds.length && browser.currentUrl) return true;
+  if (!visualIds.length) return true;
   return false;
+}
+
+function browserToolShouldHydrateView(visual: BrowserToolVisual) {
+  if (
+    visual.toolName === "BrowserGetElementMap" ||
+    visual.toolName === "BrowserExtractContent" ||
+    visual.toolName === "BrowserGetHtml" ||
+    visual.toolName === "BrowserScreenshot"
+  ) {
+    return false;
+  }
+  if (visual.effect === "map" || visual.effect === "extract" || visual.effect === "highlight") return false;
+  return true;
 }
 
 function browserViewFromToolVisual(visual: BrowserToolVisual): SessionBrowserView | undefined {
   const data = visual.data;
+  const elements = browserToolElements(data);
+  const documentHtml = browserStringValue(data.document_html) || browserStringValue(data.html) || "";
   const hasRenderableView = Boolean(
-    browserStringValue(data.url) &&
-      (browserStringValue(data.image_data) ||
-        browserStringValue(data.document_html) ||
-        browserStringValue(data.html) ||
-        recordArray(data.element_map).length),
+    (browserStringValue(data.url) || visual.url) &&
+      (browserStringValue(data.image_data) || documentHtml),
   );
   if (!hasRenderableView) return undefined;
   return {
@@ -2890,18 +3003,18 @@ function browserViewFromToolVisual(visual: BrowserToolVisual): SessionBrowserVie
     browser_id: browserStringValue(data.browser_id) || visual.browserId || "",
     url: browserStringValue(data.url) || visual.url || "",
     title: browserStringValue(data.title) || "",
-    html: browserStringValue(data.html) || "",
-    document_html: browserStringValue(data.document_html) || browserStringValue(data.html) || "",
-	    render_mode: browserRenderModeValue(data.render_mode),
-	    css_fidelity: browserStringValue(data.css_fidelity) || "pixel",
-	    render_cache_key: browserStringValue(data.render_cache_key),
-	    render_cache_status: browserStringValue(data.render_cache_status),
-	    style_ready: typeof data.style_ready === "boolean" ? data.style_ready : undefined,
-	    stylesheet_count: numericValue(data.stylesheet_count),
-	    stylesheet_loaded_count: numericValue(data.stylesheet_loaded_count),
-	    stylesheet_cached_count: numericValue(data.stylesheet_cached_count),
-	    visual_events: recordArray(data.visual_events),
-	    element_map: browserToolElements({ element_map: data.element_map }),
+    html: browserStringValue(data.html) || documentHtml,
+    document_html: documentHtml,
+    render_mode: browserRenderModeValue(data.render_mode) || "html_mirror",
+    css_fidelity: browserStringValue(data.css_fidelity) || "pixel",
+    render_cache_key: browserStringValue(data.render_cache_key),
+    render_cache_status: browserStringValue(data.render_cache_status),
+    style_ready: typeof data.style_ready === "boolean" ? data.style_ready : undefined,
+    stylesheet_count: numericValue(data.stylesheet_count),
+    stylesheet_loaded_count: numericValue(data.stylesheet_loaded_count),
+    stylesheet_cached_count: numericValue(data.stylesheet_cached_count),
+    visual_events: recordArray(data.visual_events),
+    element_map: elements,
     annotations: Array.isArray(data.annotations) ? (data.annotations as SessionBrowserAnnotation[]) : [],
     timeline_events: Array.isArray(data.timeline_events) ? (data.timeline_events as SessionBrowserTimelineEvent[]) : [],
     user_agent: browserStringValue(data.user_agent) || "",
@@ -2913,7 +3026,7 @@ function browserViewFromToolVisual(visual: BrowserToolVisual): SessionBrowserVie
     viewport_height: numericValue(data.viewport_height) || 720,
     scroll_x: numericValue(data.scroll_x) || 0,
     scroll_y: numericValue(data.scroll_y) || 0,
-    can_capture: typeof data.can_capture === "boolean" ? data.can_capture : true,
+    can_capture: typeof data.can_capture === "boolean" ? data.can_capture : Boolean(browserStringValue(data.image_data)),
   };
 }
 

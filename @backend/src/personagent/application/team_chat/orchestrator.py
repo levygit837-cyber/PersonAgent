@@ -28,6 +28,7 @@ from personagent.application.team_chat.contracts import (
 from personagent.application.tools import ToolOrchestrator, ToolRegistry, ToolRuntimeConfig
 from personagent.domain.models.conversation import Conversation, Message, Role
 from personagent.domain.prompts.prompt import shared_runtime_policy_overlay
+from personagent.domain.prompts.sections.states import render_agent_state_policy
 from personagent.domain.repositories.conversation_repository import ConversationRepository
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.domain.tools import ToolCall, ToolExecutionStatus, ToolResult, ToolUseContext
@@ -2073,9 +2074,25 @@ def _agent_system_prompt(
 
 
 def _team_policy_overlay() -> str:
-    return shared_runtime_policy_overlay(
-        todo_available=True,
-        parallel_tools_available=True,
+    return "\n\n".join(
+        (
+            shared_runtime_policy_overlay(
+                todo_available=True,
+                parallel_tools_available=True,
+            ),
+            render_agent_state_policy(
+                (
+                    "intake",
+                    "context_discovery",
+                    "tool_execution",
+                    "debug_recovery",
+                    "runtime_validation",
+                    "memory_recall",
+                    "user_checkpoint",
+                    "finalization",
+                )
+            ),
+        )
     )
 
 

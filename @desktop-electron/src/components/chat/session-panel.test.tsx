@@ -535,12 +535,13 @@ describe("SessionPanel", () => {
       visible: true,
       interactable: true,
     };
-    getSessionBrowserViewMock.mockResolvedValue(
-      browserView("https://github.com/", "conversation-1", "GitHub", {
-        element_map: [signInElement],
-        active_tab_id: "conversation-1",
-      }),
-    );
+	    getSessionBrowserViewMock.mockResolvedValue(
+	      browserView("https://github.com/", "conversation-1", "GitHub", {
+	        element_map: [signInElement],
+	        active_tab_id: "conversation-1",
+	        render_cache_status: "hit",
+	      }),
+	    );
     useChatStore.setState({
       messages: [
         {
@@ -588,10 +589,11 @@ describe("SessionPanel", () => {
     fireEvent.click(addTabButton);
     fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
 
-    expect(await screen.findByTestId("browser-tool-highlight-pa_signin")).toBeInTheDocument();
-    expect(await screen.findByTestId("browser-ghost-cursor")).toBeInTheDocument();
-    expect(screen.queryByText("Mapped 1 elements")).not.toBeInTheDocument();
-  });
+	    expect(await screen.findByTestId("browser-tool-highlight-pa_signin")).toBeInTheDocument();
+	    expect(await screen.findByTestId("browser-ghost-cursor")).toBeInTheDocument();
+	    expect(screen.getByTitle("Browser https://github.com/")).toHaveAttribute("src", "data:image/png;base64,iVBORw0KGgo=");
+	    expect(screen.queryByText("Mapped 1 elements")).not.toBeInTheDocument();
+	  });
 
   it("renders a running browser click cursor by resolving node_id against the current element map", async () => {
     const signInElement = {
@@ -741,6 +743,107 @@ describe("SessionPanel", () => {
     expect(screen.queryByText("Enter a URL to open a page in this tab.")).not.toBeInTheDocument();
   });
 
+  it("syncs a lightweight completed browser click result and hydrates the cached live view", async () => {
+    const signInElement = {
+      node_id: "pa_signin",
+      text: "Sign in",
+      role: "link",
+      tag: "a",
+      selector: "a[href='/login']",
+      href: "https://github.com/login",
+      bounds: { x: 930, y: 24, width: 76, height: 34 },
+      visible: true,
+      interactable: true,
+    };
+    getSessionBrowserViewMock
+      .mockResolvedValueOnce(
+	        browserView("https://github.com/", "conversation-1", "GitHub", {
+	          active_tab_id: "browser:panel-tab",
+	          element_map: [signInElement],
+	          render_cache_status: "hit",
+	        }),
+	      )
+      .mockResolvedValue(
+        browserView("https://github.com/login", "browser:panel-tab", "Sign in to GitHub", {
+          active_tab_id: "browser:panel-tab",
+          render_cache_status: "hit",
+        }),
+      );
+    useChatStore.setState({
+      messages: [
+        {
+          id: "agent-browser-lightweight-click",
+          role: "agent",
+          label: "PersonAgent",
+          content: "",
+          reasoning: "",
+          reasoningBlocks: [],
+          toolBlocks: [
+            {
+              id: "call_click_lightweight",
+              name: "BrowserClick",
+              status: "completed",
+              title: "Clicked Sign in",
+              message: "Clicked Sign in",
+              content: "",
+              isCollapsed: false,
+              data: {
+                type: "browser_click",
+                browser_id: "browser:panel-tab",
+                page_id: "browser:panel-tab",
+                window_id: "browser:panel-tab",
+                active_tab_id: "browser:panel-tab",
+                url: "https://github.com/login",
+                title: "Sign in to GitHub",
+                render_cache_key: "browser:panel-tab::cached-login",
+                render_cache_status: "stored",
+                viewport_width: 1024,
+                viewport_height: 720,
+                elements: [signInElement],
+                last_action: {
+                  action: "click",
+                  node_id: "pa_signin",
+                  target: signInElement,
+                  result: { ok: true, bounds: signInElement.bounds },
+                },
+              },
+            },
+          ],
+          teamEvents: [],
+          parts: [],
+          isStreaming: false,
+          isReasoningStreaming: false,
+        },
+      ],
+    });
+
+    renderWithProviders(<ChatWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+    await screen.findByText("Agent Usage");
+    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
+    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
+    fireEvent.click(addTabButton);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://github.com/login"),
+    );
+    expect(await screen.findByTestId("browser-ghost-cursor")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(getSessionBrowserViewMock).toHaveBeenCalledWith(
+        "http://localhost:8000",
+        "browser:panel-tab",
+        expect.objectContaining({ cache_mode: "prefer_cached", wait_for_styles: false }),
+        "conversation-1",
+      ),
+    );
+    expect(await screen.findByTitle("Browser https://github.com/login")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,iVBORw0KGgo=",
+    );
+  });
+
   it("hides the empty browser hint while a navigation is rendering and shows the loaded url after", async () => {
     let resolveInitialLoad!: (value: SessionBrowserView) => void;
     getSessionBrowserViewMock.mockImplementation(
@@ -808,7 +911,7 @@ describe("SessionPanel", () => {
     expect(moveSessionBrowserHistory).toHaveBeenLastCalledWith(
       "http://localhost:8000",
       expect.any(String),
-      expect.objectContaining({ direction: -1 }),
+      expect.objectContaining({ direction: -1, cache_mode: "prefer_cached", wait_for_styles: false }),
       "conversation-1",
     );
 
@@ -817,7 +920,7 @@ describe("SessionPanel", () => {
     expect(moveSessionBrowserHistory).toHaveBeenLastCalledWith(
       "http://localhost:8000",
       expect.any(String),
-      expect.objectContaining({ direction: 1 }),
+      expect.objectContaining({ direction: 1, cache_mode: "prefer_cached", wait_for_styles: false }),
       "conversation-1",
     );
 
@@ -826,7 +929,12 @@ describe("SessionPanel", () => {
       expect(reloadSessionBrowser).toHaveBeenLastCalledWith(
         "http://localhost:8000",
         expect.any(String),
-        expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }),
+        expect.objectContaining({
+          width: expect.any(Number),
+          height: expect.any(Number),
+          cache_mode: "prefer_cached",
+          wait_for_styles: false,
+        }),
         "conversation-1",
       ),
     );

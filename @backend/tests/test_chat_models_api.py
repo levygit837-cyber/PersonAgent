@@ -281,6 +281,14 @@ class FakePromptPreviewUseCase:
             "requested_mode": "writing",
             "analysis_source": "override",
             "analysis_confidence": 1.0,
+            "agent_states": ["intake", "implementation", "finalization"],
+            "agent_state_source": "heuristic",
+            "agent_state_reason": "test",
+            "state_sections_used": [
+                "state_intake",
+                "state_implementation",
+                "state_finalization",
+            ],
             "line_count": len(prompt.splitlines()),
             "char_count": len(prompt),
             "estimated_tokens": 32,
@@ -419,6 +427,14 @@ async def test_prompt_preview_endpoint_returns_prompt_package_without_completion
     assert body["char_count"] == len(body["system_prompt"])
     assert body["model"] == "deepseek-ai/deepseek-v4-flash"
     assert body["provider_data_boundary"] == "hosted_model_external_provider_local_tools"
+    assert body["agent_states"] == ["intake", "implementation", "finalization"]
+    assert body["agent_state_source"] == "heuristic"
+    assert body["agent_state_reason"] == "test"
+    assert body["state_sections_used"] == [
+        "state_intake",
+        "state_implementation",
+        "state_finalization",
+    ]
 
 
 @pytest.mark.asyncio

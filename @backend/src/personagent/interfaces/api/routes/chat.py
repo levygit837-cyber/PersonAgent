@@ -164,6 +164,10 @@ class PromptPreviewResponse(BaseModel):
     sections: list[str] = Field(default_factory=list)
     surfaces: list[str] = Field(default_factory=list)
     dynamic_sections: list[str] = Field(default_factory=list)
+    agent_states: list[str] = Field(default_factory=list)
+    agent_state_source: str | None = None
+    agent_state_reason: str | None = None
+    state_sections_used: list[str] = Field(default_factory=list)
     mode: str | None = None
     requested_mode: str | None = None
     analysis_source: str | None = None

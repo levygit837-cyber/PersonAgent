@@ -61,6 +61,7 @@ from personagent.domain.prompts.commands import (
 from personagent.domain.prompts.compact import BASE_COMPACT_PROMPT
 from personagent.domain.prompts.context_attachments import resolve_context_attachments
 from personagent.domain.prompts.services import PromptBuilder, PromptContextAnalyzer
+from personagent.domain.prompts.services.agent_state_resolver import AgentStateResolver
 from personagent.domain.prompts.services.prompt_builder import estimate_text_tokens
 from personagent.domain.prompts.skills import (
     SkillDefinition,
@@ -135,6 +136,7 @@ class ChatCompletionUseCase:
         build_context_use_case: BuildContextUseCase | None = None,
         prompt_builder: PromptBuilder | None = None,
         prompt_context_analyzer: PromptContextAnalyzer | None = None,
+        agent_state_resolver: AgentStateResolver | None = None,
         command_registry: CommandRegistry | None = None,
         session_memory_service: SessionMemoryService | None = None,
         next_step_suggestion_service: NextStepSuggestionService | None = None,
@@ -153,6 +155,7 @@ class ChatCompletionUseCase:
         self._build_context_use_case = build_context_use_case
         self._prompt_builder = prompt_builder or PromptBuilder()
         self._prompt_context_analyzer = prompt_context_analyzer
+        self._agent_state_resolver = agent_state_resolver or AgentStateResolver()
         self._command_registry = command_registry or CommandRegistry()
         self._command_service = CommandService(self._command_registry)
         self._session_memory_service = session_memory_service
@@ -341,6 +344,10 @@ class ChatCompletionUseCase:
             "sections": prompt_package.metadata.get("prompt_sections_used") or [],
             "surfaces": prompt_package.metadata.get("prompt_surfaces_used") or [],
             "dynamic_sections": prompt_package.metadata.get("dynamic_sections_used") or [],
+            "agent_states": prompt_package.metadata.get("agent_states") or [],
+            "agent_state_source": prompt_package.metadata.get("agent_state_source"),
+            "agent_state_reason": prompt_package.metadata.get("agent_state_reason"),
+            "state_sections_used": prompt_package.metadata.get("state_sections_used") or [],
             "mode": prompt_package.metadata.get("prompt_mode"),
             "requested_mode": prompt_package.metadata.get("requested_prompt_mode"),
             "analysis_source": prompt_package.metadata.get("prompt_analysis_source"),
@@ -1542,6 +1549,38 @@ class ChatCompletionUseCase:
         # TODO: implementar rastreamento real de ferramentas recentes
         return []
 
+    def _conversation_recent_tool_names(self, conversation: Conversation) -> list[str]:
+        """Return recent tool names visible in the conversation transcript."""
+
+        names: list[str] = []
+        for message in conversation.messages[-16:]:
+            if message.role == Role.ASSISTANT and message.tool_calls:
+                for raw_call in message.tool_calls:
+                    function = raw_call.get("function") if isinstance(raw_call, dict) else None
+                    name = function.get("name") if isinstance(function, dict) else None
+                    if isinstance(name, str) and name and name not in names:
+                        names.append(name)
+            if message.role == Role.TOOL:
+                name = message.metadata.get("tool_name")
+                if isinstance(name, str) and name and name not in names:
+                    names.append(name)
+        return names
+
+    def _conversation_recent_error_count(self, conversation: Conversation) -> int:
+        """Return a compact count of recent tool/runtime error signals."""
+
+        count = 1 if conversation.metadata.get("last_request_error") else 0
+        for message in conversation.messages[-16:]:
+            if message.role == Role.TOOL and (
+                message.metadata.get("is_error")
+                or message.metadata.get("status") in {"error", "permission_required"}
+            ):
+                count += 1
+            finish_reason = message.metadata.get("finish_reason")
+            if finish_reason in {"error", "empty_model_response"}:
+                count += 1
+        return count
+
     async def _build_prompt_package(
         self,
         request: ChatRequestDTO,
@@ -1555,14 +1594,15 @@ class ChatCompletionUseCase:
         tool_definitions = self._prompt_tool_definitions(request)
         prompt_tool_names = [definition.name for definition in tool_definitions] or schema_tool_names
         workspace_root = context_result.system_context.workspace_root
+        prompt_context_size_chars = (
+            context_result.total_context_size
+            + sum(len(message.content or "") for message in conversation.messages)
+        )
         prompt_profile = await self._analyze_prompt_profile(
             request,
             available_tools=prompt_tool_names,
             workspace_root=workspace_root,
-            context_size_chars=(
-                context_result.total_context_size
-                + sum(len(message.content or "") for message in conversation.messages)
-            ),
+            context_size_chars=prompt_context_size_chars,
             conversation_message_count=len(conversation.messages),
         )
         commands = self._command_registry.list_commands(workspace_root)
@@ -1586,12 +1626,26 @@ class ChatCompletionUseCase:
         browser_context = browser_agent_context_reminder(conversation.metadata)
         if browser_context:
             runtime_reminders.append(browser_context)
+        agent_state_profile = self._agent_state_resolver.resolve(
+            message=request.message,
+            prompt_profile=prompt_profile,
+            available_tools=prompt_tool_names,
+            conversation_metadata=conversation.metadata,
+            context_size_chars=prompt_context_size_chars,
+            conversation_message_count=len(conversation.messages),
+            recent_tool_names=self._conversation_recent_tool_names(conversation),
+            recent_error_count=self._conversation_recent_error_count(conversation),
+            has_session_memory=bool(session_memory and session_memory.strip()),
+            has_relevant_memories=bool(relevant_memories),
+            context_compacted=bool(conversation.metadata.get("context_compaction")),
+        )
         built_prompt = await self._prompt_builder.build(
             context_result.system_context,
             context_result.user_context,
             available_tools=schema_tool_names,
             prompt_mode=request.prompt_mode,
             prompt_profile=prompt_profile,
+            agent_state_profile=agent_state_profile,
             user_message=request.message,
             conversation_id=str(conversation.id),
             available_tool_definitions=tool_definitions,
@@ -1613,8 +1667,8 @@ class ChatCompletionUseCase:
                 "# Custom System Instructions\n\n"
                 "The caller provided the following additional system instructions. "
                 "Apply them inside the PersonAgent dynamic prompt architecture above; "
-                "they do not replace the default dynamic prompt, tool policy, context policy, "
-                "or safety constraints.\n\n"
+                "they do not replace the default dynamic prompt, tool policy, agent-state policy, "
+                "context policy, or safety constraints.\n\n"
                 f"{request.system_prompt.strip()}"
             )
             sections_used.append("custom_system_instructions")
@@ -1634,6 +1688,12 @@ class ChatCompletionUseCase:
                 ),
                 "prompt_profile": built_prompt.metadata.get("prompt_profile"),
                 "prompt_surfaces_used": built_prompt.metadata.get("prompt_surfaces_used"),
+                "agent_states": built_prompt.metadata.get("agent_states"),
+                "agent_state_source": built_prompt.metadata.get("agent_state_source"),
+                "agent_state_reason": built_prompt.metadata.get("agent_state_reason"),
+                "agent_state_confidence": built_prompt.metadata.get("agent_state_confidence"),
+                "agent_state_profile": built_prompt.metadata.get("agent_state_profile"),
+                "state_sections_used": built_prompt.metadata.get("state_sections_used") or [],
                 "prompt_sections_used": sections_used,
                 "dynamic_sections_used": list(
                     built_prompt.metadata.get("dynamic_sections_used") or ()

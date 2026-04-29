@@ -198,6 +198,8 @@ def shared_runtime_policy_overlay(
         "- Be pragmatic: identify the concrete objective, gather evidence, act through available tools, and keep output focused on the next useful decision.",
         "- Do not claim evidence you did not inspect. Keep assumptions explicit and revise them when tool results disagree.",
         "- Preserve unrelated user work and route risky mutations through the runtime or coordination flow.",
+        "- Follow through when intent is clear and the next step is reversible and low-risk; ask only for choices that materially change the outcome.",
+        "- Do not stop at the first plausible answer when verification, prerequisite lookup, or another focused tool call would materially improve correctness.",
     ]
     if todo_available:
         lines.append(
@@ -207,6 +209,12 @@ def shared_runtime_policy_overlay(
         lines.append(
             "- When the runtime exposes parallel tool calls, use them for independent read/search/check operations; keep dependent or mutating work sequential."
         )
+    lines.extend(
+        [
+            "- Before final output, check whether the requested outcome is complete, what was validated, and what remains uncertain.",
+            "- Keep user-visible updates brief, outcome-based, and tied to phase changes or blockers.",
+        ]
+    )
     return "\n".join(lines)
 
 

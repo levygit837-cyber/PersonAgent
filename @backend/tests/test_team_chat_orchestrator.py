@@ -60,6 +60,18 @@ def test_team_config_allows_unlimited_rounds():
     assert team.max_rounds is None
 
 
+def test_default_team_prompts_include_richer_execution_guidance():
+    team = default_team_config()
+
+    combined_agent_prompts = "\n".join(agent.system_prompt for agent in team.agents).lower()
+    coordinator_prompt = team.coordinator.system_prompt.lower()
+
+    assert "success criteria" in combined_agent_prompts
+    assert "tool evidence" in combined_agent_prompts
+    assert "validation" in coordinator_prompt
+    assert "verified facts" in coordinator_prompt
+
+
 def test_vote_parser_recovers_truncated_positive_vote():
     payload = _parse_vote_payload(
         '{ "approve": true, "confidence": 0.91, "blocker": false, '

@@ -162,6 +162,35 @@ async def test_lightpanda_browser_view_waits_for_css_visual_ready():
 
 
 @pytest.mark.asyncio
+async def test_lightpanda_browser_fast_view_prioritizes_html_css_over_mapping():
+    page = StyleReadyPage()
+    context = FakeContext(page=page)
+
+    async def connector(_endpoint):
+        return FakeBrowser(context=context)
+
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=connector)
+    worker._element_map_cache["panel-browser"] = [{"node_id": "cached_button", "text": "Cached", "bounds": {}}]
+
+    async def no_embed(html, _current_url):
+        return html, {"stylesheet_count": 1, "embedded_stylesheet_count": 0, "stylesheet_cached_count": 0}
+
+    worker._html_with_embedded_stylesheet_fallbacks = no_embed
+    result = await worker.view_navigate(
+        browser_id="panel-browser",
+        url="https://styled.example",
+        width=800,
+        height=500,
+        wait_for_styles=False,
+    )
+
+    assert page.goto_wait_until == "domcontentloaded"
+    assert page.style_ready_checks == 0
+    assert result["style_ready"] is True
+    assert result["element_map"][0]["node_id"] == "cached_button"
+
+
+@pytest.mark.asyncio
 async def test_lightpanda_browser_view_uses_computed_fallback_when_css_not_ready():
     page = StyleFailurePage()
     context = FakeContext(page=page)
@@ -210,8 +239,8 @@ async def test_lightpanda_browser_render_cache_returns_cached_snapshot():
     )
     cached = await worker.view_snapshot(
         browser_id="panel-browser",
-        width=800,
-        height=500,
+        width=1024,
+        height=720,
         cache_mode="prefer_cached",
     )
 
