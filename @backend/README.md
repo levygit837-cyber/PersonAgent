@@ -1,34 +1,40 @@
 # @backend — PersonAgent Backend
 
-Backend Python com **Arquitetura Clean** para o Sistema de Agente Pessoal.
+Python/FastAPI backend for PersonAgent.
 
-## 🧱 Arquitetura Clean
+Canonical cross-application documentation lives in:
+
+- [../docs/README.md](../docs/README.md)
+- [../docs/api/README.md](../docs/api/README.md)
+- [../docs/architecture/overview.md](../docs/architecture/overview.md)
+
+## Clean Architecture
 
 ```
 src/personagent/
-├── domain/                      💎 Independente de frameworks
-│   ├── models/                  ← Entidades (Conversation, Message, Role)
-│   ├── repositories/            ← Interfaces (Ports)
-│   └── exceptions.py            ← Exceções de domínio
+├── domain/                      ← Framework-independent business concepts
+│   ├── models/                  ← Entities and value objects
+│   ├── repositories/            ← Repository ports
+│   └── exceptions.py            ← Domain exceptions
 │
-├── application/                 🧠 Casos de uso
-│   ├── dto/                     ← Data Transfer Objects
-│   ├── use_cases/               ← Orquestração de regras de negócio
-│   └── ports/                   ← Interfaces dos serviços
+├── application/                 ← Use cases and orchestration
+│   ├── services/                ← Application services
+│   ├── use_cases/               ← Business workflow orchestration
+│   └── ports/                   ← Service ports
 │
-├── infrastructure/              🔌 Adaptadores externos
-│   ├── config/                  ← Settings (.env + YAML)
-│   ├── llm/                     ← Adapter llama.cpp + Process Manager
+├── infrastructure/              ← External adapters
+│   ├── config/                  ← Settings from .env + YAML
+│   ├── llm/                     ← llama.cpp and hosted provider adapters
 │   └── persistence/             ← PostgreSQL + SQLAlchemy
 │
-└── interfaces/                  🖥️ Pontos de entrada
-    ├── api/                     ← FastAPI + Rotas
+└── interfaces/                  ← Entry points
+    ├── api/                     ← FastAPI + routes
     └── cli/                     ← Typer + Rich
 ```
 
-## 🔌 Injeção de Dependências
+## Dependency Injection
 
-O sistema usa um container DI simples em `interfaces/config/di_container.py`:
+The backend uses a simple DI container in `interfaces/config/di_container.py`:
 
 ```python
 container = get_container()
@@ -36,29 +42,33 @@ llm_backend = container.get_llm_backend()
 process_manager = container.get_process_manager()
 ```
 
-## 🗄️ Banco de Dados
+## Database
 
-- **PostgreSQL** com SQLAlchemy async
-- Tabelas: `conversations`, `messages`
-- Migrations em `infrastructure/persistence/migrations/`
+- PostgreSQL with async SQLAlchemy.
+- Migrations live in `infrastructure/persistence/migrations/`.
+- Database initialization runs during FastAPI lifespan.
 
-## 📡 Streaming
+## API And Streaming
 
-O sistema suporta streaming de respostas com Server-Sent Events (SSE):
-- Conteúdo da resposta
-- Reasoning/thinking tokens
-- Eventos de finalização
+The active API surface is documented in
+[../docs/api/README.md](../docs/api/README.md). Streaming transports include:
 
-## 🧪 Desenvolvimento
+- Chat completion SSE.
+- Tool approval and user-question resume SSE.
+- QA runtime SSE.
+- State-change SSE.
+- Team Mode WebSocket.
+
+## Development
 
 ```bash
-# Instalar dependências
+# Install dependencies
 pip install -e ".[dev]"
 
-# Rodar testes
+# Run tests
 pytest
 
-# Formatar código
+# Lint and format
 ruff check . --fix
 ruff format .
 

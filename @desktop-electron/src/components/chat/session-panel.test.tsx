@@ -9,6 +9,7 @@ import {
   getSessionBrowserView,
   getSessionPanel,
   getSessionProjectDetail,
+  ingestSessionBrowserEvents,
   keySessionBrowser,
   listChatCommands,
   listModels,
@@ -16,6 +17,7 @@ import {
   navigateSessionBrowser,
   reloadSessionBrowser,
   scrollSessionBrowser,
+  setSessionBrowserCooperation,
   type SessionBrowserView,
 } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
@@ -53,6 +55,7 @@ vi.mock("../../api/client", () => ({
   getSessionBrowserView: vi.fn(),
   getSessionPanel: vi.fn(),
   getSessionProjectDetail: vi.fn(),
+  ingestSessionBrowserEvents: vi.fn(),
   generateGitCommitMessage: vi.fn().mockResolvedValue({ message: "Update workspace" }),
   gitCreateWorktree: vi.fn(),
   gitCommit: vi.fn(),
@@ -69,6 +72,7 @@ vi.mock("../../api/client", () => ({
   reloadSessionBrowser: vi.fn(),
   resolveBackendUrl: vi.fn().mockResolvedValue("http://localhost:8000"),
   scrollSessionBrowser: vi.fn(),
+  setSessionBrowserCooperation: vi.fn(),
   streamChatCompletion: vi.fn(),
   streamTeamChat: vi.fn(),
 }));
@@ -713,6 +717,28 @@ describe("browser mirror sanitizer", () => {
     expect(srcDoc).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(srcDoc).not.toContain('onclick="steal()"');
     expect(srcDoc).toContain('<base href="https://example.com/page">');
+  });
+
+  it("injects browser cooperation event batching and safe redaction hooks", () => {
+    const srcDoc = browserMirrorSrcDoc(
+      "<html><head></head><body><form><input type=\"password\" name=\"password\"><button>Apply</button></form></body></html>",
+      "https://example.com/checkout",
+      "browser:test",
+      [],
+      true,
+    );
+
+    expect(srcDoc).toContain("let cooperationEnabled = true");
+    expect(srcDoc).toContain("personagent-session-browser:event-batch");
+    expect(srcDoc).toContain('trackEvent("click"');
+    expect(srcDoc).toContain('trackEvent("input"');
+    expect(srcDoc).toContain('trackEvent("route_change"');
+    expect(srcDoc).toContain("MutationObserver");
+    expect(srcDoc).toContain("ResizeObserver");
+    expect(srcDoc).toContain("IntersectionObserver");
+    expect(srcDoc).toContain('value: "[REDACTED]"');
+    expect(srcDoc).toContain("value_char_count");
+    expect(srcDoc).toContain("selected_text");
   });
 });
 

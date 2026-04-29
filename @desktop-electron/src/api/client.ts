@@ -107,6 +107,38 @@ export interface SessionBrowserWorkspaceState {
   current_title?: string;
   runtime?: "lightpanda" | "chrome_cdp" | string;
   last_element_map?: SessionBrowserElement[];
+  cooperation?: SessionBrowserCooperationState;
+}
+
+export type SessionBrowserCooperationMode = "observe_only" | "suggest_before_action" | "agent_control";
+
+export interface SessionBrowserCooperationState {
+  enabled?: boolean;
+  mode?: SessionBrowserCooperationMode;
+  agent_control?: SessionBrowserCooperationMode;
+  browser_id?: string;
+  url?: string;
+  title?: string;
+  page_state?: Record<string, unknown>;
+  recent_actions?: string[];
+  notifications?: Array<Record<string, unknown>>;
+  pending_action_proposals?: Array<Record<string, unknown>>;
+  last_user_activity_at?: string;
+  updated_at?: string;
+}
+
+export interface SessionBrowserCooperationEvent {
+  event_id?: string;
+  kind: string;
+  source?: "user" | "agent" | "system" | "browser";
+  timestamp?: string;
+  tab_id?: string;
+  page_id?: string;
+  url?: string;
+  target?: Record<string, unknown>;
+  payload?: Record<string, unknown>;
+  importance?: "low" | "medium" | "high";
+  semantic_label?: string;
 }
 
 export interface SessionBrowserSnapshot {
@@ -123,6 +155,7 @@ export interface SessionBrowserSnapshot {
   element_map?: SessionBrowserElement[];
   annotations?: SessionBrowserAnnotation[];
   timeline_events?: SessionBrowserTimelineEvent[];
+  cooperation?: SessionBrowserCooperationState;
 }
 
 export interface SessionBrowserView {
@@ -142,6 +175,7 @@ export interface SessionBrowserView {
   element_map?: SessionBrowserElement[];
   annotations?: SessionBrowserAnnotation[];
   timeline_events?: SessionBrowserTimelineEvent[];
+  cooperation?: SessionBrowserCooperationState;
   browser_snapshot?: SessionBrowserSnapshot;
   workspace_state?: SessionBrowserWorkspaceState;
   last_action?: Record<string, unknown>;
@@ -403,6 +437,39 @@ export function actSessionBrowser(
   return requestJson<SessionBrowserView>(baseUrl, sessionBrowserPath(browserId, "/action", conversationId), {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export function setSessionBrowserCooperation(
+  baseUrl: string,
+  conversationId: string,
+  browserId: string,
+  input: { enabled: boolean; mode?: SessionBrowserCooperationMode },
+) {
+  return requestJson<{
+    cooperation: SessionBrowserCooperationState;
+    state_patch: { cooperation?: SessionBrowserCooperationState };
+    agent_context?: Record<string, unknown>;
+  }>(baseUrl, sessionBrowserPath(browserId, "/cooperation", conversationId), {
+    method: "POST",
+    body: JSON.stringify({ enabled: input.enabled, mode: input.mode ?? "observe_only" }),
+  });
+}
+
+export function ingestSessionBrowserEvents(
+  baseUrl: string,
+  conversationId: string,
+  browserId: string,
+  events: SessionBrowserCooperationEvent[],
+) {
+  return requestJson<{
+    accepted_count: number;
+    dropped_count: number;
+    state_patch: { cooperation?: SessionBrowserCooperationState };
+    notifications: Array<Record<string, unknown>>;
+  }>(baseUrl, sessionBrowserPath(browserId, "/events", conversationId), {
+    method: "POST",
+    body: JSON.stringify({ events }),
   });
 }
 

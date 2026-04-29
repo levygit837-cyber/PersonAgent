@@ -8,6 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from personagent.application.services.browser_cooperation import (
+    BROWSER_COOPERATION_MODES,
+    BrowserCooperationService,
+)
 from personagent.application.services.browser_workspace import BrowserWorkspaceService
 from personagent.application.services.session_panel import SessionPanelService
 from personagent.infrastructure.browser.lightpanda import BrowserError, BrowserUnavailableError
@@ -102,6 +106,38 @@ class SessionBrowserAnnotationRequest(BaseModel):
     tab_id: str | None = None
 
 
+class SessionBrowserCooperationRequest(BaseModel):
+    """Toggle Browser Cooperation tracking/control for one Browser Workspace."""
+
+    enabled: bool = True
+    mode: str = Field(default="observe_only")
+
+
+class SessionBrowserEventInput(BaseModel):
+    """Raw Browser -> Agent event captured by the desktop browser mirror."""
+
+    event_id: str | None = None
+    id: str | None = None
+    kind: str = Field(min_length=1)
+    source: str = "user"
+    timestamp: str | None = None
+    tab_id: str | None = None
+    page_id: str | None = None
+    window_id: str | None = None
+    url: str | None = None
+    target: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    importance: str | None = None
+    semantic_label: str | None = None
+    label: str | None = None
+
+
+class SessionBrowserEventBatchRequest(BaseModel):
+    """Batch of browser cooperation events."""
+
+    events: list[SessionBrowserEventInput] = Field(default_factory=list, max_length=100)
+
+
 @router.get("/browser/{browser_id}/view")
 async def get_session_browser_view(
     browser_id: str,
@@ -120,6 +156,53 @@ async def get_session_browser_view(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except BrowserError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{conversation_id}/browser/{browser_id}/cooperation")
+async def set_conversation_browser_cooperation(
+    conversation_id: str,
+    browser_id: str,
+    request: SessionBrowserCooperationRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Enable/disable Browser Cooperation and set the action-control mode."""
+
+    if request.mode not in BROWSER_COOPERATION_MODES:
+        raise HTTPException(status_code=400, detail="Invalid browser cooperation mode.")
+    conversation = await _load_conversation(conversation_id, session)
+    service = _browser_cooperation_service(session)
+    if service is None:
+        raise HTTPException(status_code=409, detail="Browser cooperation persistence is unavailable.")
+    result = await service.set_cooperation(
+        conversation,
+        browser_id=browser_id,
+        enabled=request.enabled,
+        mode=request.mode,
+    )
+    await _save_conversation(conversation, session)
+    return result
+
+
+@router.post("/{conversation_id}/browser/{browser_id}/events")
+async def ingest_conversation_browser_events(
+    conversation_id: str,
+    browser_id: str,
+    request: SessionBrowserEventBatchRequest,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> dict[str, Any]:
+    """Ingest normalized/redacted Browser -> Agent cooperation events."""
+
+    conversation = await _load_conversation(conversation_id, session)
+    service = _browser_cooperation_service(session)
+    if service is None:
+        raise HTTPException(status_code=409, detail="Browser cooperation persistence is unavailable.")
+    result = await service.ingest_events(
+        conversation,
+        browser_id=browser_id,
+        events=[event.model_dump(exclude_none=True) for event in request.events],
+    )
+    await _save_conversation(conversation, session)
+    return result
 
 
 @router.post("/browser/{browser_id}/navigate")
@@ -328,6 +411,15 @@ async def navigate_conversation_browser(
         label=f"Navigated to {view.get('url') or request.url}",
         payload={"url": view.get("url") or request.url, "title": view.get("title") or ""},
     )
+    await _record_canonical_browser_event(
+        session,
+        conversation,
+        browser_id=browser_id,
+        kind="navigation",
+        source="user",
+        label=f"navigated to {view.get('url') or request.url}",
+        payload={"url": view.get("url") or request.url, "title": view.get("title") or ""},
+    )
     return await _persist_browser_workspace_view(conversation, session, browser_id, view)
 
 
@@ -363,6 +455,15 @@ async def move_conversation_browser_history(
         label="Moved browser history",
         payload={"direction": request.direction, "url": view.get("url") or ""},
     )
+    await _record_canonical_browser_event(
+        session,
+        conversation,
+        browser_id=browser_id,
+        kind="history",
+        source="user",
+        label="moved browser history",
+        payload={"direction": request.direction, "url": view.get("url") or ""},
+    )
     return await _persist_browser_workspace_view(conversation, session, browser_id, view)
 
 
@@ -389,6 +490,15 @@ async def reload_conversation_browser(
         event_type="reload",
         source="user",
         label="Reloaded page",
+        payload={"url": view.get("url") or ""},
+    )
+    await _record_canonical_browser_event(
+        session,
+        conversation,
+        browser_id=browser_id,
+        kind="reload",
+        source="user",
+        label="reloaded page",
         payload={"url": view.get("url") or ""},
     )
     return await _persist_browser_workspace_view(conversation, session, browser_id, view)
@@ -426,6 +536,15 @@ async def click_conversation_browser(
         label="Clicked viewport",
         payload={"x": request.x, "y": request.y, "url": view.get("url") or ""},
     )
+    await _record_canonical_browser_event(
+        session,
+        conversation,
+        browser_id=browser_id,
+        kind="click",
+        source="user",
+        label="clicked viewport",
+        payload={"x": request.x, "y": request.y, "url": view.get("url") or ""},
+    )
     return await _persist_browser_workspace_view(conversation, session, browser_id, view)
 
 
@@ -460,6 +579,19 @@ async def key_conversation_browser(
         event_type="key",
         source="user",
         label="Sent keyboard input",
+        payload={
+            "key": request.key or "",
+            "text_char_count": len(request.text or ""),
+            "url": view.get("url") or "",
+        },
+    )
+    await _record_canonical_browser_event(
+        session,
+        conversation,
+        browser_id=browser_id,
+        kind="keydown",
+        source="user",
+        label="sent keyboard input",
         payload={"key": request.key or "", "text": request.text or "", "url": view.get("url") or ""},
     )
     return await _persist_browser_workspace_view(conversation, session, browser_id, view)
@@ -494,6 +626,15 @@ async def scroll_conversation_browser(
         event_type="scroll",
         source="user",
         label="Scrolled page",
+        payload={"delta_x": request.delta_x, "delta_y": request.delta_y, "url": view.get("url") or ""},
+    )
+    await _record_canonical_browser_event(
+        session,
+        conversation,
+        browser_id=browser_id,
+        kind="scroll",
+        source="user",
+        label="scrolled page",
         payload={"delta_x": request.delta_x, "delta_y": request.delta_y, "url": view.get("url") or ""},
     )
     return await _persist_browser_workspace_view(conversation, session, browser_id, view)
@@ -536,6 +677,20 @@ async def act_conversation_browser(
         event_type="action",
         source=_safe_event_source(request.source),
         label=f"{request.action.title()} {request.node_id}",
+        payload={
+            "node_id": request.node_id,
+            "action": request.action,
+            "url": view.get("url") or "",
+            "title": view.get("title") or "",
+        },
+    )
+    await _record_canonical_browser_event(
+        session,
+        conversation,
+        browser_id=browser_id,
+        kind="action",
+        source=_safe_event_source(request.source),
+        label=f"{request.action} {request.node_id}",
         payload={
             "node_id": request.node_id,
             "action": request.action,
@@ -772,6 +927,7 @@ async def _persist_browser_workspace_view(
         snapshot["annotations"] = view["annotations"]
         snapshot["timeline_events"] = view["timeline_events"]
         snapshot["element_map"] = view.get("element_map") or []
+        snapshot["cooperation"] = view.get("cooperation") or {}
     await _save_conversation(conversation, session)
     return view
 
@@ -779,6 +935,12 @@ async def _persist_browser_workspace_view(
 def _browser_workspace_service(session: AsyncSession) -> BrowserWorkspaceService | None:
     if isinstance(session, AsyncSession):
         return BrowserWorkspaceService(session)
+    return None
+
+
+def _browser_cooperation_service(session: AsyncSession) -> BrowserCooperationService | None:
+    if isinstance(session, AsyncSession):
+        return BrowserCooperationService(session)
     return None
 
 
@@ -812,6 +974,37 @@ async def _record_timeline_event(
     )
 
 
+async def _record_canonical_browser_event(
+    session: AsyncSession,
+    conversation,
+    *,
+    browser_id: str,
+    kind: str,
+    source: str,
+    label: str,
+    payload: dict[str, Any] | None = None,
+    tab_id: str | None = None,
+    page_id: str | None = None,
+    url: str | None = None,
+) -> None:
+    service = _browser_cooperation_service(session)
+    if service is None:
+        return
+    result = await service.record_canonical_event(
+        conversation,
+        browser_id=browser_id,
+        kind=kind,
+        source=source,
+        label=label,
+        payload=payload,
+        tab_id=tab_id,
+        page_id=page_id,
+        url=url,
+    )
+    if result is not None:
+        await _save_conversation(conversation, session)
+
+
 def _browser_workspace(conversation) -> dict[str, Any]:
     metadata = conversation.metadata
     workspace = metadata.get("browser_workspace")
@@ -839,6 +1032,9 @@ def _workspace_payload(conversation, browser_id: str) -> dict[str, Any]:
     return {
         "annotations": annotations[-100:],
         "timeline_events": timeline_events[-120:],
+        "cooperation": _coerce_dict(
+            _coerce_dict(conversation.metadata.get("browser_cooperation")).get(browser_id)
+        ),
         "tabs": _coerce_list(workspace.get("tabs")),
         "active_tab_id": str(workspace.get("active_tab_id") or browser_id),
         "workspace_state": {
@@ -847,6 +1043,9 @@ def _workspace_payload(conversation, browser_id: str) -> dict[str, Any]:
             "current_url": str(workspace.get("current_url") or ""),
             "current_title": str(workspace.get("current_title") or ""),
             "last_element_map": _coerce_list(workspace.get("last_element_map"))[:220],
+            "cooperation": _coerce_dict(
+                _coerce_dict(conversation.metadata.get("browser_cooperation")).get(browser_id)
+            ),
         },
     }
 
@@ -902,6 +1101,10 @@ def _compact_element_map(raw_map: Any) -> list[dict[str, Any]]:
         if len(compact) >= 220:
             break
     return compact
+
+
+def _coerce_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _coerce_list(value: Any) -> list[dict[str, Any]]:

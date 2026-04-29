@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import re
@@ -106,6 +107,17 @@ class CodexAuthStore:
     @property
     def models_cache_path(self) -> Path:
         return self.codex_home / "models_cache.json"
+
+    def auth_signature(self) -> str:
+        path = self.auth_path
+        if not path.exists():
+            return f"missing:{path}"
+        try:
+            stat = path.stat()
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            return f"error:{path}:{exc}"
+        return f"present:{path}:{stat.st_mtime_ns}:{stat.st_size}:{digest}"
 
     def read_status(self) -> CodexAuthSnapshot:
         path = self.auth_path
@@ -378,6 +390,9 @@ class CodexSubscriptionAdapter(LLMBackendRepository):  # type: ignore[misc]
 
     def auth_status(self) -> dict[str, Any]:
         return self.auth_store.read_status().public_dict()
+
+    def auth_signature(self) -> str:
+        return self.auth_store.auth_signature()
 
     def _build_payload(
         self,

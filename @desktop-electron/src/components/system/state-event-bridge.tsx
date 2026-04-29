@@ -24,7 +24,6 @@ interface StateChangedEvent {
   changed_at?: string;
 }
 
-const EXTERNAL_STATE_CHECK_MS = 120_000;
 const TERMINAL_STATE_CHECK_DELAYS_MS = [1_500, 5_000];
 
 export function StateEventBridge() {
@@ -35,7 +34,10 @@ export function StateEventBridge() {
 
   useEffect(() => {
     if (!baseUrl || apiStatus !== "online") return;
-    const source = new EventSource(`${baseUrl}/events/state`);
+    const params = new URLSearchParams();
+    if (selectedWorkspace) params.set("workspace_root", selectedWorkspace);
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const source = new EventSource(`${baseUrl}/events/state${suffix}`);
 
     const handleStateChanged = (message: MessageEvent<string>) => {
       const event = parseStateEvent(message.data);
@@ -49,18 +51,6 @@ export function StateEventBridge() {
     };
 
     return () => source.close();
-  }, [apiStatus, baseUrl, queryClient]);
-
-  useEffect(() => {
-    if (!baseUrl || apiStatus !== "online") return;
-    const interval = window.setInterval(() => {
-      if (selectedWorkspace) {
-        invalidateGitState(queryClient, baseUrl, selectedWorkspace);
-      }
-      invalidateStateResource(queryClient, baseUrl, "codex-auth", { provider: "codex" });
-      invalidateStateResource(queryClient, baseUrl, "models", { provider: "codex" });
-    }, EXTERNAL_STATE_CHECK_MS);
-    return () => window.clearInterval(interval);
   }, [apiStatus, baseUrl, queryClient, selectedWorkspace]);
 
   useEffect(() => {

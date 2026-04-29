@@ -99,6 +99,11 @@ class BrowserWorkspaceORM(Base):
         back_populates="browser_workspace",
         cascade="all, delete-orphan",
     )
+    cooperation_events = relationship(
+        "BrowserCooperationEventORM",
+        back_populates="browser_workspace",
+        cascade="all, delete-orphan",
+    )
     automation_runs = relationship(
         "BrowserAutomationRunORM",
         back_populates="browser_workspace",
@@ -202,6 +207,47 @@ class BrowserTimelineEventORM(Base):
         UniqueConstraint("browser_workspace_id", "event_id", name="uq_browser_timeline_workspace_event"),
         Index("idx_browser_timeline_workspace_sequence", "browser_workspace_id", "sequence"),
         Index("idx_browser_timeline_workspace_tab", "browser_workspace_id", "tab_id"),
+    )
+
+
+class BrowserCooperationEventORM(Base):
+    """Append-only normalized/redacted Browser Cooperation event log."""
+
+    __tablename__ = "browser_cooperation_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(String(120), nullable=False)
+    browser_workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("browser_workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    conversation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    browser_id = Column(String(120), nullable=False)
+    tab_id = Column(String(160), nullable=True)
+    page_id = Column(String(160), nullable=True)
+    source = Column(String(30), nullable=False, default="user")
+    kind = Column(String(80), nullable=False)
+    url = Column(Text, nullable=True)
+    target = Column(JSONB, nullable=False, default=dict)
+    payload = Column(JSONB, nullable=False, default=dict)
+    importance = Column(String(30), nullable=False, default="low")
+    semantic_label = Column(Text, nullable=True)
+    sequence = Column(Integer, nullable=False, default=0)
+    occurred_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    browser_workspace = relationship("BrowserWorkspaceORM", back_populates="cooperation_events")
+
+    __table_args__ = (
+        UniqueConstraint("browser_workspace_id", "event_id", name="uq_browser_cooperation_workspace_event"),
+        Index("idx_browser_cooperation_workspace_sequence", "browser_workspace_id", "sequence"),
+        Index("idx_browser_cooperation_conversation_created", "conversation_id", "created_at"),
+        Index("idx_browser_cooperation_workspace_kind", "browser_workspace_id", "kind"),
     )
 
 

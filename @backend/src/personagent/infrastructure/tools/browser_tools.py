@@ -9,6 +9,7 @@ from hashlib import sha256
 from typing import Any
 from urllib.parse import urlparse
 
+from personagent.application.services.browser_action_arbiter import BrowserActionArbiter
 from personagent.domain.tools import (
     Tool,
     ToolArguments,
@@ -25,6 +26,8 @@ from personagent.domain.tools import (
 )
 from personagent.infrastructure.browser import LightPandaBrowserWorker
 from personagent.infrastructure.tools.web_tools import validate_web_url
+
+_BROWSER_ACTION_ARBITER = BrowserActionArbiter()
 
 
 def create_browser_tools(worker: LightPandaBrowserWorker) -> list[Tool]:
@@ -927,6 +930,7 @@ def create_browser_click_tool(worker: LightPandaBrowserWorker) -> Tool:
         ),
         handler=handler,
         validate_input=validate,
+        check_permissions=lambda args, context: _browser_action_permission("BrowserClick", args, context),
         is_read_only=lambda _args: False,
         is_concurrency_safe=lambda _args: False,
     )
@@ -1012,6 +1016,7 @@ def create_browser_type_tool(worker: LightPandaBrowserWorker) -> Tool:
         ),
         handler=handler,
         validate_input=validate,
+        check_permissions=lambda args, context: _browser_action_permission("BrowserType", args, context),
         is_read_only=lambda _args: False,
         is_concurrency_safe=lambda _args: False,
     )
@@ -1133,6 +1138,7 @@ def create_browser_close_tab_tool(worker: LightPandaBrowserWorker) -> Tool:
         ),
         handler=handler,
         validate_input=validate,
+        check_permissions=lambda args, context: _browser_action_permission("BrowserCloseTab", args, context),
         is_read_only=lambda _args: False,
         is_concurrency_safe=lambda _args: False,
     )
@@ -1294,6 +1300,7 @@ def create_browser_script_tool(worker: LightPandaBrowserWorker) -> Tool:
         ),
         handler=handler,
         validate_input=validate,
+        check_permissions=lambda args, context: _browser_action_permission("BrowserScript", args, context),
         is_read_only=lambda _args: False,
         is_concurrency_safe=lambda _args: False,
     )
@@ -1470,6 +1477,7 @@ def create_browser_switch_tab_tool(worker: LightPandaBrowserWorker) -> Tool:
         ),
         handler=handler,
         validate_input=validate,
+        check_permissions=lambda args, context: _browser_action_permission("BrowserSwitchTab", args, context),
         is_read_only=lambda _args: False,
         is_concurrency_safe=lambda _args: False,
     )
@@ -1673,6 +1681,7 @@ def create_browser_act_tool(worker: LightPandaBrowserWorker) -> Tool:
         ),
         handler=handler,
         validate_input=validate,
+        check_permissions=lambda args, context: _browser_action_permission("BrowserAct", args, context),
         is_read_only=lambda _args: False,
         is_concurrency_safe=lambda _args: False,
     )
@@ -1687,6 +1696,11 @@ def _simple_browser_control_tool(
     handler: Any,
     validate: Any,
 ) -> Tool:
+    permission_kwargs = {}
+    if name != "BrowserWait":
+        permission_kwargs["check_permissions"] = (
+            lambda args, context: _browser_action_permission(name, args, context)
+        )
     return build_tool(
         definition=ToolDefinition(
             name=name,
@@ -1706,6 +1720,7 @@ def _simple_browser_control_tool(
         ),
         handler=handler,
         validate_input=validate,
+        **permission_kwargs,
         is_read_only=lambda _args: False,
         is_concurrency_safe=lambda _args: False,
     )
@@ -2208,6 +2223,18 @@ def _error_type(tool_name: str) -> str:
 
 def _deny(message: str) -> ToolPermissionResult:
     return ToolPermissionResult(behavior=ToolPermissionBehavior.DENY, message=message)
+
+
+async def _browser_action_permission(
+    tool_name: str,
+    arguments: ToolArguments,
+    context: ToolUseContext,
+) -> ToolPermissionResult:
+    return _BROWSER_ACTION_ARBITER.decide(
+        tool_name=tool_name,
+        arguments=arguments,
+        context=context,
+    ).to_permission_result()
 
 
 def _is_int(value: Any) -> bool:

@@ -2,6 +2,11 @@
 
 Fork não-oficial do llama.cpp com suporte ao **TurboQuant** para compressão extrema do KV Cache.
 
+Documentação central da aplicação:
+
+- [../docs/README.md](../docs/README.md)
+- [../docs/runtime/README.md](../docs/runtime/README.md)
+
 ## 📦 Repositório
 
 - **Fork**: `TheTom/llama-cpp-turboquant`

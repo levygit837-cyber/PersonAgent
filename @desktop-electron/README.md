@@ -2,6 +2,12 @@
 
 Primary desktop client for PersonAgent. It keeps the existing FastAPI backend and runs the desktop UI with React, TypeScript, Tailwind, Radix/shadcn-style primitives, Zustand, TanStack Query, and React Flow.
 
+Canonical cross-application documentation lives in:
+
+- [../docs/README.md](../docs/README.md)
+- [../docs/app/README.md](../docs/app/README.md)
+- [../docs/api/README.md](../docs/api/README.md)
+
 ## Run
 
 ```bash
@@ -22,5 +28,7 @@ npm run build
 
 ## Scope
 
-- Chat uses the existing `POST /chat/completions/stream` SSE endpoint through `fetch` and `ReadableStream`.
+- Backend calls should go through `src/api/client.ts`.
+- Streaming should go through `src/api/sse.ts`.
+- API errors should use the structured envelope handled by `src/api/errors.ts`.
 - IPC is intentionally small: window controls, persisted settings, and native folder picker.

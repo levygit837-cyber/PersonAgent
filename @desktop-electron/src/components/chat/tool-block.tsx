@@ -1,7 +1,12 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { ToolBlockStatus, ToolBlockUi } from "../../types/chat";
+import { browserImageDataUrl, browserInlineText, isBrowserToolName, normalizedToolOutput, shellLabel } from "./tool-block/browser-output";
+import { searchHasOutput, searchMetadata, searchOutputPreview, searchOutputRows, searchOutputText, searchSummary, type SearchOutputRow } from "./tool-block/search-output";
+import { todoItems, type TodoItem } from "./tool-block/todo";
+import { useToolOutputCollapsed } from "./tool-block/visibility";
+export { isBrowserToolName } from "./tool-block/browser-output";
+export { todoItems, type TodoItem } from "./tool-block/todo";
 
-const TOOL_OUTPUT_VISIBILITY_STORAGE_KEY = "personagent.toolOutputVisibility";
 const TOOL_STATUS_DOT_SIZE = 6;
 const AUTO_COLLAPSED_TOOL_OUTPUT_NAMES = new Set([
   "browserextractcontent",
@@ -24,12 +29,6 @@ const AUTO_COLLAPSED_TOOL_OUTPUT_NAMES = new Set([
   "websearch",
 ]);
 
-type SearchOutputRow = {
-  kind: "file" | "match" | "line";
-  file?: string;
-  line?: string;
-  text: string;
-};
 
 type WriteOutputRow = {
   kind: "add" | "remove" | "context" | "meta" | "error";
@@ -37,12 +36,6 @@ type WriteOutputRow = {
   text: string;
   oldLine?: number;
   newLine?: number;
-};
-
-export type TodoItem = {
-  id: string;
-  content: string;
-  status: "pending" | "in_progress" | "completed";
 };
 
 export function ToolBlock({ block, nested = false, forceExpanded = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
@@ -319,46 +312,6 @@ function ShellToolEvent({ block, nested = false, forceExpanded = false }: { bloc
   );
 }
 
-function useToolOutputCollapsed(fallbackCollapsed: boolean, options: { autoCollapse?: boolean } = {}) {
-  const [collapsed, setCollapsed] = useState(() => initialToolOutputCollapsed(fallbackCollapsed, options));
-
-  const toggleCollapsed = () => {
-    setCollapsed((value) => {
-      const next = !value;
-      persistToolOutputCollapsed(next);
-      return next;
-    });
-  };
-
-  return [collapsed, toggleCollapsed] as const;
-}
-
-function initialToolOutputCollapsed(fallbackCollapsed: boolean, options: { autoCollapse?: boolean }) {
-  const persisted = readPersistedToolOutputCollapsed();
-  if (options.autoCollapse && persisted === false) return true;
-  return persisted ?? fallbackCollapsed;
-}
-
-function readPersistedToolOutputCollapsed() {
-  if (typeof window === "undefined") return undefined;
-  try {
-    const value = window.localStorage.getItem(TOOL_OUTPUT_VISIBILITY_STORAGE_KEY);
-    if (value === "show") return false;
-    if (value === "hide") return true;
-  } catch {
-    return undefined;
-  }
-  return undefined;
-}
-
-function persistToolOutputCollapsed(collapsed: boolean) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(TOOL_OUTPUT_VISIBILITY_STORAGE_KEY, collapsed ? "hide" : "show");
-  } catch {
-    // Ignore storage failures; the current click should still update the visible row.
-  }
-}
 
 function WriteOutputPanel({ block, rows }: { block: ToolBlockUi; rows: WriteOutputRow[] }) {
   const stats = writeLineStats(block);
@@ -723,25 +676,6 @@ function contentLineCount(content: string) {
   return content.endsWith("\n") ? count - 1 : count;
 }
 
-function searchSummary(block: ToolBlockUi) {
-  if (isRunning(block)) return undefined;
-  const data = block.data;
-  const parts: string[] = [];
-  const count = numberValue(data?.matches) ?? numberValue(data?.count);
-  const shown = numberValue(data?.shown);
-
-  if (typeof count === "number") {
-    const label = block.name === "Glob" ? "file" : "match";
-    parts.push(`${count} ${count === 1 ? label : `${label}s`}`);
-  }
-  if (typeof shown === "number" && typeof count === "number" && shown !== count) {
-    parts.push(`showing ${shown}`);
-  }
-  if (data?.truncated === true) parts.push("truncated");
-  if (data?.timed_out === true) parts.push("timed out");
-
-  return parts.join(" - ");
-}
 
 function inlineToolText(block: ToolBlockUi) {
   const browserText = browserInlineText(block);
@@ -768,6 +702,26 @@ function inlineToolText(block: ToolBlockUi) {
   if (block.status === "error") return `Failed ${label}`;
   if (isRunning(block)) return `${label} running`;
   return label;
+}
+
+function lspLabel(block: ToolBlockUi) {
+  const operation = stringValue(block.data?.operation);
+  return operation ? `LSP ${operation}` : "LSP";
+}
+
+function todoLabel(block: ToolBlockUi) {
+  const todos = todoItems(block);
+  return todos.length > 0 ? `${block.name} ${todos.length} items` : block.name;
+}
+
+function taskLabel(block: ToolBlockUi) {
+  const task = block.data?.task;
+  if (task && typeof task === "object" && "title" in task) {
+    const title = stringValue((task as Record<string, unknown>).title);
+    if (title) return `${block.name} ${title}`;
+  }
+  const taskId = stringValue(block.data?.task_id);
+  return taskId ? `${block.name} ${taskId}` : block.name;
 }
 
 function groupLabel(kind: string, blocks: ToolBlockUi[], collapsed: boolean) {
@@ -841,496 +795,11 @@ function webFetchLabel(block: ToolBlockUi) {
   return url ? `Fetch ${url}` : "WebFetch";
 }
 
-function browserInlineText(block: ToolBlockUi) {
-  if (!isBrowserToolName(block.name)) return undefined;
-
-  const action = browserActionLabel(block);
-  if (block.status === "permission_required") return `Permission required for ${action.base}`;
-  if (block.status === "error") return `Failed ${action.base}`;
-  if (isRunning(block)) return action.running;
-  return action.completed;
-}
-
-function browserActionLabel(block: ToolBlockUi) {
-  const target = browserTargetLabel(block);
-  if (block.name === "BrowserOpen") {
-    return {
-      base: target ? `BrowserOpen ${target}` : "BrowserOpen",
-      running: target ? `Opening ${target}` : "Opening browser tab",
-      completed: target ? `Opened ${target}` : "Opened browser tab",
-    };
-  }
-  if (block.name === "BrowserExtractContent") {
-    return {
-      base: target ? `BrowserExtractContent ${target}` : "BrowserExtractContent",
-      running: target ? `Extracting content from ${target}` : "Extracting browser content",
-      completed: target ? `Extracted content from ${target}` : "Extracted browser content",
-    };
-  }
-  if (block.name === "BrowserSearch") {
-    const query = stringValue(block.data?.query);
-    return {
-      base: query ? `BrowserSearch ${query}` : "BrowserSearch",
-      running: query ? `Searching ${query}` : "Searching the web",
-      completed: query ? `Searched ${query}` : "Searched the web",
-    };
-  }
-  if (block.name === "BrowserListTabs") {
-    return { base: "BrowserListTabs", running: "Listing browser tabs", completed: "Listed browser tabs" };
-  }
-  if (block.name === "BrowserGetElementMap") {
-    return { base: "BrowserGetElementMap", running: "Mapping browser elements", completed: "Mapped browser elements" };
-  }
-  if (block.name === "BrowserClick") {
-    return {
-      base: target ? `BrowserClick ${target}` : "BrowserClick",
-      running: target ? `Clicking ${target}` : "Clicking browser page",
-      completed: target ? `Clicked ${target}` : "Clicked browser page",
-    };
-  }
-  if (block.name === "BrowserType") {
-    return {
-      base: target ? `BrowserType ${target}` : "BrowserType",
-      running: target ? `Typing in ${target}` : "Typing in browser",
-      completed: target ? `Typed in ${target}` : "Typed in browser",
-    };
-  }
-  if (block.name === "BrowserScreenshot") {
-    return {
-      base: target ? `BrowserScreenshot ${target}` : "BrowserScreenshot",
-      running: target ? `Capturing ${target}` : "Capturing browser screenshot",
-      completed: target ? `Captured ${target}` : "Captured browser screenshot",
-    };
-  }
-  if (block.name === "BrowserCloseTab") {
-    return { base: "BrowserCloseTab", running: "Closing browser tab", completed: "Closed browser tab" };
-  }
-  if (block.name === "BrowserReadConsole") {
-    return { base: "BrowserReadConsole", running: "Reading browser console", completed: "Read browser console" };
-  }
-  if (block.name === "BrowserScript") {
-    return { base: "BrowserScript", running: "Running browser script", completed: "Ran browser script" };
-  }
-  if (block.name === "BrowserScroll") {
-    return { base: "BrowserScroll", running: "Scrolling browser page", completed: "Scrolled browser page" };
-  }
-  if (block.name === "BrowserReload") {
-    return { base: "BrowserReload", running: "Reloading browser page", completed: "Reloaded browser page" };
-  }
-  if (block.name === "BrowserHistory") {
-    return { base: "BrowserHistory", running: "Navigating browser history", completed: "Navigated browser history" };
-  }
-  if (block.name === "BrowserSwitchTab") {
-    return { base: "BrowserSwitchTab", running: "Switching browser tab", completed: "Switched browser tab" };
-  }
-  if (block.name === "BrowserWait") {
-    return { base: "BrowserWait", running: "Waiting for browser page", completed: "Waited for browser page" };
-  }
-  if (block.name === "BrowserAct") {
-    return { base: "BrowserAct", running: "Running browser action", completed: "Ran browser action" };
-  }
-  if (block.name === "BrowserReadContentChunk") {
-    return { base: "BrowserReadContentChunk", running: "Reading browser content chunks", completed: "Read browser content chunks" };
-  }
-  if (block.name === "BrowserGetHtml") {
-    return {
-      base: target ? `BrowserGetHtml ${target}` : "BrowserGetHtml",
-      running: target ? `Reading HTML from ${target}` : "Reading browser HTML",
-      completed: target ? `Read HTML from ${target}` : "Read browser HTML",
-    };
-  }
-  return { base: block.name, running: `${block.name} running`, completed: block.name };
-}
-
-function browserTargetLabel(block: ToolBlockUi) {
-  return (
-    stringValue(block.data?.title) ??
-    stringValue(block.data?.final_url) ??
-    stringValue(block.data?.url) ??
-    stringValue(block.data?.page_id) ??
-    stringValue(block.data?.window_id) ??
-    block.path
-  );
-}
-
-function lspLabel(block: ToolBlockUi) {
-  const operation = stringValue(block.data?.operation);
-  return operation ? `LSP ${operation}` : "LSP";
-}
-
-function todoLabel(block: ToolBlockUi) {
-  const todos = todoItems(block);
-  return todos.length > 0 ? `${block.name} ${todos.length} items` : block.name;
-}
-
-function taskLabel(block: ToolBlockUi) {
-  const task = block.data?.task;
-  if (task && typeof task === "object" && "title" in task) {
-    const title = stringValue((task as Record<string, unknown>).title);
-    if (title) return `${block.name} ${title}`;
-  }
-  const taskId = stringValue(block.data?.task_id);
-  return taskId ? `${block.name} ${taskId}` : block.name;
-}
-
-function normalizedToolOutput(block: ToolBlockUi) {
-  if (isBrowserToolName(block.name)) return browserOutputText(block);
-  return block.content.trimEnd();
-}
-
-function browserOutputText(block: ToolBlockUi) {
-  const data = block.data ?? {};
-  const error = stringValue(data.error);
-  if (error) return error;
-
-  if (block.name === "BrowserOpen") return browserOpenOutput(data);
-  if (block.name === "BrowserExtractContent") return browserExtractOutput(block, data);
-  if (block.name === "BrowserSearch") return browserSearchOutput(data);
-  if (block.name === "BrowserListTabs") return browserTabsOutput(data);
-  if (block.name === "BrowserReadContentChunk") return browserChunksOutput(block, data);
-  if (block.name === "BrowserGetHtml") return browserHtmlOutput(block, data);
-  if (block.name === "BrowserReadConsole") return browserConsoleOutput(data);
-  if (block.name === "BrowserScript") return browserScriptOutput(data);
-  if (block.name === "BrowserScreenshot") return browserScreenshotOutput(data);
-  if (isBrowserControlToolName(block.name)) return browserControlOutput(data);
-  return block.content.trimEnd();
-}
-
-function browserOpenOutput(data: Record<string, unknown>) {
-  return compactOutputLines([
-    keyValueLine("Title", stringValue(data.title)),
-    keyValueLine("URL", stringValue(data.url)),
-    keyValueLine("Final URL", stringValue(data.final_url)),
-    keyValueLine("Page ID", stringValue(data.page_id)),
-    keyValueLine("Window ID", stringValue(data.window_id)),
-    keyValueLine("Search ID", stringValue(data.search_id)),
-    keyValueLine("Opened pages", numberValue(data.opened_page_count)),
-  ]);
-}
-
-function browserExtractOutput(block: ToolBlockUi, data: Record<string, unknown>) {
-  const content = rawStringValue(data.content) ?? rawStringValue(data.content_preview) ?? block.content;
-  return compactOutputLines([
-    keyValueLine("Title", stringValue(data.title)),
-    keyValueLine("URL", stringValue(data.url)),
-    keyValueLine("Page ID", stringValue(data.page_id)),
-    keyValueLine("Cache key", stringValue(data.cache_key)),
-    keyValueLine("Content chars", numberValue(data.content_chars)),
-    keyValueLine("Chunks", numberValue(data.chunk_count)),
-    data.inline_content_truncated === true ? "Inline content truncated: true" : undefined,
-    content.trim() ? `\n${content.trimEnd()}` : stringValue(data.message),
-  ]);
-}
-
-function browserSearchOutput(data: Record<string, unknown>) {
-  const results = arrayValue(data.results) ?? [];
-  const lines = compactOutputLines([
-    keyValueLine("Query", stringValue(data.query)),
-    keyValueLine("Provider", stringValue(data.provider)),
-    keyValueLine("Search ID", stringValue(data.search_id)),
-    keyValueLine("Results", results.length),
-  ]);
-  const resultLines = results
-    .map((item, index) => browserSearchResultOutput(item, index))
-    .filter((line) => line.length > 0);
-  return compactOutputLines([lines, resultLines.length ? `\n${resultLines.join("\n\n")}` : undefined]);
-}
-
-function browserSearchResultOutput(value: unknown, index: number) {
-  if (!isRecord(value)) return "";
-  return compactOutputLines([
-    `${index + 1}. ${stringValue(value.title) ?? stringValue(value.url) ?? "Untitled result"}`,
-    stringValue(value.url) ? `   ${stringValue(value.url)}` : undefined,
-    stringValue(value.snippet) ? `   ${stringValue(value.snippet)}` : undefined,
-  ]);
-}
-
-function browserTabsOutput(data: Record<string, unknown>) {
-  const tabs = arrayValue(data.tabs) ?? [];
-  const lines = compactOutputLines([
-    keyValueLine("Tab count", numberValue(data.tab_count) ?? tabs.length),
-    keyValueLine("Current URL", stringValue(data.current_url)),
-    keyValueLine("Last page ID", stringValue(data.last_open_page_id)),
-  ]);
-  const tabLines = tabs
-    .map((item, index) => browserTabOutput(item, index))
-    .filter((line) => line.length > 0);
-  return compactOutputLines([lines, tabLines.length ? `\n${tabLines.join("\n\n")}` : undefined]);
-}
-
-function browserTabOutput(value: unknown, index: number) {
-  if (!isRecord(value)) return "";
-  return compactOutputLines([
-    `${index + 1}. ${stringValue(value.title) ?? stringValue(value.url) ?? "Untitled tab"}`,
-    stringValue(value.url) ? `   ${stringValue(value.url)}` : undefined,
-    stringValue(value.page_id) ? `   page_id: ${stringValue(value.page_id)}` : undefined,
-  ]);
-}
-
-function browserChunksOutput(block: ToolBlockUi, data: Record<string, unknown>) {
-  const chunks = arrayValue(data.chunks) ?? [];
-  const lines = compactOutputLines([
-    keyValueLine("Title", stringValue(data.title)),
-    keyValueLine("URL", stringValue(data.url)),
-    keyValueLine("Cache key", stringValue(data.cache_key)),
-    keyValueLine("Chunks returned", numberValue(data.chunk_count) ?? chunks.length),
-    keyValueLine("Total chunks", numberValue(data.total_chunks)),
-  ]);
-  const chunkLines = chunks
-    .map((item) => browserChunkOutput(item))
-    .filter((line) => line.length > 0);
-  return compactOutputLines([
-    lines,
-    chunkLines.length ? `\n${chunkLines.join("\n\n")}` : undefined,
-    !chunkLines.length ? block.content.trimEnd() : undefined,
-  ]);
-}
-
-function browserChunkOutput(value: unknown) {
-  if (!isRecord(value)) return "";
-  const index = numberValue(value.index);
-  const content = rawStringValue(value.content);
-  return compactOutputLines([
-    `## Chunk ${index ?? "?"}`,
-    content?.trimEnd(),
-  ]);
-}
-
-function browserHtmlOutput(block: ToolBlockUi, data: Record<string, unknown>) {
-  const html = rawStringValue(data.html);
-  return compactOutputLines([
-    keyValueLine("Title", stringValue(data.title)),
-    keyValueLine("URL", stringValue(data.url)),
-    keyValueLine("Page ID", stringValue(data.page_id)),
-    keyValueLine("HTML chars", typeof html === "string" ? html.length : undefined),
-    html ? `\n${html.trimEnd()}` : block.content.trimEnd(),
-  ]);
-}
-
-function browserControlOutput(data: Record<string, unknown>) {
-  return compactOutputLines([
-    keyValueLine("Title", stringValue(data.title)),
-    keyValueLine("URL", stringValue(data.url)),
-    keyValueLine("Page ID", stringValue(data.page_id)),
-    keyValueLine("Runtime", stringValue(data.runtime)),
-    keyValueLine("Render mode", stringValue(data.render_mode)),
-    keyValueLine("Active tab", stringValue(data.active_tab_id)),
-    data.navigated === true ? "Navigated: true" : undefined,
-    keyValueLine("Elements", numberValue(data.element_count)),
-  ]);
-}
-
-function browserScreenshotOutput(data: Record<string, unknown>) {
-  return compactOutputLines([
-    keyValueLine("Title", stringValue(data.title)),
-    keyValueLine("URL", stringValue(data.url)),
-    keyValueLine("Page ID", stringValue(data.page_id)),
-    keyValueLine("Runtime", stringValue(data.runtime)),
-    keyValueLine("Render mode", stringValue(data.render_mode)),
-    keyValueLine("Screenshot method", stringValue(data.screenshot_method)),
-    keyValueLine("Can capture", data.can_capture === true ? "true" : data.can_capture === false ? "false" : undefined),
-    keyValueLine("Viewport", browserViewportLabel(data)),
-    keyValueLine("Fallback", stringValue(data.screenshot_error)),
-    keyValueLine("Elements", numberValue(data.element_count)),
-  ]);
-}
-
-function browserConsoleOutput(data: Record<string, unknown>) {
-  const entries = arrayValue(data.entries) ?? [];
-  const header = compactOutputLines([
-    keyValueLine("Title", stringValue(data.title)),
-    keyValueLine("URL", stringValue(data.url)),
-    keyValueLine("Page ID", stringValue(data.page_id)),
-    keyValueLine("Entries", entries.length),
-  ]);
-  const entryLines = entries
-    .slice(-30)
-    .map((entry) => browserConsoleEntryOutput(entry))
-    .filter((line) => line.length > 0);
-  return compactOutputLines([header, entryLines.length ? `\n${entryLines.join("\n")}` : undefined]);
-}
-
-function browserConsoleEntryOutput(value: unknown) {
-  if (!isRecord(value)) return "";
-  const id = numberValue(value.id);
-  const level = stringValue(value.level) ?? "log";
-  const text = rawStringValue(value.text)?.trimEnd() ?? "";
-  return `${id ?? "?"} [${level}] ${text}`;
-}
-
-function browserScriptOutput(data: Record<string, unknown>) {
-  const resultText = rawStringValue(data.result_text);
-  return compactOutputLines([
-    keyValueLine("Title", stringValue(data.title)),
-    keyValueLine("URL", stringValue(data.url)),
-    keyValueLine("Page ID", stringValue(data.page_id)),
-    keyValueLine("Mode", stringValue(data.mode)),
-    keyValueLine("CDP method", stringValue(data.cdp_method)),
-    data.truncated === true ? "Result truncated: true" : undefined,
-    resultText ? `\n${resultText.trimEnd()}` : undefined,
-  ]);
-}
-
-function browserViewportLabel(data: Record<string, unknown>) {
-  const width = numberValue(data.viewport_width);
-  const height = numberValue(data.viewport_height);
-  return width && height ? `${width}x${height}` : undefined;
-}
-
-function browserImageDataUrl(block: ToolBlockUi) {
-  if (block.name !== "BrowserScreenshot") return undefined;
-  const imageData = rawStringValue(block.data?.image_data);
-  if (!imageData) return undefined;
-  const mimeType = stringValue(block.data?.image_mime_type) ?? "image/png";
-  return `data:${mimeType};base64,${imageData}`;
-}
-
-function keyValueLine(label: string, value: string | number | undefined) {
-  if (value === undefined || value === "") return undefined;
-  return `${label}: ${value}`;
-}
-
-function compactOutputLines(lines: Array<string | undefined>) {
-  return lines.filter((line): line is string => Boolean(line && line.trim().length > 0)).join("\n");
-}
-
-function shellLabel(block: ToolBlockUi) {
-  const command = stringValue(block.data?.command);
-  if (!command) return "Shell command";
-  const base = shellCommandBase(command);
-  const args = base ? command.slice(base.length).trim() : "";
-  if (base === "find") return `Find ${args}`;
-  if (base === "grep") return `Grep ${args}`;
-  if (base === "rg") return `Search ${args}`;
-  return `Shell ${command}`;
-}
-
-export function isBrowserToolName(name: string) {
-  return (
-    name === "BrowserSearch" ||
-    name === "BrowserOpen" ||
-    name === "BrowserListTabs" ||
-    name === "BrowserExtractContent" ||
-    name === "BrowserReadContentChunk" ||
-    name === "BrowserGetHtml" ||
-    name === "BrowserGetElementMap" ||
-    isBrowserControlToolName(name) ||
-    name === "BrowserAct"
-  );
-}
-
-function isBrowserControlToolName(name: string) {
-  return (
-    name === "BrowserClick" ||
-    name === "BrowserType" ||
-    name === "BrowserScreenshot" ||
-    name === "BrowserCloseTab" ||
-    name === "BrowserReadConsole" ||
-    name === "BrowserScript" ||
-    name === "BrowserScroll" ||
-    name === "BrowserReload" ||
-    name === "BrowserHistory" ||
-    name === "BrowserSwitchTab" ||
-    name === "BrowserWait"
-  );
-}
 
 function compactGenericToolLabel(kindName: string) {
   return kindName.replace(/[_-]+/g, " ");
 }
 
-function searchMetadata(block: ToolBlockUi) {
-  const data = block.data;
-  const items: { label: string; value: string }[] = [];
-  const command = stringValue(data?.command);
-  const pattern = stringValue(data?.pattern);
-  const path = stringValue(data?.display_path) ?? stringValue(data?.path);
-  const count = numberValue(data?.matches) ?? numberValue(data?.count);
-  const shown = numberValue(data?.shown);
-  const returnCode = numberValue(data?.return_code);
-
-  if (command) items.push({ label: "Command", value: command });
-  if (pattern) items.push({ label: "Pattern", value: pattern });
-  if (path) items.push({ label: "Path", value: path });
-  if (typeof count === "number") items.push({ label: block.name === "Glob" ? "Files" : "Matches", value: String(count) });
-  if (typeof shown === "number") items.push({ label: "Shown", value: String(shown) });
-  if (typeof returnCode === "number") items.push({ label: "Return code", value: String(returnCode) });
-  if (data?.truncated === true) items.push({ label: "Truncated", value: "true" });
-  if (data?.timed_out === true) items.push({ label: "Timed out", value: "true" });
-
-  return items;
-}
-
-function searchOutputRows(block: ToolBlockUi): SearchOutputRow[] {
-  const matches = block.data?.matches;
-  if (Array.isArray(matches)) {
-    return matches.map((item) => ({ kind: "file" as const, text: String(item) })).filter((row) => row.text.trim().length > 0);
-  }
-
-  const output = searchOutputText(block);
-  if (!output.trim()) return [];
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim().length > 0)
-    .map((line) => searchOutputRowFromLine(line, block));
-}
-
-function searchOutputRowFromLine(line: string, block: ToolBlockUi): SearchOutputRow {
-  const parsed = /^(.+?):(\d+):(.*)$/.exec(line);
-  if (parsed) {
-    return {
-      kind: "match",
-      file: parsed[1],
-      line: parsed[2],
-      text: parsed[3].trim(),
-    };
-  }
-
-  const command = stringValue(block.data?.command);
-  const base = command ? shellCommandBase(command) : undefined;
-  if (block.name === "Glob" || base === "find") {
-    return { kind: "file", text: line };
-  }
-
-  return { kind: "line", text: line };
-}
-
-function searchOutputText(block: ToolBlockUi) {
-  return rawStringValue(block.data?.content) ?? block.content;
-}
-
-function searchHasOutput(block: ToolBlockUi) {
-  const matches = block.data?.matches;
-  return (Array.isArray(matches) && matches.length > 0) || hasNonWhitespace(searchOutputText(block));
-}
-
-function searchOutputPreview(block: ToolBlockUi) {
-  const matches = block.data?.matches;
-  const firstLine = firstNonEmptyLine(searchOutputText(block));
-  const first =
-    Array.isArray(matches) && matches.length > 0
-      ? { kind: "file" as const, text: String(matches[0]) }
-      : firstLine
-        ? searchOutputRowFromLine(firstLine, block)
-        : undefined;
-  if (!first) return undefined;
-  const text = first.kind === "match" ? `${first.file}:${first.line} ${first.text}` : first.text;
-  return text.length > 140 ? `${text.slice(0, 139)}...` : text;
-}
-
-function firstNonEmptyLine(output: string) {
-  let start = 0;
-  while (start <= output.length) {
-    const end = output.indexOf("\n", start);
-    const lineEnd = end === -1 ? output.length : end;
-    const line = output.slice(start, lineEnd).trimEnd();
-    if (line.trim().length > 0) return line;
-    if (end === -1) return undefined;
-    start = end + 1;
-  }
-  return undefined;
-}
 
 function latestTodoBlock(blocks: ToolBlockUi[]) {
   for (let index = blocks.length - 1; index >= 0; index -= 1) {
@@ -1351,42 +820,6 @@ function todoProgressLabel(status: ToolBlockStatus, completed: number, total: nu
   return `${completed}/${total} done`;
 }
 
-export function todoItems(block: ToolBlockUi): TodoItem[] {
-  const rawTodos =
-    arrayValue(block.data?.todos) ??
-    arrayValue(block.data?.items) ??
-    arrayValue(block.data?.todo_list) ??
-    singleTodoValue(block.data?.todo) ??
-    todoArrayFromContent(block.content);
-
-  return rawTodos
-    .map((item, index) => normalizeTodoItem(item, index))
-    .filter((item): item is TodoItem => Boolean(item));
-}
-
-function normalizeTodoItem(value: unknown, index: number): TodoItem | undefined {
-  if (!isRecord(value)) return undefined;
-  const content =
-    stringValue(value.content) ??
-    stringValue(value.title) ??
-    stringValue(value.text) ??
-    stringValue(value.description);
-  if (!content) return undefined;
-  const id = stringValue(value.id) ?? `${content}-${index}`;
-  return {
-    id,
-    content,
-    status: todoStatusValue(value.status),
-  };
-}
-
-function todoStatusValue(value: unknown): TodoItem["status"] {
-  if (typeof value !== "string") return "pending";
-  const normalized = value.trim().toLowerCase().replace(/-/g, "_");
-  if (normalized === "completed" || normalized === "complete" || normalized === "done") return "completed";
-  if (normalized === "in_progress" || normalized === "running" || normalized === "active") return "in_progress";
-  return "pending";
-}
 
 function todoStatusLabel(status: TodoItem["status"]) {
   if (status === "completed") return "completed";
@@ -1394,30 +827,6 @@ function todoStatusLabel(status: TodoItem["status"]) {
   return "pending";
 }
 
-function todoArrayFromContent(content: string): unknown[] {
-  if (!content.trim()) return [];
-  try {
-    const parsed: unknown = JSON.parse(content);
-    if (!isRecord(parsed)) return [];
-    return (
-      arrayValue(parsed.todos) ??
-      arrayValue(parsed.items) ??
-      arrayValue(parsed.todo_list) ??
-      singleTodoValue(parsed.todo) ??
-      []
-    );
-  } catch {
-    return [];
-  }
-}
-
-function arrayValue(value: unknown): unknown[] | undefined {
-  return Array.isArray(value) ? value : undefined;
-}
-
-function singleTodoValue(value: unknown): unknown[] | undefined {
-  return isRecord(value) ? [value] : undefined;
-}
 
 function lineDetail(block: ToolBlockUi) {
   const start = block.data?.start_line;

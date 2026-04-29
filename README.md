@@ -1,124 +1,89 @@
-# 🤖 PersonAgent
+# PersonAgent
 
-Sistema de Agente Pessoal com **llama.cpp + TurboQuant** para inferência local de LLMs.
+Local-first personal agent system with a Python/FastAPI backend, the official
+Electron desktop client, and llama.cpp + TurboQuant for local LLM inference.
 
-## 🏗️ Arquitetura Clean
+## Documentation
+
+The canonical documentation hub is [docs/README.md](docs/README.md).
+
+- [Application overview](docs/architecture/overview.md)
+- [API reference](docs/api/README.md)
+- [ADR index and template](docs/adr/README.md)
+- [Development guide](docs/development/README.md)
+- [Browser Workspace contract](docs/browser-workspace.md)
+
+## Architecture
 
 ```
 PersonAgent/
-├── @backend/                    ← Python + FastAPI (Arquitetura Clean)
+├── @backend/                    ← Python + FastAPI
 │   ├── src/personagent/
-│   │   ├── domain/              💎 Regras de negócio puras
-│   │   ├── application/         🧠 Casos de uso / Orquestração
-│   │   ├── infrastructure/      🔌 Adaptadores externos
-│   │   └── interfaces/          🖥️ FastAPI + CLI
+│   │   ├── domain/              ← Pure business concepts
+│   │   ├── application/         ← Use cases and orchestration
+│   │   ├── infrastructure/      ← External adapters
+│   │   └── interfaces/          ← FastAPI + CLI
 │   └── pyproject.toml
 │
 ├── @llama/                      ← Fork llama.cpp + TurboQuant
-│   ├── llama-cpp-turboquant/    🔥 Motor de inferência
+│   ├── llama-cpp-turboquant/    ← Inference runtime
 │   ├── scripts/
-│   │   ├── build.sh             ← Compila com CUDA + TurboQuant
-│   │   ├── start-server.sh      ← Inicia llama-server
-│   │   └── stop-server.sh       ← Encerra llama-server
-│   └── models/                  ← Symlinks para GGUFs
+│   │   ├── build.sh
+│   │   ├── start-server.sh
+│   │   └── stop-server.sh
+│   └── models/                  ← GGUF symlinks
 │
 ├── @desktop-electron/           ← Electron + React desktop client (official desktop app)
 │   ├── electron/                ← main/preload with isolated IPC
 │   └── src/                     ← React renderer, shadcn-style UI, Chat
 │
+├── docs/                        ← Central documentation hub
 ├── docker-compose.yml           ← PostgreSQL
-├── config.yaml                  ← Configuração YAML
-└── .env                         ← Variáveis de ambiente
+├── config.yaml                  ← YAML configuration
+└── .env                         ← Environment variables
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
-### 1. Pré-requisitos
+### 1. Prerequisites
 
-- **Python** 3.11+
-- **Node.js** 20+ e **npm** (cliente desktop Electron)
-- **PostgreSQL** (via Docker)
-- **CUDA Toolkit** (para GPU NVIDIA)
+- Python 3.11+
+- Node.js 20+ and npm
+- PostgreSQL through Docker
+- CUDA Toolkit for NVIDIA GPU acceleration
 - **cmake**, **build-essential**
 
-### 2. Iniciar PostgreSQL
+### 2. Start PostgreSQL
 
 ```bash
 docker compose up -d postgres
 ```
 
-### 3. Compilar llama.cpp com TurboQuant
+### 3. Build llama.cpp with TurboQuant
 
 ```bash
 cd @llama
 ./scripts/build.sh
 ```
 
-### 4. Instalar dependências Python
+### 4. Install Python Dependencies
 
 ```bash
 cd @backend
 pip install -e ".[dev]"
 ```
 
-### 5. Iniciar o Sistema
+### 5. Start The System
 
 ```bash
-# Via CLI
-personagent chat -m "Olá, quem é você?"
+# CLI
+personagent chat -m "Hello, who are you?"
 
-# Via API Server
+# API server
 personagent serve --port 8000
 ```
 
-## ⚡ TurboQuant
-
-O **TurboQuant** é uma técnica de quantização extrema do KV Cache que:
-- Reduz uso de memória em **~87%** (compressão 4.57x)
-- Permite contextos enormes com pouca VRAM
-- Tem perda de precisão próxima de zero
-
-Configuração padrão no `config.yaml`:
-```yaml
-llm:
-  cache_type_k: "turbo4"
-  cache_type_v: "turbo4"
-  ctx_size: 262144
-```
-
-## 📡 API Endpoints
-
-| Método | Endpoint | Descrição |
-|--------|----------|-----------|
-| POST | `/chat/completions` | Chat completion síncrono |
-| POST | `/chat/completions/stream` | Chat completion com SSE streaming |
-| GET | `/conversations` | Lista conversas |
-| GET | `/conversations/{id}` | Detalhes da conversa |
-| DELETE | `/conversations/{id}` | Remove conversa |
-| GET | `/health` | Health check |
-
-## 🛠️ Comandos CLI
-
-```bash
-# Chat interativo
-personagent chat -m "Sua mensagem aqui"
-
-# Com streaming e ocultar reasoning
-personagent chat -m "Explique quantum computing" --no-think
-
-# Verificar status do modelo
-personagent model --status
-
-# Listar conversas
-personagent conversations-list
-
-# Iniciar servidor API
-personagent serve --port 8000 --reload
-```
-
-## 🖥️ Desktop Electron
-
-O cliente desktop oficial fica em `@desktop-electron/`:
+### 6. Start The Desktop
 
 ```bash
 cd @desktop-electron
@@ -126,11 +91,47 @@ npm install
 npm run dev
 ```
 
-## 📁 Workspaces
+## TurboQuant
 
-- **`@backend/`** — Backend Python com Arquitetura Clean
-- **`@llama/`** — Fork llama.cpp com TurboQuant
+TurboQuant is an extreme KV cache quantization mode used by the local llama.cpp
+runtime. Current defaults are configured for long-context local inference:
 
-## 📝 Licença
+```yaml
+llm:
+  cache_type_k: "turbo4"
+  cache_type_v: "turbo4"
+  ctx_size: 262144
+```
 
-MIT
+## API
+
+The full active API map is maintained in [docs/api/README.md](docs/api/README.md).
+Major route groups:
+
+- `/chat` for completions, prompt preview, approvals, providers, and Team Mode.
+- `/conversations` for conversation list/detail/fork/delete/search.
+- `/sessions` for session panel and Browser Workspace actions.
+- `/memory` for structured and operational memory.
+- `/workspace` for files, mentions, Git, worktrees, and PR operations.
+- `/skills` for installed and marketplace skills.
+- `/qa` for execution-to-code graph tracing.
+- `/events/state` for desktop cache invalidation events.
+
+## CLI Commands
+
+```bash
+# Interactive chat
+personagent chat -m "Your message here"
+
+# Streaming without visible reasoning
+personagent chat -m "Explain quantum computing" --no-think
+
+# Model status
+personagent model --status
+
+# List conversations
+personagent conversations-list
+
+# Start API server
+personagent serve --port 8000 --reload
+```

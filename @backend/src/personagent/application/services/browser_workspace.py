@@ -57,6 +57,13 @@ class BrowserWorkspaceService:
                 "fallback_reason": str(view.get("fallback_reason") or ""),
             }
         )
+        cooperation = _coerce_dict(state.get("cooperation"))
+        if cooperation:
+            if url and url != "about:blank":
+                cooperation["url"] = url
+                cooperation["title"] = title
+                cooperation["updated_at"] = datetime.now(UTC).isoformat()
+            state["cooperation"] = cooperation
         workspace.state = state
         await self._upsert_tabs(workspace, view, active_tab_id=active_tab_id, runtime=runtime)
         await self._session.commit()
@@ -72,6 +79,7 @@ class BrowserWorkspaceService:
                     "tabs": view.get("tabs") or payload.get("tabs") or [],
                     "active_tab_id": view.get("active_tab_id") or payload.get("active_tab_id") or active_tab_id,
                     "runtime": runtime,
+                    "cooperation": view.get("cooperation") or payload.get("cooperation") or {},
                 }
             )
         return view
@@ -89,6 +97,7 @@ class BrowserWorkspaceService:
         return {
             "annotations": annotations,
             "timeline_events": timeline_events,
+            "cooperation": _coerce_dict(state.get("cooperation")),
             "workspace_state": {
                 "active_browser_id": browser_id,
                 "current_url": str(workspace.current_url or ""),
@@ -96,6 +105,7 @@ class BrowserWorkspaceService:
                 "last_element_map": _coerce_list(state.get("last_element_map"))[:220],
                 "runtime": str(workspace.active_runtime or "lightpanda"),
                 "active_tab_id": active_tab_id,
+                "cooperation": _coerce_dict(state.get("cooperation")),
             },
             "tabs": tabs,
             "active_tab_id": active_tab_id,

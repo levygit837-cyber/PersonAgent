@@ -11,13 +11,64 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
 import structlog
+
+from personagent.infrastructure.browser.content_cleanup import (
+    MARKDOWN_LINK_PATTERN as _MARKDOWN_LINK_PATTERN,
+)
+from personagent.infrastructure.browser.content_cleanup import (
+    clean_extracted_content as _clean_extracted_content,
+)
+from personagent.infrastructure.browser.content_cleanup import (
+    should_prefer_readable_dom as _should_prefer_readable_dom,
+)
+from personagent.infrastructure.browser.models import (
+    BrowserBlockedError,
+    BrowserConsoleEntry,
+    BrowserError,
+    BrowserOpenedPage,
+    BrowserSearchResult,
+    BrowserSearchSnapshot,
+    BrowserUnavailableError,
+)
+from personagent.infrastructure.browser.models import (
+    BrowserSession as _BrowserSession,
+)
+from personagent.infrastructure.browser.url_utils import (
+    browser_empty_fallback_html as _browser_empty_fallback_html,
+)
+from personagent.infrastructure.browser.url_utils import (
+    clamped_viewport as _clamped_viewport,
+)
+from personagent.infrastructure.browser.url_utils import (
+    clean_browser_url as _clean_browser_url,
+)
+from personagent.infrastructure.browser.url_utils import (
+    infer_search_provider as _infer_search_provider,
+)
+from personagent.infrastructure.browser.url_utils import (
+    is_local_lightpanda_endpoint as _is_local_lightpanda_endpoint,
+)
+from personagent.infrastructure.browser.url_utils import (
+    is_retryable_raw_cdp_error as _is_retryable_raw_cdp_error,
+)
+from personagent.infrastructure.browser.url_utils import (
+    is_target_already_loaded_error as _is_target_already_loaded_error,
+)
+from personagent.infrastructure.browser.url_utils import (
+    normalize_lightpanda_cdp_endpoint,
+)
+from personagent.infrastructure.browser.url_utils import (
+    normalize_navigation_url as _normalize_navigation_url,
+)
+from personagent.infrastructure.browser.url_utils import (
+    urls_equivalent as _urls_equivalent,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -26,10 +77,6 @@ Connector = Callable[[str], Awaitable[Any]]
 _DEFAULT_SEARCH_BASE_URL = "https://search.yahoo.com/search"
 _MAX_CACHED_SEARCHES_PER_CONVERSATION = 8
 _MAX_OPENED_PAGES_PER_CONVERSATION = 32
-_MARKDOWN_ANY_LINK_PATTERN = re.compile(r"\[([^\]]*)]\([^)]*\)")
-_MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
-_URL_PATTERN = re.compile(r"https?://[^\s)>\]]+")
-_MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*]\([^)]*\)")
 _STYLESHEET_LINK_PATTERN = re.compile(
     r"<link\b(?=[^>]*\brel\s*=\s*['\"][^'\"]*stylesheet[^'\"]*['\"])(?=[^>]*\bhref\s*=\s*['\"](?P<href>[^'\"]+)['\"])[^>]*>",
     re.IGNORECASE,
@@ -41,19 +88,6 @@ _HTML_ATTR_PATTERN = re.compile(
 _CSS_URL_PATTERN = re.compile(r"url\((?P<quote>['\"]?)(?P<url>[^)'\"\s][^)'\"]*)(?P=quote)\)")
 _STYLESHEET_CACHE_TTL_SECONDS = 600.0
 _MAX_STYLESHEET_CACHE_ENTRIES = 256
-_MIN_READABLE_CONTENT_CHARS = 240
-_URL_EDGE_NOISE_CHARS = " \t\r\n\f\v\u00a0\u200b\u200c\u200d\ufeff"
-_URL_ENCODED_EDGE_NOISE_SUFFIXES = (
-    "%c2%a0",
-    "%e2%80%8b",
-    "%e2%80%8c",
-    "%e2%80%8d",
-    "%ef%bb%bf",
-    "%20",
-    "%09",
-    "%0a",
-    "%0d",
-)
 _RAW_CDP_RETRY_DELAYS = (0.0, 0.5, 1.5, 3.0, 5.0)
 _MAX_CONSOLE_ENTRIES_PER_PAGE = 200
 _MAX_BROWSER_SCRIPT_CHARS = 10_000
@@ -68,34 +102,6 @@ _BROWSER_SCRIPT_CDP_ALLOWLIST = {
     "Log.enable",
     "Log.clear",
 }
-_NOISE_LINE_MARKERS = {
-    "advertise",
-    "advertisement",
-    "all rights reserved",
-    "cookie policy",
-    "copyright",
-    "follow us",
-    "forbes logo",
-    "privacy policy",
-    "see all",
-    "see more",
-    "share a news tip",
-    "sign in",
-    "sign up",
-    "sign up for newsletters",
-    "subscribe",
-    "terms of service",
-}
-_NOISE_LINE_SUBSTRINGS = (
-    "crown each region",
-    "frase by forbes",
-    "guess the category",
-    "mini crossword",
-    "pinpoint by linkedin",
-    "quick solve. big win",
-    "queens by linkedin",
-    "unscramble the anagram",
-)
 _READABLE_DOM_SCRIPT = r"""
 (() => {
   const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -761,189 +767,6 @@ _CONSOLE_DRAIN_SCRIPT = r"""
 """
 
 
-class BrowserError(RuntimeError):
-    """Base error for browser infrastructure failures."""
-
-
-class BrowserUnavailableError(BrowserError):
-    """Raised when the browser service cannot be used."""
-
-
-class BrowserBlockedError(BrowserError):
-    """Raised when the target site blocks browser automation."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        provider: str = "",
-        reason: str = "",
-        url: str = "",
-        title: str = "",
-        sample: str = "",
-    ) -> None:
-        super().__init__(message)
-        self.details = {
-            "provider": provider,
-            "reason": reason,
-            "url": url,
-            "title": title,
-            "sample": sample,
-        }
-
-
-@dataclass(slots=True)
-class BrowserSearchResult:
-    """Search result stored in a conversation browser session."""
-
-    index: int
-    title: str
-    url: str
-    snippet: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "index": self.index,
-            "title": self.title,
-            "url": self.url,
-            "snippet": self.snippet,
-        }
-
-
-@dataclass(slots=True)
-class BrowserSearchSnapshot:
-    """Recent search results kept independently from the live browser page."""
-
-    search_id: str
-    query: str
-    search_url: str
-    provider: str
-    results: list[BrowserSearchResult]
-    created_at: float = field(default_factory=time.monotonic)
-
-
-@dataclass(slots=True)
-class BrowserOpenedPage:
-    """Logical browser page opened during a conversation research session."""
-
-    page_id: str
-    url: str
-    final_url: str
-    title: str = ""
-    source_search_id: str | None = None
-    opener_tool_call_id: str | None = None
-    opened_at: float = field(default_factory=time.monotonic)
-    extraction_count: int = 0
-    last_extracted_at: float | None = None
-
-    @property
-    def window_id(self) -> str:
-        """Public browser-window identifier. Kept equal to page_id for compatibility."""
-
-        return self.page_id
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "page_id": self.page_id,
-            "window_id": self.window_id,
-            "url": self.url,
-            "final_url": self.final_url,
-            "title": self.title,
-            "source_search_id": self.source_search_id,
-            "opener_tool_call_id": self.opener_tool_call_id,
-            "extraction_count": self.extraction_count,
-        }
-
-
-@dataclass(slots=True)
-class BrowserConsoleEntry:
-    """Bounded console event captured for one logical browser page."""
-
-    entry_id: int
-    page_id: str
-    level: str
-    text: str
-    source: str
-    url: str = ""
-    timestamp: float = field(default_factory=time.time)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.entry_id,
-            "page_id": self.page_id,
-            "level": self.level,
-            "text": self.text,
-            "source": self.source,
-            "url": self.url,
-            "timestamp": self.timestamp,
-        }
-
-
-@dataclass(slots=True)
-class _BrowserSession:
-    browser: Any
-    context: Any
-    page: Any
-    pages: dict[str, Any] = field(default_factory=dict)
-    search_results: list[BrowserSearchResult] = field(default_factory=list)
-    current_url: str | None = None
-    last_open_url: str | None = None
-    last_open_page_id: str | None = None
-    current_page_id: str | None = None
-    new_pages_supported: bool = True
-    new_page_unavailable_logged: bool = False
-    new_page_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
-    created_at: float = field(default_factory=time.monotonic)
-    updated_at: float = field(default_factory=time.monotonic)
-
-    def touch(self) -> None:
-        self.updated_at = time.monotonic()
-
-
-def normalize_lightpanda_cdp_endpoint(
-    raw_url: str,
-    version_payload: Mapping[str, Any] | None = None,
-) -> str:
-    """Return a websocket endpoint accepted by Playwright connect_over_cdp."""
-
-    trimmed = raw_url.strip().rstrip("/")
-    if not trimmed:
-        raise BrowserUnavailableError("LIGHTPANDA_CDP_URL is empty.")
-    if trimmed.startswith(("ws://", "wss://")):
-        return trimmed
-    websocket_url = None
-    if version_payload is not None:
-        websocket_url = version_payload.get("webSocketDebuggerUrl")
-    if isinstance(websocket_url, str) and websocket_url.strip():
-        parsed_ws = urlparse(websocket_url.strip())
-        parsed_raw = urlparse(trimmed)
-        if parsed_ws.hostname in {"0.0.0.0", "::"} and parsed_raw.hostname:
-            netloc = parsed_raw.hostname
-            if parsed_ws.port:
-                netloc = f"{netloc}:{parsed_ws.port}"
-            return urlunparse((parsed_ws.scheme, netloc, parsed_ws.path, "", parsed_ws.query, ""))
-        return websocket_url.strip()
-
-    parsed = urlparse(trimmed)
-    if parsed.scheme not in {"http", "https"}:
-        raise BrowserUnavailableError(
-            "LIGHTPANDA_CDP_URL must start with http://, https://, ws:// or wss://."
-        )
-    scheme = "wss" if parsed.scheme == "https" else "ws"
-    return urlunparse((scheme, parsed.netloc, parsed.path, "", "", ""))
-
-
-def _infer_search_provider(search_base_url: str) -> str:
-    hostname = (urlparse(search_base_url).hostname or "").lower()
-    if hostname == "search.yahoo.com" or hostname.endswith(".search.yahoo.com"):
-        return "yahoo"
-    if hostname == "bing.com" or hostname.endswith(".bing.com"):
-        return "bing"
-    if hostname.startswith("www.google.") or hostname.startswith("google."):
-        return "google"
-    return "generic"
-
-
 def _search_results_script(provider: str) -> str:
     if provider == "yahoo":
         return _YAHOO_RESULTS_SCRIPT
@@ -952,228 +775,6 @@ def _search_results_script(provider: str) -> str:
     if provider == "google":
         return _GOOGLE_RESULTS_SCRIPT
     return _GENERIC_RESULTS_SCRIPT
-
-
-def _clean_browser_url(raw_url: str) -> str:
-    """Trim whitespace/invisible suffixes that search pages often append to hrefs."""
-
-    url = str(raw_url or "").strip(_URL_EDGE_NOISE_CHARS)
-    while url:
-        lowered = url.lower()
-        for suffix in _URL_ENCODED_EDGE_NOISE_SUFFIXES:
-            if lowered.endswith(suffix):
-                url = url[: -len(suffix)].rstrip(_URL_EDGE_NOISE_CHARS)
-                break
-        else:
-            break
-    return url
-
-
-def _normalize_navigation_url(raw_url: str) -> str:
-    url = _clean_browser_url(raw_url)
-    if not url:
-        raise BrowserError("A URL is required.")
-    if re.match(r"^https?://", url, re.IGNORECASE):
-        return url
-    return f"https://{url}"
-
-
-def _browser_empty_fallback_html(url: str, title: str = "") -> str:
-    safe_url = _escape_html(url)
-    safe_title = _escape_html(title or url or "Browser")
-    return (
-        "<!doctype html><html><head>"
-        f"<title>{safe_title}</title>"
-        "<style>"
-        "body{font-family:Inter,ui-sans-serif,system-ui,sans-serif;margin:0;padding:24px;"
-        "background:#fff;color:#111827;line-height:1.5}"
-        ".pa-empty{max-width:620px;margin:10vh auto;border:1px solid #e5e7eb;border-radius:12px;padding:18px}"
-        ".pa-url{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#6b7280;word-break:break-all}"
-        "</style></head><body><main class='pa-empty'>"
-        "<h1>Browser page loaded</h1>"
-        "<p>The page reached this URL, but the DOM snapshot was empty after redirects settled.</p>"
-        f"<p class='pa-url'>{safe_url}</p>"
-        "</main></body></html>"
-    )
-
-
-def _escape_html(value: str) -> str:
-    return (
-        str(value or "")
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&#39;")
-    )
-
-
-def _clamped_viewport(width: int, height: int) -> tuple[int, int]:
-    return min(max(int(width), 320), 2400), min(max(int(height), 240), 1800)
-
-
-def _is_local_lightpanda_endpoint(raw_url: str) -> bool:
-    parsed = urlparse(str(raw_url or "").strip())
-    return parsed.hostname in {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
-
-
-def _urls_equivalent(first: str, second: str) -> bool:
-    first_clean = _clean_browser_url(first)
-    second_clean = _clean_browser_url(second)
-    if first_clean == second_clean:
-        return True
-    first_parsed = urlparse(first_clean)
-    second_parsed = urlparse(second_clean)
-    return (
-        first_parsed.scheme.lower(),
-        first_parsed.netloc.lower(),
-        first_parsed.path.rstrip("/") or "/",
-        first_parsed.query,
-    ) == (
-        second_parsed.scheme.lower(),
-        second_parsed.netloc.lower(),
-        second_parsed.path.rstrip("/") or "/",
-        second_parsed.query,
-    )
-
-
-def _is_retryable_raw_cdp_error(exc: Exception) -> bool:
-    if isinstance(exc, (OSError, TimeoutError, asyncio.TimeoutError)):
-        return True
-    message = str(exc).lower()
-    return any(
-        marker in message
-        for marker in (
-            "connect call failed",
-            "connection refused",
-            "connection reset",
-            "connection closed",
-            "did not receive a valid http response",
-        )
-    )
-
-
-def _is_target_already_loaded_error(exc: Exception) -> bool:
-    return "targetalreadyloaded" in str(exc).replace(" ", "").lower()
-
-
-def _clean_extracted_content(raw_content: str) -> tuple[str, dict[str, Any]]:
-    """Remove navigation/link-list noise while preserving article text."""
-
-    raw = str(raw_content or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    raw = _MARKDOWN_IMAGE_PATTERN.sub("", raw)
-    raw_link_count = len(_MARKDOWN_ANY_LINK_PATTERN.findall(raw)) + len(_URL_PATTERN.findall(raw))
-    if not raw:
-        return "", {
-            "raw_chars": 0,
-            "cleaned_chars": 0,
-            "raw_link_count": 0,
-            "removed_link_noise_blocks": 0,
-        }
-
-    kept_blocks: list[str] = []
-    removed_blocks = 0
-    for block in re.split(r"\n\s*\n+", raw):
-        cleaned_block = _clean_content_block(block)
-        if not cleaned_block:
-            continue
-        if _is_link_noise_block(block):
-            removed_blocks += 1
-            continue
-        kept_blocks.append(cleaned_block)
-
-    cleaned = "\n\n".join(kept_blocks)
-    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
-    if _should_keep_raw_content(raw, cleaned, raw_link_count):
-        cleaned = _collapse_text_spacing(raw)
-    return cleaned, {
-        "raw_chars": len(raw),
-        "cleaned_chars": len(cleaned),
-        "raw_link_count": raw_link_count,
-        "removed_link_noise_blocks": removed_blocks,
-    }
-
-
-def _clean_content_block(block: str) -> str:
-    lines: list[str] = []
-    for raw_line in block.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        line = _MARKDOWN_ANY_LINK_PATTERN.sub(lambda match: match.group(1).strip(), line)
-        line = _URL_PATTERN.sub("", line)
-        line = re.sub(r"^[\-*+]\s+", "", line)
-        line = _collapse_text_spacing(line)
-        if not line or _is_noise_line(line):
-            continue
-        lines.append(line)
-    return "\n".join(lines).strip()
-
-
-def _is_link_noise_block(block: str) -> bool:
-    lines = [line.strip() for line in block.splitlines() if line.strip()]
-    if not lines:
-        return False
-    link_count = len(_MARKDOWN_ANY_LINK_PATTERN.findall(block)) + len(_URL_PATTERN.findall(block))
-    if link_count < 6:
-        return False
-    link_only_lines = sum(1 for line in lines if _is_link_only_line(line))
-    if link_only_lines / max(1, len(lines)) >= 0.55:
-        return True
-    text_without_links = _MARKDOWN_ANY_LINK_PATTERN.sub("", block)
-    text_without_links = _URL_PATTERN.sub("", text_without_links)
-    non_link_chars = len(_collapse_text_spacing(text_without_links))
-    return link_count >= 12 and non_link_chars < link_count * 24
-
-
-def _is_link_only_line(line: str) -> bool:
-    stripped = line.strip()
-    if not stripped:
-        return False
-    link_count = len(_MARKDOWN_ANY_LINK_PATTERN.findall(stripped)) + len(
-        _URL_PATTERN.findall(stripped)
-    )
-    if link_count == 0:
-        return False
-    without_links = _MARKDOWN_ANY_LINK_PATTERN.sub("", stripped)
-    without_links = _URL_PATTERN.sub("", without_links)
-    without_links = re.sub(r"^[\-*+]\s*", "", without_links)
-    return len(_collapse_text_spacing(without_links)) <= 12
-
-
-def _is_noise_line(line: str) -> bool:
-    normalized = _collapse_text_spacing(line).strip(" :-|").lower()
-    if not normalized:
-        return True
-    if not any(char.isalnum() for char in normalized):
-        return True
-    if normalized in _NOISE_LINE_MARKERS:
-        return True
-    if any(marker in normalized for marker in _NOISE_LINE_SUBSTRINGS):
-        return True
-    return len(normalized) <= 4 and normalized in {"ad", "ads", "new", "more"}
-
-
-def _should_keep_raw_content(raw: str, cleaned: str, raw_link_count: int) -> bool:
-    if len(cleaned) >= _MIN_READABLE_CONTENT_CHARS:
-        return False
-    if raw_link_count >= 12:
-        return False
-    return len(raw) > len(cleaned)
-
-
-def _should_prefer_readable_dom(cleaned: str, stats: dict[str, Any]) -> bool:
-    raw_link_count = int(stats.get("raw_link_count") or 0)
-    removed_blocks = int(stats.get("removed_link_noise_blocks") or 0)
-    cleaned_chars = len(cleaned)
-    if cleaned_chars < _MIN_READABLE_CONTENT_CHARS:
-        return True
-    return bool(raw_link_count >= 40 and removed_blocks)
-
-
-def _collapse_text_spacing(value: str) -> str:
-    return re.sub(r"[ \t\f\v]+", " ", str(value or "")).strip()
 
 
 class LightPandaBrowserWorker:

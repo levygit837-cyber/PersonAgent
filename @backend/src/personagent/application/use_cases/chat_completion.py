@@ -28,6 +28,7 @@ from personagent.application.services import (
     SessionMemoryService,
     SessionTitleService,
 )
+from personagent.application.services.browser_cooperation import browser_agent_context_reminder
 from personagent.application.services.operational_memory import project_slug_from_workspace
 from personagent.application.state.services import StateManager
 from personagent.application.tools import (
@@ -1613,6 +1614,9 @@ class ChatCompletionUseCase:
             runtime_reminders.append(preparation.slash_reminder)
         if preparation:
             runtime_reminders.extend(preparation.context_reminders)
+        browser_context = browser_agent_context_reminder(conversation.metadata)
+        if browser_context:
+            runtime_reminders.append(browser_context)
         built_prompt = await self._prompt_builder.build(
             context_result.system_context,
             context_result.user_context,
@@ -1686,6 +1690,7 @@ class ChatCompletionUseCase:
                 "memory_filters_applied": memory_metadata.get("memory_filters_applied"),
                 "has_custom_system_prompt": has_custom_system_prompt,
                 "custom_system_prompt_policy": "append_to_dynamic_system_prompt",
+                "has_browser_cooperation_context": bool(browser_context),
             },
         )
 
@@ -2081,6 +2086,7 @@ class ChatCompletionUseCase:
                 "plan_mode": plan_state,
                 "plan_mode_active": plan_active,
                 "structured_output_schema": raw_context.get("structured_output_schema"),
+                "browser_cooperation": conversation.metadata.get("browser_cooperation", {}),
             },
         )
 
