@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getConversation, streamChatCompletion } from "../api/client";
 import { emptySessionUsage, type ChatMessageUi } from "../types/chat";
 import { useAppStore } from "./app-store";
-import { useChatStore } from "./chat-store";
+import { createChatStore, useChatStore } from "./chat-store";
 
 const apiMocks = vi.hoisted(() => ({
   forkConversation: vi.fn(),
@@ -64,6 +64,7 @@ describe("chat workspace routing", () => {
       teamMode: false,
     });
     useChatStore.setState({
+      workspaceRoot: undefined,
       messages: [],
       conversationId: undefined,
       conversationTitle: undefined,
@@ -135,6 +136,30 @@ describe("chat workspace routing", () => {
     expect(vi.mocked(streamChatCompletion)).toHaveBeenCalled();
   });
 
+  it("renders terminal tool-loop events instead of leaving an empty agent card", async () => {
+    apiMocks.streamChatCompletion.mockImplementation(() =>
+      eventStream([
+        {
+          event: "tool_iterations_exceeded",
+          finish_reason: "tool_iterations_exceeded",
+          tool_iterations: 8,
+        },
+        {
+          event: "conversation_saved",
+          conversation_id: "conversation-loop",
+          title: "Loop",
+          finish_reason: "tool_iterations_exceeded",
+        },
+      ]),
+    );
+
+    await useChatStore.getState().sendMessage("Use tools until done");
+
+    const agentMessage = useChatStore.getState().messages.find((message) => message.role === "agent");
+    expect(agentMessage?.content).toContain("Tool execution stopped after 8 iterations");
+    expect(agentMessage?.isStreaming).toBe(false);
+  });
+
   it("switches the active workspace before loading a mapped conversation", async () => {
     await useChatStore.getState().loadConversation("conversation-eval");
 
@@ -142,6 +167,20 @@ describe("chat workspace routing", () => {
     expect(useAppStore.getState().selectedWorkspace).toBe("/workspaces/Eval");
     expect(useAppStore.getState().recentWorkspaces[0]).toBe("/workspaces/Eval");
     expect(useChatStore.getState().conversationId).toBe("conversation-eval");
+  });
+
+  it("loads a pane-scoped conversation without changing the selected global workspace", async () => {
+    const paneStore = createChatStore({
+      paneId: "pane:conversation-eval",
+      initialWorkspaceRoot: "/workspaces/WebPilot",
+      syncWorkspaceSelection: false,
+    });
+
+    await paneStore.getState().loadConversation("conversation-eval", "/workspaces/Eval");
+
+    expect(useAppStore.getState().selectedWorkspace).toBe("/workspaces/WebPilot");
+    expect(paneStore.getState().workspaceRoot).toBe("/workspaces/Eval");
+    expect(paneStore.getState().conversationId).toBe("conversation-eval");
   });
 
   it("does not wait for Electron settings persistence before fetching the conversation", async () => {
@@ -286,6 +325,12 @@ describe("chat workspace routing", () => {
 
 async function* emptyStream() {
   return;
+}
+
+async function* eventStream(events: unknown[]) {
+  for (const event of events) {
+    yield event;
+  }
 }
 
 function chatMessage(overrides: Partial<ChatMessageUi>): ChatMessageUi {

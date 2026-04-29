@@ -5,6 +5,7 @@ import { TooltipProvider } from "../ui/tooltip";
 import { Sidebar } from "./sidebar";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
+import { CHAT_SESSION_DRAG_MIME, MAIN_CHAT_PANE_ID, useChatLayoutStore } from "../../stores/chat-layout-store";
 
 const originalLoadConversation = useChatStore.getState().loadConversation;
 
@@ -49,6 +50,7 @@ describe("Sidebar", () => {
       conversationId: undefined,
       loadConversation: originalLoadConversation,
     });
+    useChatLayoutStore.setState({ panes: [], activePaneId: MAIN_CHAT_PANE_ID });
 
   });
 
@@ -138,6 +140,61 @@ describe("Sidebar", () => {
     });
   });
 
+  it("adds sessions to split from the right-click menu", async () => {
+    renderSidebar();
+
+    fireEvent.contextMenu(await screen.findByText("Debug Session"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /add to split/i }));
+
+    expect(useChatLayoutStore.getState().panes).toHaveLength(1);
+    expect(useChatLayoutStore.getState().panes[0]).toMatchObject({
+      conversationId: "conversation_1",
+      workspaceRoot: "/home/user/my-project",
+      title: "Debug Session",
+    });
+  });
+
+  it("opens compact windows from the right-click menu", async () => {
+    const openSession = vi.fn(async () => true);
+    window.personAgent = {
+      compact: {
+        openSession,
+        getLaunchContext: vi.fn(),
+      },
+    } as unknown as Window["personAgent"];
+
+    renderSidebar();
+
+    fireEvent.contextMenu(await screen.findByText("Debug Session"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /compact window/i }));
+
+    expect(openSession).toHaveBeenCalledWith({
+      conversationId: "conversation_1",
+      workspaceRoot: "/home/user/my-project",
+      title: "Debug Session",
+    });
+  });
+
+  it("serializes sessions for drag and drop into the main workspace", async () => {
+    renderSidebar();
+    const data: Record<string, string> = {};
+    const dataTransfer = {
+      effectAllowed: "",
+      setData: vi.fn((type: string, value: string) => {
+        data[type] = value;
+      }),
+    };
+
+    fireEvent.dragStart(await screen.findByText("Debug Session"), { dataTransfer });
+
+    expect(dataTransfer.setData).toHaveBeenCalledWith(CHAT_SESSION_DRAG_MIME, expect.any(String));
+    expect(JSON.parse(data[CHAT_SESSION_DRAG_MIME])).toMatchObject({
+      conversationId: "conversation_1",
+      workspaceRoot: "/home/user/my-project",
+      title: "Debug Session",
+    });
+  });
+
   it("does not hide backend sessions when local workspace mapping is empty", async () => {
     useAppStore.setState({
       convWorkspaceMap: {},
@@ -196,6 +253,33 @@ describe("Sidebar", () => {
     });
 
     expect(workspaceFolderNames()).toEqual(["my-project", "other-project"]);
+  });
+
+  it("renders visual session state indicators", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          { id: "running_session", title: "Running Session", created_at: "", updated_at: "", message_count: 1, status: "running" },
+          { id: "pending_session", title: "Pending Session", created_at: "", updated_at: "", message_count: 1, status: "pending" },
+          { id: "error_session", title: "Error Session", created_at: "", updated_at: "", message_count: 1, status: "error" },
+        ]),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    useAppStore.setState({
+      convWorkspaceMap: {},
+      selectedWorkspace: "/home/user/my-project",
+      recentWorkspaces: ["/home/user/my-project"],
+    });
+
+    renderSidebar();
+
+    expect(await screen.findByLabelText("Agent running")).toBeInTheDocument();
+    expect(screen.getByLabelText("Pending approval")).toBeInTheDocument();
+    expect(screen.getByLabelText("Error in last request")).toBeInTheDocument();
   });
 });
 

@@ -24,6 +24,7 @@ class ConversationListResponse(BaseModel):
     updated_at: str
     message_count: int
     workspace_root: str | None = None
+    status: str = "idle"
 
 
 class ConversationDetailResponse(BaseModel):
@@ -198,6 +199,7 @@ def _conversation_list_response(conv: Conversation) -> ConversationListResponse:
         updated_at=conv.updated_at.isoformat(),
         message_count=len(conv.messages),
         workspace_root=_workspace_root_from_metadata(conv.metadata),
+        status=_conversation_status(conv.metadata, conv.messages),
     )
 
 
@@ -219,3 +221,21 @@ def _workspace_root_from_metadata(metadata: dict | None) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _conversation_status(metadata: dict | None, messages: list[Message] | None = None) -> str:
+    data = metadata or {}
+    status = data.get("session_status")
+    if status in {"idle", "error", "pending", "running"}:
+        return str(status)
+    pending_tool = data.get("pending_tool_approval")
+    if isinstance(pending_tool, dict) and pending_tool.get("status") == "awaiting_approval":
+        return "pending"
+    plan_mode = data.get("plan_mode")
+    if isinstance(plan_mode, dict) and plan_mode.get("status") == "awaiting_approval":
+        return "pending"
+    for message in reversed(messages or []):
+        message_metadata = message.metadata or {}
+        if message_metadata.get("is_error") is True or message_metadata.get("status") in {"error", "failed"}:
+            return "error"
+    return "idle"

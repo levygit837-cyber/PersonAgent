@@ -387,7 +387,53 @@ async def test_stream_uses_default_tool_iteration_limit_for_repeated_calls(tmp_p
     assert llm.calls == DEFAULT_MAX_TOOL_ITERATIONS
     assert events.count("tool_result") == DEFAULT_MAX_TOOL_ITERATIONS
     assert "tool_iterations_exceeded" in events
+    notice = next(chunk for chunk in chunks if chunk.metadata.get("event") == "tool_iterations_exceeded")
+    assert "Tool execution stopped" in notice.content
     assert not any(chunk.finish_reason == "tool_calls" for chunk in chunks)
+
+    saved = next(chunk for chunk in chunks if chunk.metadata.get("event") == "conversation_saved")
+    conversation = await repo.get_by_id(UUID(saved.metadata["conversation_id"]))
+    assert conversation is not None
+    assert conversation.messages[-1].role == Role.ASSISTANT
+    assert conversation.messages[-1].metadata["finish_reason"] == "tool_iterations_exceeded"
+    assert "Tool execution stopped" in conversation.messages[-1].content
+
+
+@pytest.mark.asyncio
+async def test_stream_recovers_when_provider_stops_empty_after_tool_result(tmp_path):
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text("alpha\nbeta\n", encoding="utf-8")
+    repo = MemoryConversationRepository()
+    llm = EmptyStopAfterToolLLM()
+    registry = ToolRegistry([create_read_file_tool()])
+    config = ToolRuntimeConfig.from_values(workspace_root=tmp_path)
+    use_case = ChatCompletionUseCase(
+        conversation_repo=repo,
+        llm_backend=llm,
+        tool_registry=registry,
+        tool_runtime_config=config,
+    )
+
+    chunks = [
+        chunk
+        async for chunk in use_case.execute_stream(
+            ChatRequestDTO(message="Read notes.txt", tools_enabled=True)
+        )
+    ]
+
+    assert llm.calls == 3
+    assert any(chunk.metadata.get("status") == "retrying_empty_tool_response" for chunk in chunks)
+    assert any(chunk.content == "Recovered final answer." for chunk in chunks)
+    saved = next(chunk for chunk in chunks if chunk.metadata.get("event") == "conversation_saved")
+    conversation = await repo.get_by_id(UUID(saved.metadata["conversation_id"]))
+    assert conversation is not None
+    assert conversation.messages[-1].role == Role.ASSISTANT
+    assert conversation.messages[-1].content == "Recovered final answer."
+    assert all(
+        message.content or message.tool_calls
+        for message in conversation.messages
+        if message.role == Role.ASSISTANT
+    )
 
 
 @pytest.mark.asyncio
@@ -1071,6 +1117,46 @@ class RepeatingStreamingToolCallingLLM(LLMBackendRepository):
             ],
             finish_reason="tool_calls",
         )
+
+    async def health_check(self) -> dict:
+        return {"status": "healthy"}
+
+    async def get_model_info(self) -> dict:
+        return {}
+
+
+class EmptyStopAfterToolLLM(LLMBackendRepository):
+    def __init__(self):
+        self.calls = 0
+
+    async def chat_completion(self, *args, **kwargs) -> InferenceResult:
+        return InferenceResult(content="unused")
+
+    async def chat_completion_stream(self, messages, *args, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            yield StreamChunk(
+                tool_calls=[
+                    {
+                        "id": "call_read",
+                        "type": "function",
+                        "function": {
+                            "name": "Read",
+                            "arguments": '{"path":"notes.txt"}',
+                        },
+                    }
+                ],
+                finish_reason="tool_calls",
+            )
+            return
+        if self.calls == 2:
+            yield StreamChunk(finish_reason="stop")
+            return
+        assert messages[-1]["role"] == "user"
+        assert "stopped after tool results" in messages[-1]["content"]
+        assert not kwargs.get("tools")
+        yield StreamChunk(content="Recovered final answer.")
+        yield StreamChunk(finish_reason="stop")
 
     async def health_check(self) -> dict:
         return {"status": "healthy"}

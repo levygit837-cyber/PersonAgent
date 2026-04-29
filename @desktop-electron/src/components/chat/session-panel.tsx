@@ -119,6 +119,7 @@ const BROWSER_LOADING_MESSAGES = [
   "Estilizando seu site...",
   "Mapeando elementos clicaveis...",
 ];
+let composerAnnotationSequence = 0;
 
 function createEmptyBrowserState(browserId = `browser:${Date.now()}`): BrowserState {
   return {
@@ -244,7 +245,9 @@ export function SessionPanel({
   onClose: () => void;
 }) {
   const baseUrl = useAppStore((state) => state.baseUrl);
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const paneWorkspaceRoot = useChatStore((state) => state.workspaceRoot);
+  const workspaceRoot = paneWorkspaceRoot || selectedWorkspace;
   const conversationId = useChatStore((state) => state.conversationId);
   const isStreaming = useChatStore((state) => state.isStreaming);
   const liveUsage = useChatStore((state) => state.liveSessionUsage);
@@ -413,7 +416,7 @@ export function SessionPanel({
         historyIndex,
         loading: false,
         error:
-          view.can_capture || view.render_mode === "html_mirror"
+          view.can_capture || view.render_mode === "html_mirror" || view.render_mode === "computed_html" || view.render_mode === "pixel"
             ? undefined
             : view.screenshot_error || "Browser rendering is unavailable.",
         view,
@@ -607,6 +610,11 @@ export function SessionPanel({
         quote: element?.text,
         url: browser.currentUrl,
         title: browser.view?.title,
+        selector: element?.selector,
+        frame_id: element?.frame_id,
+        selector_chain: element?.selector_chain,
+        shadow_path: element?.shadow_path,
+        tab_id: element?.tab_id ?? browser.view?.active_tab_id,
       });
       updateBrowserTab(tabId, (current) => ({
         ...current,
@@ -636,7 +644,7 @@ export function SessionPanel({
     action: "click" | "submit" = "click",
   ) => {
     const browser = browserForTab(tabId);
-    if (!browser || !baseUrl || !conversationId) return;
+    if (!browser || !baseUrl) return;
     const requestId = startBrowserRequest(tabId);
     try {
       const view = await actSessionBrowser(
@@ -1192,6 +1200,7 @@ function BrowserTabContent({
   const requestedInitialViewRef = useRef(false);
   const lastBrowserIdRef = useRef(browser.browserId);
   const [mirrorUrl, setMirrorUrl] = useState("");
+  const [pixelHoverNodeId, setPixelHoverNodeId] = useState<string | null>(null);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const canGoBack = browser.historyIndex > 0;
   const canGoForward = browser.historyIndex >= 0 && browser.historyIndex < browser.history.length - 1;
@@ -1205,14 +1214,21 @@ function BrowserTabContent({
   const elementMap = browser.view?.element_map || browser.view?.browser_snapshot?.element_map || [];
   const annotations = browser.view?.annotations || browser.view?.browser_snapshot?.annotations || [];
   const timelineEvents = browser.view?.timeline_events || browser.view?.browser_snapshot?.timeline_events || [];
-  const showHtmlMirror = Boolean(browser.currentUrl && browser.view?.render_mode === "html_mirror" && documentHtml);
+  const backendTabs = browser.view?.tabs || browser.view?.browser_snapshot?.tabs || [];
+  const showHtmlMirror = Boolean(
+    browser.currentUrl &&
+      (browser.view?.render_mode === "html_mirror" || browser.view?.render_mode === "computed_html") &&
+      documentHtml,
+  );
   const mirrorDocument = showHtmlMirror
-    ? browserMirrorSrcDoc(documentHtml, browser.currentUrl, browser.browserId)
+    ? browserMirrorSrcDoc(documentHtml, browser.currentUrl, browser.browserId, elementMap)
     : "";
+  const canInspectBrowser = showHtmlMirror || showRenderedPage;
   const annotationCounts = useMemo(() => browserAnnotationCounts(annotations), [annotations]);
   const selectedElement = browser.selectedNodeId
     ? elementMap.find((item) => item.node_id === browser.selectedNodeId) ?? browser.elementMetadata[browser.selectedNodeId]
     : undefined;
+  const pixelHoverElement = pixelHoverNodeId ? elementMap.find((item) => item.node_id === pixelHoverNodeId) : undefined;
   const viewport = () => browserViewport(viewportRef.current, browser.view);
   const showEmptyState = !browser.loading && !showRenderedPage && !(showHtmlMirror && mirrorUrl);
 
@@ -1316,7 +1332,18 @@ function BrowserTabContent({
 
   const handleViewportClick = (event: MouseEvent<HTMLDivElement>) => {
     if (isBrowserViewportControlTarget(event.target)) return;
-    if (!browser.view || !imageRef.current) return;
+    if (!browser.view) return;
+    if (browser.mode !== "browse" && pixelHoverElement?.node_id) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (browser.mode === "action") {
+        onBrowserAction(pixelHoverElement.node_id, viewport());
+      } else {
+        onElementSelect(pixelHoverElement.node_id, pixelHoverElement as BrowserElementMetadata);
+      }
+      return;
+    }
+    if (!imageRef.current) return;
     const rect = imageRef.current.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     viewportRef.current?.focus();
@@ -1329,6 +1356,18 @@ function BrowserTabContent({
       y: ((event.clientY - rect.top) / rect.height) * targetHeight,
       button: event.button === 1 ? "middle" : event.button === 2 ? "right" : "left",
     });
+  };
+
+  const handleViewportMouseMove = (event: MouseEvent<HTMLDivElement>) => {
+    if (browser.mode === "browse" || !browser.view) return;
+    const surface = showRenderedPage ? imageRef.current : showHtmlMirror ? viewportRef.current : null;
+    if (!surface) return;
+    const element = browserElementAtRenderedPoint(event, surface, browser.view, elementMap);
+    setPixelHoverNodeId(element?.node_id ?? null);
+  };
+
+  const handleViewportMouseLeave = () => {
+    setPixelHoverNodeId(null);
   };
 
   const handleViewportKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -1383,7 +1422,7 @@ function BrowserTabContent({
         <BrowserModeButton
           label="Inspect and annotate"
           active={browser.mode === "annotate"}
-          disabled={!showHtmlMirror}
+          disabled={!canInspectBrowser}
           onClick={() => onModeChange(browser.mode === "annotate" ? "browse" : "annotate")}
         >
           <MessageSquarePlus className="h-3.5 w-3.5" />
@@ -1391,7 +1430,7 @@ function BrowserTabContent({
         <BrowserModeButton
           label="Action mode"
           active={browser.mode === "action"}
-          disabled={!showHtmlMirror || !canPersistWorkspace}
+          disabled={!canInspectBrowser || !canPersistWorkspace}
           onClick={() => onModeChange(browser.mode === "action" ? "browse" : "action")}
         >
           <MousePointerClick className="h-3.5 w-3.5" />
@@ -1406,7 +1445,7 @@ function BrowserTabContent({
             ? "Annotation mode · hover and click an element"
             : browser.mode === "action"
               ? "Action mode · click mapped elements"
-              : `${elementMap.length} mapped elements`}
+              : `${elementMap.length} mapped elements${backendTabs.length > 1 ? ` · ${backendTabs.length} tabs` : ""}`}
         </span>
         {annotations.length ? (
           <span className="inline-flex items-center gap-1">
@@ -1428,18 +1467,28 @@ function BrowserTabContent({
         tabIndex={0}
         className="relative -mx-3 -mb-4 min-h-[calc(100vh-220px)] flex-1 overflow-hidden bg-background outline-none"
         onClick={handleViewportClick}
+        onMouseMove={handleViewportMouseMove}
+        onMouseLeave={handleViewportMouseLeave}
         onKeyDown={handleViewportKeyDown}
         onWheel={handleViewportWheel}
       >
         {showRenderedPage ? (
-          <img
-            ref={imageRef}
-            src={imageSource}
-            alt={browser.view?.title || browser.currentUrl || "LightPanda browser"}
-            title={`Browser ${browser.currentUrl || browser.view?.url || ""}`.trim()}
-            className="h-full min-h-[calc(100vh-220px)] w-full select-none object-contain"
-            draggable={false}
-          />
+          <>
+            <img
+              ref={imageRef}
+              src={imageSource}
+              alt={browser.view?.title || browser.currentUrl || "LightPanda browser"}
+              title={`Browser ${browser.currentUrl || browser.view?.url || ""}`.trim()}
+              className="h-full min-h-[calc(100vh-220px)] w-full select-none object-contain"
+              draggable={false}
+            />
+            {pixelHoverElement?.bounds && browser.view ? (
+              <div
+              className="pointer-events-none absolute z-20 rounded-[var(--browser-highlight-radius,4px)] border-2 border-primary bg-primary/18 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)] transition-all duration-100"
+              style={browserRenderedElementStyle(pixelHoverElement.bounds, imageRef.current, browser.view)}
+              />
+            ) : null}
+          </>
         ) : showHtmlMirror && mirrorUrl ? (
           <iframe
             ref={iframeRef}
@@ -1453,6 +1502,17 @@ function BrowserTabContent({
           <div className="flex h-full min-h-[260px] items-center justify-center px-8 text-center text-xs leading-5 text-muted-foreground">
             Enter a URL to open a page in this tab.
           </div>
+        ) : null}
+        {showHtmlMirror && browser.mode !== "browse" ? (
+          <>
+            <div className="absolute inset-0 z-10 cursor-crosshair" aria-hidden="true" />
+            {pixelHoverElement?.bounds && browser.view ? (
+              <div
+                className="pointer-events-none absolute z-20 rounded-[var(--browser-highlight-radius,4px)] border-2 border-primary bg-primary/18 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)] transition-all duration-100"
+                style={browserRenderedElementStyle(pixelHoverElement.bounds, viewportRef.current, browser.view)}
+              />
+            ) : null}
+          </>
         ) : null}
         {browser.loading ? (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/78 px-8 text-center backdrop-blur-sm">
@@ -1808,6 +1868,50 @@ function browserViewport(element: HTMLElement | null, view?: SessionBrowserView)
   };
 }
 
+function browserElementAtRenderedPoint(
+  event: MouseEvent<HTMLElement>,
+  image: HTMLElement,
+  view: SessionBrowserView,
+  elementMap: SessionBrowserElement[],
+) {
+  const rect = image.getBoundingClientRect();
+  if (!rect.width || !rect.height) return undefined;
+  const targetWidth = view.viewport_width || rect.width;
+  const targetHeight = view.viewport_height || rect.height;
+  const x = ((event.clientX - rect.left) / rect.width) * targetWidth;
+  const y = ((event.clientY - rect.top) / rect.height) * targetHeight;
+  return elementMap
+    .filter((element) => {
+      const bounds = element.bounds;
+      if (!bounds || bounds.width <= 0 || bounds.height <= 0) return false;
+      return x >= bounds.x && x <= bounds.x + bounds.width && y >= bounds.y && y <= bounds.y + bounds.height;
+    })
+    .sort((left, right) => {
+      const leftBounds = left.bounds!;
+      const rightBounds = right.bounds!;
+      const leftArea = leftBounds.width * leftBounds.height;
+      const rightArea = rightBounds.width * rightBounds.height;
+      if (Boolean(left.interactable) !== Boolean(right.interactable)) return left.interactable ? -1 : 1;
+      return leftArea - rightArea;
+    })[0];
+}
+
+function browserRenderedElementStyle(
+  bounds: NonNullable<SessionBrowserElement["bounds"]>,
+  image: HTMLElement | null,
+  view: SessionBrowserView,
+) {
+  const rect = image?.getBoundingClientRect();
+  const scaleX = rect?.width ? rect.width / Math.max(1, view.viewport_width || rect.width) : 1;
+  const scaleY = rect?.height ? rect.height / Math.max(1, view.viewport_height || rect.height) : 1;
+  return {
+    left: Math.round(bounds.x * scaleX),
+    top: Math.round(bounds.y * scaleY),
+    width: Math.round(bounds.width * scaleX),
+    height: Math.round(bounds.height * scaleY),
+  };
+}
+
 function browserAnnotationCounts(annotations: SessionBrowserAnnotation[]) {
   return annotations.reduce<Record<string, number>>((counts, annotation) => {
     if (!annotation.node_id) return counts;
@@ -1967,10 +2071,20 @@ function normalizeBrowserElementMetadata(value: unknown, fallbackNodeId: string)
       : undefined;
   return {
     node_id: nodeId,
+    tab_id: typeof source.tab_id === "string" ? source.tab_id : undefined,
+    frame_id: typeof source.frame_id === "string" ? source.frame_id : undefined,
+    frame_url: typeof source.frame_url === "string" ? source.frame_url : undefined,
     role: typeof source.role === "string" ? source.role : undefined,
     tag: typeof source.tag === "string" ? source.tag : undefined,
     text: typeof source.text === "string" ? source.text : undefined,
     selector: typeof source.selector === "string" ? source.selector : undefined,
+    selector_chain: Array.isArray(source.selector_chain) ? source.selector_chain.filter((item): item is string => typeof item === "string") : undefined,
+    shadow_path: Array.isArray(source.shadow_path) ? source.shadow_path.filter((item): item is string => typeof item === "string") : undefined,
+    stable_key: typeof source.stable_key === "string" ? source.stable_key : undefined,
+    interactable: typeof source.interactable === "boolean" ? source.interactable : undefined,
+    computed_summary: source.computed_summary && typeof source.computed_summary === "object" && !Array.isArray(source.computed_summary)
+      ? (source.computed_summary as Record<string, unknown>)
+      : undefined,
     href: typeof source.href === "string" ? source.href : undefined,
     name: typeof source.name === "string" ? source.name : undefined,
     input_type: typeof source.input_type === "string" ? source.input_type : undefined,
@@ -2016,8 +2130,8 @@ function normalizeBrowserTextSelection(value: unknown): BrowserTextSelectionMeta
 }
 
 function nextComposerAnnotationId() {
-  const current = useChatStore.getState().composerAnnotations;
-  return Math.max(0, ...current.map((annotation) => annotation.id)) + 1;
+  composerAnnotationSequence += 1;
+  return Date.now() + composerAnnotationSequence;
 }
 
 function browserAnnotationDisplayPath(url: string, title: string) {
@@ -2038,6 +2152,7 @@ function browserMirrorSrcDoc(
   html: string,
   currentUrl: string,
   browserId: string,
+  elementMap: SessionBrowserElement[],
 ) {
   const sanitizedHtml = sanitizeBrowserMirrorHtml(html);
   const base = `<base href="${escapeHtmlAttribute(currentUrl)}">`;
@@ -2189,6 +2304,18 @@ function browserMirrorSrcDoc(
  const script = `<script>
 	(() => {
 	  const browserId = ${JSON.stringify(browserId)};
+	  const knownElements = ${scriptJson(
+      elementMap
+        .filter((element) => element.node_id && element.selector)
+        .slice(0, 500)
+        .map((element) => ({
+          node_id: element.node_id,
+          role: element.role || "",
+          selector: element.selector || "",
+          frame_id: element.frame_id || "main",
+          shadow_path: element.shadow_path || [],
+        })),
+    )};
 	  let mode = "browse";
 	  let annotationCounts = {};
 	  let selectedNodeId = "";
@@ -2309,6 +2436,21 @@ function browserMirrorSrcDoc(
 	    const nodeId = "pa_dom_" + stableHash(signature);
 	    element.setAttribute("data-pa-node-id", nodeId);
 	    return nodeId;
+	  };
+	  const applyKnownNodeIds = () => {
+	    for (const item of knownElements) {
+	      if (!item || !item.node_id || !item.selector) continue;
+	      if (item.frame_id && item.frame_id !== "main") continue;
+	      if (Array.isArray(item.shadow_path) && item.shadow_path.length) continue;
+	      try {
+	        const element = document.querySelector(item.selector);
+	        if (!element) continue;
+	        element.setAttribute("data-pa-node-id", item.node_id);
+	        if (item.role) element.setAttribute("data-pa-role", item.role);
+	      } catch {
+	        // Selector fidelity is best-effort for static browser mirrors.
+	      }
+	    }
 	  };
 	  const canContainMarker = (element) => {
 	    if (!element || !element.tagName) return false;
@@ -2708,8 +2850,12 @@ function browserMirrorSrcDoc(
 	    return true;
 	  };
 	  if (document.readyState === "loading") {
-	    document.addEventListener("DOMContentLoaded", applyAnnotationMarkers, { once: true });
+	    document.addEventListener("DOMContentLoaded", () => {
+	      applyKnownNodeIds();
+	      applyAnnotationMarkers();
+	    }, { once: true });
 	  } else {
+	    applyKnownNodeIds();
 	    applyAnnotationMarkers();
 	  }
 	  document.addEventListener("mousemove", scheduleHover, true);
@@ -2761,9 +2907,18 @@ function browserMirrorSrcDoc(
 	      return;
 	    }
 	    const anchor = event.target && event.target.closest ? event.target.closest("a[href]") : null;
-	    if (!anchor) return;
+	    if (anchor) {
+	      event.preventDefault();
+	      send(new URL(anchor.getAttribute("href"), document.baseURI).href);
+	      return;
+	    }
+	    const actionTarget = event.target && event.target.closest
+	      ? event.target.closest("button,input[type='button'],input[type='checkbox'],input[type='radio'],summary,[role='button'],[role='tab'],[role='checkbox'],[role='radio'],[role='menuitem']")
+	      : null;
+	    if (!actionTarget) return;
 	    event.preventDefault();
-	    send(new URL(anchor.getAttribute("href"), document.baseURI).href);
+	    event.stopPropagation();
+	    sendElementAction(ensureNodeId(actionTarget), "click");
 	  }, true);
 	  document.addEventListener("keydown", (event) => {
 	    if (event.defaultPrevented || event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
@@ -2807,6 +2962,7 @@ function browserCssLabel(value?: string) {
   if (value === "pixel") return "Pixel render";
   if (value === "original_embedded") return "Original + Embedded CSS";
   if (value === "embedded") return "Embedded CSS";
+  if (value === "computed") return "Computed CSS";
   if (value === "fallback_html") return "Fallback HTML";
   return "Original CSS";
 }
@@ -2815,6 +2971,7 @@ function browserCssBadgeClass(value?: string) {
   if (value === "fallback_html") return "border-warning/40 bg-warning/10 text-warning";
   if (value === "original_embedded") return "border-primary/35 bg-primary/10 text-primary";
   if (value === "embedded") return "border-primary/35 bg-primary/10 text-primary";
+  if (value === "computed") return "border-primary/35 bg-primary/10 text-primary";
   if (value === "pixel") return "border-success/35 bg-success/10 text-success";
   return "border-glass-border/35 bg-card/70 text-muted-foreground";
 }

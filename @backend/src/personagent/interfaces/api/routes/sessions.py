@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from personagent.application.services.browser_workspace import BrowserWorkspaceService
 from personagent.application.services.session_panel import SessionPanelService
 from personagent.infrastructure.browser.lightpanda import BrowserError, BrowserUnavailableError
 from personagent.interfaces.api.routes.chat import get_db
@@ -72,9 +73,17 @@ class SessionBrowserActionRequest(SessionBrowserViewport):
     """Request to execute a mapped browser element action."""
 
     node_id: str = Field(min_length=1)
-    action: str = Field(pattern="^(click|fill|submit|select|press)$")
+    action: str = Field(
+        pattern="^(click|fill|submit|select|press|hover|wait|drag|drop|upload|select_text|scroll_to|screenshot)$"
+    )
     value: str | None = None
     key: str | None = None
+    target_node_id: str | None = None
+    timeout_ms: int | None = Field(default=None, ge=1, le=120_000)
+    files: list[str] | None = None
+    text: str | None = None
+    x: float | None = None
+    y: float | None = None
     source: str = "user"
 
 
@@ -86,6 +95,11 @@ class SessionBrowserAnnotationRequest(BaseModel):
     quote: str | None = Field(default=None, max_length=4000)
     url: str | None = None
     title: str | None = None
+    selector: str | None = None
+    frame_id: str | None = None
+    selector_chain: list[str] | None = None
+    shadow_path: list[str] | None = None
+    tab_id: str | None = None
 
 
 @router.get("/browser/{browser_id}/view")
@@ -235,6 +249,35 @@ async def scroll_session_browser(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/browser/{browser_id}/action")
+async def act_session_browser(
+    browser_id: str,
+    request: SessionBrowserActionRequest,
+) -> dict[str, Any]:
+    """Execute a mapped DOM action in a runtime-only session-panel browser."""
+
+    try:
+        return await _browser_worker().view_act(
+            browser_id=browser_id,
+            node_id=request.node_id,
+            action=request.action,
+            value=request.value,
+            key=request.key,
+            target_node_id=request.target_node_id,
+            timeout_ms=request.timeout_ms,
+            files=request.files,
+            text=request.text,
+            x=request.x,
+            y=request.y,
+            width=request.width,
+            height=request.height,
+        )
+    except BrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BrowserError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/{conversation_id}/browser/{browser_id}/view")
 async def get_conversation_browser_view(
     conversation_id: str,
@@ -276,7 +319,8 @@ async def navigate_conversation_browser(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except BrowserError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _append_timeline_event(
+    await _record_timeline_event(
+        session,
         conversation,
         browser_id=browser_id,
         event_type="navigate",
@@ -310,7 +354,8 @@ async def move_conversation_browser_history(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except BrowserError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _append_timeline_event(
+    await _record_timeline_event(
+        session,
         conversation,
         browser_id=browser_id,
         event_type="history",
@@ -337,7 +382,8 @@ async def reload_conversation_browser(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except BrowserError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _append_timeline_event(
+    await _record_timeline_event(
+        session,
         conversation,
         browser_id=browser_id,
         event_type="reload",
@@ -371,7 +417,8 @@ async def click_conversation_browser(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except BrowserError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _append_timeline_event(
+    await _record_timeline_event(
+        session,
         conversation,
         browser_id=browser_id,
         event_type="click",
@@ -406,7 +453,8 @@ async def key_conversation_browser(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except BrowserError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _append_timeline_event(
+    await _record_timeline_event(
+        session,
         conversation,
         browser_id=browser_id,
         event_type="key",
@@ -439,7 +487,8 @@ async def scroll_conversation_browser(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except BrowserError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _append_timeline_event(
+    await _record_timeline_event(
+        session,
         conversation,
         browser_id=browser_id,
         event_type="scroll",
@@ -467,6 +516,12 @@ async def act_conversation_browser(
             action=request.action,
             value=request.value,
             key=request.key,
+            target_node_id=request.target_node_id,
+            timeout_ms=request.timeout_ms,
+            files=request.files,
+            text=request.text,
+            x=request.x,
+            y=request.y,
             width=request.width,
             height=request.height,
         )
@@ -474,7 +529,8 @@ async def act_conversation_browser(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except BrowserError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _append_timeline_event(
+    await _record_timeline_event(
+        session,
         conversation,
         browser_id=browser_id,
         event_type="action",
@@ -500,22 +556,44 @@ async def create_conversation_browser_annotation(
     """Persist an annotation linked to a Browser Workspace element."""
 
     conversation = await _load_conversation(conversation_id, session)
+    service = _browser_workspace_service(session)
+    if service is not None:
+        return await service.create_annotation(
+            conversation,
+            browser_id=browser_id,
+            node_id=request.node_id,
+            body=request.body,
+            quote=request.quote,
+            url=request.url,
+            title=request.title,
+            selector=request.selector,
+            frame_id=request.frame_id,
+            selector_chain=request.selector_chain,
+            shadow_path=request.shadow_path,
+            tab_id=request.tab_id,
+        )
     workspace = _browser_workspace(conversation)
     annotation = {
         "id": f"ann_{uuid4().hex[:12]}",
         "browser_id": browser_id,
+        "tab_id": request.tab_id or browser_id,
         "node_id": request.node_id,
         "body": request.body.strip(),
         "quote": (request.quote or "").strip(),
         "url": (request.url or "").strip(),
         "title": (request.title or "").strip(),
+        "selector": (request.selector or "").strip(),
+        "frame_id": (request.frame_id or "main").strip(),
+        "selector_chain": request.selector_chain or [],
+        "shadow_path": request.shadow_path or [],
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
     }
     annotations = _coerce_list(workspace.get("annotations"))
     annotations.append(annotation)
     workspace["annotations"] = annotations[-100:]
-    _append_timeline_event(
+    await _record_timeline_event(
+        session,
         conversation,
         browser_id=browser_id,
         event_type="annotation",
@@ -537,6 +615,13 @@ async def delete_conversation_browser_annotation(
     """Delete a persisted Browser Workspace annotation."""
 
     conversation = await _load_conversation(conversation_id, session)
+    service = _browser_workspace_service(session)
+    if service is not None:
+        return await service.delete_annotation(
+            conversation,
+            browser_id=browser_id,
+            annotation_id=annotation_id,
+        )
     workspace = _browser_workspace(conversation)
     annotations = [
         item
@@ -544,7 +629,8 @@ async def delete_conversation_browser_annotation(
         if str(item.get("id") or "") != annotation_id
     ]
     workspace["annotations"] = annotations
-    _append_timeline_event(
+    await _record_timeline_event(
+        session,
         conversation,
         browser_id=browser_id,
         event_type="annotation_deleted",
@@ -565,6 +651,9 @@ async def clear_conversation_browser_timeline(
     """Clear Browser Workspace timeline events for the current conversation."""
 
     conversation = await _load_conversation(conversation_id, session)
+    service = _browser_workspace_service(session)
+    if service is not None:
+        return await service.clear_timeline(conversation, browser_id=browser_id)
     workspace = _browser_workspace(conversation)
     workspace["timeline_events"] = [
         item
@@ -666,12 +755,17 @@ async def _persist_browser_workspace_view(
     browser_id: str,
     view: dict[str, Any],
 ) -> dict[str, Any]:
+    service = _browser_workspace_service(session)
+    if service is not None:
+        return await service.persist_view(conversation, browser_id=browser_id, view=view)
     workspace = _browser_workspace(conversation)
     workspace["active_browser_id"] = browser_id
+    workspace["active_tab_id"] = view.get("active_tab_id") or browser_id
     if view.get("url") and view.get("url") != "about:blank":
         workspace["current_url"] = view.get("url")
         workspace["current_title"] = view.get("title") or ""
     workspace["last_element_map"] = _compact_element_map(view.get("element_map"))
+    workspace["tabs"] = _coerce_list(view.get("tabs"))[:50]
     view.update(_workspace_payload(conversation, browser_id))
     snapshot = view.get("browser_snapshot")
     if isinstance(snapshot, dict):
@@ -680,6 +774,42 @@ async def _persist_browser_workspace_view(
         snapshot["element_map"] = view.get("element_map") or []
     await _save_conversation(conversation, session)
     return view
+
+
+def _browser_workspace_service(session: AsyncSession) -> BrowserWorkspaceService | None:
+    if isinstance(session, AsyncSession):
+        return BrowserWorkspaceService(session)
+    return None
+
+
+async def _record_timeline_event(
+    session: AsyncSession,
+    conversation,
+    *,
+    browser_id: str,
+    event_type: str,
+    source: str,
+    label: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    service = _browser_workspace_service(session)
+    if service is not None:
+        return await service.append_timeline_event(
+            conversation,
+            browser_id=browser_id,
+            event_type=event_type,
+            source=source,
+            label=label,
+            payload=payload,
+        )
+    return _append_timeline_event(
+        conversation,
+        browser_id=browser_id,
+        event_type=event_type,
+        source=source,
+        label=label,
+        payload=payload,
+    )
 
 
 def _browser_workspace(conversation) -> dict[str, Any]:
@@ -709,8 +839,11 @@ def _workspace_payload(conversation, browser_id: str) -> dict[str, Any]:
     return {
         "annotations": annotations[-100:],
         "timeline_events": timeline_events[-120:],
+        "tabs": _coerce_list(workspace.get("tabs")),
+        "active_tab_id": str(workspace.get("active_tab_id") or browser_id),
         "workspace_state": {
             "active_browser_id": str(workspace.get("active_browser_id") or ""),
+            "active_tab_id": str(workspace.get("active_tab_id") or browser_id),
             "current_url": str(workspace.get("current_url") or ""),
             "current_title": str(workspace.get("current_title") or ""),
             "last_element_map": _coerce_list(workspace.get("last_element_map"))[:220],
@@ -752,11 +885,18 @@ def _compact_element_map(raw_map: Any) -> list[dict[str, Any]]:
         compact.append(
             {
                 "node_id": node_id,
+                "tab_id": str(item.get("tab_id") or ""),
+                "frame_id": str(item.get("frame_id") or "main"),
+                "frame_url": str(item.get("frame_url") or ""),
                 "role": str(item.get("role") or ""),
                 "tag": str(item.get("tag") or ""),
                 "text": str(item.get("text") or "")[:240],
                 "href": str(item.get("href") or ""),
                 "selector": str(item.get("selector") or ""),
+                "selector_chain": _coerce_list(item.get("selector_chain")),
+                "shadow_path": _coerce_list(item.get("shadow_path")),
+                "stable_key": str(item.get("stable_key") or ""),
+                "interactable": bool(item.get("interactable")),
             }
         )
         if len(compact) >= 220:

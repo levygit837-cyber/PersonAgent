@@ -28,6 +28,7 @@ class ToolRuntimeConfig:
     tool_result_storage_root: Path | None = None
     web_allowed_domains: tuple[str, ...] = ()
     web_blocked_domains: tuple[str, ...] = ("localhost", "127.0.0.1", "0.0.0.0")
+    web_allow_private_hosts: bool = False
     skill_roots: tuple[Path, ...] = ()
     lsp_enabled: bool = False
 
@@ -50,6 +51,7 @@ class ToolRuntimeConfig:
         tool_result_storage_root: str | Path | None = None,
         web_allowed_domains: list[str] | tuple[str, ...] | None = None,
         web_blocked_domains: list[str] | tuple[str, ...] | None = None,
+        web_allow_private_hosts: bool = False,
         skill_roots: list[str | Path] | tuple[str | Path, ...] | None = None,
         lsp_enabled: bool = False,
     ) -> ToolRuntimeConfig:
@@ -77,8 +79,13 @@ class ToolRuntimeConfig:
             web_allowed_domains=tuple(item.lower() for item in (web_allowed_domains or ())),
             web_blocked_domains=tuple(
                 item.lower()
-                for item in (web_blocked_domains or ("localhost", "127.0.0.1", "0.0.0.0"))
+                for item in (
+                    web_blocked_domains
+                    if web_blocked_domains is not None
+                    else ("localhost", "127.0.0.1", "0.0.0.0")
+                )
             ),
+            web_allow_private_hosts=bool(web_allow_private_hosts),
             skill_roots=tuple(Path(path).expanduser().resolve() for path in (skill_roots or ())),
             lsp_enabled=bool(lsp_enabled),
         )

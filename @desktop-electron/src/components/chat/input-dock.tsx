@@ -1,4 +1,4 @@
-import { ArrowUp, BookOpen, Brain, ChevronDown, ChevronRight, Command, FileText, Folder, LogOut, Plus, Sparkles, Square, Terminal, UsersRound, X } from "lucide-react";
+import { ArrowUp, BookOpen, Brain, ChevronDown, ChevronRight, ChevronUp, Command, FileText, Folder, LogOut, Plus, Sparkles, Square, Terminal, UsersRound, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
@@ -28,6 +28,9 @@ type ModelOption = {
   group: string;
   contextLength?: number;
 };
+
+const DEEPSEEK_API_GROUP = "DeepSeek API";
+const DEEPSEEK_NVIDIA_GROUP = "DeepSeek NVIDIA";
 
 type ComposerMentionKind = "file" | "directory" | "skill";
 
@@ -72,10 +75,10 @@ const curatedHostedModels: ModelOption[] = [
   { id: "qwen/qwen3-coder-480b-a35b-instruct", provider: "nvidia", label: "Qwen3 Coder 480B", group: "Qwen" },
   { id: "minimaxai/minimax-m2.5", provider: "nvidia", label: "Minimax M2.5", group: "Minimax" },
   { id: "moonshotai/kimi-k2.5", provider: "nvidia", label: "Kimi K2.5", group: "Moonshot" },
-  { id: "deepseek-v4-flash", provider: "deepseek", label: "DeepSeek V4 Flash", group: "DeepSeek" },
-  { id: "deepseek-v4-pro", provider: "deepseek", label: "DeepSeek V4 Pro", group: "DeepSeek" },
-  { id: "deepseek-ai/deepseek-v4-flash", provider: "nvidia", label: "DeepSeek V4 Flash", group: "DeepSeek" },
-  { id: "deepseek-ai/deepseek-v4-pro", provider: "nvidia", label: "DeepSeek V4 Pro", group: "DeepSeek" },
+  { id: "deepseek-v4-flash", provider: "deepseek", label: "DeepSeek V4 Flash", group: DEEPSEEK_API_GROUP },
+  { id: "deepseek-v4-pro", provider: "deepseek", label: "DeepSeek V4 Pro", group: DEEPSEEK_API_GROUP },
+  { id: "deepseek-ai/deepseek-v4-flash", provider: "nvidia", label: "DeepSeek V4 Flash", group: DEEPSEEK_NVIDIA_GROUP },
+  { id: "deepseek-ai/deepseek-v4-pro", provider: "nvidia", label: "DeepSeek V4 Pro", group: DEEPSEEK_NVIDIA_GROUP },
   { id: "gemini-3.1-pro-preview", provider: "vertex", label: "Gemini 3.1 Pro", group: "Google Vertex" },
   { id: "gemini-3.1-pro-preview-customtools", provider: "vertex", label: "Gemini 3.1 Pro Custom Tools", group: "Google Vertex" },
   { id: "gemini-3.1-flash-lite-preview", provider: "vertex", label: "Gemini 3.1 Flash-Lite", group: "Google Vertex" },
@@ -92,7 +95,8 @@ const modelGroupOrder = [
   "Qwen",
   "Minimax",
   "Moonshot",
-  "DeepSeek",
+  DEEPSEEK_API_GROUP,
+  DEEPSEEK_NVIDIA_GROUP,
   "Google Vertex",
   "NVIDIA",
   "Mistral",
@@ -114,7 +118,8 @@ const GROUP_ICON_SLUG: Record<string, string> = {
   Qwen: "qwen",
   Minimax: "minimax",
   Moonshot: "moonshotai",
-  DeepSeek: "deepseek",
+  [DEEPSEEK_API_GROUP]: "deepseek",
+  [DEEPSEEK_NVIDIA_GROUP]: "nvidia",
   "Google Vertex": "google",
   NVIDIA: "nvidia",
   Mistral: "mistralai",
@@ -153,7 +158,13 @@ function ProviderIcon({ group, className }: { group: string; className?: string 
   );
 }
 
-export function InputDock() {
+export function InputDock({
+  compact = false,
+  workspaceRoot,
+}: {
+  compact?: boolean;
+  workspaceRoot?: string | null;
+}) {
   const [text, setText] = useState("");
   const [cursorPosition, setCursorPosition] = useState(0);
   const [selectedMentions, setSelectedMentions] = useState<ComposerMention[]>([]);
@@ -171,7 +182,9 @@ export function InputDock() {
   const clearPendingSnippet = useTerminalStore((state) => state.clearPendingSnippet);
   const snippetNonce = useTerminalStore((state) => state.snippetNonce);
   const baseUrl = useAppStore((state) => state.baseUrl);
-  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const globalSelectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const paneWorkspaceRoot = useChatStore((state) => state.workspaceRoot);
+  const selectedWorkspace = workspaceRoot || paneWorkspaceRoot || globalSelectedWorkspace;
   const disabled = isStreaming;
   const slashToken = slashTokenFromText(text);
   const mentionTrigger = mentionTriggerFromText(text, cursorPosition);
@@ -292,8 +305,8 @@ export function InputDock() {
   };
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-5 pb-5">
-      <div className="flex w-full max-w-[780px] flex-col gap-0" data-testid="input-dock-stack">
+    <div className={compact ? "pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-3 pb-3" : "pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-5 pb-5"}>
+      <div className={compact ? "flex w-full max-w-[680px] flex-col gap-0" : "flex w-full max-w-[780px] flex-col gap-0"} data-testid="input-dock-stack">
         <InputTodoDock />
         <div
           className="personagent-input-composer pointer-events-auto w-full overflow-hidden rounded-2xl border border-glass-border/35 bg-card/90 shadow-dock ring-1 ring-primary/10 backdrop-blur-2xl"
@@ -319,9 +332,9 @@ export function InputDock() {
           <ComposerAnnotationTray annotations={composerAnnotations} onRemove={removeComposerAnnotation} />
           <ComposerMentionTray mentions={selectedMentions} onRemove={removeMention} />
           <TerminalSnippetTray snippet={pendingSnippet} onRemove={clearPendingSnippet} />
-          <div className="flex items-end gap-2 px-2.5 py-2.5 sm:gap-2.5 sm:px-3">
+          <div className={compact ? "flex items-end gap-1.5 px-2 py-2" : "flex items-end gap-2 px-2.5 py-2.5 sm:gap-2.5 sm:px-3"}>
             <FeatureMenu enabled={!disabled} />
-            <BranchSwitcherButton enabled={!disabled} />
+            <BranchSwitcherButton enabled={!disabled} workspaceRoot={selectedWorkspace} compact={compact} />
             <textarea
               ref={textareaRef}
               value={text}
@@ -364,10 +377,10 @@ export function InputDock() {
                   submit();
                 }
               }}
-              className="min-h-10 min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/80 disabled:opacity-60"
+              className={compact ? "min-h-9 min-w-0 flex-1 resize-none bg-transparent px-1 py-1.5 text-[13px] leading-5 text-foreground outline-none placeholder:text-muted-foreground/80 disabled:opacity-60" : "min-h-10 min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/80 disabled:opacity-60"}
             />
             <ModelReasoningSelector enabled={!disabled} />
-            <ContextWindowIndicator />
+            {compact ? null : <ContextWindowIndicator />}
             <Button
               size="icon"
               variant={isStreaming ? "destructive" : canSend ? "default" : "secondary"}
@@ -526,6 +539,8 @@ function InputTodoDock() {
   const liveSnapshot = useMemo(() => latestTodoSnapshot(messages, activeAgentId), [messages, activeAgentId]);
   const [displaySnapshot, setDisplaySnapshot] = useState<TodoDockSnapshot | undefined>();
   const [exiting, setExiting] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   useEffect(() => {
     if (isExecuting && liveSnapshot) {
@@ -548,12 +563,26 @@ function InputTodoDock() {
     return () => window.clearTimeout(timer);
   }, [exiting]);
 
+  useEffect(() => {
+    if (!restoring) return undefined;
+    const timer = window.setTimeout(() => setRestoring(false), 240);
+    return () => window.clearTimeout(timer);
+  }, [restoring]);
+
   if (!displaySnapshot) return null;
 
   return (
     <TodoDockPanel
       snapshot={displaySnapshot}
       exiting={exiting}
+      minimized={minimized}
+      restoring={restoring}
+      onToggleMinimized={() => {
+        setMinimized((value) => {
+          if (value) setRestoring(true);
+          return !value;
+        });
+      }}
       onExitComplete={() => {
         if (!exiting) return;
         setDisplaySnapshot(undefined);
@@ -566,20 +595,27 @@ function InputTodoDock() {
 function TodoDockPanel({
   snapshot,
   exiting,
+  minimized,
+  restoring,
+  onToggleMinimized,
   onExitComplete,
 }: {
   snapshot: TodoDockSnapshot;
   exiting: boolean;
+  minimized: boolean;
+  restoring: boolean;
+  onToggleMinimized: () => void;
   onExitComplete: () => void;
 }) {
   const completed = snapshot.todos.filter((todo) => todo.status === "completed").length;
   const active = snapshot.todos.find((todo) => todo.status === "in_progress");
+  const progressLabel = `${completed}/${snapshot.todos.length}`;
   return (
     <section
-      className={`${exiting ? "personagent-todo-exit" : "personagent-todo-rise"} personagent-input-todo-dock pointer-events-auto overflow-hidden rounded-t-2xl rounded-b-none border border-b-0 border-glass-border/35 bg-card/90 shadow-dock ring-1 ring-primary/10 backdrop-blur-2xl`}
+      className={`${exiting ? "personagent-todo-exit" : "personagent-todo-rise"} ${minimized ? "is-minimized" : restoring ? "is-restoring" : ""} personagent-input-todo-dock personagent-todo-panel pointer-events-auto overflow-hidden rounded-t-2xl rounded-b-none border border-b-0 border-glass-border/35 bg-card/90 shadow-dock ring-1 ring-primary/10 backdrop-blur-2xl`}
       aria-label="Todo tracker"
       data-testid="input-todo-tracker"
-      data-state={exiting ? "exiting" : "visible"}
+      data-state={exiting ? "exiting" : minimized ? "minimized" : "visible"}
       onAnimationEnd={() => {
         if (exiting) onExitComplete();
       }}
@@ -588,18 +624,30 @@ function TodoDockPanel({
         <div className="flex min-w-0 items-center gap-1.5">
           <TodoDockStatusDot status={snapshot.status} />
           <div className="min-w-0">
-            <div className="truncate font-mono text-[10px] font-semibold uppercase text-foreground">Todos</div>
-            <div className="truncate font-mono text-[9px] text-muted-foreground">
+            <div className="truncate font-mono text-[10px] font-semibold uppercase text-foreground">
+              {minimized ? `Todos ${progressLabel}` : "Todos"}
+            </div>
+            <div className={`${minimized ? "hidden" : "block"} truncate font-mono text-[9px] text-muted-foreground`}>
               {snapshot.toolName}
               {snapshot.updateCount > 1 ? ` - ${snapshot.updateCount} updates` : ""}
             </div>
           </div>
         </div>
-        <div className="shrink-0 rounded-full border border-glass-border/30 bg-background/40 px-1.5 py-0 font-mono text-[9px] leading-4 text-muted-foreground">
-          {snapshot.status === "running" || snapshot.status === "queued" ? "updating" : `${completed}/${snapshot.todos.length} done`}
+        <div className="flex shrink-0 items-center gap-1.5">
+          <div className="rounded-full border border-glass-border/30 bg-background/40 px-1.5 py-0 font-mono text-[9px] leading-4 text-muted-foreground">
+            {minimized ? progressLabel : snapshot.status === "running" || snapshot.status === "queued" ? "updating" : `${progressLabel} done`}
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-glass/80 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+            aria-label={minimized ? "Restore Todo tracker" : "Minimize Todo tracker"}
+            onClick={onToggleMinimized}
+          >
+            {minimized ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </button>
         </div>
       </div>
-      <ul className="personagent-input-todo-scroll max-h-24 overflow-y-auto overscroll-contain py-0.5" data-testid="input-todo-scroll">
+      <ul className={`${minimized ? "max-h-0 py-0 opacity-0" : "max-h-24 py-0.5 opacity-100"} personagent-input-todo-scroll overflow-y-auto overscroll-contain transition-[max-height,opacity,padding] duration-200 ease-out`} data-testid="input-todo-scroll">
         {snapshot.todos.map((todo, index) => (
           <li
             key={todo.id || `${todo.content}-${index}`}
@@ -1263,12 +1311,12 @@ function modelGroup(id: string, provider: ModelProvider) {
   if (provider === "kimi") return "Kimi Code";
   if (provider === "codex") return "ChatGPT Subscription";
   if (provider === "vertex") return "Google Vertex";
-  if (provider === "deepseek") return "DeepSeek";
+  if (provider === "deepseek") return DEEPSEEK_API_GROUP;
   if (normalized.startsWith("openai/") || normalized.startsWith("gpt-")) return "OpenAI";
   if (normalized.startsWith("qwen/")) return "Qwen";
   if (normalized.startsWith("minimax") || normalized.startsWith("minimaxai/")) return "Minimax";
   if (normalized.startsWith("moonshotai/")) return "Moonshot";
-  if (normalized.startsWith("deepseek-ai/")) return "DeepSeek";
+  if (normalized.startsWith("deepseek-ai/")) return DEEPSEEK_NVIDIA_GROUP;
   if (normalized.startsWith("nvidia/")) return "NVIDIA";
   if (normalized.startsWith("mistralai/") || normalized.startsWith("nv-mistralai/")) return "Mistral";
   if (normalized.startsWith("meta/")) return "Meta";

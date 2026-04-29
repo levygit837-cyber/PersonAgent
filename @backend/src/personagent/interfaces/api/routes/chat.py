@@ -571,6 +571,7 @@ async def _approve_pending_tool_call(
         "status": "approved",
         "result_status": result.status.value,
     }
+    conversation.metadata["session_status"] = "running"
     await conv_repo.update(conversation)
     return use_case, resume_request, pending, result
 
@@ -1029,6 +1030,7 @@ async def approve_plan(
         }
     )
     write_plan_state(conversation.metadata, state)
+    conversation.metadata["session_status"] = "idle"
     await conv_repo.update(conversation)
 
     return {
@@ -1061,6 +1063,7 @@ async def continue_plan(
         }
     )
     write_plan_state(conversation.metadata, state)
+    conversation.metadata["session_status"] = "idle"
     await conv_repo.update(conversation)
 
     suggested_message = (
@@ -1099,6 +1102,7 @@ async def cancel_plan(
         }
     )
     write_plan_state(conversation.metadata, state)
+    conversation.metadata["session_status"] = "idle"
     await conv_repo.update(conversation)
 
     return plan_mode_event(str(conversation.id), state)
@@ -1250,6 +1254,7 @@ async def reject_tool(
             },
         )
     )
+    conversation.metadata["session_status"] = "idle"
     await conv_repo.update(conversation)
     return {
         "event": "tool_approval_changed",

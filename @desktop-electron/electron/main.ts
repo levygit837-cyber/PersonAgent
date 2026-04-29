@@ -8,8 +8,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 type SettingsRecord = Record<string, unknown>;
+type CompactLaunchContext = {
+  conversationId: string;
+  workspaceRoot?: string | null;
+  title?: string | null;
+};
 
 let mainWindow: BrowserWindow | null = null;
+const compactWindows = new Map<string, BrowserWindow>();
+const compactContextsByWebContentsId = new Map<number, CompactLaunchContext>();
 let settingsWriteQueue: Promise<void> = Promise.resolve();
 const MAX_FILE_PREVIEW_BYTES = 2 * 1024 * 1024;
 
@@ -182,18 +189,119 @@ async function createWindow() {
   revealMainWindow("load-file");
 }
 
-ipcMain.handle("window:minimize", () => mainWindow?.minimize());
-ipcMain.handle("window:maximize-toggle", () => {
-  if (!mainWindow) return false;
-  if (mainWindow.isMaximized()) {
-    mainWindow.restore();
+async function createCompactWindow(context: CompactLaunchContext) {
+  const conversationId = context.conversationId.trim();
+  if (!conversationId) return false;
+
+  const existing = compactWindows.get(conversationId);
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    return true;
+  }
+
+  const compactWindow = new BrowserWindow({
+    width: 420,
+    height: 680,
+    minWidth: 360,
+    minHeight: 520,
+    title: context.title || "PersonAgent Compact",
+    frame: false,
+    titleBarStyle: "hidden",
+    backgroundColor: "#08090b",
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  const compactWebContentsId = compactWindow.webContents.id;
+
+  compactWindows.set(conversationId, compactWindow);
+  compactContextsByWebContentsId.set(compactWebContentsId, {
+    conversationId,
+    workspaceRoot: context.workspaceRoot,
+    title: context.title,
+  });
+
+  compactWindow.once("ready-to-show", () => {
+    compactWindow.show();
+    compactWindow.focus();
+  });
+
+  compactWindow.on("closed", () => {
+    compactWindows.delete(conversationId);
+    compactContextsByWebContentsId.delete(compactWebContentsId);
+  });
+
+  compactWindow.webContents.on("console-message", (_event, level, message, _line, sourceId) => {
+    const labels = ["verbose", "info", "warning", "error"];
+    const label = labels[level] ?? String(level);
+    console.log(`[compact:${label}] ${sourceId}: ${message}`);
+  });
+
+  compactWindow.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  const query = {
+    mode: "compact",
+    conversationId,
+    workspaceRoot: context.workspaceRoot || "",
+    title: context.title || "",
+  };
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    const url = new URL(devServerUrl);
+    for (const [key, value] of Object.entries(query)) {
+      url.searchParams.set(key, value);
+    }
+    await compactWindow.loadURL(url.toString());
+  } else {
+    await compactWindow.loadFile(join(__dirname, "../dist/index.html"), { query });
+  }
+  return true;
+}
+
+function getWindowForEvent(event: IpcMainInvokeEvent) {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (senderWindow && !senderWindow.isDestroyed()) return senderWindow;
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+}
+
+ipcMain.handle("window:minimize", (event) => {
+  getWindowForEvent(event)?.minimize();
+});
+
+ipcMain.handle("window:maximize-toggle", (event) => {
+  const targetWindow = getWindowForEvent(event);
+  if (!targetWindow) return false;
+  if (targetWindow.isMaximized()) {
+    targetWindow.restore();
     return false;
   }
-  mainWindow.maximize();
+  targetWindow.maximize();
   return true;
 });
-ipcMain.handle("window:close", () => mainWindow?.close());
-ipcMain.handle("window:is-maximized", () => mainWindow?.isMaximized() ?? false);
+
+ipcMain.handle("window:close", (event) => {
+  getWindowForEvent(event)?.close();
+});
+
+ipcMain.handle("window:is-maximized", (event) => getWindowForEvent(event)?.isMaximized() ?? false);
+
+ipcMain.handle("compact:open-session", async (_event, context: CompactLaunchContext) => {
+  return createCompactWindow(context);
+});
+
+ipcMain.handle("compact:get-launch-context", (event) => {
+  return compactContextsByWebContentsId.get(event.sender.id) ?? null;
+});
 
 ipcMain.handle("settings:get", async (_event, key: string) => {
   const settings = await readSettings();

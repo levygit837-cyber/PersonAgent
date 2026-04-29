@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import socketserver
+import threading
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
@@ -67,6 +70,110 @@ async def test_lightpanda_direct_page_tools_live_flow(tmp_path):
         assert "<h1>Example Domain</h1>" in html["html"], html
     finally:
         await worker.close()
+
+
+@pytest.mark.asyncio
+async def test_lightpanda_browser_control_tools_live_local_page(tmp_path):
+    server, url = _serve_local_browser_control_page()
+    worker = LightPandaBrowserWorker(
+        cdp_url=os.getenv("LIGHTPANDA_CDP_URL", "http://127.0.0.1:9222"),
+        timeout_ms=int(os.getenv("LIGHTPANDA_TIMEOUT_MS", "30000")),
+    )
+    registry = ToolRegistry(create_browser_tools(worker))
+    orchestrator = ToolOrchestrator(
+        registry,
+        ToolRuntimeConfig.from_values(workspace_root=tmp_path),
+    )
+    context = _local_context(tmp_path)
+
+    try:
+        opened = await _run(
+            orchestrator,
+            context,
+            ToolCall(id="control_open", name="BrowserOpen", arguments={"url": url}),
+        )
+        page_id = opened["page_id"]
+
+        element_map = await _run(
+            orchestrator,
+            context,
+            ToolCall(id="control_map", name="BrowserGetElementMap", arguments={"width": 1024, "height": 720}),
+        )
+        input_node = _element_node_id(element_map, tag="input")
+        button_node = _element_node_id(element_map, text="Save")
+        assert input_node, element_map
+        assert button_node, element_map
+
+        typed = await _run(
+            orchestrator,
+            context,
+            ToolCall(
+                id="control_type",
+                name="BrowserType",
+                arguments={"page_id": page_id, "node_id": input_node, "mode": "fill", "text": "Ada"},
+            ),
+        )
+        assert typed["type"] == "browser_type"
+
+        clicked = await _run(
+            orchestrator,
+            context,
+            ToolCall(
+                id="control_click",
+                name="BrowserClick",
+                arguments={"page_id": page_id, "node_id": button_node},
+            ),
+        )
+        assert clicked["type"] == "browser_click"
+
+        script = await _run(
+            orchestrator,
+            context,
+            ToolCall(
+                id="control_script",
+                name="BrowserScript",
+                arguments={
+                    "page_id": page_id,
+                    "mode": "evaluate",
+                    "script": "() => ({ value: document.querySelector('#name').value, clicked: window.clicked })",
+                },
+            ),
+        )
+        assert script["result"]["value"] == "Ada"
+        assert script["result"]["clicked"] is True
+
+        console = await _run(
+            orchestrator,
+            context,
+            ToolCall(id="control_console", name="BrowserReadConsole", arguments={"page_id": page_id}),
+        )
+        assert any("clicked:Ada" in entry["text"] for entry in console["entries"]), console
+
+        screenshot = await _run(
+            orchestrator,
+            context,
+            ToolCall(id="control_screenshot", name="BrowserScreenshot", arguments={"page_id": page_id}),
+        )
+        assert screenshot["type"] == "browser_screenshot"
+        assert "can_capture" in screenshot
+
+        switched = await _run(
+            orchestrator,
+            context,
+            ToolCall(id="control_switch", name="BrowserSwitchTab", arguments={"page_id": page_id}),
+        )
+        assert switched["active_tab_id"] == page_id
+
+        closed = await _run(
+            orchestrator,
+            context,
+            ToolCall(id="control_close", name="BrowserCloseTab", arguments={"page_id": page_id}),
+        )
+        assert closed["closed_page_id"] == page_id
+    finally:
+        await worker.close()
+        server.shutdown()
+        server.server_close()
 
 
 @pytest.mark.asyncio
@@ -148,3 +255,56 @@ def _context(root: Path) -> ToolUseContext:
             "web_blocked_domains": ("localhost", "127.0.0.1", "0.0.0.0"),
         },
     )
+
+
+def _local_context(root: Path) -> ToolUseContext:
+    return ToolUseContext(
+        conversation_id="lightpanda-browser-control-live",
+        workspace_root=root,
+        cwd=root,
+        allowed_roots=(root,),
+        limits={
+            "result_max_chars": 20_000,
+            "web_allowed_domains": (),
+            "web_blocked_domains": (),
+            "web_allow_private_hosts": True,
+        },
+    )
+
+
+def _element_node_id(element_map: dict, *, tag: str | None = None, text: str | None = None) -> str:
+    for element in element_map.get("elements", []):
+        if tag and element.get("tag") == tag:
+            return str(element.get("node_id") or "")
+        if text and text in str(element.get("text") or ""):
+            return str(element.get("node_id") or "")
+    return ""
+
+
+def _serve_local_browser_control_page() -> tuple[socketserver.TCPServer, str]:
+    html = b"""<!doctype html>
+<html>
+  <head><title>Browser Control Fixture</title></head>
+  <body>
+    <label>Name <input id="name" aria-label="Name"></label>
+    <button id="save" onclick="window.clicked = true; console.log('clicked:' + document.querySelector('#name').value);">Save</button>
+    <script>window.clicked = false;</script>
+  </body>
+</html>"""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("content-type", "text/html; charset=utf-8")
+            self.send_header("content-length", str(len(html)))
+            self.end_headers()
+            self.wfile.write(html)
+
+        def log_message(self, _format, *args):
+            return None
+
+    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    return server, f"http://{host}:{port}/"

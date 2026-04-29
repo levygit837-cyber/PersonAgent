@@ -38,8 +38,15 @@ type OperationFeedback = {
   detail?: string;
 };
 
-export function GitActionButton() {
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+export function GitActionButton({
+  workspaceRoot: workspaceRootOverride,
+  compact = false,
+}: {
+  workspaceRoot?: string | null;
+  compact?: boolean;
+}) {
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const workspaceRoot = workspaceRootOverride || selectedWorkspace;
   const [open, setOpen] = useState(false);
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
@@ -48,15 +55,15 @@ export function GitActionButton() {
   const [menuFeedback, setMenuFeedback] = useState<OperationFeedback | null>(null);
   const [pendingCommitMode, setPendingCommitMode] = useState<"commit" | "commitAndPush" | null>(null);
 
-  const { data: status, isLoading, isFetching } = useGitStatus(true);
-  const commitMutation = useGitCommit();
-  const pushMutation = useGitPush();
-  const prMutation = useGitOpenPr();
-  const generateMessageMutation = useGitGenerateCommitMessage();
+  const { data: status, isLoading, isFetching } = useGitStatus(true, workspaceRoot);
+  const commitMutation = useGitCommit(workspaceRoot);
+  const pushMutation = useGitPush(workspaceRoot);
+  const prMutation = useGitOpenPr(workspaceRoot);
+  const generateMessageMutation = useGitGenerateCommitMessage(workspaceRoot);
 
   const hasWorkspace = Boolean(workspaceRoot);
   const hasRepo = hasWorkspace && Boolean(status?.branch);
-  const recentActionsQuery = useGitRecentActions(open && hasRepo);
+  const recentActionsQuery = useGitRecentActions(open && hasRepo, workspaceRoot);
   const isDirty = status?.is_dirty ?? false;
   const hasAhead = (status?.ahead ?? 0) > 0;
   const hasBehind = (status?.behind ?? 0) > 0;
@@ -70,7 +77,9 @@ export function GitActionButton() {
   const hasPendingWork = isDirty || hasAhead;
 
   const baseButtonClass =
-    "relative inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] font-medium transition-all duration-200";
+    compact
+      ? "relative inline-flex h-7 max-w-[132px] items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium transition-all duration-200"
+      : "relative inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] font-medium transition-all duration-200";
 
   let buttonClass = baseButtonClass;
   let showPulse = false;

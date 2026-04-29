@@ -81,6 +81,7 @@ class PostgresConversationRepository(ConversationRepository):
                 "updated_at": row.updated_at.isoformat(),
                 "message_count": int(row.message_count or 0),
                 "workspace_root": _workspace_root_from_metadata(row.metadata_),
+                "status": _conversation_status_from_metadata(row.metadata_),
             }
             for row in result
         ]
@@ -191,6 +192,7 @@ class PostgresConversationRepository(ConversationRepository):
                 "updated_at": row.updated_at.isoformat(),
                 "message_count": int(row.message_count or 0),
                 "workspace_root": _workspace_root_from_metadata(row.metadata_),
+                "status": _conversation_status_from_metadata(row.metadata_),
             }
             for row in result
         ]
@@ -242,3 +244,17 @@ def _workspace_root_from_metadata(metadata: dict | None) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _conversation_status_from_metadata(metadata: dict | None) -> str:
+    data = metadata or {}
+    status = data.get("session_status")
+    if status in {"idle", "error", "pending", "running"}:
+        return str(status)
+    pending_tool = data.get("pending_tool_approval")
+    if isinstance(pending_tool, dict) and pending_tool.get("status") == "awaiting_approval":
+        return "pending"
+    plan_mode = data.get("plan_mode")
+    if isinstance(plan_mode, dict) and plan_mode.get("status") == "awaiting_approval":
+        return "pending"
+    return "idle"

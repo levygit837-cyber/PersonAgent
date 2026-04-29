@@ -20,9 +20,10 @@ import { useAppStore } from "./app-store";
 
 const GIT_STATUS_POLL_MS = 15_000;
 
-export function useGitStatus(enabled: boolean) {
+export function useGitStatus(enabled: boolean, workspaceRootOverride?: string | null) {
   const baseUrl = useAppStore((state) => state.baseUrl);
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const workspaceRoot = workspaceRootOverride || selectedWorkspace;
 
   return useQuery({
     queryKey: ["git-status", baseUrl, workspaceRoot],
@@ -35,9 +36,10 @@ export function useGitStatus(enabled: boolean) {
   });
 }
 
-export function useGitBranches(enabled: boolean) {
+export function useGitBranches(enabled: boolean, workspaceRootOverride?: string | null) {
   const baseUrl = useAppStore((state) => state.baseUrl);
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const workspaceRoot = workspaceRootOverride || selectedWorkspace;
 
   return useQuery({
     queryKey: ["git-branches", baseUrl, workspaceRoot],
@@ -49,9 +51,10 @@ export function useGitBranches(enabled: boolean) {
   });
 }
 
-export function useGitRecentActions(enabled: boolean) {
+export function useGitRecentActions(enabled: boolean, workspaceRootOverride?: string | null) {
   const baseUrl = useAppStore((state) => state.baseUrl);
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const workspaceRoot = workspaceRootOverride || selectedWorkspace;
 
   return useQuery({
     queryKey: ["git-recent-actions", baseUrl, workspaceRoot],
@@ -63,9 +66,10 @@ export function useGitRecentActions(enabled: boolean) {
   });
 }
 
-export function useGitPullRequests(enabled: boolean) {
+export function useGitPullRequests(enabled: boolean, workspaceRootOverride?: string | null) {
   const baseUrl = useAppStore((state) => state.baseUrl);
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const workspaceRoot = workspaceRootOverride || selectedWorkspace;
 
   return useQuery({
     queryKey: ["git-pull-requests", baseUrl, workspaceRoot],
@@ -90,9 +94,10 @@ export function useWorkspaceProjects(enabled: boolean) {
   });
 }
 
-export function useGitGenerateCommitMessage() {
+export function useGitGenerateCommitMessage(workspaceRootOverride?: string | null) {
   const baseUrl = useAppStore((state) => state.baseUrl);
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const workspaceRoot = workspaceRootOverride || selectedWorkspace;
 
   return useMutation({
     mutationFn: async () => {
@@ -102,10 +107,11 @@ export function useGitGenerateCommitMessage() {
   });
 }
 
-export function useGitCreateBranch() {
+export function useGitCreateBranch(workspaceRootOverride?: string | null) {
   const queryClient = useQueryClient();
   const baseUrl = useAppStore((state) => state.baseUrl);
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const workspaceRoot = workspaceRootOverride || selectedWorkspace;
 
   return useMutation({
     mutationFn: async (name: string) => {
@@ -119,10 +125,11 @@ export function useGitCreateBranch() {
   });
 }
 
-export function useGitCheckoutBranch() {
+export function useGitCheckoutBranch(workspaceRootOverride?: string | null) {
   const queryClient = useQueryClient();
   const baseUrl = useAppStore((state) => state.baseUrl);
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const workspaceRoot = workspaceRootOverride || selectedWorkspace;
 
   return useMutation({
     mutationFn: async (branch: Pick<GitBranchInfo, "name" | "kind">) => {
@@ -136,10 +143,11 @@ export function useGitCheckoutBranch() {
   });
 }
 
-export function useGitCommit() {
+export function useGitCommit(workspaceRootOverride?: string | null) {
   const queryClient = useQueryClient();
   const baseUrl = useAppStore((state) => state.baseUrl);
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const workspaceRoot = workspaceRootOverride || selectedWorkspace;
 
   return useMutation({
     mutationFn: async (input: { message: string; autoGenerateMessage?: boolean }) => {
@@ -155,10 +163,11 @@ export function useGitCommit() {
   });
 }
 
-export function useGitPush() {
+export function useGitPush(workspaceRootOverride?: string | null) {
   const queryClient = useQueryClient();
   const baseUrl = useAppStore((state) => state.baseUrl);
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const workspaceRoot = workspaceRootOverride || selectedWorkspace;
 
   return useMutation({
     mutationFn: async () => {
@@ -174,10 +183,11 @@ export function useGitPush() {
   });
 }
 
-export function useGitOpenPr() {
+export function useGitOpenPr(workspaceRootOverride?: string | null) {
   const queryClient = useQueryClient();
   const baseUrl = useAppStore((state) => state.baseUrl);
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const workspaceRoot = workspaceRootOverride || selectedWorkspace;
 
   return useMutation({
     mutationFn: async () => {

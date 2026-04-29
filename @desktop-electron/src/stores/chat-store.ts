@@ -1,4 +1,6 @@
-import { create } from "zustand";
+import { createContext, createElement, useContext, type ReactNode } from "react";
+import { useStore } from "zustand";
+import { createStore, type StoreApi } from "zustand/vanilla";
 import {
   approvePlan,
   cancelPlan,
@@ -21,6 +23,7 @@ import {
   emptySessionUsage,
   type ChatMessagePartUi,
   type ChatMessageUi,
+  type ConversationStatus,
   type ContextAttachment,
   type GeneratedImage,
   type ModelProvider,
@@ -86,6 +89,7 @@ export interface ComposerAnnotation {
 }
 
 interface ChatState {
+  workspaceRoot?: string | null;
   messages: ChatMessageUi[];
   composerAnnotations: ComposerAnnotation[];
   conversationId?: string;
@@ -94,6 +98,7 @@ interface ChatState {
   isStreaming: boolean;
   isFinalizing: boolean;
   loadingConversationId?: string;
+  conversationStatuses: Record<string, ConversationStatus>;
   activeController?: AbortController;
   activeAgentId?: string;
   pendingPlanApproval?: PlanApprovalUi;
@@ -101,6 +106,7 @@ interface ChatState {
   nextStepSuggestion?: string;
   liveSessionUsage: SessionUsage;
   liveSubAgentIds: string[];
+  setWorkspaceRoot: (workspaceRoot?: string | null) => void;
   addComposerAnnotation: (annotation: ComposerAnnotation) => void;
   removeComposerAnnotation: (id: number) => void;
   clearComposerAnnotations: () => void;
@@ -125,13 +131,29 @@ interface SendMessageOptions {
   displayAttachments?: ContextAttachment[];
 }
 
-export const useChatStore = create<ChatState>((set, get) => ({
+export type ChatStoreApi = StoreApi<ChatState>;
+
+interface CreateChatStoreOptions {
+  initialWorkspaceRoot?: string | null;
+  paneId?: string;
+  syncWorkspaceSelection?: boolean;
+}
+
+export function createChatStore(options: CreateChatStoreOptions = {}): ChatStoreApi {
+  const syncWorkspaceSelection = options.syncWorkspaceSelection ?? true;
+  const paneId = options.paneId || "main";
+
+  return createStore<ChatState>((set, get) => ({
+  workspaceRoot: options.initialWorkspaceRoot,
   messages: [],
   composerAnnotations: [],
   isStreaming: false,
   isFinalizing: false,
+  conversationStatuses: {},
   liveSessionUsage: emptySessionUsage(),
   liveSubAgentIds: [],
+
+  setWorkspaceRoot: (workspaceRoot) => set({ workspaceRoot: workspaceRoot?.trim() || undefined }),
 
   addComposerAnnotation: (annotation) => set((state) => ({
     composerAnnotations: [...state.composerAnnotations.filter((item) => item.id !== annotation.id), annotation],
@@ -151,8 +173,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ loadingConversationId: id, error: undefined });
     try {
       const appStore = useAppStore.getState();
-      const mappedWorkspace = workspaceRoot?.trim() || appStore.convWorkspaceMap[id]?.trim();
-      if (mappedWorkspace && mappedWorkspace !== appStore.selectedWorkspace) {
+      const mappedWorkspace = workspaceRoot?.trim() || appStore.convWorkspaceMap[id]?.trim() || get().workspaceRoot?.trim();
+      if (mappedWorkspace) {
+        set({ workspaceRoot: mappedWorkspace });
+      }
+      if (syncWorkspaceSelection && mappedWorkspace && mappedWorkspace !== appStore.selectedWorkspace) {
         await appStore.selectWorkspace(mappedWorkspace);
       }
 
@@ -175,6 +200,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         loadingConversationId: undefined,
         error: undefined,
       });
+      setConversationStatus(set, detail.id, inferConversationStatus(detail.messages));
       resetLiveTokenTotals();
     } catch (error) {
       if (get().loadingConversationId === id) {
@@ -199,6 +225,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       nextStepSuggestion: undefined,
       liveSessionUsage: emptySessionUsage(),
       liveSubAgentIds: [],
+      workspaceRoot: syncWorkspaceSelection ? get().workspaceRoot : get().workspaceRoot,
       isFinalizing: false,
       loadingConversationId: undefined,
       error: undefined,
@@ -213,6 +240,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (handleLocalSlashCommand(message, set, get)) return;
 
     const appState = useAppStore.getState();
+    const workspaceRoot = getEffectiveWorkspaceRoot(get());
     const contextAttachments = options?.contextAttachments ?? [];
     const displayAttachments = options?.displayAttachments ?? contextAttachments;
     const userMessage: ChatMessageUi = {
@@ -231,7 +259,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ? { context_attachments: displayAttachments }
         : undefined,
     };
-    const agentId = `${Date.now()}_agent`;
+    const agentId = `${paneId}_${Date.now()}_${Math.random().toString(36).slice(2)}_agent`;
     const agentMessage: ChatMessageUi = {
       id: agentId,
       role: "agent",
@@ -259,6 +287,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       liveSubAgentIds: [],
       error: undefined,
     }));
+    if (get().conversationId) setConversationStatus(set, get().conversationId, "running");
 
     const requestInput = {
       conversationId: get().conversationId,
@@ -266,7 +295,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       provider: appState.provider,
       model: appState.selectedModelId,
       reasoningPreset: appState.reasoningPreset,
-      workspaceRoot: appState.selectedWorkspace,
+      workspaceRoot,
       systemPrompt,
       contextAttachments,
     };
@@ -279,12 +308,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       } else {
         for await (const chunk of streamChatCompletion(appState.baseUrl, payload, controller.signal)) {
-          handleChunk(chunk, agentId, set, get, appState.selectedWorkspace);
+          handleChunk(chunk, agentId, set, get, workspaceRoot);
         }
       }
     } catch (error) {
       if (!controller.signal.aborted && isActiveGenerationState(get(), controller, agentId)) {
+        const conversationId = get().conversationId;
         set({ error: errorMessage(error) });
+        if (conversationId) setConversationStatus(set, conversationId, "error");
       }
     } finally {
       flushTextBuffer(agentId, set);
@@ -311,10 +342,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         feedback,
       });
       set({ pendingPlanApproval: undefined, error: undefined });
+      setConversationStatus(set, pending.conversationId, "running");
       const injected = response.injected_message?.trim();
       if (injected) await get().sendMessage(injected);
     } catch (error) {
       set({ error: errorMessage(error) });
+      setConversationStatus(set, pending.conversationId, "error");
     }
   },
 
@@ -328,10 +361,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         feedback,
       });
       set({ pendingPlanApproval: undefined, error: undefined });
+      setConversationStatus(set, pending.conversationId, "running");
       const message = response.suggested_message?.trim();
       if (message) await get().sendMessage(message);
     } catch (error) {
       set({ error: errorMessage(error) });
+      setConversationStatus(set, pending.conversationId, "error");
     }
   },
 
@@ -345,8 +380,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         feedback,
       });
       set({ pendingPlanApproval: undefined, error: undefined });
+      setConversationStatus(set, pending.conversationId, "idle");
     } catch (error) {
       set({ error: errorMessage(error) });
+      setConversationStatus(set, pending.conversationId, "error");
     }
   },
 
@@ -387,6 +424,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         error: undefined,
       };
     });
+    setConversationStatus(set, pending.conversationId, "running");
     try {
       for await (const chunk of streamApproveTool(
         appState.baseUrl,
@@ -401,6 +439,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (error) {
       if (!controller.signal.aborted && isActiveGenerationState(get(), controller, agentId)) {
         set({ error: errorMessage(error) });
+        setConversationStatus(set, pending.conversationId, "error");
       }
     } finally {
       flushTextBuffer(agentId, set);
@@ -426,10 +465,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         approvalId: pending.approvalId,
       });
       set({ pendingToolApproval: undefined, error: undefined });
+      setConversationStatus(set, pending.conversationId, "idle");
       const injected = typeof response.injected_message === "string" ? response.injected_message.trim() : "";
       if (injected) await get().sendMessage(injected);
     } catch (error) {
       set({ error: errorMessage(error) });
+      setConversationStatus(set, pending.conversationId, "error");
     }
   },
 
@@ -472,7 +513,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   branchAgentMessage: async (messageId) => {
     if (get().isStreaming) return;
     const app = useAppStore.getState();
-    const workspaceRoot = app.selectedWorkspace?.trim();
+    const workspaceRoot = getEffectiveWorkspaceRoot(get());
     if (!workspaceRoot) {
       setAgentMessageActionState(set, messageId, {
         worktree_status: "error",
@@ -490,7 +531,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         name: worktreeSlug(get().conversationId, messageId),
         sourceMessageId: messageId,
       });
-      await useAppStore.getState().selectWorkspace(result.path);
+      set({ workspaceRoot: result.path });
+      if (syncWorkspaceSelection) {
+        await useAppStore.getState().selectWorkspace(result.path);
+      }
       setAgentMessageActionState(set, messageId, {
         worktree_status: "ready",
         worktree_branch: result.branch,
@@ -527,12 +571,82 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearError: () => set({ error: undefined }),
 }));
+}
+
+const defaultChatStore = createChatStore({ paneId: "main", syncWorkspaceSelection: true });
+
+const ChatStoreContext = createContext<ChatStoreApi | null>(null);
+
+export function ChatStoreProvider({
+  store,
+  children,
+}: {
+  store: ChatStoreApi;
+  children: ReactNode;
+}) {
+  return createElement(ChatStoreContext.Provider, { value: store }, children);
+}
+
+type ChatStoreHook = {
+  <T>(selector: (state: ChatState) => T): T;
+  getState: ChatStoreApi["getState"];
+  setState: ChatStoreApi["setState"];
+  subscribe: ChatStoreApi["subscribe"];
+  getInitialState: ChatStoreApi["getInitialState"];
+};
+
+export const useChatStore = Object.assign(
+  function useContextualChatStore<T>(selector: (state: ChatState) => T): T {
+    const store = useContext(ChatStoreContext) ?? defaultChatStore;
+    return useStore(store, selector);
+  },
+  {
+    getState: defaultChatStore.getState,
+    setState: defaultChatStore.setState,
+    subscribe: defaultChatStore.subscribe,
+    getInitialState: defaultChatStore.getInitialState,
+  },
+) as ChatStoreHook;
+
+export function getDefaultChatStore() {
+  return defaultChatStore;
+}
 
 type ChatSet = (
   partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>),
 ) => void;
 
 type ChatGet = () => ChatState;
+
+function getEffectiveWorkspaceRoot(state: ChatState) {
+  return state.workspaceRoot?.trim() || useAppStore.getState().selectedWorkspace?.trim() || undefined;
+}
+
+function setConversationStatus(
+  set: ChatSet,
+  conversationId: string | undefined | null,
+  status: ConversationStatus,
+) {
+  if (!conversationId) return;
+  set((state) => ({
+    conversationStatuses: {
+      ...state.conversationStatuses,
+      [conversationId]: status,
+    },
+  }));
+  window.dispatchEvent(new CustomEvent("personagent:conversations-changed"));
+}
+
+function inferConversationStatus(messages: PersistedMessage[]): ConversationStatus {
+  const metadata = messages
+    .map((message) => message.metadata)
+    .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object"));
+
+  if (metadata.some((item) => item.is_error === true || item.status === "error" || item.status === "failed")) {
+    return "error";
+  }
+  return "idle";
+}
 
 async function replayUserMessageFromIndex(
   userIndex: number,
@@ -583,16 +697,17 @@ async function prepareConversationReplay(
   }
 
   const app = useAppStore.getState();
+  const workspaceRoot = getEffectiveWorkspaceRoot(get());
   const fork = await forkConversation(app.baseUrl, conversationId, {
     title: get().conversationTitle,
-    workspaceRoot: app.selectedWorkspace,
+    workspaceRoot,
     messages: conversationForkMessages(prefixMessages),
   });
   set({
     conversationId: fork.id,
     conversationTitle: fork.title,
   });
-  void useAppStore.getState().associateConversation(fork.id, app.selectedWorkspace);
+  void useAppStore.getState().associateConversation(fork.id, workspaceRoot);
   window.dispatchEvent(new CustomEvent("personagent:conversations-changed"));
 }
 
@@ -893,7 +1008,7 @@ function usageCommandText(usage: SessionUsage) {
 function statusCommandText(state: ChatState, app: ReturnType<typeof useAppStore.getState>) {
   return [
     "Local status:",
-    `Workspace: ${app.selectedWorkspace || "(none)"}`,
+    `Workspace: ${getEffectiveWorkspaceRoot(state) || "(none)"}`,
     `Model: ${app.provider}/${app.selectedModelId}`,
     `Reasoning effort: ${app.reasoningPreset}`,
     `Conversation: ${state.conversationId || "(new)"}`,
@@ -1043,9 +1158,10 @@ function handleChunk(
   get: () => ChatState,
   workspaceRoot?: string,
 ) {
-  const chunk = normalizeStreamChunk(agentId, rawChunk);
+  const chunk = normalizeStreamChunk(agentId, withVisibleTerminalNotice(rawChunk));
   if (chunk.error) {
     const message = chunk.error_detail?.message ?? chunk.error;
+    const conversationId = String(chunk.conversation_id ?? get().conversationId ?? "");
     flushTextBuffer(agentId, set);
     thinkingStates.delete(agentId);
     set((state) => ({
@@ -1056,6 +1172,7 @@ function handleChunk(
       activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
       messages: state.messages.map((item) => (item.id === agentId ? closeActiveReasoning(item, false) : item)),
     }));
+    setConversationStatus(set, conversationId, "error");
     return;
   }
 
@@ -1065,6 +1182,7 @@ function handleChunk(
       conversationId: chunk.conversation_id,
       conversationTitle: chunk.title || state.conversationTitle,
     }));
+    setConversationStatus(set, chunk.conversation_id, "running");
     void useAppStore.getState().associateConversation(chunk.conversation_id, workspaceRoot);
     window.dispatchEvent(new CustomEvent("personagent:conversations-changed"));
     return;
@@ -1082,6 +1200,7 @@ function handleChunk(
       pendingPlanApproval: planApprovalFromChunk(chunk),
       messages: state.messages.map((item) => (item.id === agentId ? closeActiveReasoning(item, false) : item)),
     }));
+    setConversationStatus(set, chunk.conversation_id, "pending");
     return;
   }
 
@@ -1100,6 +1219,7 @@ function handleChunk(
         ? chunk.next_step_suggestion.trim()
         : undefined;
     window.dispatchEvent(new CustomEvent("personagent:conversations-changed"));
+    setConversationStatus(set, chunk.conversation_id ?? get().conversationId, "idle");
     set((state) => ({
       isStreaming: state.activeAgentId === agentId ? false : state.isStreaming,
       isFinalizing: false,
@@ -1141,6 +1261,7 @@ function handleChunk(
         isStreaming: false,
         isFinalizing: false,
       });
+      setConversationStatus(set, chunk.conversation_id ?? get().conversationId, "pending");
     }
     if (!isToolGroupEvent(chunk)) {
       applyToolChunk(chunk, agentId, set);
@@ -1166,6 +1287,28 @@ function handleChunk(
 
   applyLiveTokenUsage(chunk, set);
   queueTextChunk(agentId, chunk, set);
+}
+
+function withVisibleTerminalNotice(chunk: StreamChunk): StreamChunk {
+  if (chunk.content || chunk.reasoning_content) return chunk;
+  if (chunk.event === "tool_iterations_exceeded") {
+    const iterations = typeof chunk.tool_iterations === "number" ? chunk.tool_iterations : undefined;
+    return {
+      ...chunk,
+      content: iterations
+        ? `Tool execution stopped after ${iterations} iterations before the model produced a final answer.`
+        : "Tool execution stopped before the model produced a final answer.",
+      finish_reason: chunk.finish_reason ?? "tool_iterations_exceeded",
+    };
+  }
+  if (chunk.event === "empty_model_response") {
+    return {
+      ...chunk,
+      content: "The model stopped after tool execution without producing a visible final answer.",
+      finish_reason: chunk.finish_reason ?? "empty_model_response",
+    };
+  }
+  return chunk;
 }
 
 function queueTextChunk(
@@ -1274,11 +1417,13 @@ function handleTeamEvent(
       error: event.error,
       messages: get().messages.map((item) => (item.id === agentId ? closeActiveReasoning(item, false) : item)),
     });
+    setConversationStatus(set, event.conversation_id ?? get().conversationId, "error");
     return;
   }
 
   if (event.conversation_id) {
     set({ conversationId: event.conversation_id });
+    setConversationStatus(set, event.conversation_id, "running");
   }
 
   if (event.event === "agent_turn_started" && event.agent_id) {
@@ -1323,8 +1468,11 @@ function handleTeamEvent(
 
   if (event.event === "team_run_completed") {
     resetLiveTokenTotals();
+    setConversationStatus(set, event.conversation_id ?? get().conversationId, "idle");
     window.dispatchEvent(new CustomEvent("personagent:conversations-changed"));
     window.dispatchEvent(new CustomEvent("personagent:session-panel-changed"));
+  } else if (event.event === "team_consensus_failed" || event.event === "team_run_cancelled" || (event.event === "error" && !event.agent_id)) {
+    setConversationStatus(set, event.conversation_id ?? get().conversationId, "error");
   }
 
   set((state) => ({
@@ -2639,6 +2787,19 @@ function shouldCollapseToolBlock(name: string, status: ToolBlockStatus) {
     "BrowserExtractContent",
     "BrowserReadContentChunk",
     "BrowserGetHtml",
+    "BrowserGetElementMap",
+    "BrowserClick",
+    "BrowserType",
+    "BrowserScreenshot",
+    "BrowserCloseTab",
+    "BrowserReadConsole",
+    "BrowserScript",
+    "BrowserScroll",
+    "BrowserReload",
+    "BrowserHistory",
+    "BrowserSwitchTab",
+    "BrowserWait",
+    "BrowserAct",
     "Task",
     "TaskCreate",
     "TaskGet",

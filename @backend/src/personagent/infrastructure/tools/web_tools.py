@@ -263,7 +263,8 @@ def _validate_url(url: str, context: ToolUseContext) -> ToolPermissionResult | N
         return _deny("URL must include a hostname.")
     blocked = tuple(str(item).lower() for item in context.limits.get("web_blocked_domains", ()))
     allowed = tuple(str(item).lower() for item in context.limits.get("web_allowed_domains", ()))
-    if _host_matches(hostname, blocked) or _is_private_host(hostname):
+    allow_private_hosts = bool(context.limits.get("web_allow_private_hosts", False))
+    if _host_matches(hostname, blocked) or (_is_private_host(hostname) and not allow_private_hosts):
         return _deny(f"URL host is blocked: {hostname}")
     if allowed and not _host_matches(hostname, allowed):
         return _deny(f"URL host is not in the allowed domains: {hostname}")

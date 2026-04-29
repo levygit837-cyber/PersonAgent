@@ -95,6 +95,31 @@ class _PromptPreparation:
     context_attachment_metadata: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class _AssistantStreamState:
+    content_chunks: list[str] = field(default_factory=list)
+    reasoning_chunks: list[str] = field(default_factory=list)
+    images: list[GeneratedImage] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    tool_calls: list[dict[str, Any]] | None = None
+    finish_reason: str | None = None
+    usage: dict[str, int] | None = None
+    model: str = ""
+    provider: str = ""
+
+    @property
+    def content(self) -> str:
+        return "".join(self.content_chunks)
+
+    @property
+    def reasoning_content(self) -> str:
+        return "".join(self.reasoning_chunks)
+
+    @property
+    def has_visible_output(self) -> bool:
+        return bool(self.content or self.images)
+
+
 class ChatCompletionUseCase:
     """Orchestrates one chat interaction with the LLM."""
 
@@ -264,6 +289,7 @@ class ChatCompletionUseCase:
     async def execute_stream(self, request: ChatRequestDTO) -> AsyncIterator[StreamChunk]:
         """Execute a streaming chat completion."""
         conversation = await self._get_or_create_conversation(request)
+        _set_session_status(conversation, "running")
         was_empty = len(conversation.messages) == 0
         yield StreamChunk(
             metadata={
@@ -333,6 +359,7 @@ class ChatCompletionUseCase:
         if request.conversation_id is None:
             raise ConversationNotFoundError("conversation_id is required to resume a tool")
         conversation = await self._get_or_create_conversation(request)
+        _set_session_status(conversation, "running")
         yield StreamChunk(
             metadata={
                 "event": "conversation",
@@ -403,6 +430,7 @@ class ChatCompletionUseCase:
             max_iterations = self._max_tool_iterations(request)
             iteration = 0
             tool_limit_exceeded = False
+            executed_tools = False
             prompt_context_emitted = False
             while iteration < max_iterations:
                 messages, context_metadata = await self._prepare_messages_for_llm(
@@ -419,114 +447,108 @@ class ChatCompletionUseCase:
                         }
                     )
                     prompt_context_emitted = True
-                assistant_content_chunks: list[str] = []
-                assistant_reasoning_chunks: list[str] = []
-                assistant_images: list[GeneratedImage] = []
-                assistant_metadata: dict[str, Any] = {}
-                assistant_tool_calls: list[dict[str, Any]] | None = None
-                assistant_finish_reason = None
-                assistant_usage = None
-                assistant_model = request.model
-                assistant_provider = request.provider
-
-                async for chunk in self._llm_backend.chat_completion_stream(
-                    messages=messages,
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens,
-                    tools=tools,
-                    tool_choice="auto" if tools else None,
+                assistant_state = _AssistantStreamState(
                     model=request.model,
                     provider=request.provider,
-                    reasoning_level=request.reasoning_level,
-                    reasoning_budget_tokens=request.reasoning_budget_tokens,
+                )
+
+                async for forwarded_chunk in self._stream_assistant_pass(
+                    request=request,
+                    messages=messages,
+                    tools=tools,
+                    seen_tool_call_ids=seen_tool_call_ids,
+                    iteration=iteration,
+                    state=assistant_state,
                 ):
-                    chunk_metadata = {
-                        "provider": request.provider,
-                        "model": request.model,
-                        **chunk.metadata,
-                    }
-                    if chunk.content:
-                        assistant_content_chunks.append(chunk.content)
-                    if chunk.reasoning_content:
-                        assistant_reasoning_chunks.append(chunk.reasoning_content)
-                    if chunk.images:
-                        assistant_images.extend(chunk.images)
-                    if chunk.tool_calls:
-                        assistant_tool_calls = self._unique_tool_call_ids(
-                            chunk.tool_calls,
-                            seen_tool_call_ids,
-                            iteration,
-                        )
-                        assistant_finish_reason = "tool_calls"
-                    assistant_metadata.update(
-                        {
-                            key: value
-                            for key, value in chunk_metadata.items()
-                            if key.startswith(("vertex_", "kimi_"))
+                    yield forwarded_chunk
+
+                if (
+                    executed_tools
+                    and not assistant_state.has_visible_output
+                    and assistant_state.tool_calls is None
+                    and assistant_state.finish_reason in {None, "stop"}
+                ):
+                    retry_state = _AssistantStreamState(
+                        reasoning_chunks=list(assistant_state.reasoning_chunks),
+                        model=assistant_state.model or request.model,
+                        provider=assistant_state.provider or request.provider,
+                    )
+                    yield StreamChunk(
+                        metadata={
+                            "event": "status",
+                            "status": "retrying_empty_tool_response",
+                            "provider": assistant_state.provider or request.provider,
+                            "model": assistant_state.model or request.model,
                         }
                     )
-                    if chunk.finish_reason:
-                        internal_tool_stop = (
-                            assistant_tool_calls is not None
-                            and chunk.finish_reason != "tool_calls"
-                            and not chunk.content
-                            and not chunk.reasoning_content
-                            and not chunk.images
-                        )
-                        if not internal_tool_stop:
-                            assistant_finish_reason = chunk.finish_reason
-                            if chunk.finish_reason != "tool_calls":
-                                final_finish_reason = chunk.finish_reason
-                    if chunk.usage:
-                        assistant_usage = chunk.usage
-                        final_usage = chunk.usage
-                    if chunk_metadata.get("model"):
-                        assistant_model = str(chunk_metadata["model"])
-                    else:
-                        assistant_model = request.model
-                    assistant_provider = str(chunk_metadata.get("provider") or request.provider)
-                    final_model = assistant_model
-                    final_provider = assistant_provider
-                    forwarded_finish_reason = self._forwarded_finish_reason(
-                        chunk,
-                        has_pending_tool_calls=assistant_tool_calls is not None,
-                    )
-                    if (
-                        chunk.content
-                        or chunk.reasoning_content
-                        or chunk.images
-                        or forwarded_finish_reason
+                    async for forwarded_chunk in self._stream_assistant_pass(
+                        request=request,
+                        messages=self._messages_with_final_answer_reminder(messages),
+                        tools=[],
+                        seen_tool_call_ids=seen_tool_call_ids,
+                        iteration=iteration,
+                        state=retry_state,
                     ):
+                        yield forwarded_chunk
+                    if retry_state.has_visible_output or retry_state.tool_calls:
+                        assistant_state = retry_state
+                    else:
+                        notice = self._empty_model_response_notice(
+                            provider=assistant_state.provider or request.provider,
+                            model=assistant_state.model or request.model,
+                        )
+                        assistant_state = _AssistantStreamState(
+                            content_chunks=[notice],
+                            reasoning_chunks=list(retry_state.reasoning_chunks),
+                            finish_reason="empty_model_response",
+                            usage=retry_state.usage,
+                            model=retry_state.model or assistant_state.model or request.model,
+                            provider=retry_state.provider
+                            or assistant_state.provider
+                            or request.provider,
+                            metadata={
+                                **assistant_state.metadata,
+                                **retry_state.metadata,
+                                "empty_model_response": True,
+                            },
+                        )
                         yield StreamChunk(
-                            content=chunk.content,
-                            reasoning_content=chunk.reasoning_content,
-                            finish_reason=forwarded_finish_reason,
-                            usage=chunk.usage,
-                            images=chunk.images,
-                            is_thinking=chunk.is_thinking,
-                            metadata=chunk_metadata,
+                            content=notice,
+                            finish_reason="empty_model_response",
+                            usage=assistant_state.usage,
+                            metadata={
+                                "event": "empty_model_response",
+                                "provider": assistant_state.provider,
+                                "model": assistant_state.model,
+                            },
                         )
 
-                assistant_content = "".join(assistant_content_chunks)
-                assistant_reasoning = "".join(assistant_reasoning_chunks)
+                final_finish_reason = (
+                    assistant_state.finish_reason
+                    if assistant_state.finish_reason != "tool_calls"
+                    else final_finish_reason
+                )
+                final_usage = assistant_state.usage or final_usage
+                final_model = assistant_state.model or final_model
+                final_provider = assistant_state.provider or final_provider
                 conversation.add_message(
                     Message(
                         role=Role.ASSISTANT,
-                        content=assistant_content,
-                        tool_calls=assistant_tool_calls,
+                        content=assistant_state.content,
+                        tool_calls=assistant_state.tool_calls,
                         metadata={
-                            "reasoning_content": assistant_reasoning or None,
-                            "finish_reason": assistant_finish_reason,
-                            "usage": assistant_usage,
-                            "model": assistant_model,
-                            "provider": assistant_provider,
-                            "images": [image.to_dict() for image in assistant_images],
-                            **assistant_metadata,
+                            "reasoning_content": assistant_state.reasoning_content or None,
+                            "finish_reason": assistant_state.finish_reason,
+                            "usage": assistant_state.usage,
+                            "model": assistant_state.model,
+                            "provider": assistant_state.provider,
+                            "images": [image.to_dict() for image in assistant_state.images],
+                            **assistant_state.metadata,
                         },
                     )
                 )
 
-                tool_calls = self._parse_tool_calls(assistant_tool_calls)
+                tool_calls = self._parse_tool_calls(assistant_state.tool_calls)
                 if not tool_calls or not tool_context:
                     break
 
@@ -547,6 +569,7 @@ class ChatCompletionUseCase:
                     metadata = event.to_stream_metadata()
                     if event.result is not None and event.event == "permission_required":
                         if self._is_user_question_result(event.result):
+                            _set_session_status(conversation, "pending")
                             metadata.update(
                                 self._record_pending_user_question(
                                     conversation,
@@ -559,6 +582,7 @@ class ChatCompletionUseCase:
                             waiting_for_tool_approval = True
                             final_finish_reason = "user_input_required"
                         else:
+                            _set_session_status(conversation, "pending")
                             metadata.update(
                                 self._record_pending_tool_approval(
                                     conversation,
@@ -595,6 +619,7 @@ class ChatCompletionUseCase:
                         self._apply_tool_state_result(result, conversation)
                         if result.status != ToolExecutionStatus.PERMISSION_REQUIRED:
                             conversation.add_message(self._tool_message_from_result(result))
+                            executed_tools = True
                 iteration += 1
                 if waiting_for_plan_approval or waiting_for_tool_approval:
                     break
@@ -603,17 +628,35 @@ class ChatCompletionUseCase:
 
             if tool_limit_exceeded:
                 final_finish_reason = "tool_iterations_exceeded"
+                notice = self._tool_iteration_limit_notice(max_iterations)
+                conversation.add_message(
+                    Message(
+                        role=Role.ASSISTANT,
+                        content=notice,
+                        metadata={
+                            "finish_reason": "tool_iterations_exceeded",
+                            "model": final_model,
+                            "provider": final_provider,
+                            "tool_iterations": max_iterations,
+                        },
+                    )
+                )
                 yield StreamChunk(
+                    content=notice,
                     finish_reason="tool_iterations_exceeded",
                     metadata={
                         "event": "tool_iterations_exceeded",
                         "provider": final_provider,
                         "model": final_model,
+                        "tool_iterations": max_iterations,
                     },
                 )
 
         except LLMBackendError as exc:
             logger.error("llm_backend_stream_error", error=str(exc))
+            _set_session_status(conversation, "error")
+            conversation.metadata["last_request_error"] = str(exc)
+            await self._conversation_repo.update(conversation)
             raise
 
         next_step_suggestion = await self._after_turn_services(
@@ -645,6 +688,8 @@ class ChatCompletionUseCase:
                 }
             )
 
+        _set_session_status(conversation, "idle")
+        conversation.metadata.pop("last_request_error", None)
         await self._conversation_repo.update(conversation)
 
         # Trigger extração de memória em background
@@ -925,6 +970,119 @@ class ChatCompletionUseCase:
         ):
             return None
         return chunk.finish_reason
+
+    async def _stream_assistant_pass(
+        self,
+        *,
+        request: ChatRequestDTO,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        seen_tool_call_ids: set[str],
+        iteration: int,
+        state: _AssistantStreamState,
+    ) -> AsyncIterator[StreamChunk]:
+        async for chunk in self._llm_backend.chat_completion_stream(
+            messages=messages,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            tools=tools,
+            tool_choice="auto" if tools else None,
+            model=request.model,
+            provider=request.provider,
+            reasoning_level=request.reasoning_level,
+            reasoning_budget_tokens=request.reasoning_budget_tokens,
+        ):
+            chunk_metadata = {
+                "provider": request.provider,
+                "model": request.model,
+                **chunk.metadata,
+            }
+            if chunk.content:
+                state.content_chunks.append(chunk.content)
+            if chunk.reasoning_content:
+                state.reasoning_chunks.append(chunk.reasoning_content)
+            if chunk.images:
+                state.images.extend(chunk.images)
+            if chunk.tool_calls:
+                state.tool_calls = self._unique_tool_call_ids(
+                    chunk.tool_calls,
+                    seen_tool_call_ids,
+                    iteration,
+                )
+                state.finish_reason = "tool_calls"
+            state.metadata.update(
+                {
+                    key: value
+                    for key, value in chunk_metadata.items()
+                    if key.startswith(("vertex_", "kimi_"))
+                }
+            )
+            if chunk.finish_reason:
+                internal_tool_stop = (
+                    state.tool_calls is not None
+                    and chunk.finish_reason != "tool_calls"
+                    and not chunk.content
+                    and not chunk.reasoning_content
+                    and not chunk.images
+                )
+                if not internal_tool_stop:
+                    state.finish_reason = chunk.finish_reason
+            if chunk.usage:
+                state.usage = chunk.usage
+            state.model = str(chunk_metadata.get("model") or request.model)
+            state.provider = str(chunk_metadata.get("provider") or request.provider)
+            forwarded_finish_reason = self._forwarded_finish_reason(
+                chunk,
+                has_pending_tool_calls=state.tool_calls is not None,
+            )
+            if (
+                chunk.content
+                or chunk.reasoning_content
+                or chunk.images
+                or forwarded_finish_reason
+            ):
+                yield StreamChunk(
+                    content=chunk.content,
+                    reasoning_content=chunk.reasoning_content,
+                    finish_reason=forwarded_finish_reason,
+                    usage=chunk.usage,
+                    images=chunk.images,
+                    is_thinking=chunk.is_thinking,
+                    metadata=chunk_metadata,
+                )
+
+    def _messages_with_final_answer_reminder(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            *messages,
+            {
+                "role": "user",
+                "content": (
+                    "<system-reminder>\n"
+                    "The previous provider pass stopped after tool results without a visible "
+                    "final answer. Use the tool results already present above and respond now "
+                    "with the final answer. Do not call more tools for this recovery pass.\n"
+                    "</system-reminder>"
+                ),
+            },
+        ]
+
+    def _empty_model_response_notice(self, *, provider: str, model: str) -> str:
+        return (
+            "The model stopped after tool execution without producing a visible final "
+            f"answer. Provider: {provider}; model: {model}. The tool results were preserved, "
+            "but the provider returned an empty terminal response."
+        )
+
+    def _tool_iteration_limit_notice(self, max_iterations: int) -> str:
+        return (
+            "Tool execution stopped because the model reached the configured limit of "
+            f"{max_iterations} tool iterations before producing a final answer. The tool "
+            "results above were preserved; narrow the request or continue from the latest "
+            "tool result."
+        )
 
     def _prepare_prompt_surfaces(
         self,
@@ -1914,6 +2072,7 @@ class ChatCompletionUseCase:
                 ),
                 "web_allowed_domains": config.web_allowed_domains,
                 "web_blocked_domains": config.web_blocked_domains,
+                "web_allow_private_hosts": config.web_allow_private_hosts,
                 "skill_roots": tuple(str(path) for path in config.skill_roots),
             },
             metadata={
@@ -1982,3 +2141,8 @@ def _apply_workspace_metadata(conversation: Conversation, tool_context: dict[str
     workspace_root = (tool_context or {}).get("workspace_root")
     if isinstance(workspace_root, str) and workspace_root.strip():
         conversation.metadata["workspace_root"] = workspace_root.strip()
+
+
+def _set_session_status(conversation: Conversation, status: str) -> None:
+    if status in {"idle", "error", "pending", "running"}:
+        conversation.metadata["session_status"] = status

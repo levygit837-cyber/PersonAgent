@@ -66,7 +66,10 @@ export interface ConversationSummary {
   updated_at: string;
   message_count: number;
   workspace_root?: string | null;
+  status?: ConversationStatus | null;
 }
+
+export type ConversationStatus = "idle" | "error" | "pending" | "running";
 
 export type PersistedMessageRole = "system" | "user" | "assistant" | "tool";
 
@@ -487,6 +490,7 @@ export interface StreamChunk {
   tool_data?: Record<string, unknown>;
   tool_approval?: ToolApprovalPayload;
   tool_calls?: unknown;
+  tool_iterations?: number;
   next_step_suggestion?: string | null;
 }
 

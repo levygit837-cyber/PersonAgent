@@ -51,6 +51,8 @@ dependencies = [
     # Scheduler
     "apscheduler>=3.11.0",
     "pgvector>=0.4.1",
+    "opentelemetry-api>=1.41.1",
+    "opentelemetry-sdk>=1.41.1",
 ]
 
 [project.optional-dependencies]

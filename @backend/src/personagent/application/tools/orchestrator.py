@@ -381,7 +381,21 @@ class ToolOrchestrator:
             "BrowserOpen",
             "BrowserListTabs",
             "BrowserExtractContent",
+            "BrowserReadContentChunk",
             "BrowserGetHtml",
+            "BrowserGetElementMap",
+            "BrowserClick",
+            "BrowserType",
+            "BrowserScreenshot",
+            "BrowserCloseTab",
+            "BrowserReadConsole",
+            "BrowserScript",
+            "BrowserScroll",
+            "BrowserReload",
+            "BrowserHistory",
+            "BrowserSwitchTab",
+            "BrowserWait",
+            "BrowserAct",
         }:
             return "Browsing..."
         return "Running tool..."

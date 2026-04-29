@@ -14,10 +14,13 @@ const BRANCH_PANEL_EXIT_MS = 140;
 
 type BranchSwitcherButtonProps = {
   enabled: boolean;
+  workspaceRoot?: string | null;
+  compact?: boolean;
 };
 
-export function BranchSwitcherButton({ enabled }: BranchSwitcherButtonProps) {
-  const workspaceRoot = useAppStore((state) => state.selectedWorkspace);
+export function BranchSwitcherButton({ enabled, workspaceRoot: workspaceRootOverride, compact = false }: BranchSwitcherButtonProps) {
+  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
+  const workspaceRoot = workspaceRootOverride || selectedWorkspace;
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
@@ -29,10 +32,10 @@ export function BranchSwitcherButton({ enabled }: BranchSwitcherButtonProps) {
   const [newBranchName, setNewBranchName] = useState("");
   const [operationError, setOperationError] = useState<string | null>(null);
   const [pendingBranch, setPendingBranch] = useState<string | null>(null);
-  const statusQuery = useGitStatus(enabled);
-  const branchesQuery = useGitBranches(mounted && !exiting && enabled);
-  const createMutation = useGitCreateBranch();
-  const checkoutMutation = useGitCheckoutBranch();
+  const statusQuery = useGitStatus(enabled, workspaceRoot);
+  const branchesQuery = useGitBranches(mounted && !exiting && enabled, workspaceRoot);
+  const createMutation = useGitCreateBranch(workspaceRoot);
+  const checkoutMutation = useGitCheckoutBranch(workspaceRoot);
   const open = mounted && !exiting;
   const status = statusQuery.data;
   const hasWorkspace = Boolean(workspaceRoot);
@@ -196,7 +199,7 @@ export function BranchSwitcherButton({ enabled }: BranchSwitcherButtonProps) {
                 else openPanel();
               }}
               className={cn(
-                "relative h-10 w-10 shrink-0 rounded-xl text-muted-foreground hover:text-foreground",
+                compact ? "relative h-9 w-9 shrink-0 rounded-xl text-muted-foreground hover:text-foreground" : "relative h-10 w-10 shrink-0 rounded-xl text-muted-foreground hover:text-foreground",
                 open && "bg-glass/80 text-foreground",
               )}
             >

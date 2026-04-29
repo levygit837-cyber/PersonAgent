@@ -7,7 +7,7 @@ import { UserMessage } from "./user-message";
 const followThreshold = 120;
 const scrollUpKeys = new Set(["ArrowUp", "PageUp", "Home"]);
 
-export function MessageFeed({ extraBottomPadding = false }: { extraBottomPadding?: boolean }) {
+export function MessageFeed({ extraBottomPadding = false, compact = false }: { extraBottomPadding?: boolean; compact?: boolean }) {
   const messages = useChatStore((state) => state.messages);
   const conversationId = useChatStore((state) => state.conversationId);
   const error = useChatStore((state) => state.error);
@@ -110,13 +110,14 @@ export function MessageFeed({ extraBottomPadding = false }: { extraBottomPadding
       ref={scrollerRef}
       data-testid="message-feed-scroller"
       className={[
-        "h-full overflow-x-hidden overflow-y-auto px-5 pt-6",
-        extraBottomPadding ? "pb-[340px]" : "pb-44",
+        "h-full overflow-x-hidden overflow-y-auto pt-6",
+        compact ? "px-3" : "px-5",
+        extraBottomPadding ? "pb-[380px]" : compact ? "pb-56" : "pb-64",
       ].join(" ")}
       style={{ overflowAnchor: "none" }}
       tabIndex={-1}
     >
-      <div className="mx-auto flex w-full min-w-0 max-w-[820px] flex-col">
+      <div className={compact ? "mx-auto flex w-full min-w-0 max-w-[720px] flex-col" : "mx-auto flex w-full min-w-0 max-w-[820px] flex-col"}>
         {error ? <ErrorBanner message={error} /> : null}
         {messages.map((message) =>
           message.role === "user" ? (

@@ -9,6 +9,7 @@ const originalInitialize = useAppStore.getState().initialize;
 
 describe("App", () => {
   beforeEach(() => {
+    window.history.pushState({}, "", "/");
     useAppStore.setState({
       initialize: async () => undefined,
       section: "openPr",
@@ -21,6 +22,15 @@ describe("App", () => {
     renderApp();
 
     expect(screen.getByTestId("open-pr-workspace")).toBeInTheDocument();
+  });
+
+  it("renders compact mode without the sidebar shell", () => {
+    window.history.pushState({}, "", "/?mode=compact");
+
+    renderApp();
+
+    expect(screen.getByText("Opening session...")).toBeInTheDocument();
+    expect(screen.queryByText("New Chat")).not.toBeInTheDocument();
   });
 });
 
@@ -44,4 +54,5 @@ function renderApp() {
 
 afterAll(() => {
   useAppStore.setState({ initialize: originalInitialize });
+  window.history.pushState({}, "", "/");
 });

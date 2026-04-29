@@ -160,11 +160,55 @@ TOOL_PROMPTS: dict[str, str] = {
     ),
     "BrowserGetElementMap": (
         "Inspect the current browser page's mapped UI elements before interacting visually. Use "
-        "returned node_id values with BrowserAct."
+        "returned node_id values with BrowserClick or BrowserType. Use BrowserAct only for advanced "
+        "compatibility actions not covered by explicit browser tools."
+    ),
+    "BrowserClick": (
+        "Click by node_id from BrowserGetElementMap when possible; use x/y only when no mapped element "
+        "exists. After a click that may navigate or change UI state, inspect the returned elements or "
+        "call BrowserWait/BrowserGetElementMap before continuing."
+    ),
+    "BrowserType": (
+        "Use mode=fill for inputs with a node_id, mode=type for focused incremental text, and mode=press "
+        "for keys such as Enter or Escape. Prefer BrowserType over BrowserAct for text entry."
+    ),
+    "BrowserScreenshot": (
+        "Capture visual state. Chrome/Chromium CDP can return image_data; LightPanda may return a "
+        "DOM-mirror fallback with can_capture=false. Do not rely on screenshots for text extraction "
+        "when BrowserExtractContent or BrowserGetElementMap is available."
+    ),
+    "BrowserCloseTab": (
+        "Close browser pages that are no longer needed. Keep page_id/window_id from BrowserOpen or "
+        "BrowserListTabs and expect the updated tab list in the result."
+    ),
+    "BrowserReadConsole": (
+        "Read captured console logs and page errors after actions or scripts. Use since_id for polling "
+        "and clear=true only when those entries are no longer needed."
+    ),
+    "BrowserScript": (
+        "Use only for advanced inspection that explicit browser tools cannot handle. evaluate runs "
+        "bounded JavaScript in the page; cdp mode is limited to the allowlisted Runtime, Performance, "
+        "DOM, Page.captureScreenshot, and Log methods. Never use it as a first choice for clicking, "
+        "typing, scrolling, waiting, reloading, tab switching, or screenshots."
+    ),
+    "BrowserScroll": (
+        "Scroll the selected page when content or controls are below the viewport, then inspect the "
+        "returned elements or use BrowserGetElementMap."
+    ),
+    "BrowserReload": "Reload the selected page when current state may be stale.",
+    "BrowserHistory": "Move the selected page back or forward in browser history.",
+    "BrowserSwitchTab": (
+        "Activate a page_id/window_id returned by BrowserOpen or BrowserListTabs before acting on that tab."
+    ),
+    "BrowserWait": (
+        "Wait for a short time or a load state after click/type/reload/history actions before inspecting "
+        "the page again."
     ),
     "BrowserAct": (
-        "Act on a mapped browser element by node_id. Use click, fill, submit, select, or press, "
-        "then inspect the updated page before continuing."
+        "Advanced compatibility tool for mapped browser actions. Prefer BrowserClick, BrowserType, "
+        "BrowserScroll, BrowserWait, BrowserScreenshot, and tab tools first. Use BrowserAct for hover, "
+        "drag/drop, upload, select_text, scroll_to, submit/select, or other mapped actions not exposed "
+        "as explicit tools, then inspect the updated page before continuing."
     ),
     "TodoWrite": (
         "Use TodoWrite for non-trivial writing, exploration, debugging, research, and validation. "

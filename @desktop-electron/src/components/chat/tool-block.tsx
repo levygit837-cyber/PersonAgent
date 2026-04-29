@@ -6,10 +6,14 @@ const TOOL_STATUS_DOT_SIZE = 6;
 const AUTO_COLLAPSED_TOOL_OUTPUT_NAMES = new Set([
   "browserextractcontent",
   "browsergethtml",
+  "browsergetelementmap",
   "browserlisttabs",
   "browseropen",
   "browserreadcontentchunk",
+  "browserreadconsole",
   "browsersearch",
+  "browserscript",
+  "browserscreenshot",
   "find",
   "glob",
   "grep",
@@ -404,8 +408,9 @@ function WriteOutputLine({ row }: { row: WriteOutputRow }) {
 function GenericToolEvent({ block, nested = false, forceExpanded = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
   const [collapsed, toggleCollapsed] = useToolOutputCollapsed(block.isCollapsed || shouldAutoCollapseToolOutput(block), { autoCollapse: shouldAutoCollapseToolOutput(block) });
   const output = normalizedToolOutput(block);
+  const browserImage = browserImageDataUrl(block);
   const outputCollapsed = forceExpanded || isRunning(block) ? false : collapsed;
-  const hasDetails = output.trim().length > 0;
+  const hasDetails = output.trim().length > 0 || Boolean(browserImage);
   const error = isError(block);
 
   return (
@@ -423,9 +428,20 @@ function GenericToolEvent({ block, nested = false, forceExpanded = false }: { bl
         </span>
       </button>
       {hasDetails && !outputCollapsed ? (
-        <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 p-3 font-mono text-[11px] leading-5 text-muted-foreground shadow-soft">
-          {output}
-        </pre>
+        <div className="ml-4 mt-2 overflow-hidden rounded-xl border border-glass-border/35 bg-card/80 shadow-soft">
+          {browserImage ? (
+            <img
+              src={browserImage}
+              alt="Browser screenshot"
+              className="max-h-80 w-full object-contain bg-background/60"
+            />
+          ) : null}
+          {output.trim() ? (
+            <pre className={browserImage ? "max-h-72 overflow-auto border-t border-glass-border/35 p-3 font-mono text-[11px] leading-5 text-muted-foreground" : "max-h-72 overflow-auto p-3 font-mono text-[11px] leading-5 text-muted-foreground"}>
+              {output}
+            </pre>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
@@ -862,6 +878,57 @@ function browserActionLabel(block: ToolBlockUi) {
   if (block.name === "BrowserListTabs") {
     return { base: "BrowserListTabs", running: "Listing browser tabs", completed: "Listed browser tabs" };
   }
+  if (block.name === "BrowserGetElementMap") {
+    return { base: "BrowserGetElementMap", running: "Mapping browser elements", completed: "Mapped browser elements" };
+  }
+  if (block.name === "BrowserClick") {
+    return {
+      base: target ? `BrowserClick ${target}` : "BrowserClick",
+      running: target ? `Clicking ${target}` : "Clicking browser page",
+      completed: target ? `Clicked ${target}` : "Clicked browser page",
+    };
+  }
+  if (block.name === "BrowserType") {
+    return {
+      base: target ? `BrowserType ${target}` : "BrowserType",
+      running: target ? `Typing in ${target}` : "Typing in browser",
+      completed: target ? `Typed in ${target}` : "Typed in browser",
+    };
+  }
+  if (block.name === "BrowserScreenshot") {
+    return {
+      base: target ? `BrowserScreenshot ${target}` : "BrowserScreenshot",
+      running: target ? `Capturing ${target}` : "Capturing browser screenshot",
+      completed: target ? `Captured ${target}` : "Captured browser screenshot",
+    };
+  }
+  if (block.name === "BrowserCloseTab") {
+    return { base: "BrowserCloseTab", running: "Closing browser tab", completed: "Closed browser tab" };
+  }
+  if (block.name === "BrowserReadConsole") {
+    return { base: "BrowserReadConsole", running: "Reading browser console", completed: "Read browser console" };
+  }
+  if (block.name === "BrowserScript") {
+    return { base: "BrowserScript", running: "Running browser script", completed: "Ran browser script" };
+  }
+  if (block.name === "BrowserScroll") {
+    return { base: "BrowserScroll", running: "Scrolling browser page", completed: "Scrolled browser page" };
+  }
+  if (block.name === "BrowserReload") {
+    return { base: "BrowserReload", running: "Reloading browser page", completed: "Reloaded browser page" };
+  }
+  if (block.name === "BrowserHistory") {
+    return { base: "BrowserHistory", running: "Navigating browser history", completed: "Navigated browser history" };
+  }
+  if (block.name === "BrowserSwitchTab") {
+    return { base: "BrowserSwitchTab", running: "Switching browser tab", completed: "Switched browser tab" };
+  }
+  if (block.name === "BrowserWait") {
+    return { base: "BrowserWait", running: "Waiting for browser page", completed: "Waited for browser page" };
+  }
+  if (block.name === "BrowserAct") {
+    return { base: "BrowserAct", running: "Running browser action", completed: "Ran browser action" };
+  }
   if (block.name === "BrowserReadContentChunk") {
     return { base: "BrowserReadContentChunk", running: "Reading browser content chunks", completed: "Read browser content chunks" };
   }
@@ -922,6 +989,10 @@ function browserOutputText(block: ToolBlockUi) {
   if (block.name === "BrowserListTabs") return browserTabsOutput(data);
   if (block.name === "BrowserReadContentChunk") return browserChunksOutput(block, data);
   if (block.name === "BrowserGetHtml") return browserHtmlOutput(block, data);
+  if (block.name === "BrowserReadConsole") return browserConsoleOutput(data);
+  if (block.name === "BrowserScript") return browserScriptOutput(data);
+  if (block.name === "BrowserScreenshot") return browserScreenshotOutput(data);
+  if (isBrowserControlToolName(block.name)) return browserControlOutput(data);
   return block.content.trimEnd();
 }
 
@@ -1036,6 +1107,84 @@ function browserHtmlOutput(block: ToolBlockUi, data: Record<string, unknown>) {
   ]);
 }
 
+function browserControlOutput(data: Record<string, unknown>) {
+  return compactOutputLines([
+    keyValueLine("Title", stringValue(data.title)),
+    keyValueLine("URL", stringValue(data.url)),
+    keyValueLine("Page ID", stringValue(data.page_id)),
+    keyValueLine("Runtime", stringValue(data.runtime)),
+    keyValueLine("Render mode", stringValue(data.render_mode)),
+    keyValueLine("Active tab", stringValue(data.active_tab_id)),
+    data.navigated === true ? "Navigated: true" : undefined,
+    keyValueLine("Elements", numberValue(data.element_count)),
+  ]);
+}
+
+function browserScreenshotOutput(data: Record<string, unknown>) {
+  return compactOutputLines([
+    keyValueLine("Title", stringValue(data.title)),
+    keyValueLine("URL", stringValue(data.url)),
+    keyValueLine("Page ID", stringValue(data.page_id)),
+    keyValueLine("Runtime", stringValue(data.runtime)),
+    keyValueLine("Render mode", stringValue(data.render_mode)),
+    keyValueLine("Screenshot method", stringValue(data.screenshot_method)),
+    keyValueLine("Can capture", data.can_capture === true ? "true" : data.can_capture === false ? "false" : undefined),
+    keyValueLine("Viewport", browserViewportLabel(data)),
+    keyValueLine("Fallback", stringValue(data.screenshot_error)),
+    keyValueLine("Elements", numberValue(data.element_count)),
+  ]);
+}
+
+function browserConsoleOutput(data: Record<string, unknown>) {
+  const entries = arrayValue(data.entries) ?? [];
+  const header = compactOutputLines([
+    keyValueLine("Title", stringValue(data.title)),
+    keyValueLine("URL", stringValue(data.url)),
+    keyValueLine("Page ID", stringValue(data.page_id)),
+    keyValueLine("Entries", entries.length),
+  ]);
+  const entryLines = entries
+    .slice(-30)
+    .map((entry) => browserConsoleEntryOutput(entry))
+    .filter((line) => line.length > 0);
+  return compactOutputLines([header, entryLines.length ? `\n${entryLines.join("\n")}` : undefined]);
+}
+
+function browserConsoleEntryOutput(value: unknown) {
+  if (!isRecord(value)) return "";
+  const id = numberValue(value.id);
+  const level = stringValue(value.level) ?? "log";
+  const text = rawStringValue(value.text)?.trimEnd() ?? "";
+  return `${id ?? "?"} [${level}] ${text}`;
+}
+
+function browserScriptOutput(data: Record<string, unknown>) {
+  const resultText = rawStringValue(data.result_text);
+  return compactOutputLines([
+    keyValueLine("Title", stringValue(data.title)),
+    keyValueLine("URL", stringValue(data.url)),
+    keyValueLine("Page ID", stringValue(data.page_id)),
+    keyValueLine("Mode", stringValue(data.mode)),
+    keyValueLine("CDP method", stringValue(data.cdp_method)),
+    data.truncated === true ? "Result truncated: true" : undefined,
+    resultText ? `\n${resultText.trimEnd()}` : undefined,
+  ]);
+}
+
+function browserViewportLabel(data: Record<string, unknown>) {
+  const width = numberValue(data.viewport_width);
+  const height = numberValue(data.viewport_height);
+  return width && height ? `${width}x${height}` : undefined;
+}
+
+function browserImageDataUrl(block: ToolBlockUi) {
+  if (block.name !== "BrowserScreenshot") return undefined;
+  const imageData = rawStringValue(block.data?.image_data);
+  if (!imageData) return undefined;
+  const mimeType = stringValue(block.data?.image_mime_type) ?? "image/png";
+  return `data:${mimeType};base64,${imageData}`;
+}
+
 function keyValueLine(label: string, value: string | number | undefined) {
   if (value === undefined || value === "") return undefined;
   return `${label}: ${value}`;
@@ -1063,7 +1212,26 @@ export function isBrowserToolName(name: string) {
     name === "BrowserListTabs" ||
     name === "BrowserExtractContent" ||
     name === "BrowserReadContentChunk" ||
-    name === "BrowserGetHtml"
+    name === "BrowserGetHtml" ||
+    name === "BrowserGetElementMap" ||
+    isBrowserControlToolName(name) ||
+    name === "BrowserAct"
+  );
+}
+
+function isBrowserControlToolName(name: string) {
+  return (
+    name === "BrowserClick" ||
+    name === "BrowserType" ||
+    name === "BrowserScreenshot" ||
+    name === "BrowserCloseTab" ||
+    name === "BrowserReadConsole" ||
+    name === "BrowserScript" ||
+    name === "BrowserScroll" ||
+    name === "BrowserReload" ||
+    name === "BrowserHistory" ||
+    name === "BrowserSwitchTab" ||
+    name === "BrowserWait"
   );
 }
 

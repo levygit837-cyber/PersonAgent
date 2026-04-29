@@ -1,15 +1,17 @@
 import { Minus, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 
-export function TitleBar() {
+export function TitleBar({ compactTitle }: { compactTitle?: string }) {
   return (
-    <header className="drag-region flex h-9 shrink-0 items-center border-b border-glass-border/25 bg-background">
-      <div className="no-drag ml-3 flex items-center gap-1.5">
+    <header className="drag-region flex h-9 shrink-0 select-none items-center border-b border-glass-border/25 bg-background">
+      <div className="ml-3 flex min-w-0 flex-1 items-center gap-1.5">
         <div className="grid h-[18px] w-[18px] place-items-center rounded bg-primary/15 text-[9px] font-bold text-primary">
           P
         </div>
-        <span className="text-[13px] font-medium tracking-tight text-foreground">PersonAgent</span>
-        <span className="text-[11px] text-muted-foreground">.local</span>
+        <span className="shrink-0 text-[13px] font-medium tracking-tight text-foreground">PersonAgent</span>
+        <span className="max-w-[24ch] truncate text-[11px] text-muted-foreground">
+          {compactTitle ? compactTitle : ".local"}
+        </span>
       </div>
       <div className="no-drag ml-auto flex h-full items-center">
         <Button

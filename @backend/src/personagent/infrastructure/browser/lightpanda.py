@@ -55,6 +55,19 @@ _URL_ENCODED_EDGE_NOISE_SUFFIXES = (
     "%0d",
 )
 _RAW_CDP_RETRY_DELAYS = (0.0, 0.5, 1.5, 3.0, 5.0)
+_MAX_CONSOLE_ENTRIES_PER_PAGE = 200
+_MAX_BROWSER_SCRIPT_CHARS = 10_000
+_MAX_BROWSER_SCRIPT_RESULT_CHARS = 12_000
+_BROWSER_SCRIPT_CDP_ALLOWLIST = {
+    "Runtime.evaluate",
+    "Performance.getMetrics",
+    "DOM.getDocument",
+    "DOM.querySelector",
+    "DOM.getOuterHTML",
+    "Page.captureScreenshot",
+    "Log.enable",
+    "Log.clear",
+}
 _NOISE_LINE_MARKERS = {
     "advertise",
     "advertisement",
@@ -278,7 +291,11 @@ async ({ maxSteps, delayMs, stepRatio }) => {
 """
 
 _BROWSER_ELEMENT_MAP_SCRIPT = r"""
-() => {
+(options = {}) => {
+  const frameId = String(options.frameId || 'main');
+  const frameUrl = String(options.frameUrl || window.location.href || '');
+  const offsetX = Number(options.offsetX || 0);
+  const offsetY = Number(options.offsetY || 0);
   const selectors = [
     'a[href]',
     'button',
@@ -294,6 +311,7 @@ _BROWSER_ELEMENT_MAP_SCRIPT = r"""
     '[role="tab"]',
     'summary',
     'label',
+    'iframe',
     'h1',
     'h2',
     'h3',
@@ -352,9 +370,10 @@ _BROWSER_ELEMENT_MAP_SCRIPT = r"""
   const accessibleName = (el) => {
     const labelledBy = normalize(el.getAttribute('aria-labelledby'));
     if (labelledBy) {
+      const root = el.getRootNode && el.getRootNode();
       const text = labelledBy
         .split(/\s+/)
-        .map((id) => document.getElementById(id)?.textContent || '')
+        .map((id) => root?.getElementById?.(id)?.textContent || document.getElementById(id)?.textContent || '')
         .join(' ');
       if (normalize(text)) return normalize(text);
     }
@@ -375,19 +394,49 @@ _BROWSER_ELEMENT_MAP_SCRIPT = r"""
     return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.right >= 0 &&
       rect.top <= Math.max(window.innerHeight, 1) * 3 && rect.left <= Math.max(window.innerWidth, 1) * 3;
   };
-  const candidates = Array.from(document.querySelectorAll(selectors));
+  const interactable = (el) => Boolean(el.matches && el.matches([
+    'a[href]',
+    'button',
+    'input',
+    'textarea',
+    'select',
+    'form',
+    '[role="button"]',
+    '[role="link"]',
+    '[role="menuitem"]',
+    '[role="checkbox"]',
+    '[role="radio"]',
+    '[role="tab"]',
+    'summary',
+    'label'
+  ].join(',')));
+  const computedSummary = (el) => {
+    const style = window.getComputedStyle(el);
+    return {
+      display: style.display,
+      position: style.position,
+      color: style.color,
+      background: style.backgroundColor,
+      font: `${style.fontSize} ${style.fontFamily}`,
+      margin: style.margin,
+      padding: style.padding,
+      border: style.border,
+      border_radius: style.borderRadius,
+      box_sizing: style.boxSizing,
+    };
+  };
   const mapped = [];
   const seen = new Set();
-  for (const el of candidates) {
-    if (!(el instanceof Element) || !isVisible(el)) continue;
+  const mapElement = (el, shadowPath) => {
+    if (!(el instanceof Element) || !isVisible(el)) return;
     const role = inferredRole(el);
     const selector = cssPath(el);
     const text = accessibleName(el);
     const href = el instanceof HTMLAnchorElement ? el.href : '';
     const form = el instanceof HTMLFormElement ? el : el.closest('form');
-    const key = `${role}|${selector}|${href}|${text.slice(0, 80)}`;
+    const key = `${frameId}|${shadowPath.join('>')}|${role}|${selector}|${href}|${text.slice(0, 80)}`;
     const nodeId = normalize(el.getAttribute('data-pa-node-id')) || `pa_${hash(key)}`;
-    if (seen.has(nodeId)) continue;
+    if (seen.has(nodeId)) return;
     seen.add(nodeId);
     el.setAttribute('data-pa-node-id', nodeId);
     el.setAttribute('data-pa-role', role);
@@ -402,26 +451,74 @@ _BROWSER_ELEMENT_MAP_SCRIPT = r"""
       name: normalize(el.getAttribute('name')),
       input_type: el instanceof HTMLInputElement ? normalize(el.type) : '',
       form_method: form ? normalize(form.getAttribute('method') || 'get').toLowerCase() : '',
-      form_action: form ? new URL(form.getAttribute('action') || document.baseURI, document.baseURI).href : '',
+      form_action: form ? new URL(form.getAttribute('action') || el.ownerDocument.baseURI, el.ownerDocument.baseURI).href : '',
+      tab_id: '',
+      frame_id: frameId,
+      frame_url: frameUrl,
+      selector_chain: [...shadowPath, selector],
+      shadow_path: shadowPath,
+      stable_key: key,
+      interactable: interactable(el),
+      computed_summary: computedSummary(el),
       bounds: {
-        x: Math.round(rect.x),
-        y: Math.round(rect.y),
+        x: Math.round(rect.x + offsetX),
+        y: Math.round(rect.y + offsetY),
         width: Math.round(rect.width),
         height: Math.round(rect.height)
       },
       visible: true
     });
-    if (mapped.length >= 220) break;
+  };
+  const collect = (root, shadowPath = []) => {
+    if (!root || typeof root.querySelectorAll !== 'function' || mapped.length >= 500) return;
+    for (const el of Array.from(root.querySelectorAll(selectors))) {
+      mapElement(el, shadowPath);
+      if (mapped.length >= 500) return;
+    }
+    for (const host of Array.from(root.querySelectorAll('*'))) {
+      if (!host.shadowRoot) continue;
+      const hostSelector = cssPath(host);
+      collect(host.shadowRoot, [...shadowPath, hostSelector]);
+      if (mapped.length >= 500) return;
+    }
   }
+  collect(document, []);
   return mapped;
 }
 """
 
 _BROWSER_ACT_SCRIPT = r"""
-async ({ nodeId, selector, action, value, key }) => {
+async ({ nodeId, selector, shadowPath, action, value, key, targetSelector, targetShadowPath, timeoutMs, text, x, y }) => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  let el = Array.from(document.querySelectorAll('[data-pa-node-id]'))
-    .find((candidate) => candidate.getAttribute('data-pa-node-id') === nodeId);
+  if (action === 'wait') {
+    await sleep(Math.min(Math.max(Number(timeoutMs || value || 1000), 1), 120000));
+    return { ok: true, node_id: nodeId, action, url: window.location.href };
+  }
+  if (action === 'screenshot') {
+    return { ok: true, node_id: nodeId, action, url: window.location.href };
+  }
+  const resolveRoot = (path) => {
+    let root = document;
+    for (const hostSelector of Array.isArray(path) ? path : []) {
+      if (!hostSelector || typeof root.querySelector !== 'function') return null;
+      const host = root.querySelector(hostSelector);
+      if (!host || !host.shadowRoot) return null;
+      root = host.shadowRoot;
+    }
+    return root;
+  };
+  const resolveElement = (nextNodeId, nextSelector, nextShadowPath) => {
+    const root = resolveRoot(nextShadowPath) || document;
+    let found = Array.from(root.querySelectorAll('[data-pa-node-id]'))
+      .find((candidate) => candidate.getAttribute('data-pa-node-id') === nextNodeId);
+    if (!found && nextSelector) {
+      try {
+        found = root.querySelector(nextSelector);
+      } catch (_error) {}
+    }
+    return found || null;
+  };
+  let el = resolveElement(nodeId, selector, shadowPath);
   if (!el && selector) {
     try {
       el = document.querySelector(selector);
@@ -429,6 +526,14 @@ async ({ nodeId, selector, action, value, key }) => {
   }
   if (!el) return { ok: false, reason: 'node_not_found' };
   const dispatch = (target, type) => target.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));
+  const mouse = (target, type, options = {}) => target.dispatchEvent(new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    clientX: options.clientX ?? Math.round(target.getBoundingClientRect().left + target.getBoundingClientRect().width / 2),
+    clientY: options.clientY ?? Math.round(target.getBoundingClientRect().top + target.getBoundingClientRect().height / 2),
+    button: 0,
+  }));
   const focus = () => {
     if (typeof el.focus === 'function') {
       try { el.focus({ preventScroll: false }); } catch (_error) { el.focus(); }
@@ -456,11 +561,108 @@ async ({ nodeId, selector, action, value, key }) => {
     const nextKey = String(key || value || 'Enter');
     el.dispatchEvent(new KeyboardEvent('keydown', { key: nextKey, bubbles: true, cancelable: true }));
     el.dispatchEvent(new KeyboardEvent('keyup', { key: nextKey, bubbles: true, cancelable: true }));
+  } else if (action === 'hover') {
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    await sleep(80);
+    mouse(el, 'mouseover');
+    mouse(el, 'mousemove');
+  } else if (action === 'scroll_to') {
+    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+  } else if (action === 'select_text') {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const selection = window.getSelection();
+    if (!selection) return { ok: false, reason: 'selection_unavailable' };
+    selection.removeAllRanges();
+    selection.addRange(range);
+  } else if (action === 'drag' || action === 'drop') {
+    const target = targetSelector ? resolveElement('', targetSelector, targetShadowPath) : null;
+    if (action === 'drop' && !target) return { ok: false, reason: 'drop_target_not_found' };
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    await sleep(80);
+    const start = el.getBoundingClientRect();
+    const end = target ? target.getBoundingClientRect() : {
+      left: Number(x || start.left + start.width / 2),
+      top: Number(y || start.top + start.height / 2),
+      width: 1,
+      height: 1,
+    };
+    const dataTransfer = new DataTransfer();
+    mouse(el, 'mousedown', { clientX: start.left + start.width / 2, clientY: start.top + start.height / 2 });
+    el.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer }));
+    if (target) {
+      target.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer }));
+      target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer }));
+      target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }));
+    }
+    el.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer }));
+    mouse(el, 'mouseup', { clientX: end.left + end.width / 2, clientY: end.top + end.height / 2 });
+  } else if (action === 'upload') {
+    if (!(el instanceof HTMLInputElement) || el.type !== 'file') return { ok: false, reason: 'not_file_input' };
+    return { ok: false, reason: 'upload_requires_playwright_file_set' };
   } else {
     return { ok: false, reason: 'unsupported_action' };
   }
   await sleep(350);
   return { ok: true, node_id: nodeId, action, url: window.location.href };
+}
+"""
+
+_COMPUTED_HTML_SNAPSHOT_SCRIPT = r"""
+({ url }) => {
+  const important = [
+    'display', 'position', 'box-sizing', 'float', 'clear',
+    'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',
+    'margin', 'padding', 'border', 'border-radius', 'outline',
+    'font', 'font-size', 'font-family', 'font-weight', 'font-style', 'line-height',
+    'letter-spacing', 'text-align', 'text-decoration', 'text-transform', 'white-space',
+    'color', 'background', 'background-color', 'background-image', 'background-size',
+    'background-position', 'background-repeat', 'opacity',
+    'display', 'flex-direction', 'flex-wrap', 'align-items', 'align-content',
+    'justify-content', 'gap', 'row-gap', 'column-gap',
+    'grid-template-columns', 'grid-template-rows', 'grid-auto-flow',
+    'list-style', 'vertical-align', 'overflow', 'object-fit', 'object-position'
+  ];
+  const clone = document.documentElement.cloneNode(true);
+  const sourceNodes = [document.documentElement, ...document.documentElement.querySelectorAll('*')];
+  const cloneNodes = [clone, ...clone.querySelectorAll('*')];
+  const visible = (el) => {
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+  };
+  for (let index = 0; index < sourceNodes.length && index < cloneNodes.length && index < 1600; index += 1) {
+    const source = sourceNodes[index];
+    const target = cloneNodes[index];
+    if (!target || !source || target.nodeType !== Node.ELEMENT_NODE) continue;
+    if (['SCRIPT', 'NOSCRIPT', 'TEMPLATE'].includes(target.tagName)) {
+      target.remove();
+      continue;
+    }
+    if (!visible(source) && target.tagName !== 'HTML' && target.tagName !== 'BODY' && target.tagName !== 'HEAD') {
+      target.setAttribute('data-pa-hidden', 'true');
+      target.setAttribute('style', 'display:none !important');
+      continue;
+    }
+    const style = window.getComputedStyle(source);
+    const inline = [];
+    for (const prop of important) {
+      const value = style.getPropertyValue(prop);
+      if (value) inline.push(`${prop}:${value}`);
+    }
+    target.setAttribute('style', inline.join(';'));
+  }
+  clone.querySelectorAll('script,noscript,template,[data-pa-hidden="true"]').forEach((node) => node.remove());
+  const head = clone.querySelector('head') || clone.insertBefore(document.createElement('head'), clone.firstChild);
+  head.querySelectorAll('link[rel~="stylesheet"],style[data-personagent-embedded-css]').forEach((node) => node.remove());
+  const base = document.createElement('base');
+  base.href = url || document.baseURI || window.location.href;
+  head.insertBefore(base, head.firstChild);
+  const marker = document.createElement('meta');
+  marker.setAttribute('name', 'personagent-css-fidelity');
+  marker.setAttribute('content', 'computed');
+  head.appendChild(marker);
+  return '<!doctype html>\n' + clone.outerHTML;
 }
 """
 
@@ -556,6 +758,30 @@ class BrowserOpenedPage:
             "source_search_id": self.source_search_id,
             "opener_tool_call_id": self.opener_tool_call_id,
             "extraction_count": self.extraction_count,
+        }
+
+
+@dataclass(slots=True)
+class BrowserConsoleEntry:
+    """Bounded console event captured for one logical browser page."""
+
+    entry_id: int
+    page_id: str
+    level: str
+    text: str
+    source: str
+    url: str = ""
+    timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.entry_id,
+            "page_id": self.page_id,
+            "level": self.level,
+            "text": self.text,
+            "source": self.source,
+            "url": self.url,
+            "timestamp": self.timestamp,
         }
 
 
@@ -892,6 +1118,9 @@ class LightPandaBrowserWorker:
         self._opened_pages_cache: dict[str, list[BrowserOpenedPage]] = {}
         self._element_map_cache: dict[str, list[dict[str, Any]]] = {}
         self._stylesheet_cache: dict[str, tuple[float, str]] = {}
+        self._console_cache: dict[str, dict[str, list[BrowserConsoleEntry]]] = {}
+        self._console_sequence = 0
+        self._console_listener_keys: set[tuple[str, str, int]] = set()
 
     async def warmup(self) -> bool:
         """Best-effort startup connection. Failures are logged, not raised."""
@@ -920,6 +1149,8 @@ class LightPandaBrowserWorker:
             self._last_open_cache.clear()
             self._opened_pages_cache.clear()
             self._stylesheet_cache.clear()
+            self._console_cache.clear()
+            self._console_listener_keys.clear()
 
     @property
     def search_provider_label(self) -> str:
@@ -1075,6 +1306,7 @@ class LightPandaBrowserWorker:
         session.last_open_url = opened_page.final_url
         session.last_open_page_id = opened_page.page_id
         session.current_page_id = opened_page.page_id
+        self._attach_page_console_listeners(conversation_id, opened_page.page_id, page)
         session.touch()
         return {
             "type": "browser_open",
@@ -1497,6 +1729,12 @@ class LightPandaBrowserWorker:
         height: int,
         value: str | None = None,
         key: str | None = None,
+        target_node_id: str | None = None,
+        timeout_ms: int | None = None,
+        files: list[str] | None = None,
+        text: str | None = None,
+        x: float | None = None,
+        y: float | None = None,
     ) -> dict[str, Any]:
         """Execute a mapped DOM action and return the updated browser workspace view."""
 
@@ -1504,8 +1742,23 @@ class LightPandaBrowserWorker:
         normalized_action = str(action or "").strip().lower()
         if not normalized_node_id:
             raise BrowserError("BrowserAct requires node_id.")
-        if normalized_action not in {"click", "fill", "submit", "select", "press"}:
-            raise BrowserError("BrowserAct action must be click, fill, submit, select, or press.")
+        supported_actions = {
+            "click",
+            "fill",
+            "submit",
+            "select",
+            "press",
+            "hover",
+            "wait",
+            "drag",
+            "drop",
+            "upload",
+            "select_text",
+            "scroll_to",
+            "screenshot",
+        }
+        if normalized_action not in supported_actions:
+            raise BrowserError(f"BrowserAct action must be one of: {', '.join(sorted(supported_actions))}.")
         session = await self._get_session(browser_id)
         page = self._preferred_session_page(session)
         session.page = page
@@ -1513,20 +1766,41 @@ class LightPandaBrowserWorker:
         await self._set_page_viewport(page, viewport_width, viewport_height)
         # The snapshot step injects stable data-pa-node-id attributes. Re-inject before acting
         # so agent tools can act after a fresh BrowserOpen without a visible UI snapshot.
-        await self._browser_element_map(page)
-        cached_selector = self._element_selector(browser_id, normalized_node_id)
-        before_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
-        result = await self._evaluate_page(
-            page,
-            _BROWSER_ACT_SCRIPT,
-            {
-                "nodeId": normalized_node_id,
-                "selector": cached_selector,
-                "action": normalized_action,
-                "value": value,
-                "key": key,
-            },
+        raw_map = await self._browser_element_map(page)
+        self._element_map_cache[browser_id] = self._enrich_browser_element_map(
+            raw_map,
+            browser_id=browser_id,
+            tab_id=session.current_page_id or browser_id,
         )
+        target = self._element_target(browser_id, normalized_node_id)
+        target_action = self._element_target(browser_id, str(target_node_id or "").strip())
+        cached_selector = str(target.get("selector") or "")
+        target_selector = str(target_action.get("selector") or "")
+        action_context = await self._action_context_for_element(page, target)
+        before_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
+        if normalized_action == "upload":
+            result = await self._upload_files(action_context, cached_selector, files or [])
+        else:
+            result = await self._evaluate_page(
+                action_context,
+                _BROWSER_ACT_SCRIPT,
+                {
+                    "nodeId": normalized_node_id,
+                    "selector": cached_selector,
+                    "shadowPath": target.get("shadow_path") if isinstance(target.get("shadow_path"), list) else [],
+                    "action": normalized_action,
+                    "value": value,
+                    "key": key,
+                    "targetSelector": target_selector,
+                    "targetShadowPath": target_action.get("shadow_path")
+                    if isinstance(target_action.get("shadow_path"), list)
+                    else [],
+                    "timeoutMs": timeout_ms,
+                    "text": text,
+                    "x": x,
+                    "y": y,
+                },
+            )
         after_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
         navigated = bool(after_url and after_url != before_url)
         if (not isinstance(result, Mapping) or not result.get("ok")) and not navigated:
@@ -1550,7 +1824,672 @@ class LightPandaBrowserWorker:
             "action": normalized_action,
             "value": value if normalized_action in {"fill", "select"} else None,
             "key": key if normalized_action == "press" else None,
+            "target_node_id": target_node_id,
+            "timeout_ms": timeout_ms,
+            "files": files if normalized_action == "upload" else None,
+            "text": text if normalized_action == "select_text" else None,
         }
+        return view
+
+    async def click(
+        self,
+        *,
+        conversation_id: str,
+        page_id: str | None = None,
+        node_id: str | None = None,
+        x: float | None = None,
+        y: float | None = None,
+        width: int = 1024,
+        height: int = 720,
+        button: str = "left",
+        click_count: int = 1,
+        modifiers: list[str] | None = None,
+        wait_after_ms: int = 250,
+    ) -> dict[str, Any]:
+        """Click a mapped element or viewport coordinate on a live browser page."""
+
+        session, page, resolved_page_id = await self._resolve_live_page(
+            conversation_id,
+            page_id=page_id,
+            activate=True,
+        )
+        viewport_width, viewport_height = _clamped_viewport(width, height)
+        before_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
+        safe_wait_ms = min(max(int(wait_after_ms), 0), 10_000)
+        if node_id:
+            view = await self.view_act(
+                browser_id=conversation_id,
+                node_id=node_id,
+                action="click",
+                width=viewport_width,
+                height=viewport_height,
+            )
+        else:
+            if x is None or y is None:
+                raise BrowserError("BrowserClick requires node_id or x/y coordinates.")
+            await self._set_page_viewport(page, viewport_width, viewport_height)
+            mouse = getattr(page, "mouse", None)
+            click = getattr(mouse, "click", None)
+            if not callable(click):
+                raise BrowserUnavailableError("Browser pointer interaction is unavailable.")
+            safe_button = button if button in {"left", "middle", "right"} else "left"
+            kwargs = {
+                "button": safe_button,
+                "click_count": min(max(int(click_count), 1), 3),
+            }
+            if modifiers:
+                keyboard = getattr(page, "keyboard", None)
+                for modifier in modifiers:
+                    down = getattr(keyboard, "down", None)
+                    if callable(down):
+                        with suppress(Exception):
+                            await down(str(modifier))
+                try:
+                    await click(
+                        min(max(float(x), 0.0), float(viewport_width)),
+                        min(max(float(y), 0.0), float(viewport_height)),
+                        **kwargs,
+                    )
+                finally:
+                    for modifier in reversed(modifiers):
+                        up = getattr(keyboard, "up", None)
+                        if callable(up):
+                            with suppress(Exception):
+                                await up(str(modifier))
+            else:
+                try:
+                    await click(
+                        min(max(float(x), 0.0), float(viewport_width)),
+                        min(max(float(y), 0.0), float(viewport_height)),
+                        **kwargs,
+                    )
+                except TypeError:
+                    kwargs.pop("click_count", None)
+                    await click(
+                        min(max(float(x), 0.0), float(viewport_width)),
+                        min(max(float(y), 0.0), float(viewport_height)),
+                        **kwargs,
+                    )
+            with suppress(Exception):
+                await page.wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 5_000))
+            if safe_wait_ms:
+                with suppress(Exception):
+                    await page.wait_for_timeout(safe_wait_ms)
+            session.touch()
+            view = await self._browser_view_snapshot(
+                conversation_id,
+                session,
+                width=viewport_width,
+                height=viewport_height,
+            )
+        after_url = _clean_browser_url(str(getattr(page, "url", "") or view.get("url") or ""))
+        view.update(
+            {
+                "type": "browser_click",
+                "page_id": resolved_page_id,
+                "window_id": resolved_page_id,
+                "navigated": bool(after_url and before_url and after_url != before_url),
+                "last_action": {
+                    "action": "click",
+                    "node_id": node_id,
+                    "x": x,
+                    "y": y,
+                    "button": button,
+                    "click_count": min(max(int(click_count), 1), 3),
+                    "modifiers": modifiers or [],
+                },
+            }
+        )
+        return view
+
+    async def type_input(
+        self,
+        *,
+        conversation_id: str,
+        page_id: str | None = None,
+        node_id: str | None = None,
+        mode: str = "type",
+        text: str | None = None,
+        key: str | None = None,
+        clear: bool = False,
+        delay_ms: int = 0,
+        submit: bool = False,
+        width: int = 1024,
+        height: int = 720,
+    ) -> dict[str, Any]:
+        """Type, fill, or press keys on a live browser page."""
+
+        session, page, resolved_page_id = await self._resolve_live_page(
+            conversation_id,
+            page_id=page_id,
+            activate=True,
+        )
+        viewport_width, viewport_height = _clamped_viewport(width, height)
+        normalized_mode = str(mode or "type").strip().lower()
+        if normalized_mode not in {"type", "fill", "press"}:
+            raise BrowserError("BrowserType mode must be one of: type, fill, press.")
+        before_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
+        if node_id and normalized_mode == "fill":
+            view = await self.view_act(
+                browser_id=conversation_id,
+                node_id=node_id,
+                action="fill",
+                value=text or "",
+                width=viewport_width,
+                height=viewport_height,
+            )
+        elif node_id and normalized_mode == "press":
+            view = await self.view_act(
+                browser_id=conversation_id,
+                node_id=node_id,
+                action="press",
+                key=key or text or "",
+                width=viewport_width,
+                height=viewport_height,
+            )
+        else:
+            await self._set_page_viewport(page, viewport_width, viewport_height)
+            if node_id:
+                await self.view_act(
+                    browser_id=conversation_id,
+                    node_id=node_id,
+                    action="click",
+                    width=viewport_width,
+                    height=viewport_height,
+                )
+            keyboard = getattr(page, "keyboard", None)
+            if keyboard is None:
+                raise BrowserUnavailableError("Browser keyboard interaction is unavailable.")
+            if clear:
+                press_key = getattr(keyboard, "press", None)
+                if callable(press_key):
+                    with suppress(Exception):
+                        await press_key("Control+A")
+                    with suppress(Exception):
+                        await press_key("Backspace")
+            if normalized_mode == "press":
+                press_key = getattr(keyboard, "press", None)
+                if not callable(press_key):
+                    raise BrowserUnavailableError("Browser key input is unavailable.")
+                await press_key(key or text or "")
+            elif text:
+                type_text = getattr(keyboard, "type", None)
+                if not callable(type_text):
+                    raise BrowserUnavailableError("Browser text input is unavailable.")
+                delay = min(max(int(delay_ms), 0), 1_000)
+                try:
+                    await type_text(text, delay=delay)
+                except TypeError:
+                    await type_text(text)
+            if submit:
+                press_key = getattr(keyboard, "press", None)
+                if callable(press_key):
+                    await press_key("Enter")
+            with suppress(Exception):
+                await page.wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 5_000))
+            with suppress(Exception):
+                await page.wait_for_timeout(120)
+            session.touch()
+            view = await self._browser_view_snapshot(
+                conversation_id,
+                session,
+                width=viewport_width,
+                height=viewport_height,
+            )
+        if submit and node_id and normalized_mode in {"fill", "press"}:
+            keyboard = getattr(session.page, "keyboard", None)
+            press_key = getattr(keyboard, "press", None)
+            if callable(press_key):
+                with suppress(Exception):
+                    await press_key("Enter")
+                with suppress(Exception):
+                    await session.page.wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 5_000))
+                with suppress(Exception):
+                    await session.page.wait_for_timeout(120)
+                view = await self._browser_view_snapshot(
+                    conversation_id,
+                    session,
+                    width=viewport_width,
+                    height=viewport_height,
+                )
+        after_url = _clean_browser_url(str(getattr(page, "url", "") or view.get("url") or ""))
+        view.update(
+            {
+                "type": "browser_type",
+                "page_id": resolved_page_id,
+                "window_id": resolved_page_id,
+                "navigated": bool(after_url and before_url and after_url != before_url),
+                "last_action": {
+                    "action": normalized_mode,
+                    "node_id": node_id,
+                    "text": text if normalized_mode in {"type", "fill"} else None,
+                    "key": key if normalized_mode == "press" else None,
+                    "clear": bool(clear),
+                    "submit": bool(submit),
+                },
+            }
+        )
+        return view
+
+    async def screenshot(
+        self,
+        *,
+        conversation_id: str,
+        page_id: str | None = None,
+        width: int = 1024,
+        height: int = 720,
+        full_page: bool = False,
+        image_format: str = "png",
+        quality: int | None = None,
+    ) -> dict[str, Any]:
+        """Capture a page screenshot or return the controlled DOM-mirror fallback."""
+
+        session, page, resolved_page_id = await self._resolve_live_page(
+            conversation_id,
+            page_id=page_id,
+            activate=True,
+        )
+        viewport_width, viewport_height = _clamped_viewport(width, height)
+        await self._set_page_viewport(page, viewport_width, viewport_height)
+        title, user_agent, raw_element_map, html = await asyncio.gather(
+            self._safe_title(page),
+            self._safe_user_agent(page),
+            self._browser_element_map(page),
+            self._safe_html(page),
+        )
+        current_url = _clean_browser_url(str(getattr(page, "url", "") or "about:blank"))
+        runtime = "lightpanda" if user_agent.lower().startswith("lightpanda/") else "chrome_cdp"
+        render_mode = "html_mirror"
+        image_data = ""
+        image_error = ""
+        screenshot_method = ""
+        requested_format = str(image_format or "png").lower()
+        if requested_format not in {"png", "jpeg"}:
+            requested_format = "png"
+        if runtime == "lightpanda":
+            image_error = "LightPanda has no graphical rendering engine; using DOM mirror."
+        else:
+            try:
+                screenshot = getattr(page, "screenshot", None)
+                if not callable(screenshot):
+                    raise BrowserUnavailableError("Page screenshot capture is unavailable.")
+                kwargs: dict[str, Any] = {
+                    "type": requested_format,
+                    "full_page": bool(full_page),
+                }
+                if requested_format == "jpeg" and quality is not None:
+                    kwargs["quality"] = min(max(int(quality), 1), 100)
+                raw_image = await asyncio.wait_for(
+                    screenshot(**kwargs),
+                    timeout=min(max(self.timeout_ms / 1000, 1.0), 10.0),
+                )
+                image_data = base64.b64encode(raw_image).decode("ascii")
+                render_mode = "pixel"
+                screenshot_method = "playwright_page_screenshot"
+            except Exception as exc:
+                image_error = str(exc)
+                logger.warning("browser_control_screenshot_failed", error=image_error)
+        element_map = self._enrich_browser_element_map(
+            raw_element_map,
+            browser_id=conversation_id,
+            tab_id=resolved_page_id,
+        )
+        self._element_map_cache[conversation_id] = element_map
+        session.current_url = current_url or session.current_url
+        session.touch()
+        return {
+            "type": "browser_screenshot",
+            "page_id": resolved_page_id,
+            "window_id": resolved_page_id,
+            "url": current_url,
+            "title": title,
+            "runtime": runtime,
+            "render_mode": render_mode,
+            "active_tab_id": session.current_page_id or resolved_page_id,
+            "navigated": False,
+            "image_data": image_data,
+            "image_mime_type": f"image/{requested_format}" if image_data else "",
+            "screenshot_method": screenshot_method,
+            "screenshot_error": image_error,
+            "can_capture": bool(image_data),
+            "viewport_width": viewport_width,
+            "viewport_height": viewport_height,
+            "full_page": bool(full_page),
+            "html": html if not image_data else "",
+            "document_html": html if not image_data else "",
+            "element_map": element_map[:80],
+        }
+
+    async def close_tab(
+        self,
+        *,
+        conversation_id: str,
+        page_id: str | None = None,
+        max_tabs: int = 20,
+    ) -> dict[str, Any]:
+        """Close one logical browser tab and return the updated tab list."""
+
+        session = await self._get_session(conversation_id)
+        target_page_id = str(page_id or session.current_page_id or session.last_open_page_id or "").strip()
+        if not target_page_id:
+            last_open = self._last_open_cache.get(conversation_id)
+            target_page_id = last_open.page_id if last_open is not None else ""
+        if not target_page_id:
+            raise BrowserError("No browser page selected. Run BrowserOpen first.")
+        live_page = session.pages.pop(target_page_id, None)
+        closed = False
+        if live_page is not None:
+            await self._best_effort_resource_call("browser_control_close_page", live_page.close)
+            closed = True
+        pages = self._opened_pages_cache.get(conversation_id, [])
+        remaining_pages = [opened_page for opened_page in pages if opened_page.page_id != target_page_id]
+        self._opened_pages_cache[conversation_id] = remaining_pages
+        if self._last_open_cache.get(conversation_id) is not None and self._last_open_cache[conversation_id].page_id == target_page_id:
+            if remaining_pages:
+                self._last_open_cache[conversation_id] = remaining_pages[0]
+            else:
+                self._last_open_cache.pop(conversation_id, None)
+        self._console_cache.get(conversation_id, {}).pop(target_page_id, None)
+        self._element_map_cache.pop(conversation_id, None)
+        if session.current_page_id == target_page_id:
+            next_page_id = next((candidate for candidate in session.pages if candidate != target_page_id), None)
+            if next_page_id:
+                session.current_page_id = next_page_id
+                session.last_open_page_id = next_page_id
+                session.page = session.pages[next_page_id]
+            elif remaining_pages:
+                session.current_page_id = remaining_pages[0].page_id
+                session.last_open_page_id = remaining_pages[0].page_id
+            else:
+                session.current_page_id = None
+                session.last_open_page_id = None
+        session.touch()
+        tabs = await self.list_tabs(conversation_id=conversation_id, max_tabs=max_tabs)
+        tabs.update(
+            {
+                "type": "browser_close_tab",
+                "closed_page_id": target_page_id,
+                "closed_window_id": target_page_id,
+                "closed": closed or len(remaining_pages) != len(pages),
+            }
+        )
+        return tabs
+
+    async def read_console(
+        self,
+        *,
+        conversation_id: str,
+        page_id: str | None = None,
+        levels: list[str] | None = None,
+        since_id: int | None = None,
+        limit: int = 100,
+        clear: bool = False,
+    ) -> dict[str, Any]:
+        """Read a bounded ring buffer of captured console events for a browser page."""
+
+        session = await self._get_session(conversation_id)
+        target_page_id = str(page_id or session.current_page_id or session.last_open_page_id or "").strip()
+        if not target_page_id:
+            last_open = self._last_open_cache.get(conversation_id)
+            target_page_id = last_open.page_id if last_open is not None else conversation_id
+        allowed_levels = {str(level).lower() for level in levels or [] if str(level).strip()}
+        page_entries = list(self._console_cache.get(conversation_id, {}).get(target_page_id, []))
+        if since_id is not None:
+            page_entries = [entry for entry in page_entries if entry.entry_id > int(since_id)]
+        if allowed_levels:
+            page_entries = [entry for entry in page_entries if entry.level.lower() in allowed_levels]
+        safe_limit = min(max(int(limit), 1), _MAX_CONSOLE_ENTRIES_PER_PAGE)
+        selected = page_entries[-safe_limit:]
+        if clear:
+            self._console_cache.get(conversation_id, {}).pop(target_page_id, None)
+        page = session.pages.get(target_page_id) or self._preferred_session_page(session)
+        return {
+            "type": "browser_console",
+            "page_id": target_page_id,
+            "window_id": target_page_id,
+            "url": _clean_browser_url(str(getattr(page, "url", "") or session.current_url or "")),
+            "title": await self._safe_title(page),
+            "runtime": await self._page_runtime(page),
+            "render_mode": "html_mirror" if await self._is_lightpanda_page(page) else "pixel",
+            "active_tab_id": session.current_page_id or target_page_id,
+            "navigated": False,
+            "entries": [entry.to_dict() for entry in selected],
+            "next_since_id": selected[-1].entry_id if selected else since_id,
+            "cleared": bool(clear),
+        }
+
+    async def script(
+        self,
+        *,
+        conversation_id: str,
+        page_id: str | None = None,
+        mode: str = "evaluate",
+        script: str | None = None,
+        args: Any | None = None,
+        cdp_method: str | None = None,
+        cdp_params: dict[str, Any] | None = None,
+        timeout_ms: int = 5_000,
+    ) -> dict[str, Any]:
+        """Run allowlisted page JS or selected CDP methods for advanced browser control."""
+
+        session, page, resolved_page_id = await self._resolve_live_page(
+            conversation_id,
+            page_id=page_id,
+            activate=True,
+        )
+        normalized_mode = str(mode or "evaluate").strip().lower()
+        safe_timeout_ms = min(max(int(timeout_ms), 1), 30_000)
+        current_url = _clean_browser_url(str(getattr(page, "url", "") or session.current_url or "about:blank"))
+        if normalized_mode == "evaluate":
+            if not isinstance(script, str) or not script.strip():
+                raise BrowserError("BrowserScript evaluate requires a non-empty script.")
+            if len(script) > _MAX_BROWSER_SCRIPT_CHARS:
+                raise BrowserError(f"BrowserScript script is too large; max {_MAX_BROWSER_SCRIPT_CHARS} characters.")
+            value = await asyncio.wait_for(
+                self._evaluate_page(page, script, args),
+                timeout=safe_timeout_ms / 1000,
+            )
+            method = "Runtime.evaluate"
+        elif normalized_mode == "cdp":
+            method = str(cdp_method or "").strip()
+            if method not in _BROWSER_SCRIPT_CDP_ALLOWLIST:
+                raise BrowserError(
+                    "BrowserScript cdp_method must be one of: "
+                    + ", ".join(sorted(_BROWSER_SCRIPT_CDP_ALLOWLIST))
+                    + "."
+                )
+            raw_params = cdp_params or {}
+            if len(json.dumps(raw_params, ensure_ascii=False, default=str)) > _MAX_BROWSER_SCRIPT_CHARS:
+                raise BrowserError(
+                    f"BrowserScript cdp_params is too large; max {_MAX_BROWSER_SCRIPT_CHARS} serialized characters."
+                )
+            expression = raw_params.get("expression") if isinstance(raw_params, dict) else None
+            if isinstance(expression, str) and len(expression) > _MAX_BROWSER_SCRIPT_CHARS:
+                raise BrowserError(
+                    f"BrowserScript Runtime.evaluate expression is too large; max {_MAX_BROWSER_SCRIPT_CHARS} characters."
+                )
+            value = await asyncio.wait_for(
+                self._cdp_command_for_page(
+                    page,
+                    url=current_url,
+                    method=method,
+                    params=raw_params,
+                ),
+                timeout=safe_timeout_ms / 1000,
+            )
+        else:
+            raise BrowserError("BrowserScript mode must be one of: evaluate, cdp.")
+        result_text, result, truncated = self._bounded_script_result(value)
+        return {
+            "type": "browser_script",
+            "page_id": resolved_page_id,
+            "window_id": resolved_page_id,
+            "url": current_url,
+            "title": await self._safe_title(page),
+            "runtime": await self._page_runtime(page),
+            "render_mode": "html_mirror" if await self._is_lightpanda_page(page) else "pixel",
+            "active_tab_id": session.current_page_id or resolved_page_id,
+            "navigated": False,
+            "mode": normalized_mode,
+            "cdp_method": method if normalized_mode == "cdp" else None,
+            "result": result,
+            "result_text": result_text,
+            "truncated": truncated,
+        }
+
+    async def scroll(
+        self,
+        *,
+        conversation_id: str,
+        page_id: str | None = None,
+        delta_x: float = 0.0,
+        delta_y: float = 600.0,
+        width: int = 1024,
+        height: int = 720,
+    ) -> dict[str, Any]:
+        session, _page, resolved_page_id = await self._resolve_live_page(
+            conversation_id,
+            page_id=page_id,
+            activate=True,
+        )
+        view = await self.view_scroll(
+            browser_id=conversation_id,
+            delta_x=delta_x,
+            delta_y=delta_y,
+            width=width,
+            height=height,
+        )
+        view.update(
+            {
+                "type": "browser_scroll",
+                "page_id": resolved_page_id,
+                "window_id": resolved_page_id,
+                "navigated": False,
+                "active_tab_id": session.current_page_id or resolved_page_id,
+            }
+        )
+        return view
+
+    async def reload(
+        self,
+        *,
+        conversation_id: str,
+        page_id: str | None = None,
+        width: int = 1024,
+        height: int = 720,
+    ) -> dict[str, Any]:
+        session, _page, resolved_page_id = await self._resolve_live_page(
+            conversation_id,
+            page_id=page_id,
+            activate=True,
+        )
+        view = await self.view_reload(browser_id=conversation_id, width=width, height=height)
+        view.update(
+            {
+                "type": "browser_reload",
+                "page_id": resolved_page_id,
+                "window_id": resolved_page_id,
+                "navigated": True,
+                "active_tab_id": session.current_page_id or resolved_page_id,
+            }
+        )
+        return view
+
+    async def history(
+        self,
+        *,
+        conversation_id: str,
+        page_id: str | None = None,
+        direction: int = -1,
+        width: int = 1024,
+        height: int = 720,
+    ) -> dict[str, Any]:
+        session, _page, resolved_page_id = await self._resolve_live_page(
+            conversation_id,
+            page_id=page_id,
+            activate=True,
+        )
+        safe_direction = -1 if int(direction) < 0 else 1
+        view = await self.view_history(
+            browser_id=conversation_id,
+            direction=safe_direction,
+            width=width,
+            height=height,
+        )
+        view.update(
+            {
+                "type": "browser_history",
+                "page_id": resolved_page_id,
+                "window_id": resolved_page_id,
+                "direction": safe_direction,
+                "navigated": True,
+                "active_tab_id": session.current_page_id or resolved_page_id,
+            }
+        )
+        return view
+
+    async def switch_tab(
+        self,
+        *,
+        conversation_id: str,
+        page_id: str,
+        max_tabs: int = 20,
+    ) -> dict[str, Any]:
+        session, page, resolved_page_id = await self._resolve_live_page(
+            conversation_id,
+            page_id=page_id,
+            activate=True,
+        )
+        session.current_url = _clean_browser_url(str(getattr(page, "url", "") or session.current_url or ""))
+        session.touch()
+        tabs = await self.list_tabs(conversation_id=conversation_id, max_tabs=max_tabs)
+        tabs.update(
+            {
+                "type": "browser_switch_tab",
+                "page_id": resolved_page_id,
+                "window_id": resolved_page_id,
+                "active_tab_id": resolved_page_id,
+                "navigated": False,
+            }
+        )
+        return tabs
+
+    async def wait(
+        self,
+        *,
+        conversation_id: str,
+        page_id: str | None = None,
+        timeout_ms: int = 1_000,
+        state: str | None = None,
+        width: int = 1024,
+        height: int = 720,
+    ) -> dict[str, Any]:
+        session, page, resolved_page_id = await self._resolve_live_page(
+            conversation_id,
+            page_id=page_id,
+            activate=True,
+        )
+        safe_timeout_ms = min(max(int(timeout_ms), 1), 120_000)
+        state_value = str(state or "").strip()
+        if state_value:
+            wait_for_load_state = getattr(page, "wait_for_load_state", None)
+            if callable(wait_for_load_state):
+                with suppress(Exception):
+                    await wait_for_load_state(state_value, timeout=safe_timeout_ms)
+        else:
+            with suppress(Exception):
+                await page.wait_for_timeout(safe_timeout_ms)
+        view = await self._browser_view_snapshot(conversation_id, session, width=width, height=height)
+        view.update(
+            {
+                "type": "browser_wait",
+                "page_id": resolved_page_id,
+                "window_id": resolved_page_id,
+                "timeout_ms": safe_timeout_ms,
+                "state": state_value or None,
+                "navigated": False,
+            }
+        )
         return view
 
     def search_url(self, query: str, *, max_results: int | None = None) -> str:
@@ -1608,11 +2547,16 @@ class LightPandaBrowserWorker:
         viewport_width, viewport_height = _clamped_viewport(width, height)
         await self._set_page_viewport(page, viewport_width, viewport_height)
         current_url = _clean_browser_url(str(getattr(page, "url", "") or "about:blank"))
-        title, user_agent, element_map, html = await asyncio.gather(
+        title, user_agent, raw_element_map, html = await asyncio.gather(
             self._safe_title(page),
             self._safe_user_agent(page),
             self._browser_element_map(page),
             self._safe_html(page),
+        )
+        element_map = self._enrich_browser_element_map(
+            raw_element_map,
+            browser_id=browser_id,
+            tab_id=session.current_page_id or browser_id,
         )
         self._element_map_cache[browser_id] = element_map
         html_from_fallback = False
@@ -1649,25 +2593,42 @@ class LightPandaBrowserWorker:
             session.current_url = current_url
             self._remember_current_url(browser_id, current_url)
         session.touch()
+        render_mode = "html_mirror" if is_lightpanda or not image_data else "pixel"
+        runtime = "lightpanda" if is_lightpanda else "chrome_cdp"
         css_fidelity = self._css_fidelity(
             html=html,
-            render_mode="html_mirror" if is_lightpanda or not image_data else "screenshot",
+            render_mode=render_mode,
             embedded_stylesheet_count=embedded_stylesheet_count,
         )
         if html_from_fallback and css_fidelity == "original":
             css_fidelity = "fallback_html"
+        if render_mode == "html_mirror" and css_fidelity == "fallback_html" and html.strip():
+            computed_html = await self._computed_html_snapshot(page, current_url)
+            if computed_html.strip():
+                html = computed_html
+                render_mode = "computed_html"
+                css_fidelity = "computed"
         fallback_reason = (
             ""
-            if css_fidelity in {"original", "pixel", "embedded"}
+            if css_fidelity in {"original", "pixel", "embedded", "computed"}
             else "Page HTML was captured, but original CSS could not be confirmed."
         )
+        if css_fidelity == "computed":
+            fallback_reason = "Original CSS was not confirmed; using a computed-style DOM snapshot."
+        tabs = self._browser_tabs_snapshot(browser_id, session, current_url=current_url, title=title, runtime=runtime)
+        active_tab_id = session.current_page_id or browser_id
+        frame_tree = await self._browser_frame_tree_snapshot(page, current_url=current_url, title=title)
         browser_snapshot = {
             "document_html": html,
             "url": current_url,
             "title": title,
-            "render_mode": "html_mirror" if is_lightpanda or not image_data else "screenshot",
+            "render_mode": render_mode,
+            "runtime": runtime,
             "css_fidelity": css_fidelity,
             "fallback_reason": fallback_reason,
+            "tabs": tabs,
+            "active_tab_id": active_tab_id,
+            "frame_tree": frame_tree,
             "element_map": element_map,
         }
         return {
@@ -1677,9 +2638,13 @@ class LightPandaBrowserWorker:
             "title": title,
             "html": html,
             "document_html": html,
-            "render_mode": browser_snapshot["render_mode"],
+            "render_mode": render_mode,
+            "runtime": runtime,
             "css_fidelity": css_fidelity,
             "fallback_reason": fallback_reason,
+            "tabs": tabs,
+            "active_tab_id": active_tab_id,
+            "frame_tree": frame_tree,
             "element_map": element_map,
             "annotations": [],
             "timeline_events": [],
@@ -1694,16 +2659,170 @@ class LightPandaBrowserWorker:
             "can_capture": bool(image_data),
         }
 
+    def _enrich_browser_element_map(
+        self,
+        raw_map: list[dict[str, Any]],
+        *,
+        browser_id: str,
+        tab_id: str,
+    ) -> list[dict[str, Any]]:
+        enriched: list[dict[str, Any]] = []
+        for item in raw_map:
+            if not isinstance(item, dict):
+                continue
+            node_id = str(item.get("node_id") or "").strip()
+            selector = str(item.get("selector") or "")
+            role = str(item.get("role") or "")
+            text = str(item.get("text") or "")
+            frame_id = str(item.get("frame_id") or "main")
+            stable_key = str(item.get("stable_key") or f"{tab_id}|{frame_id}|{selector}|{role}|{text[:80]}")
+            next_item = dict(item)
+            next_item["node_id"] = node_id
+            next_item["tab_id"] = str(item.get("tab_id") or tab_id or browser_id)
+            next_item["frame_id"] = frame_id
+            next_item["selector_chain"] = item.get("selector_chain") if isinstance(item.get("selector_chain"), list) else [selector]
+            next_item["shadow_path"] = item.get("shadow_path") if isinstance(item.get("shadow_path"), list) else []
+            next_item["stable_key"] = stable_key
+            next_item["interactable"] = bool(
+                item.get("interactable")
+                or role in {"link", "button", "input", "textbox", "select", "form", "checkbox", "radio", "tab"}
+            )
+            if not isinstance(next_item.get("computed_summary"), dict):
+                next_item["computed_summary"] = {}
+            enriched.append(next_item)
+            if len(enriched) >= 220:
+                break
+        return enriched
+
+    def _browser_tabs_snapshot(
+        self,
+        browser_id: str,
+        session: _BrowserSession,
+        *,
+        current_url: str,
+        title: str,
+        runtime: str,
+    ) -> list[dict[str, Any]]:
+        opened_pages = self._opened_pages_cache.get(browser_id, [])
+        active_tab_id = session.current_page_id or browser_id
+        tabs: list[dict[str, Any]] = []
+        for index, opened_page in enumerate(opened_pages[:50], start=1):
+            tabs.append(
+                {
+                    "tab_id": opened_page.page_id,
+                    "id": opened_page.page_id,
+                    "url": opened_page.final_url or opened_page.url,
+                    "title": opened_page.title or title,
+                    "runtime": runtime,
+                    "active": opened_page.page_id == active_tab_id,
+                    "is_active": opened_page.page_id == active_tab_id,
+                    "history": [opened_page.final_url or opened_page.url],
+                    "index": index,
+                }
+            )
+        if not tabs:
+            tabs.append(
+                {
+                    "tab_id": active_tab_id,
+                    "id": active_tab_id,
+                    "url": current_url,
+                    "title": title,
+                    "runtime": runtime,
+                    "active": True,
+                    "is_active": True,
+                    "history": [current_url] if current_url and current_url != "about:blank" else [],
+                    "index": 1,
+                }
+            )
+        return tabs
+
     async def _browser_element_map(self, page: Any) -> list[dict[str, Any]]:
+        mapped: list[dict[str, Any]] = []
         with suppress(Exception):
-            value = await self._evaluate_page(page, _BROWSER_ELEMENT_MAP_SCRIPT)
+            value = await self._evaluate_page(
+                page,
+                _BROWSER_ELEMENT_MAP_SCRIPT,
+                {"frameId": "main", "frameUrl": str(getattr(page, "url", "") or "")},
+            )
             if isinstance(value, list):
-                return [
+                mapped.extend(
                     item
                     for item in value
                     if isinstance(item, dict) and isinstance(item.get("node_id"), str)
-                ][:220]
-        return []
+                )
+        mapped.extend(await self._browser_iframe_element_map(page))
+        return mapped[:500]
+
+    async def _browser_iframe_element_map(self, page: Any) -> list[dict[str, Any]]:
+        frames = await self._page_frames(page)
+        if len(frames) <= 1:
+            return []
+        main_frame = self._main_frame(page)
+        mapped: list[dict[str, Any]] = []
+        for index, frame in enumerate(frames):
+            if frame is main_frame:
+                continue
+            frame_id = self._frame_id(frame, index)
+            offset = await self._frame_viewport_offset(frame)
+            with suppress(Exception):
+                evaluate = getattr(frame, "evaluate", None)
+                if not callable(evaluate):
+                    continue
+                value = evaluate(
+                    _BROWSER_ELEMENT_MAP_SCRIPT,
+                    {
+                        "frameId": frame_id,
+                        "frameUrl": str(getattr(frame, "url", "") or ""),
+                        "offsetX": offset[0],
+                        "offsetY": offset[1],
+                    },
+                )
+                if inspect.isawaitable(value):
+                    value = await value
+                if isinstance(value, list):
+                    mapped.extend(
+                        item
+                        for item in value
+                        if isinstance(item, dict) and isinstance(item.get("node_id"), str)
+                    )
+            if len(mapped) >= 280:
+                break
+        return mapped[:280]
+
+    async def _browser_frame_tree_snapshot(
+        self,
+        page: Any,
+        *,
+        current_url: str,
+        title: str,
+    ) -> list[dict[str, Any]]:
+        frames = await self._page_frames(page)
+        if not frames:
+            return [{"frame_id": "main", "url": current_url, "title": title, "parent_frame_id": ""}]
+        main_frame = self._main_frame(page)
+        tree: list[dict[str, Any]] = []
+        for index, frame in enumerate(frames):
+            frame_id = "main" if frame is main_frame or index == 0 else self._frame_id(frame, index)
+            parent_id = ""
+            frame_url = str(getattr(frame, "url", "") or "")
+            parent_frame = getattr(frame, "parent_frame", None)
+            if callable(parent_frame):
+                with suppress(Exception):
+                    parent = parent_frame()
+                    if parent is not None and parent is not main_frame:
+                        parent_index = frames.index(parent) if parent in frames else 0
+                        parent_id = self._frame_id(parent, parent_index)
+                    elif parent is main_frame:
+                        parent_id = "main"
+            tree.append(
+                {
+                    "frame_id": frame_id,
+                    "url": frame_url or (current_url if frame_id == "main" else ""),
+                    "title": title if frame_id == "main" else "",
+                    "parent_frame_id": parent_id,
+                }
+            )
+        return tree or [{"frame_id": "main", "url": current_url, "title": title, "parent_frame_id": ""}]
 
     async def _html_with_embedded_stylesheet_fallbacks(
         self,
@@ -1745,6 +2864,17 @@ class LightPandaBrowserWorker:
                 len(embedded_styles),
             )
         return f"{style_block}{html}", len(embedded_styles)
+
+    async def _computed_html_snapshot(self, page: Any, current_url: str) -> str:
+        with suppress(Exception):
+            value = await self._evaluate_page(
+                page,
+                _COMPUTED_HTML_SNAPSHOT_SCRIPT,
+                {"url": current_url},
+            )
+            if isinstance(value, str):
+                return value[:2_000_000]
+        return ""
 
     @staticmethod
     def _stylesheet_hrefs(html: str, current_url: str, *, max_hrefs: int) -> list[str]:
@@ -1818,12 +2948,14 @@ class LightPandaBrowserWorker:
 
     @staticmethod
     def _css_fidelity(*, html: str, render_mode: str, embedded_stylesheet_count: int = 0) -> str:
-        if render_mode == "screenshot":
+        if render_mode in {"screenshot", "pixel"}:
             return "pixel"
+        if render_mode == "computed_html":
+            return "computed"
         if not html.strip():
             return "fallback_html"
         if embedded_stylesheet_count > 0:
-            return "original_embedded"
+            return "embedded"
         lowered = html.lower()
         if (
             'rel="stylesheet"' in lowered
@@ -1840,6 +2972,151 @@ class LightPandaBrowserWorker:
             if str(item.get("node_id") or "") == node_id:
                 return str(item.get("selector") or "")
         return ""
+
+    def _element_target(self, browser_id: str, node_id: str) -> dict[str, Any]:
+        if not node_id:
+            return {}
+        for item in self._element_map_cache.get(browser_id, []):
+            if str(item.get("node_id") or "") == node_id:
+                return item
+        return {}
+
+    async def _action_context_for_element(self, page: Any, target: dict[str, Any]) -> Any:
+        frame_id = str(target.get("frame_id") or "main")
+        if frame_id == "main":
+            return page
+        frames = await self._page_frames(page)
+        for index, frame in enumerate(frames):
+            if self._frame_id(frame, index) == frame_id:
+                return frame
+        return page
+
+    async def _page_frames(self, page: Any) -> list[Any]:
+        frames_attr = getattr(page, "frames", None)
+        if callable(frames_attr):
+            with suppress(Exception):
+                value = frames_attr()
+                if inspect.isawaitable(value):
+                    value = await value
+                if isinstance(value, list):
+                    return value
+        if isinstance(frames_attr, list):
+            return frames_attr
+        return [page]
+
+    def _main_frame(self, page: Any) -> Any:
+        main_frame = getattr(page, "main_frame", None)
+        if callable(main_frame):
+            with suppress(Exception):
+                return main_frame()
+        if main_frame is not None:
+            return main_frame
+        return page
+
+    def _frame_id(self, frame: Any, index: int) -> str:
+        frame_url = str(getattr(frame, "url", "") or "")
+        frame_name = ""
+        name = getattr(frame, "name", None)
+        with suppress(Exception):
+            frame_name = str(name() if callable(name) else name or "")
+        digest = hashlib.sha1(f"{index}|{frame_name}|{frame_url}".encode("utf-8", errors="ignore")).hexdigest()[:12]
+        return f"frame_{digest}"
+
+    async def _frame_viewport_offset(self, frame: Any) -> tuple[float, float]:
+        frame_element = getattr(frame, "frame_element", None)
+        if not callable(frame_element):
+            return (0.0, 0.0)
+        with suppress(Exception):
+            element = frame_element()
+            if inspect.isawaitable(element):
+                element = await element
+            bounding_box = getattr(element, "bounding_box", None)
+            if not callable(bounding_box):
+                return (0.0, 0.0)
+            box = bounding_box()
+            if inspect.isawaitable(box):
+                box = await box
+            if isinstance(box, Mapping):
+                return (float(box.get("x") or 0.0), float(box.get("y") or 0.0))
+        return (0.0, 0.0)
+
+    async def _upload_files(self, page: Any, selector: str, files: list[str]) -> dict[str, Any]:
+        if not selector:
+            return {"ok": False, "reason": "selector_not_found"}
+        paths = [str(Path(path).expanduser()) for path in files if str(path or "").strip()]
+        if not paths:
+            return {"ok": False, "reason": "files_required"}
+        locator = getattr(page, "locator", None)
+        if not callable(locator):
+            return {"ok": False, "reason": "locator_unavailable"}
+        try:
+            file_input = locator(selector).first
+            if callable(file_input):
+                file_input = file_input()
+            set_input_files = getattr(file_input, "set_input_files", None)
+            if not callable(set_input_files):
+                return {"ok": False, "reason": "file_upload_unavailable"}
+            result = set_input_files(paths)
+            if inspect.isawaitable(result):
+                await result
+            return {"ok": True, "action": "upload", "file_count": len(paths)}
+        except Exception as exc:
+            return {"ok": False, "reason": str(exc)}
+
+    async def _drag_between_elements(
+        self,
+        page: Any,
+        selector: str,
+        *,
+        target_selector: str,
+        x: float | None,
+        y: float | None,
+    ) -> dict[str, Any]:
+        if not selector:
+            return {"ok": False, "reason": "selector_not_found"}
+        mouse = getattr(page, "mouse", None)
+        if mouse is None:
+            return {"ok": False, "reason": "mouse_unavailable"}
+        payload = await self._evaluate_page(
+            page,
+            """
+            ({ selector, targetSelector, x, y }) => {
+              const rectFor = (nextSelector) => {
+                if (!nextSelector) return null;
+                const el = document.querySelector(nextSelector);
+                if (!el) return null;
+                el.scrollIntoView({ block: 'center', inline: 'center' });
+                const rect = el.getBoundingClientRect();
+                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+              };
+              return {
+                source: rectFor(selector),
+                target: rectFor(targetSelector) || (
+                  Number.isFinite(Number(x)) && Number.isFinite(Number(y))
+                    ? { x: Number(x), y: Number(y) }
+                    : null
+                )
+              };
+            }
+            """,
+            {"selector": selector, "targetSelector": target_selector, "x": x, "y": y},
+        )
+        if not isinstance(payload, Mapping):
+            return {"ok": False, "reason": "bounds_unavailable"}
+        source = payload.get("source")
+        target = payload.get("target")
+        if not isinstance(source, Mapping) or not isinstance(target, Mapping):
+            return {"ok": False, "reason": "drag_points_unavailable"}
+        move = getattr(mouse, "move", None)
+        down = getattr(mouse, "down", None)
+        up = getattr(mouse, "up", None)
+        if not (callable(move) and callable(down) and callable(up)):
+            return {"ok": False, "reason": "drag_unavailable"}
+        await move(float(source["x"]), float(source["y"]))
+        await down()
+        await move(float(target["x"]), float(target["y"]), steps=12)
+        await up()
+        return {"ok": True, "action": "drop"}
 
     async def _set_page_viewport(self, page: Any, width: int, height: int) -> None:
         operation = getattr(page, "set_viewport_size", None)
@@ -1999,6 +3276,191 @@ class LightPandaBrowserWorker:
             seen.add(marker)
             pages.append(page)
         return pages
+
+    async def _resolve_live_page(
+        self,
+        conversation_id: str,
+        *,
+        page_id: str | None = None,
+        activate: bool = True,
+    ) -> tuple[_BrowserSession, Any, str]:
+        session = await self._get_session(conversation_id)
+        target_page_id = str(
+            page_id
+            or session.current_page_id
+            or session.last_open_page_id
+            or (self._last_open_cache.get(conversation_id).page_id if self._last_open_cache.get(conversation_id) else "")
+            or ""
+        ).strip()
+        page = session.pages.get(target_page_id) if target_page_id else None
+        if page is not None and not self._page_is_open(page):
+            session.pages.pop(target_page_id, None)
+            page = None
+        if page is None and target_page_id:
+            opened_page = self._opened_page(conversation_id, target_page_id)
+            if opened_page is None:
+                raise BrowserError(
+                    f"No opened browser page with page_id {target_page_id}. Run BrowserOpen first."
+                )
+            page = self._preferred_session_page(session)
+            if not self._page_is_open(page):
+                raise BrowserError(
+                    f"No live browser page with page_id {target_page_id}. Run BrowserOpen again."
+                )
+            page_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
+            target_url = opened_page.final_url or opened_page.url
+            if target_url.startswith(("http://", "https://")) and not _urls_equivalent(page_url, target_url):
+                await self._goto_page(page, target_url, allow_partial=True)
+            session.pages[target_page_id] = page
+        if page is None:
+            page = self._preferred_session_page(session)
+            if not self._page_is_open(page):
+                raise BrowserError("No live browser page is available. Run BrowserOpen first.")
+            target_page_id = target_page_id or session.current_page_id or session.last_open_page_id or conversation_id
+        if activate:
+            session.page = page
+            session.current_page_id = target_page_id
+            session.last_open_page_id = target_page_id
+            current_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
+            if current_url:
+                session.current_url = current_url
+                self._remember_current_url(conversation_id, current_url)
+            session.touch()
+        self._attach_page_console_listeners(conversation_id, target_page_id, page)
+        return session, page, target_page_id
+
+    def _page_is_open(self, page: Any) -> bool:
+        with suppress(Exception):
+            is_closed = getattr(page, "is_closed", None)
+            if callable(is_closed):
+                return not bool(is_closed())
+        return True
+
+    def _attach_page_console_listeners(self, conversation_id: str, page_id: str, page: Any) -> None:
+        on_event = getattr(page, "on", None)
+        if not callable(on_event):
+            return
+        key = (conversation_id, page_id, id(page))
+        if key in self._console_listener_keys:
+            return
+        self._console_listener_keys.add(key)
+
+        def handle_console(message: Any) -> None:
+            level = self._console_message_attr(message, "type") or "log"
+            text = self._console_message_attr(message, "text") or str(message)
+            location = self._console_message_attr(message, "location")
+            url = ""
+            if isinstance(location, Mapping):
+                url = str(location.get("url") or "")
+            self._record_console_entry(
+                conversation_id,
+                page_id,
+                level=str(level),
+                text=str(text),
+                source="console",
+                url=url,
+            )
+
+        def handle_page_error(error: Any) -> None:
+            self._record_console_entry(
+                conversation_id,
+                page_id,
+                level="error",
+                text=str(error),
+                source="pageerror",
+                url=_clean_browser_url(str(getattr(page, "url", "") or "")),
+            )
+
+        with suppress(Exception):
+            on_event("console", handle_console)
+        with suppress(Exception):
+            on_event("pageerror", handle_page_error)
+
+    def _console_message_attr(self, message: Any, name: str) -> Any:
+        value = getattr(message, name, None)
+        if callable(value):
+            with suppress(Exception):
+                return value()
+        return value
+
+    def _record_console_entry(
+        self,
+        conversation_id: str,
+        page_id: str,
+        *,
+        level: str,
+        text: str,
+        source: str,
+        url: str = "",
+    ) -> None:
+        self._console_sequence += 1
+        page_cache = self._console_cache.setdefault(conversation_id, {}).setdefault(page_id, [])
+        page_cache.append(
+            BrowserConsoleEntry(
+                entry_id=self._console_sequence,
+                page_id=page_id,
+                level=(level or "log").lower(),
+                text=str(text or "")[:8_000],
+                source=source,
+                url=url,
+            )
+        )
+        del page_cache[:-_MAX_CONSOLE_ENTRIES_PER_PAGE]
+
+    async def _page_runtime(self, page: Any) -> str:
+        return "lightpanda" if await self._is_lightpanda_page(page) else "chrome_cdp"
+
+    async def _is_lightpanda_page(self, page: Any) -> bool:
+        user_agent = await self._safe_user_agent(page)
+        return user_agent.lower().startswith("lightpanda/")
+
+    def _bounded_script_result(self, value: Any) -> tuple[str, Any | None, bool]:
+        try:
+            result_text = json.dumps(value, ensure_ascii=False, default=str)
+        except Exception:
+            result_text = str(value)
+        truncated = len(result_text) > _MAX_BROWSER_SCRIPT_RESULT_CHARS
+        if truncated:
+            result_text = result_text[:_MAX_BROWSER_SCRIPT_RESULT_CHARS].rstrip()
+        result: Any | None
+        if truncated:
+            result = None
+        else:
+            try:
+                result = json.loads(result_text)
+            except Exception:
+                result = result_text
+        return result_text, result, truncated
+
+    async def _cdp_command_for_page(
+        self,
+        page: Any,
+        *,
+        url: str,
+        method: str,
+        params: dict[str, Any],
+    ) -> Any:
+        context = getattr(page, "context", None)
+        if callable(context):
+            with suppress(Exception):
+                context = context()
+        new_cdp_session = getattr(context, "new_cdp_session", None)
+        if callable(new_cdp_session):
+            cdp_session = await new_cdp_session(page)
+            try:
+                return await cdp_session.send(method, params or {})
+            finally:
+                detach = getattr(cdp_session, "detach", None)
+                if callable(detach):
+                    with suppress(Exception):
+                        result = detach()
+                        if inspect.isawaitable(result):
+                            await result
+        return await self._lightpanda_raw_cdp_command(
+            url=url or "about:blank",
+            method=method,
+            params=params or {},
+        )
 
     def _first_open_context_page(self, context: Any) -> Any | None:
         raw_pages = getattr(context, "pages", None)
@@ -3111,6 +4573,7 @@ class LightPandaBrowserWorker:
                     self._last_open_cache.pop(conversation_id, None)
                     self._opened_pages_cache.pop(conversation_id, None)
                     self._element_map_cache.pop(conversation_id, None)
+                    self._console_cache.pop(conversation_id, None)
 
     async def _enforce_session_limit(self) -> None:
         while len(self._sessions) > self.max_sessions:
@@ -3131,6 +4594,7 @@ class LightPandaBrowserWorker:
     async def _close_session(self, conversation_id: str, session: _BrowserSession) -> None:
         self._sessions.pop(conversation_id, None)
         self._element_map_cache.pop(conversation_id, None)
+        self._console_cache.pop(conversation_id, None)
         for page in self._session_pages(session):
             await self._best_effort_resource_call("browser_page_close", page.close)
         await self._best_effort_resource_call("browser_context_close", session.context.close)

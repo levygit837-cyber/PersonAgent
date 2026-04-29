@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getCodexAuthStatus, getGitStatus, gitCheckoutBranch, gitCreateBranch, listChatCommands, listGitBranches, listModels, listSkills, listWorkspaceMentions, logoutCodex } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
@@ -267,6 +267,29 @@ describe("InputDock", () => {
     expect(screen.getByText("Gemini 3.1 Flash-Lite")).toBeInTheDocument();
     expect(screen.getByText("Gemini 3 Pro Image")).toBeInTheDocument();
     expect(screen.queryByText("gemini-3-pro-preview")).not.toBeInTheDocument();
+  });
+
+  it("separates DeepSeek API models from DeepSeek NVIDIA models", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: /model and reasoning/i }));
+
+    const apiLabel = await screen.findByText("DeepSeek API");
+    const nvidiaLabel = await screen.findByText("DeepSeek NVIDIA");
+
+    const apiGroup = apiLabel.parentElement;
+    const nvidiaGroup = nvidiaLabel.parentElement;
+    expect(apiGroup).not.toBeNull();
+    expect(nvidiaGroup).not.toBeNull();
+    expect(apiGroup).not.toBe(nvidiaGroup);
+    expect(within(apiGroup!).getByText("DeepSeek V4 Flash")).toBeInTheDocument();
+    expect(within(apiGroup!).getByText("DeepSeek V4 Pro")).toBeInTheDocument();
+    expect(within(nvidiaGroup!).getByText("DeepSeek V4 Flash")).toBeInTheDocument();
+    expect(within(nvidiaGroup!).getByText("DeepSeek V4 Pro")).toBeInTheDocument();
   });
 
   it("shows Kimi K2.6 and selects the kimi provider", async () => {
@@ -821,6 +844,53 @@ describe("InputDock", () => {
     expect(screen.getByText("1/3 done")).toBeInTheDocument();
     expect(screen.getByText("Verify dock behavior")).toBeInTheDocument();
     expect(screen.getByText("active")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /minimize todo tracker/i })).toBeInTheDocument();
+  });
+
+  it("minimizes and restores the todo tracker from the header", () => {
+    useChatStore.setState({
+      isStreaming: true,
+      activeAgentId: "agent",
+      messages: [
+        agentMessage({
+          id: "agent",
+          isStreaming: true,
+          toolBlocks: [
+            todoBlock({
+              data: {
+                todos: [
+                  { id: "inspect", content: "Inspect current renderer", status: "completed" },
+                  { id: "build", content: "Build todo panel", status: "in_progress" },
+                  { id: "verify", content: "Verify dock behavior", status: "pending" },
+                ],
+              },
+            }),
+          ],
+        }),
+      ],
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    const tracker = screen.getByTestId("input-todo-tracker");
+    const scrollRegion = screen.getByTestId("input-todo-scroll");
+
+    fireEvent.click(screen.getByRole("button", { name: /minimize todo tracker/i }));
+
+    expect(tracker).toHaveAttribute("data-state", "minimized");
+    expect(screen.getByText("Todos 1/3")).toBeInTheDocument();
+    expect(scrollRegion).toHaveClass("max-h-0", "opacity-0");
+    expect(screen.getByRole("button", { name: /restore todo tracker/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /restore todo tracker/i }));
+
+    expect(tracker).toHaveAttribute("data-state", "visible");
+    expect(screen.getByText("TodoWrite")).toBeInTheDocument();
+    expect(scrollRegion).toHaveClass("max-h-24", "opacity-100");
   });
 
   it("keeps completed todos visible until agent execution ends, then exits into the input dock", () => {

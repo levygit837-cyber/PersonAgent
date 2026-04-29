@@ -38,6 +38,16 @@ const api = {
       return () => ipcRenderer.off("terminal:exit", handler);
     },
   },
+  compact: {
+    openSession: (context: { conversationId: string; workspaceRoot?: string | null; title?: string | null }) =>
+      ipcRenderer.invoke("compact:open-session", context) as Promise<boolean>,
+    getLaunchContext: () =>
+      ipcRenderer.invoke("compact:get-launch-context") as Promise<{
+        conversationId: string;
+        workspaceRoot?: string | null;
+        title?: string | null;
+      } | null>,
+  },
 };
 
 contextBridge.exposeInMainWorld("personAgent", api);

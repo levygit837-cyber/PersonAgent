@@ -37,10 +37,18 @@ export interface SessionBrowserViewport {
 
 export interface SessionBrowserElement {
   node_id: string;
+  tab_id?: string;
+  frame_id?: string;
+  frame_url?: string;
   role?: string;
   tag?: string;
   text?: string;
   selector?: string;
+  selector_chain?: string[];
+  shadow_path?: string[];
+  stable_key?: string;
+  interactable?: boolean;
+  computed_summary?: Record<string, unknown>;
   href?: string;
   name?: string;
   input_type?: string;
@@ -53,11 +61,16 @@ export interface SessionBrowserElement {
 export interface SessionBrowserAnnotation {
   id: string;
   browser_id: string;
+  tab_id?: string;
   node_id: string;
   body: string;
   quote?: string;
   url?: string;
   title?: string;
+  selector?: string;
+  frame_id?: string;
+  selector_chain?: string[];
+  shadow_path?: string[];
   created_at: string;
   updated_at?: string;
 }
@@ -65,17 +78,34 @@ export interface SessionBrowserAnnotation {
 export interface SessionBrowserTimelineEvent {
   id: string;
   browser_id: string;
+  tab_id?: string;
   source: "user" | "agent" | "system";
   event_type: string;
   label: string;
   payload?: Record<string, unknown>;
+  sequence?: number;
+  automation_run_id?: string;
   created_at: string;
+}
+
+export interface SessionBrowserTab {
+  tab_id: string;
+  id?: string;
+  url?: string;
+  title?: string;
+  runtime?: "lightpanda" | "chrome_cdp" | string;
+  active?: boolean;
+  is_active?: boolean;
+  history?: string[];
+  state?: Record<string, unknown>;
 }
 
 export interface SessionBrowserWorkspaceState {
   active_browser_id?: string;
+  active_tab_id?: string;
   current_url?: string;
   current_title?: string;
+  runtime?: "lightpanda" | "chrome_cdp" | string;
   last_element_map?: SessionBrowserElement[];
 }
 
@@ -83,9 +113,13 @@ export interface SessionBrowserSnapshot {
   document_html: string;
   url: string;
   title: string;
-  render_mode?: "screenshot" | "html_mirror";
-  css_fidelity?: "pixel" | "original" | "embedded" | "fallback_html" | string;
+  render_mode?: "screenshot" | "html_mirror" | "computed_html" | "pixel";
+  runtime?: "lightpanda" | "chrome_cdp" | string;
+  css_fidelity?: "pixel" | "original" | "embedded" | "computed" | "fallback_html" | string;
   fallback_reason?: string;
+  tabs?: SessionBrowserTab[];
+  active_tab_id?: string;
+  frame_tree?: Array<Record<string, unknown>>;
   element_map?: SessionBrowserElement[];
   annotations?: SessionBrowserAnnotation[];
   timeline_events?: SessionBrowserTimelineEvent[];
@@ -98,9 +132,13 @@ export interface SessionBrowserView {
   title: string;
   html?: string;
   document_html?: string;
-  render_mode?: "screenshot" | "html_mirror";
-  css_fidelity?: "pixel" | "original" | "embedded" | "fallback_html" | string;
+  render_mode?: "screenshot" | "html_mirror" | "computed_html" | "pixel";
+  runtime?: "lightpanda" | "chrome_cdp" | string;
+  css_fidelity?: "pixel" | "original" | "embedded" | "computed" | "fallback_html" | string;
   fallback_reason?: string;
+  tabs?: SessionBrowserTab[];
+  active_tab_id?: string;
+  frame_tree?: Array<Record<string, unknown>>;
   element_map?: SessionBrowserElement[];
   annotations?: SessionBrowserAnnotation[];
   timeline_events?: SessionBrowserTimelineEvent[];
@@ -332,12 +370,31 @@ export function actSessionBrowser(
   browserId: string,
   input: SessionBrowserViewport & {
     node_id: string;
-    action: "click" | "fill" | "submit" | "select" | "press";
+    action:
+      | "click"
+      | "fill"
+      | "submit"
+      | "select"
+      | "press"
+      | "hover"
+      | "wait"
+      | "drag"
+      | "drop"
+      | "upload"
+      | "select_text"
+      | "scroll_to"
+      | "screenshot";
     value?: string;
     key?: string;
+    target_node_id?: string;
+    timeout_ms?: number;
+    files?: string[];
+    text?: string;
+    x?: number;
+    y?: number;
     source?: "user" | "agent" | "system";
   },
-  conversationId: string,
+  conversationId?: string | null,
 ) {
   return requestJson<SessionBrowserView>(baseUrl, sessionBrowserPath(browserId, "/action", conversationId), {
     method: "POST",
@@ -349,7 +406,18 @@ export function createSessionBrowserAnnotation(
   baseUrl: string,
   conversationId: string,
   browserId: string,
-  input: { node_id: string; body: string; quote?: string; url?: string; title?: string },
+  input: {
+    node_id: string;
+    body: string;
+    quote?: string;
+    url?: string;
+    title?: string;
+    selector?: string;
+    frame_id?: string;
+    selector_chain?: string[];
+    shadow_path?: string[];
+    tab_id?: string;
+  },
 ) {
   return requestJson<{ annotation: SessionBrowserAnnotation; annotations: SessionBrowserAnnotation[]; timeline_events: SessionBrowserTimelineEvent[] }>(
     baseUrl,

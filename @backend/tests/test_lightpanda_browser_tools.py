@@ -941,6 +941,17 @@ async def test_browser_tools_block_private_urls(tmp_path):
     assert denied.allowed is False
 
 
+def test_tool_runtime_config_can_opt_into_private_browser_fixtures(tmp_path):
+    config = ToolRuntimeConfig.from_values(
+        workspace_root=tmp_path,
+        web_blocked_domains=(),
+        web_allow_private_hosts=True,
+    )
+
+    assert config.web_blocked_domains == ()
+    assert config.web_allow_private_hosts is True
+
+
 def test_tool_registry_exposes_browser_tools():
     registry = DIContainer().get_tool_registry()
     names = {tool.definition.name for tool in registry.list_enabled()}
@@ -953,6 +964,17 @@ def test_tool_registry_exposes_browser_tools():
         "BrowserReadContentChunk",
         "BrowserGetHtml",
         "BrowserGetElementMap",
+        "BrowserClick",
+        "BrowserType",
+        "BrowserScreenshot",
+        "BrowserCloseTab",
+        "BrowserReadConsole",
+        "BrowserScript",
+        "BrowserScroll",
+        "BrowserReload",
+        "BrowserHistory",
+        "BrowserSwitchTab",
+        "BrowserWait",
         "BrowserAct",
     } <= names
 
@@ -981,6 +1003,60 @@ async def test_browser_element_map_and_act_tools(tmp_path):
     assert act_data["type"] == "browser_action"
     assert act_data["last_action"]["node_id"] == "pa_link"
     assert act_data["last_action"]["action"] == "click"
+
+
+@pytest.mark.asyncio
+async def test_browser_control_tools_execute_with_strict_targets(tmp_path):
+    worker = FakeBrowserWorker()
+    tools = {tool.definition.name: tool for tool in create_browser_tools(worker)}
+    context = _tool_context(tmp_path)
+
+    alias_denied = await tools["BrowserClick"].validate_input(
+        {"page_id": "page_one", "window_id": "page_two", "node_id": "pa_link"},
+        context,
+    )
+    assert alias_denied is not None
+    assert alias_denied.allowed is False
+
+    script_denied = await tools["BrowserScript"].validate_input(
+        {"mode": "cdp", "cdp_method": "Target.closeTarget"},
+        context,
+    )
+    assert script_denied is not None
+    assert script_denied.allowed is False
+
+    calls = [
+        ToolCall(id="click", name="BrowserClick", arguments={"node_id": "pa_link"}),
+        ToolCall(id="type", name="BrowserType", arguments={"node_id": "pa_input", "mode": "fill", "text": "hello"}),
+        ToolCall(id="screenshot", name="BrowserScreenshot", arguments={"format": "png"}),
+        ToolCall(id="console", name="BrowserReadConsole", arguments={"levels": ["log"], "limit": 5}),
+        ToolCall(id="script", name="BrowserScript", arguments={"mode": "evaluate", "script": "() => 42"}),
+        ToolCall(id="scroll", name="BrowserScroll", arguments={"delta_y": 200}),
+        ToolCall(id="reload", name="BrowserReload", arguments={}),
+        ToolCall(id="history", name="BrowserHistory", arguments={"direction": "back"}),
+        ToolCall(id="switch", name="BrowserSwitchTab", arguments={"page_id": "page_example"}),
+        ToolCall(id="wait", name="BrowserWait", arguments={"timeout_ms": 10}),
+        ToolCall(id="close", name="BrowserCloseTab", arguments={"page_id": "page_example"}),
+    ]
+
+    results = {
+        call.name: json.loads((await tools[call.name].call(call.arguments, context, call)).content)
+        for call in calls
+    }
+
+    assert results["BrowserClick"]["type"] == "browser_click"
+    assert results["BrowserClick"]["last_action"]["node_id"] == "pa_link"
+    assert results["BrowserType"]["type"] == "browser_type"
+    assert results["BrowserType"]["last_action"]["text"] == "hello"
+    assert results["BrowserScreenshot"]["type"] == "browser_screenshot"
+    assert results["BrowserScreenshot"]["image_data"] == "aW1hZ2U="
+    assert results["BrowserReadConsole"]["entries"][0]["text"] == "ready"
+    assert results["BrowserScript"]["result"] == 42
+    assert results["BrowserScroll"]["type"] == "browser_scroll"
+    assert results["BrowserReload"]["type"] == "browser_reload"
+    assert results["BrowserHistory"]["direction"] == -1
+    assert results["BrowserSwitchTab"]["active_tab_id"] == "page_example"
+    assert results["BrowserCloseTab"]["closed_page_id"] == "page_example"
 
 
 def _tool_context(root: Path, *, conversation_id: str = "test") -> ToolUseContext:
@@ -1150,6 +1226,217 @@ class FakeBrowserWorker:
     ):
         view = await self.view_snapshot(browser_id=browser_id, width=width, height=height)
         view["last_action"] = {"node_id": node_id, "action": action, "value": value, "key": key}
+        return view
+
+    async def click(
+        self,
+        *,
+        conversation_id: str,
+        page_id=None,
+        node_id=None,
+        x=None,
+        y=None,
+        width: int = 1024,
+        height: int = 720,
+        button: str = "left",
+        click_count: int = 1,
+        modifiers=None,
+        wait_after_ms: int = 250,
+    ):
+        view = await self.view_snapshot(browser_id=conversation_id, width=width, height=height)
+        view.update(
+            {
+                "type": "browser_click",
+                "page_id": page_id or "page_example",
+                "window_id": page_id or "page_example",
+                "runtime": "chrome_cdp",
+                "render_mode": "pixel",
+                "active_tab_id": page_id or "page_example",
+                "navigated": False,
+                "last_action": {
+                    "action": "click",
+                    "node_id": node_id,
+                    "x": x,
+                    "y": y,
+                    "button": button,
+                    "click_count": click_count,
+                    "modifiers": modifiers or [],
+                },
+            }
+        )
+        return view
+
+    async def type_input(
+        self,
+        *,
+        conversation_id: str,
+        page_id=None,
+        node_id=None,
+        mode: str = "type",
+        text=None,
+        key=None,
+        clear: bool = False,
+        delay_ms: int = 0,
+        submit: bool = False,
+        width: int = 1024,
+        height: int = 720,
+    ):
+        view = await self.view_snapshot(browser_id=conversation_id, width=width, height=height)
+        view.update(
+            {
+                "type": "browser_type",
+                "page_id": page_id or "page_example",
+                "window_id": page_id or "page_example",
+                "runtime": "chrome_cdp",
+                "render_mode": "pixel",
+                "active_tab_id": page_id or "page_example",
+                "navigated": False,
+                "last_action": {
+                    "action": mode,
+                    "node_id": node_id,
+                    "text": text,
+                    "key": key,
+                    "clear": clear,
+                    "submit": submit,
+                },
+            }
+        )
+        return view
+
+    async def screenshot(
+        self,
+        *,
+        conversation_id: str,
+        page_id=None,
+        width: int = 1024,
+        height: int = 720,
+        full_page: bool = False,
+        image_format: str = "png",
+        quality=None,
+    ):
+        view = await self.view_snapshot(browser_id=conversation_id, width=width, height=height)
+        view.update(
+            {
+                "type": "browser_screenshot",
+                "page_id": page_id or "page_example",
+                "window_id": page_id or "page_example",
+                "runtime": "chrome_cdp",
+                "render_mode": "pixel",
+                "active_tab_id": page_id or "page_example",
+                "navigated": False,
+                "image_data": "aW1hZ2U=",
+                "image_mime_type": "image/png",
+                "can_capture": True,
+                "viewport_width": width,
+                "viewport_height": height,
+                "full_page": full_page,
+            }
+        )
+        return view
+
+    async def close_tab(self, *, conversation_id: str, page_id=None, max_tabs: int = 20):
+        return {
+            "type": "browser_close_tab",
+            "closed_page_id": page_id or "page_example",
+            "closed_window_id": page_id or "page_example",
+            "closed": True,
+            "tab_count": 0,
+            "tabs": [],
+            "max_tabs": max_tabs,
+        }
+
+    async def read_console(
+        self,
+        *,
+        conversation_id: str,
+        page_id=None,
+        levels=None,
+        since_id=None,
+        limit: int = 100,
+        clear: bool = False,
+    ):
+        return {
+            "type": "browser_console",
+            "page_id": page_id or "page_example",
+            "window_id": page_id or "page_example",
+            "url": "https://example.com/",
+            "title": "Example Domain",
+            "runtime": "chrome_cdp",
+            "render_mode": "pixel",
+            "active_tab_id": page_id or "page_example",
+            "navigated": False,
+            "entries": [{"id": 1, "level": "log", "text": "ready", "source": "console"}][:limit],
+            "next_since_id": 1,
+            "cleared": clear,
+        }
+
+    async def script(
+        self,
+        *,
+        conversation_id: str,
+        page_id=None,
+        mode: str = "evaluate",
+        script=None,
+        args=None,
+        cdp_method=None,
+        cdp_params=None,
+        timeout_ms: int = 5000,
+    ):
+        return {
+            "type": "browser_script",
+            "page_id": page_id or "page_example",
+            "window_id": page_id or "page_example",
+            "url": "https://example.com/",
+            "title": "Example Domain",
+            "runtime": "chrome_cdp",
+            "render_mode": "pixel",
+            "active_tab_id": page_id or "page_example",
+            "navigated": False,
+            "mode": mode,
+            "cdp_method": cdp_method,
+            "result": 42,
+            "result_text": "42",
+            "truncated": False,
+        }
+
+    async def scroll(self, *, conversation_id: str, page_id=None, delta_x=0, delta_y=600, width: int = 1024, height: int = 720):
+        view = await self.view_snapshot(browser_id=conversation_id, width=width, height=height)
+        view.update({"type": "browser_scroll", "page_id": page_id or "page_example", "window_id": page_id or "page_example"})
+        return view
+
+    async def reload(self, *, conversation_id: str, page_id=None, width: int = 1024, height: int = 720):
+        view = await self.view_snapshot(browser_id=conversation_id, width=width, height=height)
+        view.update({"type": "browser_reload", "page_id": page_id or "page_example", "window_id": page_id or "page_example"})
+        return view
+
+    async def history(self, *, conversation_id: str, page_id=None, direction: int = -1, width: int = 1024, height: int = 720):
+        view = await self.view_snapshot(browser_id=conversation_id, width=width, height=height)
+        view.update(
+            {
+                "type": "browser_history",
+                "page_id": page_id or "page_example",
+                "window_id": page_id or "page_example",
+                "direction": direction,
+            }
+        )
+        return view
+
+    async def switch_tab(self, *, conversation_id: str, page_id: str, max_tabs: int = 20):
+        data = await self.list_tabs(conversation_id=conversation_id, max_tabs=max_tabs)
+        data.update({"type": "browser_switch_tab", "page_id": page_id, "window_id": page_id, "active_tab_id": page_id})
+        return data
+
+    async def wait(self, *, conversation_id: str, page_id=None, timeout_ms: int = 1000, state=None, width: int = 1024, height: int = 720):
+        view = await self.view_snapshot(browser_id=conversation_id, width=width, height=height)
+        view.update(
+            {
+                "type": "browser_wait",
+                "page_id": page_id or "page_example",
+                "window_id": page_id or "page_example",
+                "timeout_ms": timeout_ms,
+                "state": state,
+            }
+        )
         return view
 
 
