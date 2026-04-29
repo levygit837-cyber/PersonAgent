@@ -303,11 +303,18 @@ export function browserMirrorSrcDoc(
 	    eventBuffer.push({
 	      event_id: eventId(),
 	      kind,
+	      raw_kind: kind,
 	      source: "user",
+	      channel: "event",
+	      trace_role: "user",
+	      visibility: options.visibility || (["click", "input", "change", "submit", "route_change", "mutation"].includes(kind) ? "useful" : "raw"),
 	      timestamp: new Date().toISOString(),
 	      url: window.location.href || document.baseURI || "",
 	      target,
 	      payload: options.payload || {},
+	      coordinates: options.coordinates || (target && target.bounds ? { bounds: target.bounds } : {}),
+	      trace_effect: options.traceEffect || (kind === "scroll" ? "scroll" : ["input", "change", "keydown"].includes(kind) ? "type" : kind === "click" ? "click" : "highlight"),
+	      correlation_id: options.correlationId || "",
 	      importance: options.importance || (["click", "input", "change", "submit", "route_change", "mutation"].includes(kind) ? "high" : "low"),
 	      semantic_label: options.semanticLabel || "",
 	    });

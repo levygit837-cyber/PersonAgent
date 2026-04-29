@@ -28,7 +28,10 @@ from personagent.application.services import (
     SessionMemoryService,
     SessionTitleService,
 )
-from personagent.application.services.browser_cooperation import browser_agent_context_reminder
+from personagent.application.services.browser_cooperation import (
+    attach_browser_action_proposal,
+    browser_agent_context_reminder,
+)
 from personagent.application.services.operational_memory import project_slug_from_workspace
 from personagent.application.state.services import StateManager
 from personagent.application.tools import (
@@ -867,6 +870,14 @@ class ChatCompletionUseCase:
             "created_at": now_iso(),
         }
         conversation.metadata[PENDING_TOOL_APPROVAL_KEY] = pending
+        arbiter_metadata = result.metadata.get("browser_action_arbiter") if isinstance(result.metadata, dict) else None
+        if isinstance(arbiter_metadata, dict):
+            attach_browser_action_proposal(
+                conversation.metadata,
+                pending=pending,
+                arbiter_metadata=arbiter_metadata,
+                message=result.content,
+            )
         return {
             "conversation_id": str(conversation.id),
             "approval_id": approval_id,

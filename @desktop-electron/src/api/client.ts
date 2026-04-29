@@ -121,8 +121,13 @@ export interface SessionBrowserCooperationState {
   title?: string;
   page_state?: Record<string, unknown>;
   recent_actions?: string[];
+  useful_timeline?: Array<Record<string, unknown>>;
+  recent_user_events?: Array<Record<string, unknown>>;
+  recent_agent_events?: Array<Record<string, unknown>>;
+  raw_events?: Array<Record<string, unknown>>;
   notifications?: Array<Record<string, unknown>>;
   pending_action_proposals?: Array<Record<string, unknown>>;
+  policy?: Record<string, unknown>;
   last_user_activity_at?: string;
   updated_at?: string;
 }
@@ -131,15 +136,53 @@ export interface SessionBrowserCooperationEvent {
   event_id?: string;
   kind: string;
   source?: "user" | "agent" | "system" | "browser";
+  channel?: "event" | "action" | "proposal" | "trace";
+  trace_role?: "user" | "agent" | "system" | "browser";
+  visibility?: "raw" | "useful" | "debug";
+  raw_kind?: string;
   timestamp?: string;
   tab_id?: string;
   page_id?: string;
   url?: string;
   target?: Record<string, unknown>;
   payload?: Record<string, unknown>;
+  coordinates?: Record<string, unknown>;
+  duration_ms?: number;
+  trace_effect?: "click" | "type" | "scroll" | "extract" | "highlight" | string;
+  correlation_id?: string;
   importance?: "low" | "medium" | "high";
   semantic_label?: string;
 }
+
+export type SessionBrowserCooperationWsEvent =
+  | {
+      type: "snapshot";
+      cooperation?: SessionBrowserCooperationState;
+      state_patch?: { cooperation?: SessionBrowserCooperationState };
+      raw_events?: Array<Record<string, unknown>>;
+      useful_timeline?: Array<Record<string, unknown>>;
+      recent_user_events?: Array<Record<string, unknown>>;
+      recent_agent_events?: Array<Record<string, unknown>>;
+      pending_action_proposals?: Array<Record<string, unknown>>;
+      page_state?: Record<string, unknown>;
+    }
+  | {
+      type: "event_batch.accepted" | "timeline.patch" | "mode.changed" | "proposal.resolved";
+      cooperation?: SessionBrowserCooperationState;
+      state_patch?: { cooperation?: SessionBrowserCooperationState };
+      raw_events?: Array<Record<string, unknown>>;
+      useful_timeline?: Array<Record<string, unknown>>;
+      recent_user_events?: Array<Record<string, unknown>>;
+      recent_agent_events?: Array<Record<string, unknown>>;
+      proposal?: Record<string, unknown>;
+      accepted_count?: number;
+      dropped_count?: number;
+      notifications?: Array<Record<string, unknown>>;
+    }
+  | { type: "proposal.created"; proposal: Record<string, unknown>; state_patch?: { cooperation?: SessionBrowserCooperationState } }
+  | { type: "mode.changed"; cooperation?: SessionBrowserCooperationState; state_patch?: { cooperation?: SessionBrowserCooperationState } }
+  | { type: "pong"; timestamp?: string }
+  | { type: "error"; error: string };
 
 export interface SessionBrowserSnapshot {
   document_html: string;
@@ -471,6 +514,36 @@ export function ingestSessionBrowserEvents(
     method: "POST",
     body: JSON.stringify({ events }),
   });
+}
+
+export function connectSessionBrowserCooperation(
+  baseUrl: string,
+  conversationId: string,
+  browserId: string,
+  handlers: {
+    onMessage?: (event: SessionBrowserCooperationWsEvent) => void;
+    onOpen?: (socket: WebSocket) => void;
+    onClose?: () => void;
+    onError?: (error: Event) => void;
+  } = {},
+) {
+  const socket = new WebSocket(
+    `${webSocketBaseUrl(baseUrl)}${sessionBrowserPath(browserId, "/cooperation/ws", conversationId)}`,
+  );
+  socket.onopen = () => handlers.onOpen?.(socket);
+  socket.onmessage = (message) => {
+    try {
+      handlers.onMessage?.(JSON.parse(String(message.data)) as SessionBrowserCooperationWsEvent);
+    } catch (error) {
+      handlers.onMessage?.({
+        type: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  socket.onerror = (event) => handlers.onError?.(event);
+  socket.onclose = () => handlers.onClose?.();
+  return socket;
 }
 
 export function createSessionBrowserAnnotation(

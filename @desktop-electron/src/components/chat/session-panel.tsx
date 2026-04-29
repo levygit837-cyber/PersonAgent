@@ -4,6 +4,8 @@ import {
   Activity,
   ArrowLeft,
   ArrowRight,
+  Check,
+  ChevronDown,
   ExternalLink,
   FilePenLine,
   GitBranch,
@@ -23,6 +25,7 @@ import {
 import {
   actSessionBrowser,
   clickSessionBrowser,
+  connectSessionBrowserCooperation,
   createSessionBrowserAnnotation,
   getSessionBrowserView,
   getSessionPanel,
@@ -34,7 +37,10 @@ import {
   setSessionBrowserCooperation,
   type SessionBrowserAnnotation,
   type SessionBrowserCooperationEvent,
+  type SessionBrowserCooperationMode,
+  type SessionBrowserCooperationWsEvent,
   type SessionBrowserElement,
+  type SessionBrowserTimelineEvent,
   type SessionBrowserView,
   type SessionBrowserViewport,
 } from "../../api/client";
@@ -107,6 +113,16 @@ type BrowserTextSelectionMetadata = {
   bounds?: { x: number; y: number; width: number; height: number };
 };
 
+type BrowserTracingTab = "timeline" | "raw" | "state" | "agent" | "proposals";
+
+type BrowserGhostTrace = {
+  x: number;
+  y: number;
+  effect: string;
+  visible: boolean;
+  nonce: number;
+};
+
 const summaryTab: BrowserTab = {
   id: "summary",
   title: "Summary",
@@ -172,11 +188,14 @@ export function SessionPanel({
   const isStreaming = useChatStore((state) => state.isStreaming);
   const liveUsage = useChatStore((state) => state.liveSessionUsage);
   const addComposerAnnotation = useChatStore((state) => state.addComposerAnnotation);
+  const approvePendingTool = useChatStore((state) => state.approvePendingTool);
+  const rejectPendingTool = useChatStore((state) => state.rejectPendingTool);
   const queryClient = useQueryClient();
   const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
   const [tabs, setTabs] = useState<BrowserTab[]>([summaryTab]);
   const [activeTabId, setActiveTabId] = useState(summaryTab.id);
   const browserRequestIdsRef = useRef<Record<string, number>>({});
+  const cooperationSocketsRef = useRef<Record<string, WebSocket>>({});
   const cachedPanel = useMemo(
     () => readSessionPanelCache(baseUrl, conversationId, workspaceRoot),
     [baseUrl, conversationId, workspaceRoot],
@@ -584,30 +603,109 @@ export function SessionPanel({
     updateBrowserTab(tabId, (current) => {
       const view = current.view;
       if (!view) return current;
+      const currentCooperation = browserCooperationFromView(view);
+      const nextCooperation = { ...currentCooperation, ...cooperation };
       return {
         ...current,
         view: {
           ...view,
-          cooperation,
+          cooperation: nextCooperation,
           workspace_state: view.workspace_state
-            ? { ...view.workspace_state, cooperation }
-            : { cooperation },
+            ? { ...view.workspace_state, cooperation: nextCooperation }
+            : { cooperation: nextCooperation },
           browser_snapshot: view.browser_snapshot
-            ? { ...view.browser_snapshot, cooperation }
+            ? { ...view.browser_snapshot, cooperation: nextCooperation }
             : view.browser_snapshot,
         },
       };
     });
   };
 
-  const toggleBrowserCooperation = async (tabId: string) => {
+  const applyBrowserCooperationWsEvent = (tabId: string, event: SessionBrowserCooperationWsEvent) => {
+    if (event.type === "error") return;
+    const message = event as SessionBrowserCooperationWsEvent & Record<string, unknown>;
+    const statePatch = recordValue(message.state_patch);
+    const stateCooperation = statePatch.cooperation;
+    const cooperationPatch =
+      stateCooperation && typeof stateCooperation === "object" && !Array.isArray(stateCooperation)
+        ? (stateCooperation as SessionBrowserView["cooperation"])
+        : "cooperation" in event
+          ? event.cooperation
+          : undefined;
+    const debugPatch =
+      event.type === "snapshot" || event.type === "timeline.patch" || event.type === "event_batch.accepted"
+        ? {
+            ...(cooperationPatch ?? {}),
+            ...(Array.isArray(message.raw_events) ? { raw_events: message.raw_events } : {}),
+            ...(Array.isArray(message.useful_timeline) ? { useful_timeline: message.useful_timeline } : {}),
+            ...(Array.isArray(message.recent_user_events) ? { recent_user_events: message.recent_user_events } : {}),
+            ...(Array.isArray(message.recent_agent_events) ? { recent_agent_events: message.recent_agent_events } : {}),
+            ...(Array.isArray(message.pending_action_proposals)
+              ? { pending_action_proposals: message.pending_action_proposals }
+              : {}),
+            ...(message.page_state ? { page_state: message.page_state } : {}),
+          }
+        : cooperationPatch;
+    applyBrowserCooperationPatch(tabId, debugPatch as SessionBrowserView["cooperation"]);
+  };
+
+  useEffect(() => {
+    return () => {
+      Object.values(cooperationSocketsRef.current).forEach((socket) => socket.close());
+      cooperationSocketsRef.current = {};
+    };
+  }, []);
+
+  useEffect(() => {
+    const browser = activeTab.browser;
+    const enabled = Boolean(browserCooperationFromView(browser?.view)?.enabled);
+    if (!visible || !baseUrl || !conversationId || !browser || !enabled) return;
+    const socketKey = browser.browserId;
+    const existing = cooperationSocketsRef.current[socketKey];
+    if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) return;
+    const socket = connectSessionBrowserCooperation(baseUrl, conversationId, browser.browserId, {
+      onMessage: (event) => applyBrowserCooperationWsEvent(activeTab.id, event),
+      onClose: () => {
+        if (cooperationSocketsRef.current[socketKey] === socket) delete cooperationSocketsRef.current[socketKey];
+      },
+    });
+    cooperationSocketsRef.current[socketKey] = socket;
+    const pingInterval = window.setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "ping" }));
+      }
+    }, 2000);
+    return () => {
+      window.clearInterval(pingInterval);
+      if (cooperationSocketsRef.current[socketKey] === socket) delete cooperationSocketsRef.current[socketKey];
+      socket.close();
+    };
+  }, [
+    activeTab.id,
+    activeTab.browser?.browserId,
+    baseUrl,
+    browserCooperationFromView(activeTab.browser?.view)?.enabled,
+    conversationId,
+    visible,
+  ]);
+
+  const setBrowserCooperationMode = async (
+    tabId: string,
+    mode: SessionBrowserCooperationMode | "off",
+  ) => {
     const browser = browserForTab(tabId);
     if (!browser || !baseUrl || !conversationId) return;
-    const current = browserCooperationFromView(browser.view);
+    const enabled = mode !== "off";
+    const nextMode = enabled ? mode : browserCooperationFromView(browser.view)?.mode ?? "observe_only";
+    const socket = cooperationSocketsRef.current[browser.browserId];
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "mode.set", enabled, mode: nextMode }));
+      return;
+    }
     try {
       const result = await setSessionBrowserCooperation(baseUrl, conversationId, browser.browserId, {
-        enabled: !current?.enabled,
-        mode: current?.mode ?? "observe_only",
+        enabled,
+        mode: nextMode,
       });
       applyBrowserCooperationPatch(tabId, result.cooperation);
     } catch (error) {
@@ -615,10 +713,35 @@ export function SessionPanel({
     }
   };
 
+  const decideBrowserProposal = async (
+    tabId: string,
+    proposal: Record<string, unknown>,
+    decision: "approve" | "deny" | "dismiss",
+  ) => {
+    const browser = browserForTab(tabId);
+    if (!browser) return;
+    const proposalId = String(proposal.proposal_id ?? proposal.id ?? "");
+    if (!proposalId) return;
+    const socket = cooperationSocketsRef.current[browser.browserId];
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: `proposal.${decision}`, proposal_id: proposalId }));
+    }
+    if (decision === "approve") {
+      await approvePendingTool();
+    } else if (decision === "deny") {
+      await rejectPendingTool();
+    }
+  };
+
   const recordBrowserEvents = async (tabId: string, events: SessionBrowserCooperationEvent[]) => {
     const browser = browserForTab(tabId);
     if (!browser || !baseUrl || !conversationId || !events.length) return;
     if (!browserCooperationFromView(browser.view)?.enabled) return;
+    const socket = cooperationSocketsRef.current[browser.browserId];
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "event_batch", events }));
+      return;
+    }
     try {
       const result = await ingestSessionBrowserEvents(baseUrl, conversationId, browser.browserId, events);
       applyBrowserCooperationPatch(tabId, result.state_patch.cooperation);
@@ -674,8 +797,9 @@ export function SessionPanel({
             onBrowserAnnotationDraftChange={(value) => updateAnnotationDraft(activeTab.id, value)}
             onBrowserAnnotationSave={() => void saveBrowserAnnotation(activeTab.id)}
             onBrowserAction={(nodeId, viewport) => void actOnBrowserElement(activeTab.id, nodeId, viewport)}
-            onBrowserCooperationToggle={() => void toggleBrowserCooperation(activeTab.id)}
+            onBrowserCooperationModeChange={(mode) => void setBrowserCooperationMode(activeTab.id, mode)}
             onBrowserEvents={(events) => void recordBrowserEvents(activeTab.id, events)}
+            onBrowserProposalDecision={(proposal, decision) => void decideBrowserProposal(activeTab.id, proposal, decision)}
             canPersistBrowserWorkspace={Boolean(conversationId)}
           />
         ) : !conversationId ? (
@@ -710,8 +834,9 @@ export function SessionPanel({
             onBrowserAnnotationDraftChange={(value) => updateAnnotationDraft(activeTab.id, value)}
             onBrowserAnnotationSave={() => void saveBrowserAnnotation(activeTab.id)}
             onBrowserAction={(nodeId, viewport) => void actOnBrowserElement(activeTab.id, nodeId, viewport)}
-            onBrowserCooperationToggle={() => void toggleBrowserCooperation(activeTab.id)}
+            onBrowserCooperationModeChange={(mode) => void setBrowserCooperationMode(activeTab.id, mode)}
             onBrowserEvents={(events) => void recordBrowserEvents(activeTab.id, events)}
+            onBrowserProposalDecision={(proposal, decision) => void decideBrowserProposal(activeTab.id, proposal, decision)}
             canPersistBrowserWorkspace={Boolean(conversationId)}
           />
         )}
@@ -1054,8 +1179,9 @@ function DetailTabContent({
   onBrowserAnnotationDraftChange,
   onBrowserAnnotationSave,
   onBrowserAction,
-  onBrowserCooperationToggle,
+  onBrowserCooperationModeChange,
   onBrowserEvents,
+  onBrowserProposalDecision,
   canPersistBrowserWorkspace,
 }: {
   tab: BrowserTab;
@@ -1074,8 +1200,12 @@ function DetailTabContent({
   onBrowserAnnotationDraftChange: (value: string) => void;
   onBrowserAnnotationSave: () => void;
   onBrowserAction: (nodeId: string, viewport: SessionBrowserViewport, action?: "click" | "submit") => void;
-  onBrowserCooperationToggle: () => void;
+  onBrowserCooperationModeChange: (mode: SessionBrowserCooperationMode | "off") => void;
   onBrowserEvents: (events: SessionBrowserCooperationEvent[]) => void;
+  onBrowserProposalDecision: (
+    proposal: Record<string, unknown>,
+    decision: "approve" | "deny" | "dismiss",
+  ) => void;
   canPersistBrowserWorkspace: boolean;
 }) {
   if (isBrowserTab(tab)) {
@@ -1097,8 +1227,9 @@ function DetailTabContent({
         onAnnotationDraftChange={onBrowserAnnotationDraftChange}
         onAnnotationSave={onBrowserAnnotationSave}
         onBrowserAction={onBrowserAction}
-        onCooperationToggle={onBrowserCooperationToggle}
+        onCooperationModeChange={onBrowserCooperationModeChange}
         onBrowserEvents={onBrowserEvents}
+        onProposalDecision={onBrowserProposalDecision}
         canPersistWorkspace={canPersistBrowserWorkspace}
       />
     );
@@ -1151,8 +1282,9 @@ function BrowserTabContent({
   onAnnotationDraftChange,
   onAnnotationSave,
   onBrowserAction,
-  onCooperationToggle,
+  onCooperationModeChange,
   onBrowserEvents,
+  onProposalDecision,
   canPersistWorkspace,
 }: {
   browser: BrowserState;
@@ -1171,8 +1303,12 @@ function BrowserTabContent({
   onAnnotationDraftChange: (value: string) => void;
   onAnnotationSave: () => void;
   onBrowserAction: (nodeId: string, viewport: SessionBrowserViewport, action?: "click" | "submit") => void;
-  onCooperationToggle: () => void;
+  onCooperationModeChange: (mode: SessionBrowserCooperationMode | "off") => void;
   onBrowserEvents: (events: SessionBrowserCooperationEvent[]) => void;
+  onProposalDecision: (
+    proposal: Record<string, unknown>,
+    decision: "approve" | "deny" | "dismiss",
+  ) => void;
   canPersistWorkspace: boolean;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -1184,6 +1320,15 @@ function BrowserTabContent({
   const [mirrorUrl, setMirrorUrl] = useState("");
   const [pixelHoverNodeId, setPixelHoverNodeId] = useState<string | null>(null);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+  const [tracingOpen, setTracingOpen] = useState(false);
+  const [tracingTab, setTracingTab] = useState<BrowserTracingTab>("timeline");
+  const [ghostTrace, setGhostTrace] = useState<BrowserGhostTrace>({
+    x: 20,
+    y: 20,
+    effect: "highlight",
+    visible: false,
+    nonce: 0,
+  });
   const canGoBack = browser.historyIndex > 0;
   const canGoForward = browser.historyIndex >= 0 && browser.historyIndex < browser.history.length - 1;
   const canRefresh = Boolean(browser.currentUrl);
@@ -1199,6 +1344,20 @@ function BrowserTabContent({
   const backendTabs = browser.view?.tabs || browser.view?.browser_snapshot?.tabs || [];
   const cooperation = browserCooperationFromView(browser.view);
   const cooperationEnabled = Boolean(cooperation?.enabled);
+  const cooperationMode = cooperationEnabled ? cooperation?.mode ?? cooperation?.agent_control ?? "observe_only" : "off";
+  const rawEvents = useMemo(() => recordArray(cooperation?.raw_events), [cooperation?.raw_events]);
+  const usefulTimeline = useMemo(() => recordArray(cooperation?.useful_timeline), [cooperation?.useful_timeline]);
+  const recentUserEvents = useMemo(() => recordArray(cooperation?.recent_user_events), [cooperation?.recent_user_events]);
+  const recentAgentEvents = useMemo(() => recordArray(cooperation?.recent_agent_events), [cooperation?.recent_agent_events]);
+  const pendingProposals = useMemo(
+    () =>
+      recordArray(cooperation?.pending_action_proposals).filter(
+        (proposal) => String(proposal.status ?? "awaiting_approval") === "awaiting_approval",
+      ),
+    [cooperation?.pending_action_proposals],
+  );
+  const activeProposal = pendingProposals[0];
+  const activeProposalTarget = activeProposal ? recordValue(activeProposal.target) : {};
   const showHtmlMirror = Boolean(
     browser.currentUrl &&
       (browser.view?.render_mode === "html_mirror" || browser.view?.render_mode === "computed_html") &&
@@ -1207,9 +1366,9 @@ function BrowserTabContent({
   const mirrorDocument = useMemo(
     () =>
       showHtmlMirror
-        ? browserMirrorSrcDoc(documentHtml, browser.currentUrl, browser.browserId, elementMap, cooperationEnabled)
+        ? browserMirrorSrcDoc(documentHtml, browser.currentUrl, browser.browserId, elementMap, false)
         : "",
-    [browser.browserId, browser.currentUrl, cooperationEnabled, documentHtml, elementMap, showHtmlMirror],
+    [browser.browserId, browser.currentUrl, documentHtml, elementMap, showHtmlMirror],
   );
   const canInspectBrowser = showHtmlMirror || showRenderedPage;
   const annotationCounts = useMemo(() => browserAnnotationCounts(annotations), [annotations]);
@@ -1257,7 +1416,12 @@ function BrowserTabContent({
       } else if (data.type === "personagent-session-browser:element" && typeof data.nodeId === "string") {
         const element = normalizeBrowserElementMetadata(data.element, data.nodeId);
         if (browser.mode === "action") {
-          onBrowserAction(data.nodeId, viewport());
+          const mapped = elementMap.some((item) => item.node_id === data.nodeId);
+          if (mapped) {
+            onBrowserAction(data.nodeId, viewport());
+          } else {
+            onElementSelect(data.nodeId, element);
+          }
         } else {
           onElementSelect(data.nodeId, element);
         }
@@ -1275,7 +1439,7 @@ function BrowserTabContent({
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [browser.browserId, browser.mode, onBrowserAction, onBrowserEvents, onElementSelect, onNavigate, onTextSelect]);
+  }, [browser.browserId, browser.mode, elementMap, onBrowserAction, onBrowserEvents, onElementSelect, onNavigate, onTextSelect]);
 
   useEffect(() => {
     if (browser.mode !== "annotate" || !browser.selectedNodeId) return;
@@ -1292,6 +1456,32 @@ function BrowserTabContent({
     }, 1200);
     return () => window.clearInterval(interval);
   }, [browser.loading]);
+
+  useEffect(() => {
+    const traceEvent = latestBrowserTraceEvent(recentAgentEvents, timelineEvents);
+    if (!traceEvent || !browser.view) return;
+    const surface = showRenderedPage ? imageRef.current : viewportRef.current;
+    const point = browserTracePoint(traceEvent, elementMap, browser.view, surface);
+    if (!point) return;
+    const effect = String(traceEvent.trace_effect ?? traceEvent.effect ?? traceEvent.event_type ?? "highlight");
+    setGhostTrace((current) => ({
+      x: point.x,
+      y: point.y,
+      effect,
+      visible: true,
+      nonce: current.nonce + 1,
+    }));
+    const timeout = window.setTimeout(() => {
+      setGhostTrace((current) => ({ ...current, effect: "highlight" }));
+    }, 700);
+    return () => window.clearTimeout(timeout);
+  }, [
+    browser.view,
+    elementMap,
+    recentAgentEvents,
+    showRenderedPage,
+    timelineEvents,
+  ]);
 
   useEffect(() => {
     if (!mirrorDocument || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
@@ -1428,11 +1618,16 @@ function BrowserTabContent({
         >
           <MousePointerClick className="h-3.5 w-3.5" />
         </BrowserModeButton>
-        <BrowserModeButton
-          label="Browser Cooperation"
-          active={cooperationEnabled}
+        <BrowserCooperationModeMenu
+          value={cooperationMode}
           disabled={!canPersistWorkspace}
-          onClick={onCooperationToggle}
+          onChange={onCooperationModeChange}
+        />
+        <BrowserModeButton
+          label="Tracing"
+          active={tracingOpen}
+          disabled={!canInspectBrowser}
+          onClick={() => setTracingOpen((open) => !open)}
         >
           <Activity className="h-3.5 w-3.5" />
         </BrowserModeButton>
@@ -1504,16 +1699,30 @@ function BrowserTabContent({
             Enter a URL to open a page in this tab.
           </div>
         ) : null}
-        {showHtmlMirror && browser.mode !== "browse" ? (
-          <>
-            <div className="absolute inset-0 z-10 cursor-crosshair" aria-hidden="true" />
-            {pixelHoverElement?.bounds && browser.view ? (
-              <div
-                className="pointer-events-none absolute z-20 rounded-[var(--browser-highlight-radius,4px)] border-2 border-primary bg-primary/18 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)] transition-all duration-100"
-                style={browserRenderedElementStyle(pixelHoverElement.bounds, viewportRef.current, browser.view)}
-              />
-            ) : null}
-          </>
+        {activeProposal && browser.view ? (
+          <BrowserProposalOverlay
+            proposal={activeProposal}
+            target={activeProposalTarget}
+            elementMap={elementMap}
+            view={browser.view}
+            surface={showRenderedPage ? imageRef.current : viewportRef.current}
+            onDecision={onProposalDecision}
+          />
+        ) : null}
+        <BrowserGhostCursor trace={ghostTrace} />
+        {tracingOpen ? (
+          <BrowserTracingPanel
+            cooperation={cooperation}
+            rawEvents={rawEvents}
+            usefulTimeline={usefulTimeline}
+            recentUserEvents={recentUserEvents}
+            recentAgentEvents={recentAgentEvents}
+            pendingProposals={pendingProposals}
+            activeTab={tracingTab}
+            onTabChange={setTracingTab}
+            onClose={() => setTracingOpen(false)}
+            onProposalDecision={onProposalDecision}
+          />
         ) : null}
         {browser.loading ? (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/78 px-8 text-center backdrop-blur-sm">
@@ -1600,20 +1809,6 @@ function BrowserTabContent({
             </div>
           </form>
         ) : null}
-        {timelineEvents.length ? (
-          <div className="pointer-events-none absolute inset-x-3 top-3 max-h-28 space-y-1 overflow-hidden">
-            {timelineEvents.slice(-3).map((event) => (
-              <div
-                key={event.id}
-                className="truncate rounded-full border border-glass-border/30 bg-background/82 px-2 py-1 text-[11px] text-muted-foreground shadow-lg"
-              >
-                <span className="text-foreground">{event.source}</span>
-                <span className="mx-1">·</span>
-                {event.label}
-              </div>
-            ))}
-          </div>
-        ) : null}
       </div>
     </div>
   );
@@ -1670,6 +1865,323 @@ function BrowserModeButton({
     >
       {children}
     </button>
+  );
+}
+
+function BrowserCooperationModeMenu({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: SessionBrowserCooperationMode | "off";
+  disabled: boolean;
+  onChange: (mode: SessionBrowserCooperationMode | "off") => void;
+}) {
+  const options: Array<{ value: SessionBrowserCooperationMode | "off"; label: string }> = [
+    { value: "off", label: "Off" },
+    { value: "observe_only", label: "Observe" },
+    { value: "suggest_before_action", label: "Suggest" },
+    { value: "agent_control", label: "Control" },
+  ];
+  const active = options.find((option) => option.value === value) ?? options[0];
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Browser cooperation mode"
+          disabled={disabled}
+          className={cn(
+            "inline-flex h-7 max-w-[132px] shrink-0 items-center gap-1.5 rounded-full border border-glass-border/35 bg-card/70 px-2.5 text-[11px] text-foreground outline-none transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-35",
+            value !== "off" && "border-primary/35 bg-primary/10 text-primary",
+          )}
+        >
+          <span className="truncate">{active.label}</span>
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-40">
+        <DropdownMenuLabel>Cooperation</DropdownMenuLabel>
+        {options.map((option) => (
+          <DropdownMenuItem key={option.value} onSelect={() => onChange(option.value)}>
+            <Check className={cn("mr-2 h-3.5 w-3.5", option.value === value ? "opacity-100" : "opacity-0")} />
+            <span>{option.label}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function BrowserProposalOverlay({
+  proposal,
+  target,
+  elementMap,
+  view,
+  surface,
+  onDecision,
+}: {
+  proposal: Record<string, unknown>;
+  target: Record<string, unknown>;
+  elementMap: SessionBrowserElement[];
+  view: SessionBrowserView;
+  surface: HTMLElement | null;
+  onDecision: (proposal: Record<string, unknown>, decision: "approve" | "deny" | "dismiss") => void;
+}) {
+  const bounds = browserTraceBounds(target, elementMap);
+  if (!bounds) {
+    return (
+      <div className="absolute right-3 top-3 z-40 w-[min(340px,calc(100%-24px))] rounded-lg border border-primary/35 bg-background/94 p-3 text-xs shadow-floating backdrop-blur-xl">
+        <ProposalBody proposal={proposal} onDecision={onDecision} />
+      </div>
+    );
+  }
+  const highlight = browserRenderedElementStyle(bounds, surface, view);
+  const barTop = Math.max(8, highlight.top - 38);
+  const barLeft = Math.max(8, Math.min(highlight.left, (view.viewport_width || 420) - 230));
+  return (
+    <>
+      <div
+        className="pointer-events-none absolute z-30 rounded-[4px] border-2 border-primary bg-primary/18 shadow-[0_0_0_3px_rgba(34,150,255,0.14)]"
+        style={highlight}
+      />
+      <div
+        className="absolute z-40 flex max-w-[min(360px,calc(100%-16px))] items-center gap-2 rounded-full border border-primary/35 bg-background/94 px-2 py-1.5 text-[11px] shadow-floating backdrop-blur-xl"
+        style={{ left: barLeft, top: barTop }}
+      >
+        <span className="min-w-0 max-w-32 truncate text-muted-foreground">
+          {String(proposal.tool_name ?? "Browser action")}
+        </span>
+        <button
+          type="button"
+          className="rounded-full bg-primary px-2.5 py-1 font-medium text-primary-foreground"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDecision(proposal, "approve");
+          }}
+        >
+          Allow
+        </button>
+        <button
+          type="button"
+          className="rounded-full border border-destructive/35 px-2.5 py-1 font-medium text-destructive"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDecision(proposal, "deny");
+          }}
+        >
+          Deny
+        </button>
+        <button
+          type="button"
+          className="rounded-full px-2 py-1 text-muted-foreground hover:text-foreground"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDecision(proposal, "dismiss");
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </>
+  );
+}
+
+function ProposalBody({
+  proposal,
+  onDecision,
+}: {
+  proposal: Record<string, unknown>;
+  onDecision: (proposal: Record<string, unknown>, decision: "approve" | "deny" | "dismiss") => void;
+}) {
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-foreground">
+            {String(proposal.tool_name ?? "Browser action")}
+          </div>
+          <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+            {String(proposal.reason ?? "The agent needs permission before executing this action.")}
+          </div>
+        </div>
+        <span className="shrink-0 rounded-full border border-primary/30 px-2 py-0.5 font-mono text-[10px] text-primary">
+          {String(proposal.mode ?? "ask")}
+        </span>
+      </div>
+      <div className="mt-3 flex justify-end gap-2">
+        <Button size="sm" onClick={() => onDecision(proposal, "approve")}>
+          Allow
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => onDecision(proposal, "deny")}>
+          Deny
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function BrowserGhostCursor({ trace }: { trace: BrowserGhostTrace }) {
+  if (!trace.visible) return null;
+  const effect = trace.effect || "highlight";
+  return (
+    <div
+      className="pointer-events-none absolute z-[35] transition-transform duration-500 ease-out"
+      style={{ transform: `translate3d(${trace.x}px, ${trace.y}px, 0)` }}
+      aria-hidden="true"
+    >
+      <div className="relative -left-1 -top-1">
+        <MousePointerClick className="h-5 w-5 text-primary drop-shadow-[0_6px_14px_rgba(0,0,0,0.45)]" />
+        {effect === "click" ? (
+          <span key={trace.nonce} className="absolute left-0 top-0 h-6 w-6 animate-ping rounded-full border border-primary/70" />
+        ) : null}
+        {effect === "type" ? (
+          <span key={trace.nonce} className="absolute left-5 top-1 h-4 w-0.5 animate-pulse bg-primary" />
+        ) : null}
+        {effect === "scroll" ? (
+          <span key={trace.nonce} className="absolute left-4 top-5 h-10 w-1 rounded-full bg-primary/45 blur-[1px]" />
+        ) : null}
+        {effect === "extract" ? (
+          <span key={trace.nonce} className="absolute left-4 top-4 h-8 w-8 rounded border border-primary/70 bg-primary/12" />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function BrowserTracingPanel({
+  cooperation,
+  rawEvents,
+  usefulTimeline,
+  recentUserEvents,
+  recentAgentEvents,
+  pendingProposals,
+  activeTab,
+  onTabChange,
+  onClose,
+  onProposalDecision,
+}: {
+  cooperation?: SessionBrowserView["cooperation"];
+  rawEvents: Array<Record<string, unknown>>;
+  usefulTimeline: Array<Record<string, unknown>>;
+  recentUserEvents: Array<Record<string, unknown>>;
+  recentAgentEvents: Array<Record<string, unknown>>;
+  pendingProposals: Array<Record<string, unknown>>;
+  activeTab: BrowserTracingTab;
+  onTabChange: (tab: BrowserTracingTab) => void;
+  onClose: () => void;
+  onProposalDecision: (proposal: Record<string, unknown>, decision: "approve" | "deny" | "dismiss") => void;
+}) {
+  const tabs: Array<[BrowserTracingTab, string, number]> = [
+    ["timeline", "Useful Timeline", usefulTimeline.length],
+    ["raw", "Raw Events", rawEvents.length],
+    ["state", "Page State", 0],
+    ["agent", "Agent Actions", recentAgentEvents.length],
+    ["proposals", "Proposals", pendingProposals.length],
+  ];
+  return (
+    <aside
+      data-browser-tracing-panel="true"
+      className="absolute inset-y-3 right-3 z-50 flex w-[min(390px,calc(100%-24px))] flex-col overflow-hidden rounded-lg border border-glass-border/35 bg-background/96 shadow-floating backdrop-blur-xl"
+      onClick={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
+    >
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-glass-border/25 px-3">
+        <Activity className="h-3.5 w-3.5 text-primary" />
+        <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">Tracing</div>
+        <button type="button" className="text-muted-foreground hover:text-foreground" onClick={onClose} aria-label="Close tracing">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-glass-border/20 px-2 py-2">
+        {tabs.map(([tab, label, count]) => (
+          <button
+            key={tab}
+            type="button"
+            className={cn(
+              "shrink-0 rounded-full px-2.5 py-1 text-[11px] transition-colors",
+              activeTab === tab ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+            onClick={() => onTabChange(tab)}
+          >
+            {label}
+            {count ? <span className="ml-1 font-mono">{count}</span> : null}
+          </button>
+        ))}
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto p-3">
+        {activeTab === "timeline" ? <TraceList items={usefulTimeline} empty="No useful timeline events yet." /> : null}
+        {activeTab === "raw" ? <TraceList items={rawEvents} empty="No raw events persisted yet." raw /> : null}
+        {activeTab === "state" ? (
+          <TraceJson value={cooperation?.page_state ?? {}} />
+        ) : null}
+        {activeTab === "agent" ? <TraceList items={recentAgentEvents} empty="No agent browser actions yet." /> : null}
+        {activeTab === "proposals" ? (
+          <div className="space-y-2">
+            {pendingProposals.length ? (
+              pendingProposals.map((proposal) => (
+                <div key={String(proposal.proposal_id ?? proposal.approval_id)} className="rounded-lg border border-glass-border/30 p-2">
+                  <ProposalBody proposal={proposal} onDecision={onProposalDecision} />
+                  <TraceJson value={proposal} compact />
+                </div>
+              ))
+            ) : (
+              <EmptyList text="No pending proposals." />
+            )}
+          </div>
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
+function TraceList({ items, empty, raw = false }: { items: Array<Record<string, unknown>>; empty: string; raw?: boolean }) {
+  if (!items.length) return <EmptyList text={empty} />;
+  return (
+    <div className="space-y-2">
+      {items.slice(-80).reverse().map((item, index) => (
+        <div key={String(item.event_id ?? item.id ?? index)} className="rounded-lg border border-glass-border/25 p-2 text-xs">
+          <div className="flex items-center gap-2">
+            <TraceRoleBadge role={String(item.trace_role ?? item.role ?? item.source ?? "browser")} />
+            <span className="min-w-0 flex-1 truncate text-foreground">
+              {String(item.semantic_label ?? item.label ?? item.kind ?? item.event_type ?? "event")}
+            </span>
+            {item.sequence !== undefined ? <span className="font-mono text-[10px] text-muted-foreground">#{String(item.sequence)}</span> : null}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+            {item.kind ? <span>{String(item.kind)}</span> : null}
+            {item.importance ? <span>{String(item.importance)}</span> : null}
+            {item.trace_effect ? <span>{String(item.trace_effect)}</span> : null}
+          </div>
+          {raw ? <TraceJson value={item} compact /> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TraceRoleBadge({ role }: { role: string }) {
+  const className =
+    role === "agent"
+      ? "border-primary/30 bg-primary/12 text-primary"
+      : role === "user"
+        ? "border-success/30 bg-success/10 text-success"
+        : role === "system"
+          ? "border-amber-400/30 bg-amber-400/10 text-amber-300"
+          : "border-glass-border/35 bg-muted/30 text-muted-foreground";
+  return <span className={cn("rounded-full border px-2 py-0.5 font-mono text-[10px]", className)}>{role}</span>;
+}
+
+function TraceJson({ value, compact = false }: { value: unknown; compact?: boolean }) {
+  return (
+    <pre
+      className={cn(
+        "mt-2 overflow-auto rounded-md border border-glass-border/25 bg-card/50 p-2 font-mono text-[10px] leading-4 text-muted-foreground",
+        compact ? "max-h-28" : "max-h-[55vh]",
+      )}
+    >
+      {JSON.stringify(value, null, 2)}
+    </pre>
   );
 }
 
@@ -1911,6 +2423,93 @@ function browserRenderedElementStyle(
     width: Math.round(bounds.width * scaleX),
     height: Math.round(bounds.height * scaleY),
   };
+}
+
+function browserTraceBounds(target: Record<string, unknown>, elementMap: SessionBrowserElement[]) {
+  const rawBounds = recordValue(target.bounds);
+  const bounds = normalizeBounds(rawBounds);
+  if (bounds) return bounds;
+  const nodeId = String(target.node_id ?? "");
+  if (!nodeId) return undefined;
+  return elementMap.find((item) => item.node_id === nodeId)?.bounds;
+}
+
+function browserTracePoint(
+  traceEvent: Record<string, unknown>,
+  elementMap: SessionBrowserElement[],
+  view: SessionBrowserView,
+  surface: HTMLElement | null,
+) {
+  const coordinates = recordValue(traceEvent.coordinates);
+  const x = numericValue(coordinates.x ?? traceEvent.x);
+  const y = numericValue(coordinates.y ?? traceEvent.y);
+  if (x !== undefined && y !== undefined) {
+    const rect = surface?.getBoundingClientRect();
+    const scaleX = rect?.width ? rect.width / Math.max(1, view.viewport_width || rect.width) : 1;
+    const scaleY = rect?.height ? rect.height / Math.max(1, view.viewport_height || rect.height) : 1;
+    return { x: Math.round(x * scaleX), y: Math.round(y * scaleY) };
+  }
+  const target = recordValue(traceEvent.target);
+  const bounds = browserTraceBounds(target, elementMap);
+  if (!bounds) return undefined;
+  const style = browserRenderedElementStyle(bounds, surface, view);
+  return {
+    x: Math.round(style.left + style.width / 2),
+    y: Math.round(style.top + style.height / 2),
+  };
+}
+
+function latestBrowserTraceEvent(
+  recentAgentEvents: Array<Record<string, unknown>>,
+  timelineEvents: SessionBrowserTimelineEvent[],
+) {
+  const agentTrace = recentAgentEvents.at(-1);
+  if (agentTrace) return agentTrace;
+  const timelineTrace = timelineEvents
+    .filter((event) => event.source === "agent")
+    .at(-1);
+  if (!timelineTrace) return undefined;
+  return {
+    ...timelineTrace,
+    trace_effect: traceEffectFromEventType(timelineTrace.event_type),
+    target: recordValue(timelineTrace.payload).target,
+  };
+}
+
+function traceEffectFromEventType(eventType: string) {
+  if (/click|tap/i.test(eventType)) return "click";
+  if (/type|key|input/i.test(eventType)) return "type";
+  if (/scroll/i.test(eventType)) return "scroll";
+  if (/extract|read|html|screenshot/i.test(eventType)) return "extract";
+  return "highlight";
+}
+
+function normalizeBounds(value: Record<string, unknown>) {
+  const x = numericValue(value.x);
+  const y = numericValue(value.y);
+  const width = numericValue(value.width);
+  const height = numericValue(value.height);
+  if (x === undefined || y === undefined || width === undefined || height === undefined) return undefined;
+  return { x, y, width, height };
+}
+
+function numericValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return undefined;
+}
+
+function recordArray(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+    : [];
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function browserAnnotationCounts(annotations: SessionBrowserAnnotation[]) {

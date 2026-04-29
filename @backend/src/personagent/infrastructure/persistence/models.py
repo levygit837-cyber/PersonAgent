@@ -231,10 +231,18 @@ class BrowserCooperationEventORM(Base):
     tab_id = Column(String(160), nullable=True)
     page_id = Column(String(160), nullable=True)
     source = Column(String(30), nullable=False, default="user")
+    channel = Column(String(40), nullable=False, default="event")
+    trace_role = Column(String(30), nullable=False, default="user")
+    visibility = Column(String(30), nullable=False, default="raw")
+    raw_kind = Column(String(120), nullable=True)
     kind = Column(String(80), nullable=False)
     url = Column(Text, nullable=True)
     target = Column(JSONB, nullable=False, default=dict)
     payload = Column(JSONB, nullable=False, default=dict)
+    coordinates = Column(JSONB, nullable=False, default=dict)
+    duration_ms = Column(Integer, nullable=True)
+    trace_effect = Column(String(80), nullable=True)
+    correlation_id = Column(String(120), nullable=True)
     importance = Column(String(30), nullable=False, default="low")
     semantic_label = Column(Text, nullable=True)
     sequence = Column(Integer, nullable=False, default=0)
@@ -242,6 +250,14 @@ class BrowserCooperationEventORM(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     browser_workspace = relationship("BrowserWorkspaceORM", back_populates="cooperation_events")
+
+    __table_args__ = (
+        UniqueConstraint("browser_workspace_id", "event_id", name="uq_browser_cooperation_workspace_event"),
+        Index("idx_browser_cooperation_workspace_sequence", "browser_workspace_id", "sequence"),
+        Index("idx_browser_cooperation_conversation_created", "conversation_id", "created_at"),
+        Index("idx_browser_cooperation_workspace_kind", "browser_workspace_id", "kind"),
+        Index("idx_browser_cooperation_workspace_correlation", "browser_workspace_id", "correlation_id"),
+    )
 
     __table_args__ = (
         UniqueConstraint("browser_workspace_id", "event_id", name="uq_browser_cooperation_workspace_event"),

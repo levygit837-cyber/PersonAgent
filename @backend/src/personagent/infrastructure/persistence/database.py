@@ -47,6 +47,18 @@ TEAM_MODE_SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_team_memory_snapshots_updated_at ON team_memory_snapshots(updated_at DESC)",
 )
 
+BROWSER_COOPERATION_SCHEMA_STATEMENTS = (
+    "ALTER TABLE browser_cooperation_events ADD COLUMN IF NOT EXISTS channel VARCHAR(40) NOT NULL DEFAULT 'event'",
+    "ALTER TABLE browser_cooperation_events ADD COLUMN IF NOT EXISTS trace_role VARCHAR(30) NOT NULL DEFAULT 'user'",
+    "ALTER TABLE browser_cooperation_events ADD COLUMN IF NOT EXISTS visibility VARCHAR(30) NOT NULL DEFAULT 'raw'",
+    "ALTER TABLE browser_cooperation_events ADD COLUMN IF NOT EXISTS raw_kind VARCHAR(120)",
+    "ALTER TABLE browser_cooperation_events ADD COLUMN IF NOT EXISTS coordinates JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE browser_cooperation_events ADD COLUMN IF NOT EXISTS duration_ms INTEGER",
+    "ALTER TABLE browser_cooperation_events ADD COLUMN IF NOT EXISTS trace_effect VARCHAR(80)",
+    "ALTER TABLE browser_cooperation_events ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(120)",
+    "CREATE INDEX IF NOT EXISTS idx_browser_cooperation_workspace_correlation ON browser_cooperation_events(browser_workspace_id, correlation_id)",
+)
+
 OPTIONAL_OPERATIONAL_MEMORY_SCHEMA_STATEMENTS = (
     "CREATE EXTENSION IF NOT EXISTS vector",
 )
@@ -115,6 +127,8 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         for statement in TEAM_MODE_SCHEMA_STATEMENTS:
+            await conn.execute(text(statement))
+        for statement in BROWSER_COOPERATION_SCHEMA_STATEMENTS:
             await conn.execute(text(statement))
         for statement in OPERATIONAL_MEMORY_SCHEMA_STATEMENTS:
             await conn.execute(text(statement))

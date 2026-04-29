@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -120,6 +120,10 @@ class SessionBrowserEventInput(BaseModel):
     id: str | None = None
     kind: str = Field(min_length=1)
     source: str = "user"
+    channel: str | None = None
+    trace_role: str | None = None
+    visibility: str | None = None
+    raw_kind: str | None = None
     timestamp: str | None = None
     tab_id: str | None = None
     page_id: str | None = None
@@ -127,6 +131,10 @@ class SessionBrowserEventInput(BaseModel):
     url: str | None = None
     target: dict[str, Any] = Field(default_factory=dict)
     payload: dict[str, Any] = Field(default_factory=dict)
+    coordinates: dict[str, Any] | None = None
+    duration_ms: int | None = None
+    trace_effect: str | None = None
+    correlation_id: str | None = None
     importance: str | None = None
     semantic_label: str | None = None
     label: str | None = None
@@ -203,6 +211,106 @@ async def ingest_conversation_browser_events(
     )
     await _save_conversation(conversation, session)
     return result
+
+
+@router.websocket("/{conversation_id}/browser/{browser_id}/cooperation/ws")
+async def session_browser_cooperation_ws(
+    websocket: WebSocket,
+    conversation_id: str,
+    browser_id: str,
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> None:
+    """Realtime Browser Cooperation transport for UI/debug state only."""
+
+    await websocket.accept()
+    try:
+        conversation = await _load_conversation(conversation_id, session)
+        service = _browser_cooperation_service(session)
+        if service is None:
+            await _send_ws_json_safely(websocket, {"type": "error", "error": "Browser cooperation persistence is unavailable."})
+            await websocket.close(code=1011)
+            return
+        await _send_ws_json_safely(
+            websocket,
+            await service.get_snapshot(conversation, browser_id=browser_id),
+        )
+        while True:
+            message = await websocket.receive_json()
+            message_type = str(message.get("type") or "")
+            if message_type == "ping":
+                await _send_ws_json_safely(websocket, {"type": "pong", "timestamp": datetime.now(UTC).isoformat()})
+                await _send_ws_json_safely(
+                    websocket,
+                    await service.get_snapshot(conversation, browser_id=browser_id),
+                )
+                continue
+            if message_type == "event_batch":
+                events = message.get("events")
+                if not isinstance(events, list):
+                    await _send_ws_json_safely(websocket, {"type": "error", "error": "event_batch requires an events list."})
+                    continue
+                result = await service.ingest_events(
+                    conversation,
+                    browser_id=browser_id,
+                    events=[event for event in events if isinstance(event, dict)],
+                )
+                await _save_conversation(conversation, session)
+                await _send_ws_json_safely(websocket, {"type": "event_batch.accepted", **result})
+                cooperation = result.get("state_patch", {}).get("cooperation") if isinstance(result.get("state_patch"), dict) else None
+                if cooperation:
+                    await _send_ws_json_safely(
+                        websocket,
+                        {
+                            "type": "timeline.patch",
+                            "state_patch": result.get("state_patch"),
+                            "useful_timeline": cooperation.get("useful_timeline", []),
+                            "recent_user_events": cooperation.get("recent_user_events", []),
+                            "recent_agent_events": cooperation.get("recent_agent_events", []),
+                        },
+                    )
+                continue
+            if message_type == "mode.set":
+                mode = str(message.get("mode") or "observe_only")
+                if mode not in BROWSER_COOPERATION_MODES:
+                    await _send_ws_json_safely(websocket, {"type": "error", "error": "Invalid browser cooperation mode."})
+                    continue
+                result = await service.set_cooperation(
+                    conversation,
+                    browser_id=browser_id,
+                    enabled=bool(message.get("enabled", True)),
+                    mode=mode,
+                )
+                await _save_conversation(conversation, session)
+                await _send_ws_json_safely(websocket, {"type": "mode.changed", **result})
+                continue
+            if message_type in {"proposal.approve", "proposal.deny", "proposal.dismiss"}:
+                proposal_id = str(message.get("proposal_id") or message.get("proposalId") or "")
+                if not proposal_id:
+                    await _send_ws_json_safely(websocket, {"type": "error", "error": "proposal_id is required."})
+                    continue
+                status = {
+                    "proposal.approve": "approved",
+                    "proposal.deny": "denied",
+                    "proposal.dismiss": "dismissed",
+                }[message_type]
+                result = await service.resolve_proposal(
+                    conversation,
+                    browser_id=browser_id,
+                    proposal_id=proposal_id,
+                    status=status,
+                )
+                await _save_conversation(conversation, session)
+                await _send_ws_json_safely(websocket, result)
+                continue
+            await _send_ws_json_safely(websocket, {"type": "error", "error": f"Unsupported cooperation WS message: {message_type}"})
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        await _send_ws_json_safely(websocket, {"type": "error", "error": str(exc)})
+        try:
+            await websocket.close(code=1011)
+        except RuntimeError:
+            return
 
 
 @router.post("/browser/{browser_id}/navigate")
@@ -904,6 +1012,14 @@ async def _save_conversation(conversation, session: AsyncSession):
     return await repo.update(conversation)
 
 
+async def _send_ws_json_safely(websocket: WebSocket, payload: dict[str, Any]) -> bool:
+    try:
+        await websocket.send_json(payload)
+        return True
+    except RuntimeError:
+        return False
+
+
 async def _persist_browser_workspace_view(
     conversation,
     session: AsyncSession,
@@ -912,7 +1028,10 @@ async def _persist_browser_workspace_view(
 ) -> dict[str, Any]:
     service = _browser_workspace_service(session)
     if service is not None:
-        return await service.persist_view(conversation, browser_id=browser_id, view=view)
+        persisted = await service.persist_view(conversation, browser_id=browser_id, view=view)
+        await _ingest_view_cooperation_events(session, conversation, browser_id=browser_id, view=persisted)
+        await _save_conversation(conversation, session)
+        return persisted
     workspace = _browser_workspace(conversation)
     workspace["active_browser_id"] = browser_id
     workspace["active_tab_id"] = view.get("active_tab_id") or browser_id
@@ -928,8 +1047,39 @@ async def _persist_browser_workspace_view(
         snapshot["timeline_events"] = view["timeline_events"]
         snapshot["element_map"] = view.get("element_map") or []
         snapshot["cooperation"] = view.get("cooperation") or {}
+    await _ingest_view_cooperation_events(session, conversation, browser_id=browser_id, view=view)
     await _save_conversation(conversation, session)
     return view
+
+
+async def _ingest_view_cooperation_events(
+    session: AsyncSession,
+    conversation,
+    *,
+    browser_id: str,
+    view: dict[str, Any],
+) -> None:
+    events = _coerce_list(view.get("cooperation_events"))
+    if not events:
+        snapshot = _coerce_dict(view.get("browser_snapshot"))
+        events = _coerce_list(snapshot.get("cooperation_events"))
+    if not events:
+        return
+    service = _browser_cooperation_service(session)
+    if service is None:
+        return
+    result = await service.ingest_events(
+        conversation,
+        browser_id=browser_id,
+        events=[event for event in events if isinstance(event, dict)],
+    )
+    cooperation = _coerce_dict(_coerce_dict(result.get("state_patch")).get("cooperation"))
+    if cooperation:
+        view["cooperation"] = cooperation
+        if isinstance(view.get("workspace_state"), dict):
+            view["workspace_state"]["cooperation"] = cooperation
+        if isinstance(view.get("browser_snapshot"), dict):
+            view["browser_snapshot"]["cooperation"] = cooperation
 
 
 def _browser_workspace_service(session: AsyncSession) -> BrowserWorkspaceService | None:

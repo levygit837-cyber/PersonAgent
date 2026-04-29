@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   actSessionBrowser,
   clickSessionBrowser,
+  connectSessionBrowserCooperation,
   createSessionBrowserAnnotation,
   getSessionBrowserView,
   getSessionPanel,
@@ -51,6 +52,7 @@ vi.mock("../../api/client", () => ({
   }),
   forkConversation: vi.fn(),
   clickSessionBrowser: vi.fn(),
+  connectSessionBrowserCooperation: vi.fn(),
   createSessionBrowserAnnotation: vi.fn(),
   getSessionBrowserView: vi.fn(),
   getSessionPanel: vi.fn(),
@@ -179,10 +181,12 @@ describe("SessionPanel", () => {
   const moveSessionBrowserHistoryMock = vi.mocked(moveSessionBrowserHistory);
   const reloadSessionBrowserMock = vi.mocked(reloadSessionBrowser);
   const clickSessionBrowserMock = vi.mocked(clickSessionBrowser);
+  const connectSessionBrowserCooperationMock = vi.mocked(connectSessionBrowserCooperation);
   const actSessionBrowserMock = vi.mocked(actSessionBrowser);
   const createSessionBrowserAnnotationMock = vi.mocked(createSessionBrowserAnnotation);
   const keySessionBrowserMock = vi.mocked(keySessionBrowser);
   const scrollSessionBrowserMock = vi.mocked(scrollSessionBrowser);
+  const setSessionBrowserCooperationMock = vi.mocked(setSessionBrowserCooperation);
   const listModelsMock = vi.mocked(listModels);
   const listChatCommandsMock = vi.mocked(listChatCommands);
 
@@ -206,6 +210,12 @@ describe("SessionPanel", () => {
     clickSessionBrowserMock.mockImplementation(async (_baseUrl, browserId) =>
       browserView("https://example.com/clicked", browserId, "Clicked"),
     );
+    connectSessionBrowserCooperationMock.mockReset();
+    connectSessionBrowserCooperationMock.mockReturnValue({
+      readyState: WebSocket.CLOSED,
+      close: vi.fn(),
+      send: vi.fn(),
+    } as unknown as WebSocket);
     actSessionBrowserMock.mockReset();
     actSessionBrowserMock.mockImplementation(async (_baseUrl, browserId) =>
       browserView("https://example.com/action", browserId, "Action"),
@@ -230,6 +240,13 @@ describe("SessionPanel", () => {
     scrollSessionBrowserMock.mockImplementation(async (_baseUrl, browserId) =>
       browserView("https://example.com", browserId, "Example Domain"),
     );
+    setSessionBrowserCooperationMock.mockReset();
+    setSessionBrowserCooperationMock.mockResolvedValue({
+      cooperation: { enabled: true, mode: "observe_only", agent_control: "observe_only", browser_id: "conversation-1" },
+      state_patch: {
+        cooperation: { enabled: true, mode: "observe_only", agent_control: "observe_only", browser_id: "conversation-1" },
+      },
+    });
     getSessionPanelMock.mockReset();
     getSessionPanelMock.mockResolvedValue(snapshot);
     getSessionProjectDetailMock.mockReset();
@@ -420,6 +437,90 @@ describe("SessionPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close tab Browser" }));
     expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("shows browser tracing data and changes cooperation mode from the toolbar", async () => {
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://example.com", "conversation-1", "Example", {
+        element_map: [
+          {
+            node_id: "node-apply",
+            text: "Apply",
+            role: "button",
+            tag: "button",
+            selector: "#apply",
+            bounds: { x: 20, y: 30, width: 80, height: 24 },
+          },
+        ],
+        cooperation: {
+          enabled: true,
+          mode: "observe_only",
+          agent_control: "observe_only",
+          browser_id: "conversation-1",
+          page_state: {
+            modal_open: false,
+            focused_field: null,
+            visible_primary_buttons: ["Apply"],
+          },
+          useful_timeline: [{ event_id: "evt-1", role: "user", kind: "click", label: "clicked Apply" }],
+          raw_events: [
+            {
+              event_id: "evt-1",
+              sequence: 1,
+              trace_role: "user",
+              kind: "click",
+              semantic_label: "clicked Apply",
+            },
+          ],
+          recent_agent_events: [{ event_id: "agent-1", kind: "click", label: "agent highlighted Apply", target: { node_id: "node-apply" } }],
+          pending_action_proposals: [
+            {
+              proposal_id: "proposal-1",
+              approval_id: "approval-1",
+              tool_name: "BrowserClick",
+              target: { node_id: "node-apply" },
+              status: "awaiting_approval",
+            },
+          ],
+        },
+      }),
+    );
+    setSessionBrowserCooperationMock.mockResolvedValue({
+      cooperation: { enabled: true, mode: "agent_control", agent_control: "agent_control", browser_id: "conversation-1" },
+      state_patch: {
+        cooperation: { enabled: true, mode: "agent_control", agent_control: "agent_control", browser_id: "conversation-1" },
+      },
+    });
+
+    renderWithProviders(<ChatWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+    await screen.findByText("Agent Usage");
+    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
+    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
+    fireEvent.click(addTabButton);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+
+    expect(await screen.findByRole("button", { name: "Tracing" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Browser cooperation mode" })).toHaveTextContent("Observe");
+
+    fireEvent.click(screen.getByRole("button", { name: "Tracing" }));
+    expect(await screen.findByText("Useful Timeline")).toBeInTheDocument();
+    expect(screen.getAllByText("clicked Apply").length).toBeGreaterThan(0);
+    expect(screen.getByText("Proposals")).toBeInTheDocument();
+
+    const modeButton = screen.getByRole("button", { name: "Browser cooperation mode" });
+    fireEvent.pointerDown(modeButton, { button: 0, ctrlKey: false });
+    fireEvent.click(modeButton);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Control" }));
+    await waitFor(() =>
+      expect(setSessionBrowserCooperationMock).toHaveBeenCalledWith(
+        "http://localhost:8000",
+        "conversation-1",
+        "conversation-1",
+        { enabled: true, mode: "agent_control" },
+      ),
+    );
   });
 
   it("hides the empty browser hint while a navigation is rendering and shows the loaded url after", async () => {
@@ -730,6 +831,9 @@ describe("browser mirror sanitizer", () => {
 
     expect(srcDoc).toContain("let cooperationEnabled = true");
     expect(srcDoc).toContain("personagent-session-browser:event-batch");
+    expect(srcDoc).toContain('trace_role: "user"');
+    expect(srcDoc).toContain("correlation_id");
+    expect(srcDoc).toContain("trace_effect");
     expect(srcDoc).toContain('trackEvent("click"');
     expect(srcDoc).toContain('trackEvent("input"');
     expect(srcDoc).toContain('trackEvent("route_change"');

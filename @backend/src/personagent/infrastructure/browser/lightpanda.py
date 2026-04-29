@@ -766,6 +766,180 @@ _CONSOLE_DRAIN_SCRIPT = r"""
 }
 """
 
+_COOPERATION_CAPTURE_SCRIPT = r"""
+(config) => {
+  if (window.__personagentBrowserCooperationInstalled) return true;
+  const browserId = String(config && config.browserId || '');
+  const pageId = String(config && config.pageId || browserId);
+  const entries = [];
+  let sequence = 0;
+  const eventId = () => 'cdp_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+  const text = (value, max = 120) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
+  const hash = (value) => {
+    let h = 0;
+    const input = String(value || '');
+    for (let i = 0; i < input.length; i += 1) h = ((h << 5) - h + input.charCodeAt(i)) | 0;
+    return Math.abs(h).toString(16);
+  };
+  const isSensitive = (element) => {
+    if (!element || !element.getAttribute) return false;
+    const meta = [
+      element.getAttribute('type'),
+      element.getAttribute('autocomplete'),
+      element.getAttribute('name'),
+      element.getAttribute('id'),
+      element.getAttribute('aria-label'),
+      element.getAttribute('placeholder')
+    ].join(' ');
+    return /(password|passcode|token|secret|api[_-]?key|credit|card|cc-|cc_|cvv|cvc|expiry|email)/i.test(meta);
+  };
+  const bounds = (element) => {
+    if (!element || !element.getBoundingClientRect) return undefined;
+    const rect = element.getBoundingClientRect();
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    };
+  };
+  const target = (element) => {
+    if (!element || !element.getAttribute) return {};
+    const label = text(
+      element.getAttribute('aria-label') ||
+      element.getAttribute('placeholder') ||
+      element.getAttribute('name') ||
+      element.getAttribute('id') ||
+      element.textContent ||
+      ''
+    );
+    return {
+      tag: String(element.tagName || '').toLowerCase(),
+      role: element.getAttribute('role') || undefined,
+      text: isSensitive(element) ? '[REDACTED]' : label,
+      label: isSensitive(element) ? '[REDACTED]' : label,
+      selector: element.id ? '#' + element.id : undefined,
+      input_type: element.getAttribute('type') || undefined,
+      autocomplete: element.getAttribute('autocomplete') || undefined,
+      bounds: bounds(element)
+    };
+  };
+  const pageState = () => ({
+    modal_open: Boolean(document.querySelector('[role="dialog"],dialog,[aria-modal="true"]')),
+    focused_field: document.activeElement && document.activeElement !== document.body
+      ? text(document.activeElement.getAttribute('aria-label') || document.activeElement.getAttribute('placeholder') || document.activeElement.getAttribute('name') || '')
+      : null,
+    route: window.location.pathname || '/',
+    scroll: {
+      x: Math.round(window.scrollX || document.documentElement.scrollLeft || 0),
+      y: Math.round(window.scrollY || document.documentElement.scrollTop || 0)
+    }
+  });
+  const valuePayload = (element) => {
+    if (!element || !('value' in element)) return {};
+    const value = String(element.value || '');
+    if (isSensitive(element)) {
+      return { value: '[REDACTED]', value_redacted: true, value_char_count: value.length };
+    }
+    return { value: { preview: text(value), char_count: value.length, hash: hash(value) } };
+  };
+  const push = (kind, options = {}) => {
+    try {
+      const event = {
+        event_id: eventId(),
+        kind,
+        raw_kind: kind,
+        source: 'user',
+        channel: 'event',
+        trace_role: 'user',
+        visibility: options.visibility || (['click', 'input', 'change', 'submit', 'navigation', 'route_change', 'mutation'].includes(kind) ? 'useful' : 'raw'),
+        timestamp: new Date().toISOString(),
+        browser_id: browserId,
+        page_id: pageId,
+        tab_id: pageId,
+        url: window.location.href || document.baseURI || '',
+        target: options.target || {},
+        payload: { ...(options.payload || {}), page_state: pageState() },
+        coordinates: options.coordinates || {},
+        trace_effect: options.trace_effect || (kind === 'scroll' ? 'scroll' : ['input', 'change', 'keydown'].includes(kind) ? 'type' : kind === 'click' ? 'click' : 'highlight'),
+        correlation_id: options.correlation_id || '',
+        importance: options.importance || (['click', 'input', 'change', 'submit', 'navigation', 'route_change', 'mutation'].includes(kind) ? 'high' : 'low'),
+        semantic_label: options.semantic_label || ''
+      };
+      entries.push(event);
+      if (entries.length > 500) entries.splice(0, entries.length - 500);
+      if (typeof window.__personagentBrowserEvent === 'function') {
+        Promise.resolve(window.__personagentBrowserEvent(event)).catch(() => {});
+      }
+    } catch (_error) {}
+  };
+  Object.defineProperty(window, '__personagentBrowserCooperationEvents', {
+    value: entries,
+    configurable: true,
+  });
+  Object.defineProperty(window, '__personagentBrowserCooperationInstalled', {
+    value: true,
+    configurable: true,
+  });
+  document.addEventListener('click', (event) => {
+    const element = event.target && event.target.closest ? event.target.closest('a,button,input,textarea,select,[role],form') || event.target : event.target;
+    const metadata = target(element);
+    push('click', {
+      target: metadata,
+      payload: { button: event.button === 1 ? 'middle' : event.button === 2 ? 'right' : 'left', x: Math.round(event.clientX), y: Math.round(event.clientY) },
+      coordinates: { x: Math.round(event.clientX), y: Math.round(event.clientY), bounds: metadata.bounds },
+      trace_effect: 'click'
+    });
+  }, true);
+  document.addEventListener('input', (event) => {
+    const element = event.target;
+    push('input', { target: target(element), payload: valuePayload(element), trace_effect: 'type' });
+  }, true);
+  document.addEventListener('change', (event) => {
+    const element = event.target;
+    push('change', { target: target(element), payload: valuePayload(element), trace_effect: 'type' });
+  }, true);
+  document.addEventListener('keydown', (event) => {
+    const element = event.target;
+    push('keydown', { target: target(element), payload: { key: event.key && event.key.length === 1 ? '[character]' : event.key }, trace_effect: 'type', importance: 'low' });
+  }, true);
+  document.addEventListener('submit', (event) => {
+    push('submit', { target: target(event.target), trace_effect: 'click', importance: 'high' });
+  }, true);
+  let scrollTimer = 0;
+  window.addEventListener('scroll', () => {
+    if (scrollTimer) return;
+    scrollTimer = window.setTimeout(() => {
+      scrollTimer = 0;
+      push('scroll', { payload: pageState().scroll, trace_effect: 'scroll', importance: 'low' });
+    }, 250);
+  }, true);
+  let mutationTimer = 0;
+  if (window.MutationObserver) {
+    new MutationObserver(() => {
+      if (mutationTimer) return;
+      mutationTimer = window.setTimeout(() => {
+        mutationTimer = 0;
+        push('mutation', { semantic_label: 'page content changed', importance: 'high' });
+      }, 700);
+    }).observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+  }
+  const route = () => push('route_change', { payload: { url: window.location.href }, trace_effect: 'highlight', importance: 'high' });
+  window.addEventListener('popstate', route);
+  window.addEventListener('hashchange', route);
+  return true;
+}
+"""
+
+_COOPERATION_DRAIN_SCRIPT = r"""
+() => {
+  const entries = Array.isArray(window.__personagentBrowserCooperationEvents)
+    ? window.__personagentBrowserCooperationEvents.splice(0)
+    : [];
+  return entries;
+}
+"""
+
 
 def _search_results_script(provider: str) -> str:
     if provider == "yahoo":
@@ -816,6 +990,8 @@ class LightPandaBrowserWorker:
         self._console_cache: dict[str, dict[str, list[BrowserConsoleEntry]]] = {}
         self._console_sequence = 0
         self._console_listener_keys: set[tuple[str, str, int]] = set()
+        self._cooperation_event_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        self._cooperation_listener_keys: set[tuple[str, str, int]] = set()
 
     async def warmup(self) -> bool:
         """Best-effort startup connection. Failures are logged, not raised."""
@@ -846,6 +1022,8 @@ class LightPandaBrowserWorker:
             self._stylesheet_cache.clear()
             self._console_cache.clear()
             self._console_listener_keys.clear()
+            self._cooperation_event_cache.clear()
+            self._cooperation_listener_keys.clear()
 
     @property
     def search_provider_label(self) -> str:
@@ -2244,6 +2422,8 @@ class LightPandaBrowserWorker:
         session.page = page
         viewport_width, viewport_height = _clamped_viewport(width, height)
         await self._set_page_viewport(page, viewport_width, viewport_height)
+        active_tab_id = session.current_page_id or browser_id
+        await self._install_cooperation_capture(page, browser_id, active_tab_id)
         current_url = _clean_browser_url(str(getattr(page, "url", "") or "about:blank"))
         title, user_agent, raw_element_map, html = await asyncio.gather(
             self._safe_title(page),
@@ -2314,8 +2494,8 @@ class LightPandaBrowserWorker:
         if css_fidelity == "computed":
             fallback_reason = "Original CSS was not confirmed; using a computed-style DOM snapshot."
         tabs = self._browser_tabs_snapshot(browser_id, session, current_url=current_url, title=title, runtime=runtime)
-        active_tab_id = session.current_page_id or browser_id
         frame_tree = await self._browser_frame_tree_snapshot(page, current_url=current_url, title=title)
+        cooperation_events = await self._drain_cooperation_events(page, browser_id, active_tab_id)
         browser_snapshot = {
             "document_html": html,
             "url": current_url,
@@ -2328,6 +2508,7 @@ class LightPandaBrowserWorker:
             "active_tab_id": active_tab_id,
             "frame_tree": frame_tree,
             "element_map": element_map,
+            "cooperation_events": cooperation_events,
         }
         return {
             "type": "browser_view",
@@ -2346,6 +2527,7 @@ class LightPandaBrowserWorker:
             "element_map": element_map,
             "annotations": [],
             "timeline_events": [],
+            "cooperation_events": cooperation_events,
             "browser_snapshot": browser_snapshot,
             "user_agent": user_agent,
             "image_data": image_data,
@@ -3377,6 +3559,24 @@ class LightPandaBrowserWorker:
         with suppress(Exception):
             await self._evaluate_page(page, _CONSOLE_CAPTURE_SCRIPT)
 
+    async def _install_cooperation_capture(self, page: Any, browser_id: str, page_id: str) -> None:
+        key = (browser_id, page_id, id(page))
+        if key not in self._cooperation_listener_keys:
+            expose_function = getattr(page, "expose_function", None)
+            if callable(expose_function):
+                with suppress(Exception):
+                    await expose_function(
+                        "__personagentBrowserEvent",
+                        lambda event: self._record_cooperation_event(browser_id, page_id, event),
+                    )
+            self._cooperation_listener_keys.add(key)
+        with suppress(Exception):
+            await self._evaluate_page(
+                page,
+                _COOPERATION_CAPTURE_SCRIPT,
+                {"browserId": browser_id, "pageId": page_id},
+            )
+
     async def _drain_page_console_entries(
         self,
         page: Any,
@@ -3398,6 +3598,38 @@ class LightPandaBrowserWorker:
                 source=str(entry.get("source") or "console"),
                 url=str(entry.get("url") or ""),
             )
+
+    async def _drain_cooperation_events(
+        self,
+        page: Any,
+        browser_id: str,
+        page_id: str,
+    ) -> list[dict[str, Any]]:
+        await self._install_cooperation_capture(page, browser_id, page_id)
+        entries: list[dict[str, Any]] = []
+        cached = self._cooperation_event_cache.setdefault(browser_id, {}).setdefault(page_id, [])
+        if cached:
+            entries.extend(cached[:200])
+            del cached[:200]
+        with suppress(Exception):
+            drained = await self._evaluate_page(page, _COOPERATION_DRAIN_SCRIPT)
+            if isinstance(drained, list):
+                entries.extend(item for item in drained if isinstance(item, dict))
+        return entries[-200:]
+
+    def _record_cooperation_event(self, browser_id: str, page_id: str, event: Any) -> None:
+        if not isinstance(event, Mapping):
+            return
+        payload = dict(event)
+        payload.setdefault("source", "user")
+        payload.setdefault("channel", "event")
+        payload.setdefault("trace_role", "user")
+        payload.setdefault("page_id", page_id)
+        payload.setdefault("tab_id", page_id)
+        page_cache = self._cooperation_event_cache.setdefault(browser_id, {}).setdefault(page_id, [])
+        page_cache.append(payload)
+        if len(page_cache) > 500:
+            del page_cache[: len(page_cache) - 500]
 
     async def _content_page_for_target(
         self,
@@ -4301,6 +4533,7 @@ class LightPandaBrowserWorker:
                     self._opened_pages_cache.pop(conversation_id, None)
                     self._element_map_cache.pop(conversation_id, None)
                     self._console_cache.pop(conversation_id, None)
+                    self._cooperation_event_cache.pop(conversation_id, None)
 
     async def _enforce_session_limit(self) -> None:
         while len(self._sessions) > self.max_sessions:
@@ -4322,6 +4555,7 @@ class LightPandaBrowserWorker:
         self._sessions.pop(conversation_id, None)
         self._element_map_cache.pop(conversation_id, None)
         self._console_cache.pop(conversation_id, None)
+        self._cooperation_event_cache.pop(conversation_id, None)
         for page in self._session_pages(session):
             await self._best_effort_resource_call("browser_page_close", page.close)
         await self._best_effort_resource_call("browser_context_close", session.context.close)
