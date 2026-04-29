@@ -112,9 +112,13 @@ async def test_chat_commands_hide_disabled_skills(monkeypatch, tmp_path):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         visible = await client.get("/chat/commands", params={"workspace_root": str(workspace)})
         assert visible.status_code == 200
-        assert [item["slash_name"] for item in visible.json()] == ["/reviewer"]
+        visible_commands = visible.json()
+        assert any(item["slash_name"] == "/reviewer" for item in visible_commands)
+        assert any(item["source"] == "builtin" for item in visible_commands)
 
         set_skill_activation("reviewer", False)
         visible = await client.get("/chat/commands", params={"workspace_root": str(workspace)})
         assert visible.status_code == 200
-        assert visible.json() == []
+        hidden_commands = visible.json()
+        assert all(item["slash_name"] != "/reviewer" for item in hidden_commands)
+        assert any(item["source"] == "builtin" for item in hidden_commands)

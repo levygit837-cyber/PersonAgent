@@ -541,7 +541,16 @@ async ({ nodeId, selector, shadowPath, action, value, key, targetSelector, targe
   };
   focus();
   if (action === 'click') {
-    el.click();
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    await sleep(80);
+    mouse(el, 'mouseover');
+    mouse(el, 'mousemove');
+    mouse(el, 'mousedown');
+    mouse(el, 'mouseup');
+    mouse(el, 'click');
+    if (typeof el.click === 'function') {
+      try { el.click(); } catch (_error) {}
+    }
   } else if (action === 'fill') {
     if (!('value' in el)) return { ok: false, reason: 'not_fillable' };
     el.value = String(value ?? '');
@@ -604,7 +613,14 @@ async ({ nodeId, selector, shadowPath, action, value, key, targetSelector, targe
     return { ok: false, reason: 'unsupported_action' };
   }
   await sleep(350);
-  return { ok: true, node_id: nodeId, action, url: window.location.href };
+  return {
+    ok: true,
+    node_id: nodeId,
+    action,
+    url: window.location.href,
+    selector: selector || '',
+    tag: el.tagName || ''
+  };
 }
 """
 
@@ -623,22 +639,39 @@ _COMPUTED_HTML_SNAPSHOT_SCRIPT = r"""
     'grid-template-columns', 'grid-template-rows', 'grid-auto-flow',
     'list-style', 'vertical-align', 'overflow', 'object-fit', 'object-position'
   ];
-  const clone = document.documentElement.cloneNode(true);
-  const sourceNodes = [document.documentElement, ...document.documentElement.querySelectorAll('*')];
-  const cloneNodes = [clone, ...clone.querySelectorAll('*')];
+  const pairs = [];
+  const cloneTree = (source) => {
+    if (!source) return null;
+    if (source.nodeType === Node.TEXT_NODE) return document.createTextNode(source.nodeValue || '');
+    if (source.nodeType !== Node.ELEMENT_NODE) return null;
+    if (['SCRIPT', 'NOSCRIPT', 'TEMPLATE'].includes(source.tagName)) return null;
+    const target = source.cloneNode(false);
+    pairs.push([source, target]);
+    for (const child of Array.from(source.childNodes || [])) {
+      const clonedChild = cloneTree(child);
+      if (clonedChild) target.appendChild(clonedChild);
+    }
+    if (source instanceof HTMLInputElement && target instanceof HTMLInputElement) {
+      target.setAttribute('value', source.value || '');
+      if (source.checked) target.setAttribute('checked', 'checked');
+      else target.removeAttribute('checked');
+    } else if (source instanceof HTMLTextAreaElement && target instanceof HTMLTextAreaElement) {
+      target.textContent = source.value || '';
+    } else if (source instanceof HTMLOptionElement && target instanceof HTMLOptionElement) {
+      if (source.selected) target.setAttribute('selected', 'selected');
+      else target.removeAttribute('selected');
+    }
+    return target;
+  };
+  const clone = cloneTree(document.documentElement) || document.createElement('html');
   const visible = (el) => {
     const style = window.getComputedStyle(el);
     const rect = el.getBoundingClientRect();
     return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
   };
-  for (let index = 0; index < sourceNodes.length && index < cloneNodes.length && index < 1600; index += 1) {
-    const source = sourceNodes[index];
-    const target = cloneNodes[index];
+  for (let index = 0; index < pairs.length && index < 1600; index += 1) {
+    const [source, target] = pairs[index];
     if (!target || !source || target.nodeType !== Node.ELEMENT_NODE) continue;
-    if (['SCRIPT', 'NOSCRIPT', 'TEMPLATE'].includes(target.tagName)) {
-      target.remove();
-      continue;
-    }
     if (!visible(source) && target.tagName !== 'HTML' && target.tagName !== 'BODY' && target.tagName !== 'HEAD') {
       target.setAttribute('data-pa-hidden', 'true');
       target.setAttribute('style', 'display:none !important');
@@ -652,7 +685,7 @@ _COMPUTED_HTML_SNAPSHOT_SCRIPT = r"""
     }
     target.setAttribute('style', inline.join(';'));
   }
-  clone.querySelectorAll('script,noscript,template,[data-pa-hidden="true"]').forEach((node) => node.remove());
+  clone.querySelectorAll('[data-pa-hidden="true"]').forEach((node) => node.remove());
   const head = clone.querySelector('head') || clone.insertBefore(document.createElement('head'), clone.firstChild);
   head.querySelectorAll('link[rel~="stylesheet"],style[data-personagent-embedded-css]').forEach((node) => node.remove());
   const base = document.createElement('base');
@@ -663,6 +696,67 @@ _COMPUTED_HTML_SNAPSHOT_SCRIPT = r"""
   marker.setAttribute('content', 'computed');
   head.appendChild(marker);
   return '<!doctype html>\n' + clone.outerHTML;
+}
+"""
+
+_CONSOLE_CAPTURE_SCRIPT = r"""
+() => {
+  if (window.__personagentConsoleCaptureInstalled) return true;
+  const entries = [];
+  let sequence = 0;
+  const format = (value) => {
+    try {
+      if (typeof value === 'string') return value;
+      if (value instanceof Error) return value.stack || value.message || String(value);
+      return JSON.stringify(value);
+    } catch (_error) {
+      return String(value);
+    }
+  };
+  Object.defineProperty(window, '__personagentConsoleEntries', {
+    value: entries,
+    configurable: true,
+  });
+  Object.defineProperty(window, '__personagentConsoleCaptureInstalled', {
+    value: true,
+    configurable: true,
+  });
+  const push = (level, parts, source = 'console') => {
+    try {
+      entries.push({
+        sequence: ++sequence,
+        level,
+        text: Array.from(parts || []).map(format).join(' '),
+        source,
+        url: window.location.href,
+        timestamp: Date.now() / 1000,
+      });
+      if (entries.length > 500) entries.splice(0, entries.length - 500);
+    } catch (_error) {}
+  };
+  for (const level of ['debug', 'error', 'info', 'log', 'warn']) {
+    const original = console[level];
+    console[level] = function personagentConsoleProxy(...args) {
+      push(level, args);
+      if (typeof original === 'function') return original.apply(this, args);
+    };
+  }
+  window.addEventListener('error', (event) => {
+    push('error', [event.message || event.error || 'Page error'], 'pageerror');
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    push('error', [event.reason || 'Unhandled rejection'], 'unhandledrejection');
+  });
+  return true;
+}
+"""
+
+_CONSOLE_DRAIN_SCRIPT = r"""
+() => {
+  const entries = Array.isArray(window.__personagentConsoleEntries)
+    ? window.__personagentConsoleEntries.splice(0)
+    : [];
+  return entries;
 }
 """
 
@@ -1828,6 +1922,7 @@ class LightPandaBrowserWorker:
             "timeout_ms": timeout_ms,
             "files": files if normalized_action == "upload" else None,
             "text": text if normalized_action == "select_text" else None,
+            "result": dict(result) if isinstance(result, Mapping) else result,
         }
         return view
 
@@ -2232,6 +2327,9 @@ class LightPandaBrowserWorker:
         if not target_page_id:
             last_open = self._last_open_cache.get(conversation_id)
             target_page_id = last_open.page_id if last_open is not None else conversation_id
+        page = session.pages.get(target_page_id) or self._preferred_session_page(session)
+        with suppress(Exception):
+            await self._drain_page_console_entries(page, conversation_id, target_page_id)
         allowed_levels = {str(level).lower() for level in levels or [] if str(level).strip()}
         page_entries = list(self._console_cache.get(conversation_id, {}).get(target_page_id, []))
         if since_id is not None:
@@ -2242,7 +2340,6 @@ class LightPandaBrowserWorker:
         selected = page_entries[-safe_limit:]
         if clear:
             self._console_cache.get(conversation_id, {}).pop(target_page_id, None)
-        page = session.pages.get(target_page_id) or self._preferred_session_page(session)
         return {
             "type": "browser_console",
             "page_id": target_page_id,
@@ -3621,6 +3718,7 @@ class LightPandaBrowserWorker:
         try:
             await page.goto(clean_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
             await page.wait_for_timeout(250)
+            await self._install_console_capture(page)
         except Exception as exc:
             page_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
             if allow_partial and page_url.startswith(("http://", "https://")):
@@ -3630,6 +3728,8 @@ class LightPandaBrowserWorker:
                     page_url=page_url,
                     error=str(exc),
                 )
+                with suppress(Exception):
+                    await self._install_console_capture(page)
                 return
             if "RobotsBlocked" in str(exc):
                 raise BrowserBlockedError(
@@ -3671,6 +3771,32 @@ class LightPandaBrowserWorker:
         if last_error is not None:
             raise last_error
         return None
+
+    async def _install_console_capture(self, page: Any) -> None:
+        with suppress(Exception):
+            await self._evaluate_page(page, _CONSOLE_CAPTURE_SCRIPT)
+
+    async def _drain_page_console_entries(
+        self,
+        page: Any,
+        conversation_id: str,
+        page_id: str,
+    ) -> None:
+        await self._install_console_capture(page)
+        entries = await self._evaluate_page(page, _CONSOLE_DRAIN_SCRIPT)
+        if not isinstance(entries, list):
+            return
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                continue
+            self._record_console_entry(
+                conversation_id,
+                page_id,
+                level=str(entry.get("level") or "log"),
+                text=str(entry.get("text") or ""),
+                source=str(entry.get("source") or "console"),
+                url=str(entry.get("url") or ""),
+            )
 
     async def _content_page_for_target(
         self,

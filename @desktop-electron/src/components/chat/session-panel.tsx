@@ -1216,9 +1216,13 @@ function BrowserTabContent({
       (browser.view?.render_mode === "html_mirror" || browser.view?.render_mode === "computed_html") &&
       documentHtml,
   );
-  const mirrorDocument = showHtmlMirror
-    ? browserMirrorSrcDoc(documentHtml, browser.currentUrl, browser.browserId, elementMap)
-    : "";
+  const mirrorDocument = useMemo(
+    () =>
+      showHtmlMirror
+        ? browserMirrorSrcDoc(documentHtml, browser.currentUrl, browser.browserId, elementMap)
+        : "",
+    [browser.browserId, browser.currentUrl, documentHtml, elementMap, showHtmlMirror],
+  );
   const canInspectBrowser = showHtmlMirror || showRenderedPage;
   const annotationCounts = useMemo(() => browserAnnotationCounts(annotations), [annotations]);
   const selectedElement = browser.selectedNodeId

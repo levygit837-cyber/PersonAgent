@@ -294,6 +294,7 @@ async def test_web_fetch_validates_hosts_and_extracts_html(monkeypatch, tmp_path
         url = "https://example.com/page"
         status_code = 200
         is_success = True
+        is_redirect = False
 
     class FakeClient:
         def __init__(self, *args, **kwargs):

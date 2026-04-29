@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import socketserver
+import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler
 from uuid import UUID
@@ -168,10 +169,11 @@ def _serve_local_browser_control_page() -> tuple[socketserver.TCPServer, str]:
         def log_message(self, _format, *args):
             return None
 
-    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+    server = socketserver.TCPServer(("0.0.0.0", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    host, port = server.server_address
+    _host, port = server.server_address
+    host = _lightpanda_fixture_host()
     return server, f"http://{host}:{port}/"
 
 
@@ -181,3 +183,30 @@ def _contains_ordered_subsequence(values: list[str | None], expected: list[str])
         if index < len(expected) and value == expected[index]:
             index += 1
     return index == len(expected)
+
+
+def _lightpanda_fixture_host() -> str:
+    explicit = os.getenv("LIGHTPANDA_FIXTURE_HOST")
+    if explicit:
+        return explicit
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "network",
+                "inspect",
+                "personagent_personagent-network",
+                "--format",
+                "{{(index .IPAM.Config 0).Gateway}}",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        gateway = result.stdout.strip()
+        if result.returncode == 0 and gateway:
+            return gateway
+    except Exception:
+        pass
+    return "127.0.0.1"
