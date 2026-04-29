@@ -126,6 +126,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           ? "local-model"
           : provider === "deepseek" && get().selectedModelId === "local-model"
             ? "deepseek-v4-flash"
+          : provider === "zenmux" && get().selectedModelId === "local-model"
+            ? "deepseek/deepseek-v4-flash-free"
           : provider === "codex" && get().selectedModelId === "local-model"
             ? "gpt-5.5"
             : get().selectedModelId,

@@ -41,10 +41,6 @@ from personagent.application.tools import (
     ToolRegistry,
     ToolRuntimeConfig,
 )
-from personagent.application.tools.runtime_config import (
-    DEFAULT_MAX_TOOL_ITERATIONS,
-    MAX_TOOL_ITERATIONS_HARD_CAP,
-)
 from personagent.application.use_cases.context import BuildContextUseCase
 from personagent.application.use_cases.memory.recall_memory import RecallMemoryUseCase
 from personagent.domain.context.models import ContextBuildResult, SystemContext, UserContext
@@ -208,9 +204,8 @@ class ChatCompletionUseCase:
         seen_tool_call_ids: set[str] = set()
 
         try:
-            max_iterations = self._max_tool_iterations(request)
             iteration = 0
-            while iteration < max_iterations:
+            while True:
                 messages, _context_metadata = await self._prepare_messages_for_llm(
                     conversation,
                     request,
@@ -434,12 +429,10 @@ class ChatCompletionUseCase:
         seen_tool_call_ids: set[str] = set()
 
         try:
-            max_iterations = self._max_tool_iterations(request)
             iteration = 0
-            tool_limit_exceeded = False
             executed_tools = False
             prompt_context_emitted = False
-            while iteration < max_iterations:
+            while True:
                 messages, context_metadata = await self._prepare_messages_for_llm(
                     conversation,
                     request,
@@ -630,34 +623,6 @@ class ChatCompletionUseCase:
                 iteration += 1
                 if waiting_for_plan_approval or waiting_for_tool_approval:
                     break
-                if iteration >= max_iterations:
-                    tool_limit_exceeded = True
-
-            if tool_limit_exceeded:
-                final_finish_reason = "tool_iterations_exceeded"
-                notice = self._tool_iteration_limit_notice(max_iterations)
-                conversation.add_message(
-                    Message(
-                        role=Role.ASSISTANT,
-                        content=notice,
-                        metadata={
-                            "finish_reason": "tool_iterations_exceeded",
-                            "model": final_model,
-                            "provider": final_provider,
-                            "tool_iterations": max_iterations,
-                        },
-                    )
-                )
-                yield StreamChunk(
-                    content=notice,
-                    finish_reason="tool_iterations_exceeded",
-                    metadata={
-                        "event": "tool_iterations_exceeded",
-                        "provider": final_provider,
-                        "model": final_model,
-                        "tool_iterations": max_iterations,
-                    },
-                )
 
         except LLMBackendError as exc:
             logger.error("llm_backend_stream_error", error=str(exc))
@@ -1029,7 +994,7 @@ class ChatCompletionUseCase:
                 {
                     key: value
                     for key, value in chunk_metadata.items()
-                    if key.startswith(("vertex_", "kimi_"))
+                    if key.startswith(("vertex_", "kimi_", "zenmux_"))
                 }
             )
             if chunk.finish_reason:
@@ -1089,14 +1054,6 @@ class ChatCompletionUseCase:
             "The model stopped after tool execution without producing a visible final "
             f"answer. Provider: {provider}; model: {model}. The tool results were preserved, "
             "but the provider returned an empty terminal response."
-        )
-
-    def _tool_iteration_limit_notice(self, max_iterations: int) -> str:
-        return (
-            "Tool execution stopped because the model reached the configured limit of "
-            f"{max_iterations} tool iterations before producing a final answer. The tool "
-            "results above were preserved; narrow the request or continue from the latest "
-            "tool result."
         )
 
     def _prepare_prompt_surfaces(
@@ -1367,16 +1324,6 @@ class ChatCompletionUseCase:
         if self._tool_registry is None or self._tool_runtime_config is None:
             raise RuntimeError("Tool runtime is not configured")
         return ToolOrchestrator(self._tool_registry, self._tool_runtime_config)
-
-    def _max_tool_iterations(self, request: ChatRequestDTO) -> int:
-        if request.max_tool_iterations is not None:
-            return min(MAX_TOOL_ITERATIONS_HARD_CAP, max(1, int(request.max_tool_iterations)))
-        if self._tool_runtime_config is None:
-            return DEFAULT_MAX_TOOL_ITERATIONS
-        return min(
-            MAX_TOOL_ITERATIONS_HARD_CAP,
-            max(1, int(self._tool_runtime_config.max_tool_iterations)),
-        )
 
     async def _build_context_result(
         self,
@@ -1739,7 +1686,8 @@ class ChatCompletionUseCase:
         messages = self._messages_with_prompt(
             conversation,
             prompt_package,
-            include_reasoning_content=request.provider == "deepseek",
+            include_reasoning_content=request.provider in {"deepseek", "zenmux"},
+            include_reasoning_details=request.provider == "zenmux",
         )
         estimated_tokens = self._estimate_request_tokens(messages, tools)
         metadata = {
@@ -1759,7 +1707,8 @@ class ChatCompletionUseCase:
         messages = self._messages_with_prompt(
             conversation,
             prompt_package,
-            include_reasoning_content=request.provider == "deepseek",
+            include_reasoning_content=request.provider in {"deepseek", "zenmux"},
+            include_reasoning_details=request.provider == "zenmux",
         )
         estimated_tokens = self._estimate_request_tokens(messages, tools)
         metadata.update(
@@ -1776,6 +1725,7 @@ class ChatCompletionUseCase:
         prompt_package: _PromptPackage,
         *,
         include_reasoning_content: bool = False,
+        include_reasoning_details: bool = False,
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
         if prompt_package.system_prompt:
@@ -1790,6 +1740,13 @@ class ChatCompletionUseCase:
                 and reasoning_content
             ):
                 rendered["reasoning_content"] = reasoning_content
+            reasoning_details = message.metadata.get("zenmux_reasoning_details")
+            if (
+                include_reasoning_details
+                and message.role == Role.ASSISTANT
+                and reasoning_details
+            ):
+                rendered["reasoning_details"] = reasoning_details
             messages.append(rendered)
         if not prompt_package.user_context_message:
             return messages

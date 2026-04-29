@@ -32,7 +32,9 @@ import {
   getSessionProjectDetail,
   ingestSessionBrowserEvents,
   keySessionBrowser,
+  moveSessionBrowserHistory,
   navigateSessionBrowser,
+  reloadSessionBrowser,
   scrollSessionBrowser,
   setSessionBrowserCooperation,
   type SessionBrowserAnnotation,
@@ -126,13 +128,13 @@ type BrowserGhostTrace = {
   nonce: number;
 };
 
-type BrowserToolVisualEffect = "map" | "click" | "type" | "scroll" | "extract" | "highlight";
+type BrowserVisualEffect = "map" | "click" | "type" | "scroll" | "extract" | "highlight";
 
-type BrowserToolVisual = {
+type BrowserVisualEvent = {
   id: string;
   toolName: string;
   status: ToolBlockStatus;
-  effect: BrowserToolVisualEffect;
+  effect: BrowserVisualEffect;
   browserId?: string;
   pageId?: string;
   windowId?: string;
@@ -141,8 +143,47 @@ type BrowserToolVisual = {
   target?: BrowserElementMetadata;
   elements: BrowserElementMetadata[];
   coordinates?: { x: number; y: number };
+  startedAt?: number;
+  completedAt?: number;
   data: Record<string, unknown>;
 };
+
+type BrowserToolVisual = BrowserVisualEvent;
+
+const BROWSER_TOOL_VISUAL_STYLE = `
+@keyframes personagent-browser-highlight-scan {
+  0% { transform: translateX(-30%) rotate(12deg); opacity: 0; }
+  18% { opacity: 0.92; }
+  100% { transform: translateX(360%) rotate(12deg); opacity: 0; }
+}
+@keyframes personagent-browser-highlight-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.38), 0 0 0 0 rgba(103,232,249,0.22); opacity: 0.72; }
+  50% { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.72), 0 0 0 5px rgba(103,232,249,0.12); opacity: 1; }
+}
+@keyframes personagent-browser-cursor-arrive {
+  0% { transform: translate3d(-34px, -30px, 0) scale(0.86); opacity: 0; }
+  58% { transform: translate3d(0, 0, 0) scale(1); opacity: 1; }
+  100% { transform: translate3d(0, 0, 0) scale(1); opacity: 1; }
+}
+@keyframes personagent-browser-cursor-click {
+  0% { transform: scale(0.45); opacity: 0.9; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+@keyframes personagent-browser-cursor-live {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate(-2deg); }
+  45% { transform: translate3d(1.5px, -1px, 0) rotate(1deg); }
+  72% { transform: translate3d(-1px, 1px, 0) rotate(-1deg); }
+}
+@keyframes personagent-browser-caret-live {
+  0%, 42% { opacity: 1; transform: scaleY(1); }
+  55%, 100% { opacity: 0.25; transform: scaleY(0.76); }
+}
+@keyframes personagent-browser-viewport-pulse {
+  0% { opacity: 0; transform: scale(0.985); }
+  18%, 70% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.01); }
+}
+`;
 
 const summaryTab: BrowserTab = {
   id: "summary",
@@ -159,6 +200,8 @@ const BROWSER_LOADING_MESSAGES = [
   "Estilizando seu site...",
   "Mapeando elementos clicaveis...",
 ];
+const BROWSER_RENDER_CACHE_LIMIT = 32;
+const browserRenderCache = new Map<string, SessionBrowserView>();
 let composerAnnotationSequence = 0;
 
 function createEmptyBrowserState(browserId = `browser:${Date.now()}`): BrowserState {
@@ -182,6 +225,68 @@ function isBrowserTab(tab: BrowserTab) {
 
 function browserCooperationFromView(view?: SessionBrowserView) {
   return view?.cooperation ?? view?.workspace_state?.cooperation ?? view?.browser_snapshot?.cooperation;
+}
+
+function browserRenderCacheKey(
+  browserId: string,
+  url: string,
+  viewport: Pick<SessionBrowserViewport, "width" | "height">,
+  pageId = "",
+) {
+  const normalizedUrl = normalizeComparableUrl(url || "about:blank");
+  return [browserId || "browser", pageId || normalizedUrl, normalizedUrl, Math.round(viewport.width), Math.round(viewport.height)].join(
+    "::",
+  );
+}
+
+function browserRenderCacheKeyFromView(browserId: string, view: SessionBrowserView) {
+  const viewRecord = recordValue(view);
+  return (
+    browserStringValue(view.render_cache_key) ||
+    browserRenderCacheKey(
+      browserId || view.browser_id,
+      view.url || "about:blank",
+      {
+        width: view.viewport_width || 1024,
+        height: view.viewport_height || 720,
+      },
+      browserStringValue(view.active_tab_id) || browserStringValue(viewRecord.page_id) || "",
+    )
+  );
+}
+
+function rememberBrowserRenderView(browserId: string, view: SessionBrowserView) {
+  if (!view.url || view.url === "about:blank") return;
+  const key = browserRenderCacheKeyFromView(browserId, view);
+  const fallbackKey = browserRenderCacheKey(browserId || view.browser_id, view.url, {
+    width: view.viewport_width || 1024,
+    height: view.viewport_height || 720,
+  });
+  const cachedView = { ...view, render_cache_key: view.render_cache_key || key, render_cache_status: "stored" };
+  for (const cacheKey of Array.from(new Set([key, fallbackKey]))) {
+    browserRenderCache.delete(cacheKey);
+    browserRenderCache.set(cacheKey, cachedView);
+  }
+  while (browserRenderCache.size > BROWSER_RENDER_CACHE_LIMIT) {
+    const oldest = browserRenderCache.keys().next().value;
+    if (!oldest) break;
+    browserRenderCache.delete(oldest);
+  }
+}
+
+function readBrowserRenderCache(
+  browserId: string,
+  url: string,
+  viewport: Pick<SessionBrowserViewport, "width" | "height">,
+  pageId = "",
+) {
+  if (!url || url === "about:blank") return undefined;
+  const key = browserRenderCacheKey(browserId, url, viewport, pageId);
+  const cached = browserRenderCache.get(key);
+  if (!cached) return undefined;
+  browserRenderCache.delete(key);
+  browserRenderCache.set(key, cached);
+  return { ...cached, render_cache_key: cached.render_cache_key || key, render_cache_status: "hit" };
 }
 
 function isBrowserCooperationEvent(value: unknown): value is SessionBrowserCooperationEvent {
@@ -256,7 +361,8 @@ export function SessionPanel({
 
   const usage = useMemo(() => mergeUsage(snapshot?.usage, liveUsage), [snapshot?.usage, liveUsage]);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? summaryTab;
-  const browserToolVisual = useMemo(() => latestBrowserToolVisual(chatMessages), [chatMessages]);
+  const browserVisualEvents = useMemo(() => browserVisualEventsFromMessages(chatMessages), [chatMessages]);
+  const browserToolVisual = browserVisualEvents[0];
   const appliedBrowserToolViewRef = useRef("");
 
   const openDetailTab = (detail: SessionDetailView) => {
@@ -353,6 +459,7 @@ export function SessionPanel({
     options: { addHistory?: boolean; historyIndex?: number } = {},
     requestId?: number,
   ) => {
+    rememberBrowserRenderView(view.browser_id || browserForTab(tabId)?.browserId || tabId, view);
     updateBrowserTab(tabId, (browser) => {
       if (requestId !== undefined && browserRequestIdsRef.current[tabId] !== requestId) return browser;
       const nextUrl = view.url && view.url !== "about:blank" ? view.url : browser.currentUrl;
@@ -389,10 +496,11 @@ export function SessionPanel({
     if (!browserToolVisual || browserToolVisual.status !== "completed") return;
     const view = browserViewFromToolVisual(browserToolVisual);
     if (!view) return;
-    const matchingTab = tabs.find((tab) => {
+    const browserTabs = tabs.filter(isBrowserTab);
+    const matchingTab = browserTabs.find((tab) => {
       if (!isBrowserTab(tab)) return false;
       return browserToolVisualAppliesToBrowser(browserToolVisual, tab.browser ?? createEmptyBrowserState(tab.id));
-    });
+    }) ?? browserTabs.find((tab) => tab.id === activeTabId) ?? (browserTabs.length === 1 ? browserTabs[0] : undefined);
     if (!matchingTab) return;
     const applyKey = [
       browserToolVisual.id,
@@ -404,7 +512,7 @@ export function SessionPanel({
     if (appliedBrowserToolViewRef.current === applyKey) return;
     appliedBrowserToolViewRef.current = applyKey;
     applyBrowserView(matchingTab.id, view, { addHistory: browserToolVisual.effect !== "map" });
-  }, [browserToolVisual, tabs]);
+  }, [activeTabId, browserToolVisual, tabs]);
 
   useEffect(() => {
     if (!baseUrl || !conversationId) return;
@@ -456,6 +564,10 @@ export function SessionPanel({
     const browser = browserForTab(tabId);
     if (!browser || !baseUrl) return;
     const requestId = startBrowserRequest(tabId);
+    if (browser.currentUrl) {
+      const cached = readBrowserRenderCache(browser.browserId, browser.currentUrl, viewport, browser.view?.active_tab_id);
+      if (cached) applyBrowserView(tabId, cached, { historyIndex: browser.historyIndex }, requestId);
+    }
     try {
       const view = await getSessionBrowserView(baseUrl, browser.browserId, viewport, conversationId);
       applyBrowserView(tabId, view, {}, requestId);
@@ -469,6 +581,8 @@ export function SessionPanel({
     const normalized = normalizeBrowserUrl(rawUrl);
     if (!browser || !normalized || !baseUrl) return;
     const requestId = startBrowserRequest(tabId);
+    const cached = readBrowserRenderCache(browser.browserId, normalized, viewport);
+    if (cached) applyBrowserView(tabId, cached, { addHistory: true }, requestId);
     try {
       const view = await navigateSessionBrowser(baseUrl, browser.browserId, { url: normalized, ...viewport }, conversationId);
       applyBrowserView(tabId, view, { addHistory: true }, requestId);
@@ -484,8 +598,15 @@ export function SessionPanel({
     const targetUrl = browser.history[historyIndex];
     if (!targetUrl) return;
     const requestId = startBrowserRequest(tabId);
+    const cached = readBrowserRenderCache(browser.browserId, targetUrl, viewport, browser.view?.active_tab_id);
+    if (cached) applyBrowserView(tabId, cached, { historyIndex }, requestId);
     try {
-      const view = await navigateSessionBrowser(baseUrl, browser.browserId, { url: targetUrl, ...viewport }, conversationId);
+      const view = await moveSessionBrowserHistory(
+        baseUrl,
+        browser.browserId,
+        { direction, ...viewport },
+        conversationId,
+      );
       applyBrowserView(tabId, view, { historyIndex }, requestId);
     } catch (error) {
       setBrowserError(tabId, error, requestId);
@@ -496,13 +617,10 @@ export function SessionPanel({
     const browser = browserForTab(tabId);
     if (!browser || !baseUrl || !browser.currentUrl) return;
     const requestId = startBrowserRequest(tabId);
+    const cached = readBrowserRenderCache(browser.browserId, browser.currentUrl, viewport, browser.view?.active_tab_id);
+    if (cached) applyBrowserView(tabId, cached, { historyIndex: browser.historyIndex }, requestId);
     try {
-      const view = await navigateSessionBrowser(
-        baseUrl,
-        browser.browserId,
-        { url: browser.currentUrl, ...viewport },
-        conversationId,
-      );
+      const view = await reloadSessionBrowser(baseUrl, browser.browserId, viewport, conversationId);
       applyBrowserView(tabId, view, { historyIndex: browser.historyIndex }, requestId);
     } catch (error) {
       setBrowserError(tabId, error, requestId);
@@ -882,6 +1000,7 @@ export function SessionPanel({
             onBrowserProposalDecision={(proposal, decision) => void decideBrowserProposal(activeTab.id, proposal, decision)}
             canPersistBrowserWorkspace={Boolean(conversationId)}
             browserToolVisual={browserToolVisual}
+            browserVisualEvents={browserVisualEvents}
           />
         ) : !conversationId ? (
           <EmptyPanel text="Start or open a conversation to view session data." />
@@ -920,6 +1039,7 @@ export function SessionPanel({
             onBrowserProposalDecision={(proposal, decision) => void decideBrowserProposal(activeTab.id, proposal, decision)}
             canPersistBrowserWorkspace={Boolean(conversationId)}
             browserToolVisual={browserToolVisual}
+            browserVisualEvents={browserVisualEvents}
           />
         )}
       </div>
@@ -1247,6 +1367,7 @@ function ProjectGroup({
 function DetailTabContent({
   tab,
   browserToolVisual,
+  browserVisualEvents,
   onBrowserDraftChange,
   onBrowserLoad,
   onBrowserNavigate,
@@ -1269,6 +1390,7 @@ function DetailTabContent({
 }: {
   tab: BrowserTab;
   browserToolVisual?: BrowserToolVisual;
+  browserVisualEvents?: BrowserVisualEvent[];
   onBrowserDraftChange: (value: string) => void;
   onBrowserLoad: (viewport: SessionBrowserViewport) => void;
   onBrowserNavigate: (value: string, viewport: SessionBrowserViewport) => void;
@@ -1297,6 +1419,7 @@ function DetailTabContent({
       <BrowserTabContent
         browser={tab.browser ?? createEmptyBrowserState(tab.id)}
         browserToolVisual={browserToolVisual}
+        browserVisualEvents={browserVisualEvents}
         onDraftChange={onBrowserDraftChange}
         onLoadView={onBrowserLoad}
         onNavigate={onBrowserNavigate}
@@ -1353,6 +1476,7 @@ function DetailTabContent({
 function BrowserTabContent({
   browser,
   browserToolVisual,
+  browserVisualEvents = [],
   onDraftChange,
   onLoadView,
   onNavigate,
@@ -1375,6 +1499,7 @@ function BrowserTabContent({
 }: {
   browser: BrowserState;
   browserToolVisual?: BrowserToolVisual;
+  browserVisualEvents?: BrowserVisualEvent[];
   onDraftChange: (value: string) => void;
   onLoadView: (viewport: SessionBrowserViewport) => void;
   onNavigate: (value: string, viewport: SessionBrowserViewport) => void;
@@ -1405,6 +1530,7 @@ function BrowserTabContent({
   const requestedInitialViewRef = useRef(false);
   const lastBrowserIdRef = useRef(browser.browserId);
   const [mirrorUrl, setMirrorUrl] = useState("");
+  const [mirrorReady, setMirrorReady] = useState(false);
   const [pixelHoverNodeId, setPixelHoverNodeId] = useState<string | null>(null);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [tracingOpen, setTracingOpen] = useState(false);
@@ -1429,9 +1555,6 @@ function BrowserTabContent({
   const annotations = browser.view?.annotations || browser.view?.browser_snapshot?.annotations || [];
   const timelineEvents = browser.view?.timeline_events || browser.view?.browser_snapshot?.timeline_events || [];
   const backendTabs = browser.view?.tabs || browser.view?.browser_snapshot?.tabs || [];
-  const visibleBrowserToolVisual = browserToolVisualAppliesToBrowser(browserToolVisual, browser)
-    ? browserToolVisual
-    : undefined;
   const cooperation = browserCooperationFromView(browser.view);
   const cooperationEnabled = Boolean(cooperation?.enabled);
   const cooperationMode = cooperationEnabled ? cooperation?.mode ?? cooperation?.agent_control ?? "observe_only" : "off";
@@ -1448,6 +1571,23 @@ function BrowserTabContent({
   );
   const activeProposal = pendingProposals[0];
   const activeProposalTarget = activeProposal ? recordValue(activeProposal.target) : {};
+  const proposalVisual = useMemo(
+    () => (activeProposal ? browserVisualEventFromProposal(activeProposal, browser) : undefined),
+    [activeProposal, browser.browserId, browser.currentUrl, browser.view?.active_tab_id],
+  );
+  const viewVisualEvents = useMemo(
+    () => browserVisualEventsFromRecords(browser.view?.visual_events ?? browser.view?.browser_snapshot?.visual_events),
+    [browser.view?.visual_events, browser.view?.browser_snapshot?.visual_events],
+  );
+  const visibleBrowserVisualEvents = useMemo(
+    () =>
+      [proposalVisual, ...browserVisualEvents, ...viewVisualEvents]
+        .filter((event): event is BrowserVisualEvent => Boolean(event))
+        .filter((event) => browserToolVisualAppliesToBrowser(event, browser))
+        .slice(0, 8),
+    [browser, browserVisualEvents, proposalVisual, viewVisualEvents],
+  );
+  const visibleBrowserToolVisual = visibleBrowserVisualEvents[0] ?? (browserToolVisualAppliesToBrowser(browserToolVisual, browser) ? browserToolVisual : undefined);
   const showHtmlMirror = Boolean(
     browser.currentUrl &&
       (browser.view?.render_mode === "html_mirror" || browser.view?.render_mode === "computed_html") &&
@@ -1468,6 +1608,7 @@ function BrowserTabContent({
   const pixelHoverElement = pixelHoverNodeId ? elementMap.find((item) => item.node_id === pixelHoverNodeId) : undefined;
   const viewport = () => browserViewport(viewportRef.current, browser.view);
   const showEmptyState = !browser.loading && !showRenderedPage && !(showHtmlMirror && mirrorUrl);
+  const showMirrorPreparing = showHtmlMirror && Boolean(mirrorUrl) && !mirrorReady;
 
   if (lastBrowserIdRef.current !== browser.browserId) {
     lastBrowserIdRef.current = browser.browserId;
@@ -1501,7 +1642,9 @@ function BrowserTabContent({
       ) {
         return;
       }
-      if (data.type === "personagent-session-browser:navigate" && typeof data.url === "string") {
+      if (data.type === "personagent-session-browser:ready") {
+        setMirrorReady(true);
+      } else if (data.type === "personagent-session-browser:navigate" && typeof data.url === "string") {
         onNavigate(data.url, viewport());
       } else if (data.type === "personagent-session-browser:element" && typeof data.nodeId === "string") {
         const element = normalizeBrowserElementMetadata(data.element, data.nodeId);
@@ -1589,10 +1732,12 @@ function BrowserTabContent({
 
   useEffect(() => {
     if (!mirrorDocument || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
+      setMirrorReady(false);
       setMirrorUrl("");
       return;
     }
     const nextUrl = URL.createObjectURL(new Blob([mirrorDocument], { type: "text/html" }));
+    setMirrorReady(false);
     setMirrorUrl(nextUrl);
     return () => URL.revokeObjectURL(nextUrl);
   }, [mirrorDocument]);
@@ -1776,14 +1921,17 @@ function BrowserTabContent({
             ) : null}
           </>
         ) : showHtmlMirror && mirrorUrl ? (
-          <iframe
-            ref={iframeRef}
-            title={`Browser ${browser.currentUrl}`}
-            src={mirrorUrl}
-            sandbox="allow-forms allow-scripts"
-            onLoad={postMirrorState}
-            className="h-full min-h-[calc(100vh-220px)] w-full border-0 bg-white"
-          />
+	          <iframe
+	            ref={iframeRef}
+	            title={`Browser ${browser.currentUrl}`}
+	            src={mirrorUrl}
+	            sandbox="allow-forms allow-scripts"
+	            onLoad={postMirrorState}
+	            className={cn(
+	              "h-full min-h-[calc(100vh-220px)] w-full border-0 bg-white transition-opacity duration-150",
+	              !mirrorReady && "opacity-0",
+	            )}
+	          />
         ) : showEmptyState ? (
           <div className="flex h-full min-h-[260px] items-center justify-center px-8 text-center text-xs leading-5 text-muted-foreground">
             Enter a URL to open a page in this tab.
@@ -1816,18 +1964,21 @@ function BrowserTabContent({
             recentUserEvents={recentUserEvents}
             recentAgentEvents={recentAgentEvents}
             pendingProposals={pendingProposals}
+            visualEvents={visibleBrowserVisualEvents}
             activeTab={tracingTab}
             onTabChange={setTracingTab}
             onClose={() => setTracingOpen(false)}
             onProposalDecision={onProposalDecision}
           />
         ) : null}
-        {browser.loading ? (
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/78 px-8 text-center backdrop-blur-sm">
-            <div className="flex max-w-[300px] flex-col items-center gap-3 rounded-2xl border border-glass-border/35 bg-card/86 px-5 py-5 shadow-floating ring-1 ring-white/[0.04]">
-              <Loader2 className="h-5 w-5 animate-spin text-primary" />
-              <div className="space-y-1">
-                <div className="text-sm font-medium text-foreground">{BROWSER_LOADING_MESSAGES[loadingMessageIndex]}</div>
+	        {browser.loading || showMirrorPreparing ? (
+	          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/78 px-8 text-center backdrop-blur-sm">
+	            <div className="flex max-w-[300px] flex-col items-center gap-3 rounded-2xl border border-glass-border/35 bg-card/86 px-5 py-5 shadow-floating ring-1 ring-white/[0.04]">
+	              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+	              <div className="space-y-1">
+	                <div className="text-sm font-medium text-foreground">
+	                  {showMirrorPreparing ? "Aguardando CSS da pagina..." : BROWSER_LOADING_MESSAGES[loadingMessageIndex]}
+	                </div>
                 <div className="text-[11px] leading-4 text-muted-foreground">
                   Preparando HTML, CSS e mapa de elementos do Browser.
                 </div>
@@ -2023,31 +2174,45 @@ function BrowserToolVisualOverlay({
   surface: HTMLElement | null;
 }) {
   const elements = browserToolOverlayElements(visual, elementMap);
-  if (!elements.length) return null;
   const isMap = visual.effect === "map";
+  if (!elements.length) {
+    return (
+      <div className="pointer-events-none absolute inset-0 z-[32]" aria-hidden="true">
+        <style>{BROWSER_TOOL_VISUAL_STYLE}</style>
+        <div
+          data-testid="browser-tool-viewport-pulse"
+          data-browser-tool-effect={visual.effect}
+          className="absolute inset-4 rounded-md border border-primary/30 bg-primary/8 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_0_34px_rgba(34,150,255,0.18)] [animation:personagent-browser-viewport-pulse_1.2s_ease-out_both]"
+        />
+      </div>
+    );
+  }
+  const highlightLimit = isMap ? 120 : 8;
   return (
     <div className="pointer-events-none absolute inset-0 z-[32]" aria-hidden="true">
-      {elements.slice(0, isMap ? 120 : 8).map((element, index) => {
+      <style>{BROWSER_TOOL_VISUAL_STYLE}</style>
+      {elements.slice(0, highlightLimit).map((element, index) => {
         if (!element.bounds) return null;
         const isTarget = Boolean(visual.nodeId && element.node_id === visual.nodeId);
         return (
           <div
             key={`${visual.id}-${element.node_id || index}`}
             data-testid={`browser-tool-highlight-${element.node_id || index}`}
+            data-browser-tool-effect={visual.effect}
             className={cn(
-              "absolute rounded-[4px] border transition-all duration-150",
+              "absolute overflow-hidden rounded-[4px] border transition-all duration-150",
               isMap
-                ? "border-amber-300/85 bg-amber-300/10 shadow-[0_0_0_1px_rgba(251,191,36,0.14)]"
-                : "border-primary bg-primary/16 shadow-[0_0_0_3px_rgba(34,150,255,0.14)]",
-              isTarget && "border-2 border-primary bg-primary/22 shadow-[0_0_0_4px_rgba(34,150,255,0.20)]",
+                ? "border-cyan-300/95 bg-cyan-300/12 shadow-[0_0_0_1px_rgba(103,232,249,0.24),0_0_24px_rgba(103,232,249,0.32)]"
+                : "border-primary bg-primary/18 shadow-[0_0_0_3px_rgba(34,150,255,0.18),0_0_28px_rgba(34,150,255,0.32)]",
+              isTarget && "border-2 border-white bg-primary/24 shadow-[0_0_0_4px_rgba(34,150,255,0.28),0_0_34px_rgba(255,255,255,0.34)]",
             )}
             style={browserRenderedElementStyle(element.bounds, surface, view)}
-          />
+          >
+            <span className="absolute inset-0 rounded-[inherit] opacity-80 [animation:personagent-browser-highlight-pulse_1.25s_ease-in-out_infinite]" />
+            <span className="absolute -inset-y-3 -left-1/2 w-1/2 rotate-12 bg-gradient-to-r from-transparent via-white/85 to-transparent opacity-80 blur-[1px] [animation:personagent-browser-highlight-scan_1.05s_ease-in-out_infinite]" />
+          </div>
         );
       })}
-      <div className="absolute right-3 top-3 z-[33] rounded-full border border-glass-border/35 bg-background/92 px-2.5 py-1 text-[10px] font-medium text-muted-foreground shadow-floating backdrop-blur-xl">
-        {browserToolVisualLabel(visual)}
-      </div>
     </div>
   );
 }
@@ -2166,23 +2331,28 @@ function BrowserGhostCursor({ trace }: { trace: BrowserGhostTrace }) {
   return (
     <div
       data-testid="browser-ghost-cursor"
-      className="pointer-events-none absolute z-[35] transition-transform duration-500 ease-out"
+      className="pointer-events-none absolute z-[36] transition-transform duration-500 ease-out"
       style={{ transform: `translate3d(${trace.x}px, ${trace.y}px, 0)` }}
       aria-hidden="true"
     >
-      <div className="relative -left-1 -top-1">
-        <MousePointerClick className="h-5 w-5 text-primary drop-shadow-[0_6px_14px_rgba(0,0,0,0.45)]" />
+      <style>{BROWSER_TOOL_VISUAL_STYLE}</style>
+      <div
+        key={trace.nonce}
+        className="relative -left-1 -top-1 [animation:personagent-browser-cursor-arrive_620ms_ease-out_both,personagent-browser-cursor-live_1.6s_ease-in-out_620ms_infinite]"
+      >
+        <span className="absolute -left-2 -top-2 h-9 w-9 rounded-full bg-primary/18 blur-md" />
+        <MousePointerClick className="relative h-7 w-7 text-white drop-shadow-[0_7px_15px_rgba(0,0,0,0.72)] [filter:drop-shadow(0_0_7px_rgba(34,150,255,0.82))]" />
         {effect === "click" ? (
-          <span key={trace.nonce} className="absolute left-0 top-0 h-6 w-6 animate-ping rounded-full border border-primary/70" />
+          <span className="absolute left-0 top-0 h-7 w-7 rounded-full border-2 border-white/90 [animation:personagent-browser-cursor-click_520ms_ease-out_120ms_both]" />
         ) : null}
         {effect === "type" ? (
-          <span key={trace.nonce} className="absolute left-5 top-1 h-4 w-0.5 animate-pulse bg-primary" />
+          <span className="absolute left-6 top-1 h-5 w-0.5 bg-white [animation:personagent-browser-caret-live_820ms_step-end_infinite]" />
         ) : null}
         {effect === "scroll" ? (
-          <span key={trace.nonce} className="absolute left-4 top-5 h-10 w-1 rounded-full bg-primary/45 blur-[1px]" />
+          <span className="absolute left-5 top-6 h-11 w-1 rounded-full bg-white/70 blur-[1px]" />
         ) : null}
         {effect === "extract" ? (
-          <span key={trace.nonce} className="absolute left-4 top-4 h-8 w-8 rounded border border-primary/70 bg-primary/12" />
+          <span className="absolute left-5 top-5 h-8 w-8 rounded border border-white/80 bg-primary/18" />
         ) : null}
       </div>
     </div>
@@ -2196,6 +2366,7 @@ function BrowserTracingPanel({
   recentUserEvents,
   recentAgentEvents,
   pendingProposals,
+  visualEvents,
   activeTab,
   onTabChange,
   onClose,
@@ -2207,6 +2378,7 @@ function BrowserTracingPanel({
   recentUserEvents: Array<Record<string, unknown>>;
   recentAgentEvents: Array<Record<string, unknown>>;
   pendingProposals: Array<Record<string, unknown>>;
+  visualEvents: BrowserVisualEvent[];
   activeTab: BrowserTracingTab;
   onTabChange: (tab: BrowserTracingTab) => void;
   onClose: () => void;
@@ -2216,7 +2388,7 @@ function BrowserTracingPanel({
     ["timeline", "Useful Timeline", usefulTimeline.length],
     ["raw", "Raw Events", rawEvents.length],
     ["state", "Page State", 0],
-    ["agent", "Agent Actions", recentAgentEvents.length],
+    ["agent", "Agent Actions", recentAgentEvents.length + visualEvents.length],
     ["proposals", "Proposals", pendingProposals.length],
   ];
   return (
@@ -2255,7 +2427,12 @@ function BrowserTracingPanel({
         {activeTab === "state" ? (
           <TraceJson value={cooperation?.page_state ?? {}} />
         ) : null}
-        {activeTab === "agent" ? <TraceList items={recentAgentEvents} empty="No agent browser actions yet." /> : null}
+        {activeTab === "agent" ? (
+          <div className="space-y-3">
+            {visualEvents.length ? <BrowserVisualEventList events={visualEvents} /> : null}
+            <TraceList items={recentAgentEvents} empty="No agent browser actions yet." />
+          </div>
+        ) : null}
         {activeTab === "proposals" ? (
           <div className="space-y-2">
             {pendingProposals.length ? (
@@ -2272,6 +2449,27 @@ function BrowserTracingPanel({
         ) : null}
       </div>
     </aside>
+  );
+}
+
+function BrowserVisualEventList({ events }: { events: BrowserVisualEvent[] }) {
+  return (
+    <div className="space-y-2">
+      {events.slice(0, 8).map((event) => (
+        <div key={event.id} className="rounded-lg border border-primary/20 bg-primary/[0.04] p-2 text-xs">
+          <div className="flex items-center gap-2">
+            <TraceRoleBadge role={event.status === "permission_required" ? "system" : "agent"} />
+            <span className="min-w-0 flex-1 truncate text-foreground">{event.toolName}</span>
+            <span className="rounded-full border border-glass-border/30 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+              {event.effect}
+            </span>
+          </div>
+          <div className="mt-1 truncate text-[10px] text-muted-foreground">
+            {event.nodeId || event.url || event.pageId || "viewport"}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -2487,17 +2685,23 @@ function normalizeBrowserUrl(value: string) {
 }
 
 function latestBrowserToolVisual(messages: ChatMessageUi[]): BrowserToolVisual | undefined {
+  return browserVisualEventsFromMessages(messages)[0];
+}
+
+function browserVisualEventsFromMessages(messages: ChatMessageUi[]): BrowserVisualEvent[] {
+  const events: BrowserVisualEvent[] = [];
   for (const message of [...messages].reverse()) {
     if (message.role !== "agent") continue;
     for (const block of [...message.toolBlocks].reverse()) {
       const visual = browserToolVisualFromBlock(block);
-      if (visual) return visual;
+      if (visual) events.push(visual);
+      if (events.length >= 12) return events;
     }
   }
-  return undefined;
+  return events;
 }
 
-function browserToolVisualFromBlock(block: ToolBlockUi): BrowserToolVisual | undefined {
+function browserToolVisualFromBlock(block: ToolBlockUi): BrowserVisualEvent | undefined {
   const effect = browserToolEffect(block);
   if (!effect) return undefined;
   const data = block.data ?? {};
@@ -2508,13 +2712,25 @@ function browserToolVisualFromBlock(block: ToolBlockUi): BrowserToolVisual | und
     browserStringValue(lastAction.node_id) ??
     browserStringValue(data.node_id) ??
     browserStringValue(data.target_node_id);
-  const target =
+  const mappedTarget =
     normalizeBrowserElementMetadata(lastAction.target, nodeId || "") ??
-    (nodeId ? elements.find((element) => element.node_id === nodeId) : undefined) ??
-    normalizeBrowserElementMetadata({ ...result, node_id: nodeId || result.node_id || "browser_result" }, nodeId || "browser_result");
+    (nodeId ? elements.find((element) => element.node_id === nodeId) : undefined);
+  const resultTarget = normalizeBrowserElementMetadata(
+    { ...result, node_id: nodeId || result.node_id || "browser_result" },
+    nodeId || "browser_result",
+  );
+  const target =
+    mappedTarget && resultTarget?.bounds
+      ? {
+          ...mappedTarget,
+          bounds: resultTarget.bounds,
+          tag: resultTarget.tag || mappedTarget.tag,
+          selector: resultTarget.selector || mappedTarget.selector,
+        }
+      : mappedTarget ?? resultTarget;
   const x = numericValue(lastAction.x ?? data.x);
   const y = numericValue(lastAction.y ?? data.y);
-  return {
+	  return {
     id: `${block.id}:${block.status}:${browserStringValue(data.type) || block.name}`,
     toolName: block.name,
     status: block.status,
@@ -2526,12 +2742,14 @@ function browserToolVisualFromBlock(block: ToolBlockUi): BrowserToolVisual | und
     nodeId,
     target,
     elements,
-    coordinates: x !== undefined && y !== undefined ? { x, y } : undefined,
-    data,
-  };
+	    coordinates: x !== undefined && y !== undefined ? { x, y } : undefined,
+	    startedAt: browserTimestampValue(data.started_at ?? data.created_at),
+	    completedAt: block.status === "completed" ? browserTimestampValue(data.completed_at ?? data.finished_at) : undefined,
+	    data,
+	  };
 }
 
-function browserToolEffect(block: ToolBlockUi): BrowserToolVisualEffect | undefined {
+function browserToolEffect(block: ToolBlockUi): BrowserVisualEffect | undefined {
   if (!block.name.startsWith("Browser")) return undefined;
   if (block.name === "BrowserListTabs" || block.name === "BrowserReadContentChunk" || block.name === "BrowserCloseTab") {
     return undefined;
@@ -2553,6 +2771,77 @@ function browserToolEffect(block: ToolBlockUi): BrowserToolVisualEffect | undefi
   return "highlight";
 }
 
+function browserVisualEventsFromRecords(value: unknown): BrowserVisualEvent[] {
+  return recordArray(value)
+    .map<BrowserVisualEvent | undefined>((item, index) => {
+      const toolName = browserStringValue(item.toolName) || browserStringValue(item.tool_name) || "BrowserAction";
+      const effect =
+        browserVisualEffectValue(item.effect) ||
+        browserEffectFromToolAction(toolName, browserStringValue(recordValue(item).action));
+      if (!effect) return undefined;
+      const target = normalizeBrowserElementMetadata(recordValue(item.target), browserStringValue(recordValue(item.target).node_id) || "");
+      const x = numericValue(item.x ?? recordValue(item.coordinates).x);
+      const y = numericValue(item.y ?? recordValue(item.coordinates).y);
+      return {
+        id: browserStringValue(item.id) || `browser-view-visual-${index}`,
+        toolName,
+        status: browserToolStatusValue(item.status),
+        effect,
+        browserId: browserStringValue(item.browserId) || browserStringValue(item.browser_id),
+        pageId: browserStringValue(item.pageId) || browserStringValue(item.page_id),
+        windowId: browserStringValue(item.windowId) || browserStringValue(item.window_id),
+        url: browserStringValue(item.url),
+        nodeId: browserStringValue(item.nodeId) || browserStringValue(item.node_id),
+        target,
+        elements: browserToolElements({ element_map: item.elements ?? item.element_map }),
+        coordinates: x !== undefined && y !== undefined ? { x, y } : undefined,
+        startedAt: browserTimestampValue(item.startedAt ?? item.started_at),
+        completedAt: browserTimestampValue(item.completedAt ?? item.completed_at),
+        data: recordValue(item),
+      };
+    })
+    .filter((event): event is BrowserVisualEvent => Boolean(event));
+}
+
+function browserVisualEventFromProposal(proposal: Record<string, unknown>, browser: BrowserState): BrowserVisualEvent {
+  const args = recordValue(proposal.arguments);
+  const targetRecord = recordValue(proposal.target);
+  const nodeId = browserStringValue(targetRecord.node_id) || browserStringValue(args.node_id) || browserStringValue(args.target_node_id);
+  const toolName = browserStringValue(proposal.tool_name) || browserStringValue(args.tool_name) || "BrowserAction";
+  const action = browserStringValue(args.action) || browserStringValue(proposal.action);
+  const x = numericValue(args.x ?? targetRecord.x ?? recordValue(targetRecord.coordinates).x);
+  const y = numericValue(args.y ?? targetRecord.y ?? recordValue(targetRecord.coordinates).y);
+  return {
+    id: browserStringValue(proposal.proposal_id) || browserStringValue(proposal.approval_id) || `${toolName}:${nodeId || browser.currentUrl}`,
+    toolName,
+    status: "permission_required",
+    effect: browserEffectFromToolAction(toolName, action) || "highlight",
+    browserId: browserStringValue(proposal.browser_id) || browser.browserId,
+    pageId: browserStringValue(proposal.page_id) || browser.view?.active_tab_id,
+    url: browserStringValue(proposal.url) || browser.currentUrl,
+    nodeId,
+    target: normalizeBrowserElementMetadata(targetRecord, nodeId || "proposal_target"),
+    elements: [],
+    coordinates: x !== undefined && y !== undefined ? { x, y } : undefined,
+    startedAt: browserTimestampValue(proposal.created_at),
+    data: proposal,
+  };
+}
+
+function browserEffectFromToolAction(toolName: string, action?: string): BrowserVisualEffect | undefined {
+  const syntheticBlock: ToolBlockUi = {
+    id: toolName,
+    name: toolName,
+    status: "running",
+    title: toolName,
+    message: "",
+    content: "",
+    data: { action },
+    isCollapsed: true,
+  };
+  return browserToolEffect(syntheticBlock);
+}
+
 function browserToolElements(data: Record<string, unknown>) {
   const rawElements = recordArray(data.elements).length ? recordArray(data.elements) : recordArray(data.element_map);
   return rawElements
@@ -2562,9 +2851,6 @@ function browserToolElements(data: Record<string, unknown>) {
 
 function browserToolVisualAppliesToBrowser(visual: BrowserToolVisual | undefined, browser: BrowserState) {
   if (!visual) return false;
-  if (visual.url && browser.currentUrl && normalizeComparableUrl(visual.url) !== normalizeComparableUrl(browser.currentUrl)) {
-    return false;
-  }
   const viewRecord = recordValue(browser.view);
   const browserIds = new Set(
     [
@@ -2582,7 +2868,9 @@ function browserToolVisualAppliesToBrowser(visual: BrowserToolVisual | undefined
     .filter(Boolean);
   if (visualIds.length && visualIds.some((id) => browserIds.has(id))) return true;
   if (!visualIds.length) return true;
-  if (visual.url && browser.currentUrl) return true;
+  if (visual.url && browser.currentUrl) {
+    return normalizeComparableUrl(visual.url) === normalizeComparableUrl(browser.currentUrl);
+  }
   return false;
 }
 
@@ -2604,9 +2892,16 @@ function browserViewFromToolVisual(visual: BrowserToolVisual): SessionBrowserVie
     title: browserStringValue(data.title) || "",
     html: browserStringValue(data.html) || "",
     document_html: browserStringValue(data.document_html) || browserStringValue(data.html) || "",
-    render_mode: browserRenderModeValue(data.render_mode),
-    css_fidelity: browserStringValue(data.css_fidelity) || "pixel",
-    element_map: browserToolElements({ element_map: data.element_map }),
+	    render_mode: browserRenderModeValue(data.render_mode),
+	    css_fidelity: browserStringValue(data.css_fidelity) || "pixel",
+	    render_cache_key: browserStringValue(data.render_cache_key),
+	    render_cache_status: browserStringValue(data.render_cache_status),
+	    style_ready: typeof data.style_ready === "boolean" ? data.style_ready : undefined,
+	    stylesheet_count: numericValue(data.stylesheet_count),
+	    stylesheet_loaded_count: numericValue(data.stylesheet_loaded_count),
+	    stylesheet_cached_count: numericValue(data.stylesheet_cached_count),
+	    visual_events: recordArray(data.visual_events),
+	    element_map: browserToolElements({ element_map: data.element_map }),
     annotations: Array.isArray(data.annotations) ? (data.annotations as SessionBrowserAnnotation[]) : [],
     timeline_events: Array.isArray(data.timeline_events) ? (data.timeline_events as SessionBrowserTimelineEvent[]) : [],
     user_agent: browserStringValue(data.user_agent) || "",
@@ -2616,12 +2911,15 @@ function browserViewFromToolVisual(visual: BrowserToolVisual): SessionBrowserVie
     screenshot_error: browserStringValue(data.screenshot_error) || "",
     viewport_width: numericValue(data.viewport_width) || 1024,
     viewport_height: numericValue(data.viewport_height) || 720,
+    scroll_x: numericValue(data.scroll_x) || 0,
+    scroll_y: numericValue(data.scroll_y) || 0,
     can_capture: typeof data.can_capture === "boolean" ? data.can_capture : true,
   };
 }
 
 function browserToolOverlayElements(visual: BrowserToolVisual, elementMap: SessionBrowserElement[]) {
-  const candidates = visual.effect === "map" ? [...visual.elements] : [];
+  const shouldScanMap = visual.effect === "map" || visual.effect === "extract";
+  const candidates = shouldScanMap ? [...(visual.elements.length ? visual.elements : elementMap)] : [];
   if (visual.target) candidates.unshift(visual.target);
   if (visual.nodeId) {
     const mapped = visual.elements.find((element) => element.node_id === visual.nodeId) ?? elementMap.find((element) => element.node_id === visual.nodeId);
@@ -2660,19 +2958,12 @@ function browserToolVisualPoint(
   }
   if (visual.effect === "scroll") {
     const rect = surface?.getBoundingClientRect();
-    return { x: Math.round((rect?.width || view.viewport_width || 420) / 2), y: Math.round((rect?.height || view.viewport_height || 640) / 2) };
+    return {
+      x: Math.round((rect?.width || view.viewport_width || 420) / 2),
+      y: Math.round((rect?.height || view.viewport_height || 640) / 2),
+    };
   }
   return undefined;
-}
-
-function browserToolVisualLabel(visual: BrowserToolVisual) {
-  if (visual.effect === "map") return `Mapped ${visual.elements.length} elements`;
-  const targetText = visual.target?.text || visual.target?.name || visual.nodeId || "";
-  if (visual.effect === "click") return targetText ? `Click ${targetText}` : "Browser click";
-  if (visual.effect === "type") return targetText ? `Input ${targetText}` : "Browser input";
-  if (visual.effect === "scroll") return "Browser scroll";
-  if (visual.effect === "extract") return "Browser read";
-  return visual.toolName;
 }
 
 function browserStringValue(value: unknown) {
@@ -2760,13 +3051,36 @@ function browserRenderedElementStyle(
   view: SessionBrowserView,
 ) {
   const rect = image?.getBoundingClientRect();
-  const scaleX = rect?.width ? rect.width / Math.max(1, view.viewport_width || rect.width) : 1;
-  const scaleY = rect?.height ? rect.height / Math.max(1, view.viewport_height || rect.height) : 1;
+  const viewportWidth = view.viewport_width || rect?.width || 1;
+  const viewportHeight = view.viewport_height || rect?.height || 1;
+  const viewRecord = recordValue(view);
+  const snapshotRecord = recordValue(view.browser_snapshot);
+  const scrollX = numericValue(viewRecord.scroll_x ?? snapshotRecord.scroll_x) || 0;
+  const scrollY = numericValue(viewRecord.scroll_y ?? snapshotRecord.scroll_y) || 0;
+  const viewportBounds = {
+    x: bounds.x - scrollX,
+    y: bounds.y - scrollY,
+    width: bounds.width,
+    height: bounds.height,
+  };
+  const originalLooksVisible =
+    bounds.x + bounds.width >= 0 &&
+    bounds.y + bounds.height >= 0 &&
+    bounds.x <= viewportWidth &&
+    bounds.y <= viewportHeight;
+  const scrolledLooksVisible =
+    viewportBounds.x + viewportBounds.width >= 0 &&
+    viewportBounds.y + viewportBounds.height >= 0 &&
+    viewportBounds.x <= viewportWidth &&
+    viewportBounds.y <= viewportHeight;
+  const adjusted = scrolledLooksVisible || !originalLooksVisible ? viewportBounds : bounds;
+  const scaleX = rect?.width ? rect.width / Math.max(1, viewportWidth) : 1;
+  const scaleY = rect?.height ? rect.height / Math.max(1, viewportHeight) : 1;
   return {
-    left: Math.round(bounds.x * scaleX),
-    top: Math.round(bounds.y * scaleY),
-    width: Math.round(bounds.width * scaleX),
-    height: Math.round(bounds.height * scaleY),
+    left: Math.round(adjusted.x * scaleX),
+    top: Math.round(adjusted.y * scaleY),
+    width: Math.round(adjusted.width * scaleX),
+    height: Math.round(adjusted.height * scaleY),
   };
 }
 
@@ -2845,6 +3159,29 @@ function numericValue(value: unknown) {
     if (Number.isFinite(number)) return number;
   }
   return undefined;
+}
+
+function browserTimestampValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function browserVisualEffectValue(value: unknown): BrowserVisualEffect | undefined {
+  if (value === "map" || value === "click" || value === "type" || value === "scroll" || value === "extract" || value === "highlight") {
+    return value;
+  }
+  return undefined;
+}
+
+function browserToolStatusValue(value: unknown): ToolBlockStatus {
+  if (value === "queued" || value === "running" || value === "completed" || value === "error" || value === "permission_required") {
+    return value;
+  }
+  return "running";
 }
 
 function recordArray(value: unknown): Array<Record<string, unknown>> {

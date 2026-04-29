@@ -126,6 +126,53 @@ kimi:
     assert settings.kimi_anthropic_version == "2023-06-01"
 
 
+def test_project_env_overrides_zenmux_api_key_and_defaults(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+zenmux:
+  api_key: "yaml-key"
+  base_url: "https://yaml.example/api/v1"
+  default_model: "yaml-zenmux"
+  max_tokens: 8192
+  context_window: 131072
+  timeout_seconds: 45
+  stream_read_timeout_seconds: 10
+  models_cache_ttl_seconds: 1
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "ZENMUX_API_KEY=project-zenmux-key",
+                "ZENMUX_BASE_URL=https://zenmux.ai/api/v1",
+                "ZENMUX_DEFAULT_MODEL=deepseek/deepseek-v4-flash-free",
+                "ZENMUX_MAX_TOKENS=65536",
+                "ZENMUX_CONTEXT_WINDOW=1000000",
+                "ZENMUX_TIMEOUT_SECONDS=240",
+                "ZENMUX_STREAM_READ_TIMEOUT_SECONDS=0",
+                "ZENMUX_MODELS_CACHE_TTL_SECONDS=300",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("ZENMUX_API_KEY", "stale-global-zenmux-key")
+    monkeypatch.setenv("ZENMUX_DEFAULT_MODEL", "stale/global-zenmux")
+
+    settings = Settings.from_yaml(config_path)
+
+    assert settings.zenmux_api_key == "project-zenmux-key"
+    assert settings.zenmux_base_url == "https://zenmux.ai/api/v1"
+    assert settings.zenmux_default_model == "deepseek/deepseek-v4-flash-free"
+    assert settings.zenmux_max_tokens == 65536
+    assert settings.zenmux_context_window == 1_000_000
+    assert settings.zenmux_timeout_seconds == 240
+    assert settings.zenmux_stream_read_timeout_seconds == 0
+    assert settings.zenmux_models_cache_ttl_seconds == 300
+
+
 def test_project_env_overrides_codex_subscription_defaults(tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(

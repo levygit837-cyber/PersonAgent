@@ -33,6 +33,8 @@ export interface ConversationForkMessagePayload {
 export interface SessionBrowserViewport {
   width: number;
   height: number;
+  cache_mode?: "prefer_live" | "prefer_cached";
+  wait_for_styles?: boolean;
 }
 
 export interface SessionBrowserElement {
@@ -192,6 +194,13 @@ export interface SessionBrowserSnapshot {
   runtime?: "lightpanda" | "chrome_cdp" | string;
   css_fidelity?: "pixel" | "original" | "embedded" | "computed" | "fallback_html" | string;
   fallback_reason?: string;
+  render_cache_key?: string;
+  render_cache_status?: "hit" | "miss" | "stored" | "stale" | string;
+  style_ready?: boolean;
+  stylesheet_count?: number;
+  stylesheet_loaded_count?: number;
+  stylesheet_cached_count?: number;
+  visual_events?: Array<Record<string, unknown>>;
   tabs?: SessionBrowserTab[];
   active_tab_id?: string;
   frame_tree?: Array<Record<string, unknown>>;
@@ -199,6 +208,8 @@ export interface SessionBrowserSnapshot {
   annotations?: SessionBrowserAnnotation[];
   timeline_events?: SessionBrowserTimelineEvent[];
   cooperation?: SessionBrowserCooperationState;
+  scroll_x?: number;
+  scroll_y?: number;
 }
 
 export interface SessionBrowserView {
@@ -212,6 +223,13 @@ export interface SessionBrowserView {
   runtime?: "lightpanda" | "chrome_cdp" | string;
   css_fidelity?: "pixel" | "original" | "embedded" | "computed" | "fallback_html" | string;
   fallback_reason?: string;
+  render_cache_key?: string;
+  render_cache_status?: "hit" | "miss" | "stored" | "stale" | string;
+  style_ready?: boolean;
+  stylesheet_count?: number;
+  stylesheet_loaded_count?: number;
+  stylesheet_cached_count?: number;
+  visual_events?: Array<Record<string, unknown>>;
   tabs?: SessionBrowserTab[];
   active_tab_id?: string;
   frame_tree?: Array<Record<string, unknown>>;
@@ -229,6 +247,8 @@ export interface SessionBrowserView {
   screenshot_error?: string;
   viewport_width: number;
   viewport_height: number;
+  scroll_x?: number;
+  scroll_y?: number;
   can_capture: boolean;
 }
 
@@ -402,6 +422,8 @@ export function getSessionBrowserView(
     width: String(Math.round(viewport.width)),
     height: String(Math.round(viewport.height)),
   });
+  if (viewport.cache_mode) params.set("cache_mode", viewport.cache_mode);
+  if (viewport.wait_for_styles !== undefined) params.set("wait_for_styles", String(viewport.wait_for_styles));
   return requestJson<SessionBrowserView>(
     baseUrl,
     `${sessionBrowserPath(browserId, "/view", conversationId)}?${params.toString()}`,

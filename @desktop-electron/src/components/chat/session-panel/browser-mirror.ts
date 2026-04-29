@@ -1044,7 +1044,62 @@ export function browserMirrorSrcDoc(
 	    applyAnnotationMarkers();
 	    if (!activeTarget && !selectedNodeId) positionHighlightOverlay(null);
 	  });
-	  window.parent.postMessage({ type: "personagent-session-browser:ready", browserId }, "*");
+	  const waitForStylesReady = () => new Promise((resolve) => {
+	    const startedAt = Date.now();
+	    const timeoutMs = 4200;
+	    const styleLinks = Array.from(document.querySelectorAll('link[rel~="stylesheet"], link[as="style"], link[href$=".css"]'));
+	    const settleLink = (link) => new Promise((linkResolve) => {
+	      try {
+	        if (link.sheet || link.getAttribute("data-personagent-embedded-css") === "true") {
+	          linkResolve(true);
+	          return;
+	        }
+	      } catch {
+	        linkResolve(false);
+	        return;
+	      }
+	      let finished = false;
+	      const finish = (value) => {
+	        if (finished) return;
+	        finished = true;
+	        linkResolve(value);
+	      };
+	      link.addEventListener("load", () => finish(true), { once: true });
+	      link.addEventListener("error", () => finish(false), { once: true });
+	      window.setTimeout(() => finish(Boolean(link.sheet)), timeoutMs);
+	    });
+	    const fontsReady = document.fonts && document.fonts.ready
+	      ? Promise.race([
+	          document.fonts.ready.then(() => true).catch(() => false),
+	          new Promise((fontResolve) => window.setTimeout(() => fontResolve(false), timeoutMs)),
+	        ])
+	      : Promise.resolve(true);
+	    Promise.allSettled([...styleLinks.map(settleLink), fontsReady])
+	      .then((results) => {
+	        const loadedCount = results.slice(0, styleLinks.length).filter((result) => result.status === "fulfilled" && result.value !== false).length;
+	        const waitFrame = () => new Promise((frameResolve) => window.requestAnimationFrame(() => frameResolve(true)));
+	        return waitFrame().then(waitFrame).then(() => ({
+	          stylesheetCount: styleLinks.length,
+	          stylesheetLoadedCount: loadedCount,
+	          styleReady: styleLinks.length === 0 || loadedCount >= styleLinks.length,
+	          elapsedMs: Date.now() - startedAt,
+	        }));
+	      })
+	      .then(resolve)
+	      .catch(() => resolve({
+	        stylesheetCount: styleLinks.length,
+	        stylesheetLoadedCount: 0,
+	        styleReady: false,
+	        elapsedMs: Date.now() - startedAt,
+	      }));
+	  });
+	  waitForStylesReady().then((readyState) => {
+	    window.parent.postMessage({
+	      type: "personagent-session-browser:ready",
+	      browserId,
+	      ...readyState,
+	    }, "*");
+	  });
 	  document.addEventListener("click", (event) => {
 	    if (event.target && event.target.closest && event.target.closest(".pa-selection-toolbar")) {
 	      return;

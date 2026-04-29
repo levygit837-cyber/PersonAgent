@@ -35,7 +35,7 @@ class TeamConfig:
     agents: tuple[TeamAgentConfig, ...]
     execution_order: tuple[str, ...]
     coordinator: TeamAgentConfig
-    max_rounds: int = 3
+    max_rounds: int | None = 3
     vote_every_rounds: int = 2
     consensus_threshold: float = 0.75
     force_final_vote: bool = True
@@ -147,7 +147,7 @@ def parse_team_config(team_id: str | None = None, raw: dict[str, Any] | None = N
         agents=agents,
         execution_order=execution_order,
         coordinator=_parse_agent(raw.get("coordinator") or _default_coordinator_payload()),
-        max_rounds=int(raw.get("max_rounds", 3)),
+        max_rounds=_parse_optional_positive_int(raw.get("max_rounds", 3), "max_rounds"),
         vote_every_rounds=int(raw.get("vote_every_rounds", 2)),
         consensus_threshold=float(raw.get("consensus_threshold", 0.75)),
         force_final_vote=bool(raw.get("force_final_vote", True)),
@@ -212,8 +212,8 @@ def validate_team_config(config: TeamConfig) -> None:
         raise TeamValidationError("execution_order must not contain duplicates")
     if set(config.execution_order) != set(ids):
         raise TeamValidationError("execution_order must match team agent ids")
-    if config.max_rounds < 1 or config.max_rounds > 5:
-        raise TeamValidationError("max_rounds must be between 1 and 5")
+    if config.max_rounds is not None and config.max_rounds < 1:
+        raise TeamValidationError("max_rounds must be positive or null")
     if config.vote_every_rounds < 1:
         raise TeamValidationError("vote_every_rounds must be at least 1")
     if config.consensus_threshold < 0.5 or config.consensus_threshold > 1.0:
@@ -257,6 +257,15 @@ def _parse_agent(raw: Any) -> TeamAgentConfig:
         max_tokens=int(raw.get("max_tokens", 2048)),
         tools_enabled=bool(raw.get("tools_enabled", False)),
     )
+
+
+def _parse_optional_positive_int(value: Any, key: str) -> int | None:
+    if value is None:
+        return None
+    parsed = int(value)
+    if parsed < 1:
+        raise TeamValidationError(f"{key} must be positive or null")
+    return parsed
 
 
 def _required_list(raw: dict[str, Any], key: str) -> list[Any]:

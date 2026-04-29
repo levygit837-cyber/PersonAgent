@@ -55,6 +55,12 @@ class BrowserWorkspaceService:
                 "render_mode": str(view.get("render_mode") or ""),
                 "css_fidelity": str(view.get("css_fidelity") or ""),
                 "fallback_reason": str(view.get("fallback_reason") or ""),
+                "render_cache_key": str(view.get("render_cache_key") or ""),
+                "render_cache_status": str(view.get("render_cache_status") or ""),
+                "style_ready": bool(view.get("style_ready", False)),
+                "stylesheet_count": int(view.get("stylesheet_count") or 0),
+                "stylesheet_loaded_count": int(view.get("stylesheet_loaded_count") or 0),
+                "stylesheet_cached_count": int(view.get("stylesheet_cached_count") or 0),
             }
         )
         cooperation = _coerce_dict(state.get("cooperation"))
@@ -107,6 +113,12 @@ class BrowserWorkspaceService:
                 "runtime": str(workspace.active_runtime or "lightpanda"),
                 "active_tab_id": active_tab_id,
                 "cooperation": _coerce_dict(state.get("cooperation")),
+                "render_cache_key": str(state.get("render_cache_key") or ""),
+                "render_cache_status": str(state.get("render_cache_status") or ""),
+                "style_ready": bool(state.get("style_ready", False)),
+                "stylesheet_count": int(state.get("stylesheet_count") or 0),
+                "stylesheet_loaded_count": int(state.get("stylesheet_loaded_count") or 0),
+                "stylesheet_cached_count": int(state.get("stylesheet_cached_count") or 0),
             },
             "tabs": tabs,
             "active_tab_id": active_tab_id,

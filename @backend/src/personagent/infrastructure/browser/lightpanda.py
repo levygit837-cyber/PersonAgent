@@ -7,6 +7,7 @@ import base64
 import hashlib
 import inspect
 import json
+import os
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -86,8 +87,14 @@ _HTML_ATTR_PATTERN = re.compile(
     r"(?P<name>[a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?P<value>\"[^\"]*\"|'[^']*'|[^\s\"'>`]+)"
 )
 _CSS_URL_PATTERN = re.compile(r"url\((?P<quote>['\"]?)(?P<url>[^)'\"\s][^)'\"]*)(?P=quote)\)")
-_STYLESHEET_CACHE_TTL_SECONDS = 600.0
-_MAX_STYLESHEET_CACHE_ENTRIES = 256
+_STYLESHEET_CACHE_TTL_SECONDS = float(os.getenv("PERSONAGENT_BROWSER_CSS_CACHE_TTL_SECONDS", "3600"))
+_MAX_STYLESHEET_CACHE_ENTRIES = int(os.getenv("PERSONAGENT_BROWSER_CSS_CACHE_ENTRIES", "1024"))
+_MAX_STYLESHEET_HREFS_PER_PAGE = int(os.getenv("PERSONAGENT_BROWSER_CSS_MAX_HREFS", "32"))
+_STYLESHEET_CACHE_DIR = Path(
+    os.getenv("PERSONAGENT_BROWSER_CSS_CACHE_DIR", str(Path.home() / ".cache/personagent/browser-css"))
+)
+_RENDER_SNAPSHOT_CACHE_TTL_SECONDS = float(os.getenv("PERSONAGENT_BROWSER_RENDER_CACHE_TTL_SECONDS", "300"))
+_MAX_RENDER_SNAPSHOT_CACHE_ENTRIES = int(os.getenv("PERSONAGENT_BROWSER_RENDER_CACHE_ENTRIES", "64"))
 _RAW_CDP_RETRY_DELAYS = (0.0, 0.5, 1.5, 3.0, 5.0)
 _MAX_CONSOLE_ENTRIES_PER_PAGE = 200
 _MAX_BROWSER_SCRIPT_CHARS = 10_000
@@ -760,6 +767,56 @@ _COMPUTED_HTML_SNAPSHOT_SCRIPT = r"""
 }
 """
 
+_STYLE_READY_SNAPSHOT_SCRIPT = r"""
+async () => {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve(true)));
+  const links = Array.from(document.querySelectorAll('link[rel~="stylesheet"], link[as="style"], link[href$=".css"]'));
+  const settleLink = (link) => new Promise((resolve) => {
+    try {
+      if (link.sheet || link.getAttribute('data-personagent-embedded-css') === 'true') {
+        resolve(true);
+        return;
+      }
+    } catch {
+      resolve(false);
+      return;
+    }
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    link.addEventListener('load', () => finish(true), { once: true });
+    link.addEventListener('error', () => finish(false), { once: true });
+    setTimeout(() => {
+      try {
+        finish(Boolean(link.sheet));
+      } catch {
+        finish(false);
+      }
+    }, 2600);
+  });
+  const fontsReady = document.fonts && document.fonts.ready
+    ? Promise.race([document.fonts.ready.then(() => true).catch(() => false), wait(2600).then(() => false)])
+    : Promise.resolve(true);
+  const results = await Promise.allSettled([...links.map(settleLink), fontsReady]);
+  await frame();
+  await frame();
+  const loaded = results.slice(0, links.length).filter((result) => result.status === 'fulfilled' && result.value !== false).length;
+  const fontReadyResult = results[links.length];
+  const fontsReadyValue = !fontReadyResult || (fontReadyResult.status === 'fulfilled' && fontReadyResult.value !== false);
+  return {
+    personagentStyleReadyProbe: true,
+    style_ready: (links.length === 0 || loaded >= links.length) && fontsReadyValue,
+    stylesheet_count: links.length,
+    stylesheet_loaded_count: loaded,
+    fonts_ready: fontsReadyValue
+  };
+}
+"""
+
 _CONSOLE_CAPTURE_SCRIPT = r"""
 () => {
   if (window.__personagentConsoleCaptureInstalled) return true;
@@ -1042,6 +1099,8 @@ class LightPandaBrowserWorker:
         self._opened_pages_cache: dict[str, list[BrowserOpenedPage]] = {}
         self._element_map_cache: dict[str, list[dict[str, Any]]] = {}
         self._stylesheet_cache: dict[str, tuple[float, str]] = {}
+        self._stylesheet_cache_dir = _STYLESHEET_CACHE_DIR
+        self._render_snapshot_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._console_cache: dict[str, dict[str, list[BrowserConsoleEntry]]] = {}
         self._console_sequence = 0
         self._console_listener_keys: set[tuple[str, str, int]] = set()
@@ -1075,6 +1134,7 @@ class LightPandaBrowserWorker:
             self._last_open_cache.clear()
             self._opened_pages_cache.clear()
             self._stylesheet_cache.clear()
+            self._render_snapshot_cache.clear()
             self._console_cache.clear()
             self._console_listener_keys.clear()
             self._cooperation_event_cache.clear()
@@ -1535,11 +1595,20 @@ class LightPandaBrowserWorker:
         browser_id: str,
         width: int,
         height: int,
+        cache_mode: str = "prefer_live",
+        wait_for_styles: bool = True,
     ) -> dict[str, Any]:
         """Return a real LightPanda-rendered screenshot for a session-panel browser."""
 
         session = await self._get_session(browser_id)
-        return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
+        return await self._browser_view_snapshot(
+            browser_id,
+            session,
+            width=width,
+            height=height,
+            cache_mode=cache_mode,
+            wait_for_styles=wait_for_styles,
+        )
 
     async def view_navigate(
         self,
@@ -1548,6 +1617,8 @@ class LightPandaBrowserWorker:
         url: str,
         width: int,
         height: int,
+        cache_mode: str = "prefer_live",
+        wait_for_styles: bool = True,
     ) -> dict[str, Any]:
         """Navigate the session-panel browser and return the rendered view."""
 
@@ -1560,7 +1631,14 @@ class LightPandaBrowserWorker:
         self._ensure_session_page_alias(browser_id, session)
         self._remember_current_url(browser_id, final_url)
         session.touch()
-        return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
+        return await self._browser_view_snapshot(
+            browser_id,
+            session,
+            width=width,
+            height=height,
+            cache_mode=cache_mode,
+            wait_for_styles=wait_for_styles,
+        )
 
     async def view_history(
         self,
@@ -1569,6 +1647,8 @@ class LightPandaBrowserWorker:
         direction: int,
         width: int,
         height: int,
+        cache_mode: str = "prefer_live",
+        wait_for_styles: bool = True,
     ) -> dict[str, Any]:
         """Move the session-panel browser back or forward in its real page history."""
 
@@ -1579,16 +1659,23 @@ class LightPandaBrowserWorker:
         if not callable(operation):
             raise BrowserUnavailableError("LightPanda history navigation is unavailable.")
         with suppress(Exception):
-            await operation(wait_until="domcontentloaded", timeout=self.timeout_ms)
-        with suppress(Exception):
-            await page.wait_for_timeout(250)
+            await operation(wait_until="load", timeout=self.timeout_ms)
+        if wait_for_styles:
+            await self._wait_for_page_visual_ready(page)
         final_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
         if final_url:
             session.current_url = final_url
             session.last_open_url = final_url
             self._remember_current_url(browser_id, final_url)
         session.touch()
-        return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
+        return await self._browser_view_snapshot(
+            browser_id,
+            session,
+            width=width,
+            height=height,
+            cache_mode=cache_mode,
+            wait_for_styles=wait_for_styles,
+        )
 
     async def view_reload(
         self,
@@ -1596,6 +1683,8 @@ class LightPandaBrowserWorker:
         browser_id: str,
         width: int,
         height: int,
+        cache_mode: str = "prefer_live",
+        wait_for_styles: bool = True,
     ) -> dict[str, Any]:
         """Reload the current session-panel browser page and return the rendered view."""
 
@@ -1608,7 +1697,7 @@ class LightPandaBrowserWorker:
         operation = getattr(page, "reload", None)
         if callable(operation):
             try:
-                await operation(wait_until="domcontentloaded", timeout=self.timeout_ms)
+                await operation(wait_until="load", timeout=self.timeout_ms)
             except Exception as exc:
                 if current_url.startswith(("http://", "https://")):
                     logger.warning("lightpanda_reload_falling_back_to_goto", url=current_url, error=str(exc))
@@ -1619,10 +1708,17 @@ class LightPandaBrowserWorker:
             await self._goto_page(page, current_url, allow_partial=True)
         else:
             raise BrowserUnavailableError("LightPanda reload is unavailable.")
-        with suppress(Exception):
-            await page.wait_for_timeout(250)
+        if wait_for_styles:
+            await self._wait_for_page_visual_ready(page)
         session.touch()
-        return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
+        return await self._browser_view_snapshot(
+            browser_id,
+            session,
+            width=width,
+            height=height,
+            cache_mode=cache_mode,
+            wait_for_styles=wait_for_styles,
+        )
 
     async def view_click(
         self,
@@ -1651,10 +1747,7 @@ class LightPandaBrowserWorker:
             min(max(float(y), 0.0), float(viewport_height)),
             button=safe_button,
         )
-        with suppress(Exception):
-            await page.wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 5_000))
-        with suppress(Exception):
-            await page.wait_for_timeout(250)
+        await self._wait_for_page_visual_ready(page)
         session.touch()
         return await self._browser_view_snapshot(
             browser_id,
@@ -1690,10 +1783,7 @@ class LightPandaBrowserWorker:
             if not callable(press_key):
                 raise BrowserUnavailableError("LightPanda key input is unavailable.")
             await press_key(key)
-        with suppress(Exception):
-            await page.wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 5_000))
-        with suppress(Exception):
-            await page.wait_for_timeout(120)
+        await self._wait_for_page_visual_ready(page)
         session.touch()
         return await self._browser_view_snapshot(browser_id, session, width=width, height=height)
 
@@ -1823,10 +1913,7 @@ class LightPandaBrowserWorker:
             if isinstance(result, Mapping):
                 reason = str(result.get("reason") or "")
             raise BrowserError(reason or "Browser action failed.")
-        with suppress(Exception):
-            await page.wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 5_000))
-        with suppress(Exception):
-            await page.wait_for_timeout(250)
+        await self._wait_for_page_visual_ready(page)
         session.touch()
         view = await self._browser_view_snapshot(
             browser_id,
@@ -1930,8 +2017,7 @@ class LightPandaBrowserWorker:
                         min(max(float(y), 0.0), float(viewport_height)),
                         **kwargs,
                     )
-            with suppress(Exception):
-                await page.wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 5_000))
+            await self._wait_for_page_visual_ready(page)
             if safe_wait_ms:
                 with suppress(Exception):
                     await page.wait_for_timeout(safe_wait_ms)
@@ -2054,10 +2140,7 @@ class LightPandaBrowserWorker:
                 press_key = getattr(keyboard, "press", None)
                 if callable(press_key):
                     await press_key("Enter")
-            with suppress(Exception):
-                await page.wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 5_000))
-            with suppress(Exception):
-                await page.wait_for_timeout(120)
+            await self._wait_for_page_visual_ready(page)
             session.touch()
             view = await self._browser_view_snapshot(
                 conversation_id,
@@ -2071,10 +2154,7 @@ class LightPandaBrowserWorker:
             if callable(press_key):
                 with suppress(Exception):
                     await press_key("Enter")
-                with suppress(Exception):
-                    await session.page.wait_for_load_state("domcontentloaded", timeout=min(self.timeout_ms, 5_000))
-                with suppress(Exception):
-                    await session.page.wait_for_timeout(120)
+                await self._wait_for_page_visual_ready(session.page)
                 view = await self._browser_view_snapshot(
                     conversation_id,
                     session,
@@ -2122,11 +2202,12 @@ class LightPandaBrowserWorker:
         )
         viewport_width, viewport_height = _clamped_viewport(width, height)
         await self._set_page_viewport(page, viewport_width, viewport_height)
-        title, user_agent, raw_element_map, html = await asyncio.gather(
+        title, user_agent, raw_element_map, html, scroll_state = await asyncio.gather(
             self._safe_title(page),
             self._safe_user_agent(page),
             self._browser_element_map(page),
             self._safe_html(page),
+            self._safe_scroll_state(page),
         )
         current_url = _clean_browser_url(str(getattr(page, "url", "") or "about:blank"))
         runtime = "lightpanda" if user_agent.lower().startswith("lightpanda/") else "chrome_cdp"
@@ -2185,6 +2266,8 @@ class LightPandaBrowserWorker:
             "can_capture": bool(image_data),
             "viewport_width": viewport_width,
             "viewport_height": viewport_height,
+            "scroll_x": scroll_state.get("scroll_x", 0),
+            "scroll_y": scroll_state.get("scroll_y", 0),
             "full_page": bool(full_page),
             "html": html if not image_data else "",
             "document_html": html if not image_data else "",
@@ -2576,6 +2659,8 @@ class LightPandaBrowserWorker:
         *,
         width: int,
         height: int,
+        cache_mode: str = "prefer_live",
+        wait_for_styles: bool = True,
     ) -> dict[str, Any]:
         page = self._preferred_session_page(session)
         session.page = page
@@ -2584,11 +2669,33 @@ class LightPandaBrowserWorker:
         await self._set_page_viewport(page, viewport_width, viewport_height)
         await self._install_cooperation_capture(page, browser_id, active_tab_id)
         current_url = _clean_browser_url(str(getattr(page, "url", "") or "about:blank"))
-        title, user_agent, raw_element_map, html = await asyncio.gather(
+        render_cache_key = self._render_snapshot_cache_key(
+            browser_id,
+            current_url,
+            active_tab_id,
+            viewport_width,
+            viewport_height,
+        )
+        if cache_mode == "prefer_cached":
+            cached_snapshot = self._read_render_snapshot_cache(render_cache_key)
+            if cached_snapshot is not None:
+                return cached_snapshot
+        style_metrics = (
+            await self._wait_for_page_visual_ready(page)
+            if wait_for_styles
+            else {
+                "style_ready": True,
+                "stylesheet_count": 0,
+                "stylesheet_loaded_count": 0,
+                "fonts_ready": True,
+            }
+        )
+        title, user_agent, raw_element_map, html, scroll_state = await asyncio.gather(
             self._safe_title(page),
             self._safe_user_agent(page),
             self._browser_element_map(page),
             self._safe_html(page),
+            self._safe_scroll_state(page),
         )
         element_map = self._enrich_browser_element_map(
             raw_element_map,
@@ -2603,9 +2710,22 @@ class LightPandaBrowserWorker:
         if not html.strip() and current_url.startswith(("http://", "https://")):
             html = _browser_empty_fallback_html(current_url, title)
             html_from_fallback = True
-        html, embedded_stylesheet_count = await self._html_with_embedded_stylesheet_fallbacks(
+        html, stylesheet_stats = await self._html_with_embedded_stylesheet_fallbacks(
             html,
             current_url,
+        )
+        embedded_stylesheet_count = int(stylesheet_stats.get("embedded_stylesheet_count") or 0)
+        stylesheet_count = max(
+            int(style_metrics.get("stylesheet_count") or 0),
+            int(stylesheet_stats.get("stylesheet_count") or 0),
+        )
+        stylesheet_loaded_count = max(
+            int(style_metrics.get("stylesheet_loaded_count") or 0),
+            embedded_stylesheet_count,
+        )
+        stylesheet_cached_count = int(stylesheet_stats.get("stylesheet_cached_count") or 0)
+        style_ready = bool(style_metrics.get("style_ready")) or (
+            stylesheet_count > 0 and stylesheet_loaded_count >= stylesheet_count
         )
         is_lightpanda = user_agent.lower().startswith("lightpanda/")
         image_data = ""
@@ -2639,12 +2759,21 @@ class LightPandaBrowserWorker:
         )
         if html_from_fallback and css_fidelity == "original":
             css_fidelity = "fallback_html"
-        if render_mode == "html_mirror" and css_fidelity == "fallback_html" and html.strip():
+        needs_computed_fallback = (
+            render_mode == "html_mirror"
+            and html.strip()
+            and (
+                css_fidelity == "fallback_html"
+                or (stylesheet_count > 0 and not style_ready and embedded_stylesheet_count == 0)
+            )
+        )
+        if needs_computed_fallback:
             computed_html = await self._computed_html_snapshot(page, current_url)
             if computed_html.strip():
                 html = computed_html
                 render_mode = "computed_html"
                 css_fidelity = "computed"
+                style_ready = True
         fallback_reason = (
             ""
             if css_fidelity in {"original", "pixel", "embedded", "computed"}
@@ -2663,13 +2792,22 @@ class LightPandaBrowserWorker:
             "runtime": runtime,
             "css_fidelity": css_fidelity,
             "fallback_reason": fallback_reason,
+            "render_cache_key": render_cache_key,
+            "render_cache_status": "miss",
+            "style_ready": style_ready,
+            "stylesheet_count": stylesheet_count,
+            "stylesheet_loaded_count": stylesheet_loaded_count,
+            "stylesheet_cached_count": stylesheet_cached_count,
+            "visual_events": [],
             "tabs": tabs,
             "active_tab_id": active_tab_id,
             "frame_tree": frame_tree,
             "element_map": element_map,
             "cooperation_events": cooperation_events,
+            "scroll_x": scroll_state.get("scroll_x", 0),
+            "scroll_y": scroll_state.get("scroll_y", 0),
         }
-        return {
+        view = {
             "type": "browser_view",
             "browser_id": browser_id,
             "url": current_url,
@@ -2680,6 +2818,13 @@ class LightPandaBrowserWorker:
             "runtime": runtime,
             "css_fidelity": css_fidelity,
             "fallback_reason": fallback_reason,
+            "render_cache_key": render_cache_key,
+            "render_cache_status": "miss",
+            "style_ready": style_ready,
+            "stylesheet_count": stylesheet_count,
+            "stylesheet_loaded_count": stylesheet_loaded_count,
+            "stylesheet_cached_count": stylesheet_cached_count,
+            "visual_events": [],
             "tabs": tabs,
             "active_tab_id": active_tab_id,
             "frame_tree": frame_tree,
@@ -2687,6 +2832,8 @@ class LightPandaBrowserWorker:
             "annotations": [],
             "timeline_events": [],
             "cooperation_events": cooperation_events,
+            "scroll_x": scroll_state.get("scroll_x", 0),
+            "scroll_y": scroll_state.get("scroll_y", 0),
             "browser_snapshot": browser_snapshot,
             "user_agent": user_agent,
             "image_data": image_data,
@@ -2697,6 +2844,8 @@ class LightPandaBrowserWorker:
             "viewport_height": viewport_height,
             "can_capture": bool(image_data),
         }
+        self._store_render_snapshot_cache(render_cache_key, view)
+        return view
 
     def _enrich_browser_element_map(
         self,
@@ -2921,16 +3070,113 @@ class LightPandaBrowserWorker:
             )
         return tree or [{"frame_id": "main", "url": current_url, "title": title, "parent_frame_id": ""}]
 
+    async def _wait_for_page_visual_ready(self, page: Any) -> dict[str, Any]:
+        await self._wait_for_page_load_complete(page)
+        metrics: dict[str, Any] = {
+            "style_ready": True,
+            "stylesheet_count": 0,
+            "stylesheet_loaded_count": 0,
+            "fonts_ready": True,
+        }
+        with suppress(Exception):
+            value = await asyncio.wait_for(
+                self._evaluate_page(page, _STYLE_READY_SNAPSHOT_SCRIPT),
+                timeout=min(max(self.timeout_ms / 1000, 1.0), 5.0),
+            )
+            if isinstance(value, Mapping):
+                metrics.update(
+                    {
+                        "style_ready": bool(value.get("style_ready", metrics["style_ready"])),
+                        "stylesheet_count": int(value.get("stylesheet_count") or 0),
+                        "stylesheet_loaded_count": int(value.get("stylesheet_loaded_count") or 0),
+                        "fonts_ready": bool(value.get("fonts_ready", metrics["fonts_ready"])),
+                    }
+                )
+        with suppress(Exception):
+            await page.wait_for_timeout(120)
+        return metrics
+
+    async def _wait_for_page_load_complete(self, page: Any) -> None:
+        wait_for_load_state = getattr(page, "wait_for_load_state", None)
+        if not callable(wait_for_load_state):
+            return
+        with suppress(Exception):
+            await wait_for_load_state("load", timeout=min(self.timeout_ms, 5_000))
+
+    @staticmethod
+    def _render_snapshot_cache_key(
+        browser_id: str,
+        current_url: str,
+        active_tab_id: str,
+        width: int,
+        height: int,
+    ) -> str:
+        raw = "|".join(
+            [
+                browser_id or "browser",
+                active_tab_id or browser_id or "page",
+                _clean_browser_url(current_url or "about:blank"),
+                str(int(width)),
+                str(int(height)),
+            ]
+        )
+        return "::".join([browser_id or "browser", hashlib.sha256(raw.encode("utf-8")).hexdigest()])
+
+    def _read_render_snapshot_cache(self, cache_key: str) -> dict[str, Any] | None:
+        now = time.time()
+        cached = self._render_snapshot_cache.get(cache_key)
+        if cached is None:
+            return None
+        expires_at, view = cached
+        if expires_at <= now:
+            self._render_snapshot_cache.pop(cache_key, None)
+            return None
+        return self._clone_render_snapshot(view, status="hit")
+
+    def _store_render_snapshot_cache(self, cache_key: str, view: dict[str, Any]) -> None:
+        if not cache_key or not view.get("url") or view.get("url") == "about:blank":
+            return
+        now = time.time()
+        self._render_snapshot_cache.pop(cache_key, None)
+        self._render_snapshot_cache[cache_key] = (
+            now + _RENDER_SNAPSHOT_CACHE_TTL_SECONDS,
+            self._clone_render_snapshot(view, status="stored"),
+        )
+        if len(self._render_snapshot_cache) > _MAX_RENDER_SNAPSHOT_CACHE_ENTRIES:
+            expired = [key for key, (expires_at, _) in self._render_snapshot_cache.items() if expires_at <= now]
+            for key in expired:
+                self._render_snapshot_cache.pop(key, None)
+            while len(self._render_snapshot_cache) > _MAX_RENDER_SNAPSHOT_CACHE_ENTRIES:
+                self._render_snapshot_cache.pop(next(iter(self._render_snapshot_cache)))
+
+    @staticmethod
+    def _clone_render_snapshot(view: dict[str, Any], *, status: str) -> dict[str, Any]:
+        cloned = dict(view)
+        cloned["render_cache_status"] = status
+        if isinstance(cloned.get("browser_snapshot"), dict):
+            snapshot = dict(cloned["browser_snapshot"])
+            snapshot["render_cache_status"] = status
+            cloned["browser_snapshot"] = snapshot
+        return cloned
+
     async def _html_with_embedded_stylesheet_fallbacks(
         self,
         html: str,
         current_url: str,
-    ) -> tuple[str, int]:
+    ) -> tuple[str, dict[str, int]]:
         if not html or not current_url.startswith(("http://", "https://")):
-            return html, 0
-        hrefs = self._stylesheet_hrefs(html, current_url, max_hrefs=12)
+            return html, {
+                "stylesheet_count": 0,
+                "embedded_stylesheet_count": 0,
+                "stylesheet_cached_count": 0,
+            }
+        hrefs = self._stylesheet_hrefs(html, current_url, max_hrefs=_MAX_STYLESHEET_HREFS_PER_PAGE)
         if not hrefs:
-            return html, 0
+            return html, {
+                "stylesheet_count": 0,
+                "embedded_stylesheet_count": 0,
+                "stylesheet_cached_count": 0,
+            }
         timeout = httpx.Timeout(1.8, connect=0.6)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             results = await asyncio.gather(
@@ -2939,11 +3185,22 @@ class LightPandaBrowserWorker:
             )
         embedded_styles = [
             f"/* PersonAgent embedded stylesheet fallback: {href} */\n{css_text}"
-            for href, css_text in zip(hrefs, results, strict=False)
+            for href, result in zip(hrefs, results, strict=False)
+            for css_text, cache_hit in [result if isinstance(result, tuple) else ("", False)]
             if isinstance(css_text, str) and css_text.strip()
         ]
+        cached_count = sum(
+            1
+            for result in results
+            if isinstance(result, tuple) and len(result) >= 2 and bool(result[1]) and isinstance(result[0], str) and result[0].strip()
+        )
+        stats = {
+            "stylesheet_count": len(hrefs),
+            "embedded_stylesheet_count": len(embedded_styles),
+            "stylesheet_cached_count": cached_count,
+        }
         if not embedded_styles:
-            return html, 0
+            return html, stats
         style_block = (
             '<style data-personagent-embedded-css="true">\n'
             + "\n\n".join(embedded_styles)
@@ -2958,9 +3215,9 @@ class LightPandaBrowserWorker:
                     count=1,
                     flags=re.IGNORECASE,
                 ),
-                len(embedded_styles),
+                stats,
             )
-        return f"{style_block}{html}", len(embedded_styles)
+        return f"{style_block}{html}", stats
 
     async def _computed_html_snapshot(self, page: Any, current_url: str) -> str:
         with suppress(Exception):
@@ -3010,27 +3267,80 @@ class LightPandaBrowserWorker:
             attrs[name] = value
         return attrs
 
-    async def _fetch_stylesheet_css(self, client: httpx.AsyncClient, href: str) -> str:
-        now = time.monotonic()
+    async def _fetch_stylesheet_css(self, client: httpx.AsyncClient, href: str) -> tuple[str, bool]:
+        now = time.time()
         cached = self._stylesheet_cache.get(href)
         if cached is not None and cached[0] > now:
-            return cached[1]
+            return cached[1], True
+        disk_cached = self._read_stylesheet_disk_cache(href, now=now)
+        if disk_cached:
+            self._stylesheet_cache[href] = (now + _STYLESHEET_CACHE_TTL_SECONDS, disk_cached)
+            return disk_cached, True
         response = await client.get(href)
         if response.status_code >= 400:
-            return ""
+            return "", False
         content_type = response.headers.get("content-type", "")
         css_text = response.text
         if "css" not in content_type.lower() and "{" not in css_text[:1000]:
-            return ""
+            return "", False
         css_text = self._rewrite_css_urls(css_text[:350_000], href)
         self._stylesheet_cache[href] = (now + _STYLESHEET_CACHE_TTL_SECONDS, css_text)
+        self._write_stylesheet_disk_cache(href, css_text, expires_at=now + _STYLESHEET_CACHE_TTL_SECONDS)
         if len(self._stylesheet_cache) > _MAX_STYLESHEET_CACHE_ENTRIES:
             expired = [key for key, (expires_at, _) in self._stylesheet_cache.items() if expires_at <= now]
             for key in expired:
                 self._stylesheet_cache.pop(key, None)
             while len(self._stylesheet_cache) > _MAX_STYLESHEET_CACHE_ENTRIES:
                 self._stylesheet_cache.pop(next(iter(self._stylesheet_cache)))
+        return css_text, False
+
+    def _stylesheet_disk_cache_path(self, href: str) -> Path:
+        digest = hashlib.sha256(href.encode("utf-8")).hexdigest()
+        return self._stylesheet_cache_dir / f"{digest}.json"
+
+    def _read_stylesheet_disk_cache(self, href: str, *, now: float) -> str:
+        path = self._stylesheet_disk_cache_path(href)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        if str(payload.get("url") or "") != href:
+            return ""
+        if float(payload.get("expires_at") or 0) <= now:
+            with suppress(Exception):
+                path.unlink()
+            return ""
+        css_text = str(payload.get("css") or "")
+        if not css_text.strip():
+            return ""
+        with suppress(Exception):
+            path.touch()
         return css_text
+
+    def _write_stylesheet_disk_cache(self, href: str, css_text: str, *, expires_at: float) -> None:
+        if not css_text.strip():
+            return
+        with suppress(Exception):
+            self._stylesheet_cache_dir.mkdir(parents=True, exist_ok=True)
+            path = self._stylesheet_disk_cache_path(href)
+            tmp_path = path.with_suffix(".tmp")
+            tmp_path.write_text(
+                json.dumps({"url": href, "expires_at": expires_at, "css": css_text}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            tmp_path.replace(path)
+            self._trim_stylesheet_disk_cache()
+
+    def _trim_stylesheet_disk_cache(self) -> None:
+        with suppress(Exception):
+            entries = sorted(
+                self._stylesheet_cache_dir.glob("*.json"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            for path in entries[_MAX_STYLESHEET_CACHE_ENTRIES:]:
+                with suppress(Exception):
+                    path.unlink()
 
     @staticmethod
     def _rewrite_css_urls(css_text: str, stylesheet_url: str) -> str:
@@ -3264,6 +3574,22 @@ class LightPandaBrowserWorker:
             if isinstance(value, str):
                 return value[:2_000_000]
         return ""
+
+    async def _safe_scroll_state(self, page: Any) -> dict[str, int]:
+        with suppress(Exception):
+            value = await self._evaluate_page(
+                page,
+                """() => ({
+                  scroll_x: Math.round(window.scrollX || document.documentElement.scrollLeft || 0),
+                  scroll_y: Math.round(window.scrollY || document.documentElement.scrollTop || 0)
+                })""",
+            )
+            if isinstance(value, Mapping):
+                return {
+                    "scroll_x": int(value.get("scroll_x") or 0),
+                    "scroll_y": int(value.get("scroll_y") or 0),
+                }
+        return {"scroll_x": 0, "scroll_y": 0}
 
     async def _get_session(self, conversation_id: str) -> _BrowserSession:
         async with self._sessions_lock:
@@ -3784,8 +4110,8 @@ class LightPandaBrowserWorker:
     ) -> None:
         clean_url = _clean_browser_url(url)
         try:
-            await page.goto(clean_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-            await page.wait_for_timeout(250)
+            await page.goto(clean_url, wait_until="load", timeout=self.timeout_ms)
+            await self._wait_for_page_visual_ready(page)
             await self._install_console_capture(page)
         except Exception as exc:
             page_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
@@ -4873,6 +5199,8 @@ class LightPandaBrowserWorker:
         self._element_map_cache.pop(conversation_id, None)
         self._console_cache.pop(conversation_id, None)
         self._cooperation_event_cache.pop(conversation_id, None)
+        for cache_key in [key for key in self._render_snapshot_cache if key.startswith(f"{conversation_id}::")]:
+            self._render_snapshot_cache.pop(cache_key, None)
         for page in self._session_pages(session):
             await self._best_effort_resource_call("browser_page_close", page.close)
         await self._best_effort_resource_call("browser_context_close", session.context.close)

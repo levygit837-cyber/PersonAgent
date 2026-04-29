@@ -110,6 +110,28 @@ class Settings(BaseSettings):
         alias="DEEPSEEK_MODELS_CACHE_TTL_SECONDS",
     )
 
+    # --- ZenMux API ---
+    zenmux_api_key: str = Field(default="", alias="ZENMUX_API_KEY")
+    zenmux_base_url: str = Field(
+        default="https://zenmux.ai/api/v1",
+        alias="ZENMUX_BASE_URL",
+    )
+    zenmux_default_model: str = Field(
+        default="deepseek/deepseek-v4-flash-free",
+        alias="ZENMUX_DEFAULT_MODEL",
+    )
+    zenmux_max_tokens: int = Field(default=65536, alias="ZENMUX_MAX_TOKENS")
+    zenmux_context_window: int = Field(default=1_000_000, alias="ZENMUX_CONTEXT_WINDOW")
+    zenmux_timeout_seconds: float = Field(default=240.0, alias="ZENMUX_TIMEOUT_SECONDS")
+    zenmux_stream_read_timeout_seconds: float = Field(
+        default=0.0,
+        alias="ZENMUX_STREAM_READ_TIMEOUT_SECONDS",
+    )
+    zenmux_models_cache_ttl_seconds: int = Field(
+        default=300,
+        alias="ZENMUX_MODELS_CACHE_TTL_SECONDS",
+    )
+
     # --- Google Vertex AI ---
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
     vertex_auth_mode: str = Field(default="auto", alias="VERTEX_AUTH_MODE")
@@ -189,14 +211,28 @@ class Settings(BaseSettings):
         return int(v)
 
     tools_max_concurrency: int = Field(default=4, alias="TOOLS_MAX_CONCURRENCY")
-    tools_read_max_bytes: int = Field(default=128_000, alias="TOOLS_READ_MAX_BYTES")
-    tools_read_default_limit: int = Field(default=1_000, alias="TOOLS_READ_DEFAULT_LIMIT")
-    tools_read_max_lines: int = Field(default=1_000, alias="TOOLS_READ_MAX_LINES")
+    tools_read_max_bytes: int = Field(default=10_000_000, alias="TOOLS_READ_MAX_BYTES")
+    tools_read_default_limit: int = Field(default=10_000, alias="TOOLS_READ_DEFAULT_LIMIT")
+    tools_read_max_lines: int = Field(default=100_000, alias="TOOLS_READ_MAX_LINES")
     tools_search_timeout_ms: int = Field(default=15_000, alias="TOOLS_SEARCH_TIMEOUT_MS")
     tools_shell_timeout_ms: int = Field(default=10_000, alias="TOOLS_SHELL_TIMEOUT_MS")
     tools_web_timeout_ms: int = Field(default=15_000, alias="TOOLS_WEB_TIMEOUT_MS")
-    tools_web_max_bytes: int = Field(default=512_000, alias="TOOLS_WEB_MAX_BYTES")
-    tools_result_max_chars: int = Field(default=20_000, alias="TOOLS_RESULT_MAX_CHARS")
+    tools_web_max_bytes: int = Field(default=10_000_000, alias="TOOLS_WEB_MAX_BYTES")
+    tools_result_max_chars: int | None = Field(
+        default=None, alias="TOOLS_RESULT_MAX_CHARS", validate_default=True
+    )
+
+    @field_validator("tools_result_max_chars", mode="before")
+    @classmethod
+    def parse_tools_result_max_chars(cls, v: Any) -> int | None:
+        if v is None or v == "":
+            return None
+        if isinstance(v, str):
+            v = v.strip()
+            if v == "":
+                return None
+            return int(v)
+        return int(v)
     tools_result_storage_root: str | None = Field(
         default=None,
         alias="TOOLS_RESULT_STORAGE_ROOT",

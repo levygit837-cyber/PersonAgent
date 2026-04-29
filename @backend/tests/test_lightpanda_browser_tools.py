@@ -92,6 +92,23 @@ def test_lightpanda_stylesheet_hrefs_include_preload_and_css_paths():
 
 
 @pytest.mark.asyncio
+async def test_stylesheet_cache_uses_persistent_disk_cache(tmp_path):
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222")
+    worker._stylesheet_cache_dir = tmp_path
+    client = FakeStylesheetClient("body { background: url('../bg.png'); }")
+
+    css_text, first_hit = await worker._fetch_stylesheet_css(client, "https://example.com/assets/app.css")
+    worker._stylesheet_cache.clear()
+    cached_css_text, second_hit = await worker._fetch_stylesheet_css(client, "https://example.com/assets/app.css")
+
+    assert first_hit is False
+    assert second_hit is True
+    assert client.calls == 1
+    assert "https://example.com/bg.png" in css_text
+    assert cached_css_text == css_text
+
+
+@pytest.mark.asyncio
 async def test_lightpanda_browser_view_navigation_returns_screenshot_payload():
     page = ScriptedPage()
     context = FakeContext(page=page)
@@ -113,6 +130,95 @@ async def test_lightpanda_browser_view_navigation_returns_screenshot_payload():
     assert result["image_mime_type"] == "image/png"
     assert result["image_data"] == base64.b64encode(b"browser-image").decode("ascii")
     assert page.viewport_size == {"width": 800, "height": 500}
+
+
+@pytest.mark.asyncio
+async def test_lightpanda_browser_view_waits_for_css_visual_ready():
+    page = StyleReadyPage()
+    context = FakeContext(page=page)
+
+    async def connector(_endpoint):
+        return FakeBrowser(context=context)
+
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=connector)
+
+    async def no_embed(html, _current_url):
+        return html, {"stylesheet_count": 1, "embedded_stylesheet_count": 0, "stylesheet_cached_count": 0}
+
+    worker._html_with_embedded_stylesheet_fallbacks = no_embed
+    result = await worker.view_navigate(
+        browser_id="panel-browser",
+        url="https://styled.example",
+        width=800,
+        height=500,
+    )
+
+    assert page.goto_wait_until == "load"
+    assert "load" in page.wait_load_states
+    assert page.style_ready_checks >= 1
+    assert result["style_ready"] is True
+    assert result["stylesheet_count"] == 1
+    assert result["stylesheet_loaded_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_lightpanda_browser_view_uses_computed_fallback_when_css_not_ready():
+    page = StyleFailurePage()
+    context = FakeContext(page=page)
+
+    async def connector(_endpoint):
+        return FakeBrowser(context=context)
+
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=connector)
+
+    async def no_embed(html, _current_url):
+        return html, {"stylesheet_count": 1, "embedded_stylesheet_count": 0, "stylesheet_cached_count": 0}
+
+    worker._html_with_embedded_stylesheet_fallbacks = no_embed
+    result = await worker.view_navigate(
+        browser_id="panel-browser",
+        url="https://styled.example",
+        width=800,
+        height=500,
+    )
+
+    assert result["render_mode"] == "computed_html"
+    assert result["css_fidelity"] == "computed"
+    assert result["style_ready"] is True
+    assert "personagent-css-fidelity" in result["document_html"]
+
+
+@pytest.mark.asyncio
+async def test_lightpanda_browser_render_cache_returns_cached_snapshot():
+    page = StyleReadyPage()
+    context = FakeContext(page=page)
+
+    async def connector(_endpoint):
+        return FakeBrowser(context=context)
+
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=connector)
+
+    async def no_embed(html, _current_url):
+        return html, {"stylesheet_count": 1, "embedded_stylesheet_count": 0, "stylesheet_cached_count": 0}
+
+    worker._html_with_embedded_stylesheet_fallbacks = no_embed
+    first = await worker.view_navigate(
+        browser_id="panel-browser",
+        url="https://styled.example",
+        width=800,
+        height=500,
+    )
+    cached = await worker.view_snapshot(
+        browser_id="panel-browser",
+        width=800,
+        height=500,
+        cache_mode="prefer_cached",
+    )
+
+    assert first["render_cache_key"] == cached["render_cache_key"]
+    assert cached["render_cache_status"] == "hit"
+    assert cached["browser_snapshot"]["render_cache_status"] == "hit"
+    assert cached["document_html"] == first["document_html"]
 
 
 def test_clean_browser_url_strips_encoded_invisible_suffix():
@@ -1813,6 +1919,23 @@ class TargetAlreadyLoadedContext(FakeContext):
         )
 
 
+class FakeStylesheetResponse:
+    def __init__(self, text: str, status_code: int = 200):
+        self.text = text
+        self.status_code = status_code
+        self.headers = {"content-type": "text/css; charset=utf-8"}
+
+
+class FakeStylesheetClient:
+    def __init__(self, text: str):
+        self.text = text
+        self.calls = 0
+
+    async def get(self, _href: str):
+        self.calls += 1
+        return FakeStylesheetResponse(self.text)
+
+
 class FakePage:
     def __init__(self):
         self.closed = False
@@ -1838,10 +1961,12 @@ class ScriptedPage(FakePage):
         self.fail_on_goto = fail_on_goto
         self.goto_history: list[str] = []
         self.viewport_size: dict[str, int] | None = None
+        self.goto_wait_until: str | None = None
 
     async def goto(self, url, wait_until=None, timeout=None):
         if self.fail_on_goto:
             raise RuntimeError("navigation timed out")
+        self.goto_wait_until = wait_until
         self.url = url
         self.goto_history.append(url)
         return None
@@ -1851,6 +1976,9 @@ class ScriptedPage(FakePage):
         return None
 
     async def wait_for_timeout(self, _timeout_ms):
+        return None
+
+    async def wait_for_load_state(self, state, timeout=None):
         return None
 
     async def evaluate(self, _script, arg=None):
@@ -1884,6 +2012,54 @@ class ScriptedPage(FakePage):
 
     async def screenshot(self, **_kwargs):
         return b"browser-image"
+
+
+class StyleReadyPage(ScriptedPage):
+    def __init__(self):
+        super().__init__()
+        self.wait_load_states: list[str] = []
+        self.style_ready_checks = 0
+
+    async def wait_for_load_state(self, state, timeout=None):
+        self.wait_load_states.append(state)
+        return None
+
+    async def content(self):
+        return '<html><head><link rel="stylesheet" href="/app.css"></head><body><main>Styled</main></body></html>'
+
+    async def evaluate(self, script, arg=None):
+        script_text = str(script)
+        if "personagentStyleReadyProbe" in script_text:
+            self.style_ready_checks += 1
+            return {
+                "style_ready": True,
+                "stylesheet_count": 1,
+                "stylesheet_loaded_count": 1,
+                "fonts_ready": True,
+            }
+        if "navigator.userAgent" in script_text:
+            return "LightPanda/1.0"
+        if "data-pa-node-id" in script_text and "mapped" in script_text:
+            return []
+        if "scroll_x" in script_text and "scroll_y" in script_text:
+            return {"scroll_x": 0, "scroll_y": 0}
+        return await super().evaluate(script, arg)
+
+
+class StyleFailurePage(StyleReadyPage):
+    async def evaluate(self, script, arg=None):
+        script_text = str(script)
+        if "personagentStyleReadyProbe" in script_text:
+            self.style_ready_checks += 1
+            return {
+                "style_ready": False,
+                "stylesheet_count": 1,
+                "stylesheet_loaded_count": 0,
+                "fonts_ready": True,
+            }
+        if "personagent-css-fidelity" in script_text:
+            return '<!doctype html><html><head><meta name="personagent-css-fidelity" content="computed"></head><body style="display:block">Computed</body></html>'
+        return await super().evaluate(script, arg)
 
 
 class StaleNodeActionPage(ScriptedPage):

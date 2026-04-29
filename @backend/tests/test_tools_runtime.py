@@ -8,7 +8,6 @@ import pytest
 
 from personagent.application.dto.chat_dto import ChatRequestDTO
 from personagent.application.tools import ToolOrchestrator, ToolRegistry, ToolRuntimeConfig
-from personagent.application.tools.runtime_config import DEFAULT_MAX_TOOL_ITERATIONS
 from personagent.application.use_cases.chat_completion import ChatCompletionUseCase
 from personagent.application.use_cases.context import BuildContextUseCase
 from personagent.domain.models.conversation import Conversation, Message, Role
@@ -197,7 +196,7 @@ async def test_orchestrator_streams_progress_before_result(tmp_path):
     )
     orchestrator = ToolOrchestrator(
         ToolRegistry([tool]),
-        ToolRuntimeConfig.from_values(workspace_root=tmp_path),
+        ToolRuntimeConfig.from_values(workspace_root=tmp_path, result_max_chars=12),
     )
 
     events = [
@@ -231,7 +230,7 @@ async def test_orchestrator_applies_tool_definition_result_limit(tmp_path):
     )
     orchestrator = ToolOrchestrator(
         ToolRegistry([tool]),
-        ToolRuntimeConfig.from_values(workspace_root=tmp_path),
+        ToolRuntimeConfig.from_values(workspace_root=tmp_path, result_max_chars=180),
     )
 
     events = [
@@ -362,11 +361,11 @@ async def test_chat_completion_executes_tool_loop(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_stream_uses_default_tool_iteration_limit_for_repeated_calls(tmp_path):
+async def test_stream_allows_long_tool_loop_until_model_returns_final_answer(tmp_path):
     file_path = tmp_path / "notes.txt"
     file_path.write_text("alpha\nbeta\n", encoding="utf-8")
     repo = MemoryConversationRepository()
-    llm = RepeatingStreamingToolCallingLLM()
+    llm = RepeatingStreamingToolCallingLLM(final_after=24)
     registry = ToolRegistry([create_read_file_tool()])
     config = ToolRuntimeConfig.from_values(workspace_root=tmp_path)
     use_case = ChatCompletionUseCase(
@@ -384,19 +383,17 @@ async def test_stream_uses_default_tool_iteration_limit_for_repeated_calls(tmp_p
     ]
     events = [chunk.metadata.get("event") for chunk in chunks if chunk.metadata]
 
-    assert llm.calls == DEFAULT_MAX_TOOL_ITERATIONS
-    assert events.count("tool_result") == DEFAULT_MAX_TOOL_ITERATIONS
-    assert "tool_iterations_exceeded" in events
-    notice = next(chunk for chunk in chunks if chunk.metadata.get("event") == "tool_iterations_exceeded")
-    assert "Tool execution stopped" in notice.content
+    assert llm.calls == 24
+    assert events.count("tool_result") == 23
+    assert "tool_iterations_exceeded" not in events
     assert not any(chunk.finish_reason == "tool_calls" for chunk in chunks)
 
     saved = next(chunk for chunk in chunks if chunk.metadata.get("event") == "conversation_saved")
     conversation = await repo.get_by_id(UUID(saved.metadata["conversation_id"]))
     assert conversation is not None
     assert conversation.messages[-1].role == Role.ASSISTANT
-    assert conversation.messages[-1].metadata["finish_reason"] == "tool_iterations_exceeded"
-    assert "Tool execution stopped" in conversation.messages[-1].content
+    assert conversation.messages[-1].metadata["finish_reason"] == "stop"
+    assert conversation.messages[-1].content == "Finished after 23 tool calls."
 
 
 @pytest.mark.asyncio
@@ -1096,14 +1093,19 @@ class ExitPlanStreamingLLM(LLMBackendRepository):
 
 
 class RepeatingStreamingToolCallingLLM(LLMBackendRepository):
-    def __init__(self):
+    def __init__(self, *, final_after: int):
         self.calls = 0
+        self.final_after = final_after
 
     async def chat_completion(self, *args, **kwargs) -> InferenceResult:
         return InferenceResult(content="unused")
 
     async def chat_completion_stream(self, *args, **kwargs):
         self.calls += 1
+        if self.calls >= self.final_after:
+            yield StreamChunk(content=f"Finished after {self.calls - 1} tool calls.")
+            yield StreamChunk(finish_reason="stop")
+            return
         yield StreamChunk(
             tool_calls=[
                 {

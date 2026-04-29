@@ -29,6 +29,7 @@ from personagent.infrastructure.llm.process_manager import (
     LlamaServerProcessManager,
 )
 from personagent.infrastructure.llm.vertex_ai_adapter import VertexAiAdapter
+from personagent.infrastructure.llm.zenmux_adapter import ZenMuxAdapter
 from personagent.infrastructure.persistence.context import InMemoryContextRepository
 from personagent.infrastructure.persistence.database import AsyncSessionLocal
 from personagent.infrastructure.persistence.postgres_conversation_repository import (
@@ -89,7 +90,15 @@ class DIContainer:
     def get_llm_backend(self, provider: str = "llama") -> LLMBackendRepository:
         """Retorna o adapter do LLM (singleton)."""
         normalized_provider = provider.strip().lower()
-        if normalized_provider not in {"llama", "nvidia", "deepseek", "vertex", "kimi", "codex"}:
+        if normalized_provider not in {
+            "llama",
+            "nvidia",
+            "deepseek",
+            "zenmux",
+            "vertex",
+            "kimi",
+            "codex",
+        }:
             raise ValueError(f"Unsupported LLM provider: {provider}")
 
         if normalized_provider not in self._llm_backends:
@@ -127,6 +136,17 @@ class DIContainer:
                 default_model=self._settings.deepseek_default_model,
                 default_max_tokens=self._settings.deepseek_max_tokens,
                 models_cache_ttl_seconds=self._settings.deepseek_models_cache_ttl_seconds,
+            )
+        if provider == "zenmux":
+            return ZenMuxAdapter(
+                base_url=self._settings.zenmux_base_url,
+                api_key=self._settings.zenmux_api_key,
+                timeout=self._settings.zenmux_timeout_seconds,
+                stream_read_timeout=self._settings.zenmux_stream_read_timeout_seconds,
+                default_model=self._settings.zenmux_default_model,
+                default_max_tokens=self._settings.zenmux_max_tokens,
+                models_cache_ttl_seconds=self._settings.zenmux_models_cache_ttl_seconds,
+                context_window=self._settings.zenmux_context_window,
             )
         if provider == "vertex":
             return VertexAiAdapter(

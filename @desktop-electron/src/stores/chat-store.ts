@@ -807,7 +807,7 @@ const localSlashCommands = new Set([
   "help",
 ]);
 
-const modelProviders: ModelProvider[] = ["llama", "nvidia", "deepseek", "vertex", "kimi", "codex"];
+const modelProviders: ModelProvider[] = ["llama", "nvidia", "deepseek", "zenmux", "vertex", "kimi", "codex"];
 const reasoningPresetValues: ReasoningPreset[] = ["low", "medium", "high", "xhigh", "max"];
 
 function handleLocalSlashCommand(
@@ -959,6 +959,7 @@ function normalizeProvider(value?: string): ModelProvider | undefined {
 function inferProviderForModel(modelId: string): ModelProvider | undefined {
   const normalized = modelId.toLowerCase();
   if (normalized === "local-model") return "llama";
+  if (normalized.startsWith("deepseek/deepseek-v4-")) return "zenmux";
   if (normalized.startsWith("deepseek-v4-")) return "deepseek";
   if (normalized.startsWith("gpt-") || normalized.startsWith("o")) return "codex";
   if (normalized.includes("gemini")) return "vertex";

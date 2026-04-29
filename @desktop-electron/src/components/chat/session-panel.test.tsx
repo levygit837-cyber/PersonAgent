@@ -199,12 +199,12 @@ describe("SessionPanel", () => {
       browserView(input.url, browserId, "Example Domain"),
     );
     moveSessionBrowserHistoryMock.mockReset();
-    moveSessionBrowserHistoryMock.mockImplementation(async (_baseUrl, browserId) =>
-      browserView("https://example.com", browserId, "Example Domain"),
+    moveSessionBrowserHistoryMock.mockImplementation(async (_baseUrl, browserId, input) =>
+      browserView(input.direction < 0 ? "https://example.com" : "https://example.org", browserId, "Example Domain"),
     );
     reloadSessionBrowserMock.mockReset();
     reloadSessionBrowserMock.mockImplementation(async (_baseUrl, browserId) =>
-      browserView("https://example.com", browserId, "Example Domain"),
+      browserView("https://example.org", browserId, "Example Domain"),
     );
     clickSessionBrowserMock.mockReset();
     clickSessionBrowserMock.mockImplementation(async (_baseUrl, browserId) =>
@@ -590,7 +590,155 @@ describe("SessionPanel", () => {
 
     expect(await screen.findByTestId("browser-tool-highlight-pa_signin")).toBeInTheDocument();
     expect(await screen.findByTestId("browser-ghost-cursor")).toBeInTheDocument();
-    expect(screen.getByText("Mapped 1 elements")).toBeInTheDocument();
+    expect(screen.queryByText("Mapped 1 elements")).not.toBeInTheDocument();
+  });
+
+  it("renders a running browser click cursor by resolving node_id against the current element map", async () => {
+    const signInElement = {
+      node_id: "pa_signin",
+      text: "Sign in",
+      role: "link",
+      tag: "a",
+      selector: "a[href='/login']",
+      bounds: { x: 930, y: 24, width: 76, height: 34 },
+      visible: true,
+    };
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://github.com/", "conversation-1", "GitHub", {
+        element_map: [signInElement],
+        active_tab_id: "conversation-1",
+      }),
+    );
+    useChatStore.setState({
+      messages: [
+        {
+          id: "agent-browser-running-click",
+          role: "agent",
+          label: "PersonAgent",
+          content: "",
+          reasoning: "",
+          reasoningBlocks: [],
+          toolBlocks: [
+            {
+              id: "call_click_running",
+              name: "BrowserClick",
+              status: "running",
+              title: "Clicking Sign in",
+              message: "Clicking Sign in",
+              content: "",
+              isCollapsed: false,
+              data: {
+                type: "browser_click",
+                browser_id: "conversation-1",
+                page_id: "conversation-1",
+                node_id: "pa_signin",
+                url: "https://github.com/",
+              },
+            },
+          ],
+          teamEvents: [],
+          parts: [],
+          isStreaming: true,
+          isReasoningStreaming: false,
+        },
+      ],
+    });
+
+    renderWithProviders(<ChatWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+    await screen.findByText("Agent Usage");
+    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
+    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
+    fireEvent.click(addTabButton);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+
+    const highlight = await screen.findByTestId("browser-tool-highlight-pa_signin");
+    expect(highlight).toHaveAttribute("data-browser-tool-effect", "click");
+    expect(await screen.findByTestId("browser-ghost-cursor")).toBeInTheDocument();
+  });
+
+  it("updates the visible browser tab from a completed click snapshot after navigation", async () => {
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://github.com/", "conversation-1", "GitHub", {
+        active_tab_id: "browser:panel-tab",
+      }),
+    );
+    useChatStore.setState({
+      messages: [
+        {
+          id: "agent-browser-click",
+          role: "agent",
+          label: "PersonAgent",
+          content: "",
+          reasoning: "",
+          reasoningBlocks: [],
+          toolBlocks: [
+            {
+              id: "call_click",
+              name: "BrowserClick",
+              status: "completed",
+              title: "Clicked Sign in",
+              message: "Clicked Sign in",
+              content: "",
+              isCollapsed: false,
+              data: {
+                type: "browser_click",
+                browser_id: "browser:panel-tab",
+                page_id: "browser:panel-tab",
+                window_id: "browser:panel-tab",
+                active_tab_id: "browser:panel-tab",
+                url: "https://github.com/login",
+                title: "Sign in to GitHub",
+                html: "<html><body><main>Login form</main></body></html>",
+                document_html: "<html><body><main>Login form</main></body></html>",
+                render_mode: "html_mirror",
+                css_fidelity: "embedded",
+                image_data: "",
+                image_mime_type: "",
+                viewport_width: 1024,
+                viewport_height: 720,
+                can_capture: false,
+                last_action: {
+                  action: "click",
+                  node_id: "pa_signin",
+                  target: {
+                    node_id: "pa_signin",
+                    text: "Sign in",
+                    role: "link",
+                    tag: "a",
+                    selector: "a[href='/login']",
+                    bounds: { x: 930, y: 24, width: 76, height: 34 },
+                  },
+                  result: {
+                    ok: true,
+                    bounds: { x: 930, y: 24, width: 76, height: 34 },
+                  },
+                },
+              },
+            },
+          ],
+          teamEvents: [],
+          parts: [],
+          isStreaming: false,
+          isReasoningStreaming: false,
+        },
+      ],
+    });
+
+    renderWithProviders(<ChatWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+    await screen.findByText("Agent Usage");
+    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
+    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
+    fireEvent.click(addTabButton);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Enter URL" })).toHaveValue("https://github.com/login"),
+    );
+    expect(screen.queryByText("Enter a URL to open a page in this tab.")).not.toBeInTheDocument();
   });
 
   it("hides the empty browser hint while a navigation is rendering and shows the loaded url after", async () => {
@@ -621,7 +769,7 @@ describe("SessionPanel", () => {
     await screen.findByText("Preparando o ambiente...");
 
     const urlInput = screen.getByRole("textbox", { name: "Enter URL" });
-    fireEvent.change(urlInput, { target: { value: "example.com" } });
+    fireEvent.change(urlInput, { target: { value: "delayed.example" } });
     fireEvent.submit(urlInput.closest("form")!);
 
     resolveInitialLoad(browserView("about:blank", "conversation-1"));
@@ -629,10 +777,10 @@ describe("SessionPanel", () => {
     await waitFor(() => expect(navigateSessionBrowserMock).toHaveBeenCalledTimes(1));
     expect(screen.getByText("Preparando o ambiente...")).toBeInTheDocument();
 
-    resolveNavigation(browserView("https://example.com", "conversation-1", "Example Domain"));
+    resolveNavigation(browserView("https://delayed.example", "conversation-1", "Example Domain"));
 
-    await waitFor(() => expect(urlInput).toHaveValue("https://example.com"));
-    expect(screen.getByTitle("Browser https://example.com")).toHaveAttribute("src", "data:image/png;base64,iVBORw0KGgo=");
+    await waitFor(() => expect(urlInput).toHaveValue("https://delayed.example"));
+    expect(screen.getByTitle("Browser https://delayed.example")).toHaveAttribute("src", "data:image/png;base64,iVBORw0KGgo=");
   });
 
   it("uses stored URLs for browser back, forward, and reload controls", async () => {
@@ -657,33 +805,32 @@ describe("SessionPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     await waitFor(() => expect(urlInput).toHaveValue("https://example.com"));
-    expect(navigateSessionBrowser).toHaveBeenLastCalledWith(
+    expect(moveSessionBrowserHistory).toHaveBeenLastCalledWith(
       "http://localhost:8000",
       expect.any(String),
-      expect.objectContaining({ url: "https://example.com" }),
+      expect.objectContaining({ direction: -1 }),
       "conversation-1",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Forward" }));
     await waitFor(() => expect(urlInput).toHaveValue("https://example.org"));
-    expect(navigateSessionBrowser).toHaveBeenLastCalledWith(
+    expect(moveSessionBrowserHistory).toHaveBeenLastCalledWith(
       "http://localhost:8000",
       expect.any(String),
-      expect.objectContaining({ url: "https://example.org" }),
+      expect.objectContaining({ direction: 1 }),
       "conversation-1",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
     await waitFor(() =>
-      expect(navigateSessionBrowser).toHaveBeenLastCalledWith(
+      expect(reloadSessionBrowser).toHaveBeenLastCalledWith(
         "http://localhost:8000",
         expect.any(String),
-        expect.objectContaining({ url: "https://example.org" }),
+        expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }),
         "conversation-1",
       ),
     );
-    expect(moveSessionBrowserHistory).not.toHaveBeenCalled();
-    expect(reloadSessionBrowser).not.toHaveBeenCalled();
+    expect(navigateSessionBrowser).not.toHaveBeenCalled();
   });
 
   it("opens the browser annotation editor from iframe-selected element metadata", async () => {
@@ -753,6 +900,54 @@ describe("SessionPanel", () => {
         }),
       ),
     );
+  });
+
+  it("keeps the HTML mirror hidden until the iframe reports style readiness", async () => {
+    const originalCreateObjectUrl = URL.createObjectURL;
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => "blob:browser-mirror");
+    URL.revokeObjectURL = vi.fn();
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://example.com", "conversation-1", "Example Domain", {
+        document_html: "<html><head><link rel=\"stylesheet\" href=\"/style.css\"></head><body><main>Example</main></body></html>",
+        html: "<html><head><link rel=\"stylesheet\" href=\"/style.css\"></head><body><main>Example</main></body></html>",
+        render_mode: "html_mirror",
+        css_fidelity: "embedded",
+        image_data: "",
+        image_mime_type: "",
+      }),
+    );
+
+    try {
+      renderWithProviders(<ChatWorkspace />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+      await screen.findByText("Agent Usage");
+      const addTabButton = screen.getByRole("button", { name: "New panel tab" });
+      fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
+      fireEvent.click(addTabButton);
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+
+      const iframe = (await screen.findByTitle("Browser https://example.com")) as HTMLIFrameElement;
+      expect(iframe).toHaveClass("opacity-0");
+      expect(screen.getByText("Aguardando CSS da pagina...")).toBeInTheDocument();
+
+      fireEvent(
+        window,
+        new MessageEvent("message", {
+          data: {
+            type: "personagent-session-browser:ready",
+            browserId: "conversation-1",
+            styleReady: true,
+          },
+        }),
+      );
+
+      await waitFor(() => expect(iframe).not.toHaveClass("opacity-0"));
+    } finally {
+      URL.createObjectURL = originalCreateObjectUrl;
+      URL.revokeObjectURL = originalRevokeObjectUrl;
+    }
   });
 
   it("adds selected browser text as a composer reference", async () => {
@@ -889,6 +1084,8 @@ describe("browser mirror sanitizer", () => {
     expect(srcDoc).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(srcDoc).not.toContain('onclick="steal()"');
     expect(srcDoc).toContain('<base href="https://example.com/page">');
+    expect(srcDoc).toContain("waitForStylesReady");
+    expect(srcDoc).toContain("stylesheetLoadedCount");
     expect(srcDoc).not.toContain('data-pa-browser-mode="action"');
     expect(srcDoc).not.toContain('mode === "action"');
   });

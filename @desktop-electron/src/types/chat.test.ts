@@ -14,6 +14,8 @@ describe("chat request contracts", () => {
     expect(request.reasoning_level).toBe("xhigh");
     expect(request.prompt_mode).toBe("auto");
     expect(request.reasoning_budget_tokens).toBe(16382);
+    expect(request.max_tokens).toBe(-1);
+    expect(request.max_tool_iterations).toBeUndefined();
     expect(request.workspace_root).toBe("/tmp/personagent");
     expect(request.tool_context?.allowed_roots).toEqual(["/tmp/personagent"]);
   });
@@ -36,6 +38,33 @@ describe("chat request contracts", () => {
 
     expect(request.reasoning_level).toBe("xhigh");
     expect(request.reasoning_budget_tokens).toBe(16382);
+  });
+
+  it("does not send an explicit reasoning budget for max reasoning sessions", () => {
+    const request = buildChatRequest({
+      message: "Run a long coding session",
+      provider: "llama",
+      model: "local-model",
+      reasoningPreset: "max",
+    });
+
+    expect(request.reasoning_level).toBe("max");
+    expect(request.reasoning_budget_tokens).toBeNull();
+    expect(request.max_tokens).toBe(-1);
+  });
+
+  it("serializes ZenMux provider and DeepSeek free model without a protocol switch", () => {
+    const request = buildChatRequest({
+      message: "Use ZenMux",
+      provider: "zenmux",
+      model: "deepseek/deepseek-v4-pro-free",
+      reasoningPreset: "high",
+    });
+
+    expect(request.provider).toBe("zenmux");
+    expect(request.model).toBe("deepseek/deepseek-v4-pro-free");
+    expect(request.reasoning_level).toBe("high");
+    expect(request.reasoning_budget_tokens).toBe(8192);
   });
 
   it("serializes structured context attachments separately from the visible message", () => {

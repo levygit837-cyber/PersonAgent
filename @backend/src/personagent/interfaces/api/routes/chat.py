@@ -99,7 +99,7 @@ class ChatRequest(BaseModel):
     max_tokens: int = Field(default=-1, ge=-1)
     provider: str = Field(
         default="llama",
-        description="Inference provider: llama, nvidia, deepseek, vertex, kimi, or codex",
+        description="Inference provider: llama, nvidia, deepseek, zenmux, vertex, kimi, or codex",
     )
     model: str = Field(default="local-model", description="Model to use for inference")
     prompt_mode: str = Field(
@@ -117,8 +117,7 @@ class ChatRequest(BaseModel):
     reasoning_budget_tokens: int | None = Field(
         default=None,
         ge=0,
-        le=32768,
-        description="Token budget for thinking/reasoning",
+        description="Optional token budget for thinking/reasoning. Null means no explicit app cap.",
     )
     tools_enabled: bool = Field(
         default=True,
@@ -135,7 +134,7 @@ class ChatRequest(BaseModel):
     max_tool_iterations: int | None = Field(
         default=None,
         ge=1,
-        description="Limit for model -> tools -> model cycles.",
+        description="Optional limit for model -> tools -> model cycles. Null means unlimited.",
     )
     context_attachments: list[dict[str, Any]] = Field(
         default_factory=list,
@@ -257,10 +256,10 @@ def resolve_reasoning_budget(request: ChatRequest) -> int | None:
 def resolve_provider(provider: str) -> str:
     """Normalize and validate the inference provider."""
     normalized = provider.strip().lower()
-    if normalized not in {"llama", "nvidia", "deepseek", "vertex", "kimi", "codex"}:
+    if normalized not in {"llama", "nvidia", "deepseek", "zenmux", "vertex", "kimi", "codex"}:
         raise HTTPException(
             status_code=400,
-            detail="Invalid provider. Use llama, nvidia, deepseek, vertex, kimi, or codex.",
+            detail="Invalid provider. Use llama, nvidia, deepseek, zenmux, vertex, kimi, or codex.",
         )
     return normalized
 
@@ -271,6 +270,8 @@ def resolve_model(provider: str, model: str) -> str:
         return get_container().settings.nvidia_default_model
     if provider == "deepseek" and (not model or model == "local-model"):
         return get_container().settings.deepseek_default_model
+    if provider == "zenmux" and (not model or model == "local-model"):
+        return get_container().settings.zenmux_default_model
     if provider == "vertex" and (not model or model == "local-model"):
         return get_container().settings.vertex_default_model
     if provider == "kimi" and (not model or model == "local-model"):
@@ -286,6 +287,8 @@ def resolve_context_window_tokens(container: DIContainer, provider: str) -> int:
         return container.settings.kimi_context_window
     if provider == "deepseek":
         return container.settings.deepseek_context_window
+    if provider == "zenmux":
+        return container.settings.zenmux_context_window
     if provider == "vertex":
         return container.settings.vertex_context_window
     if provider == "codex":
@@ -299,6 +302,8 @@ def resolve_default_output_tokens(container: DIContainer, provider: str) -> int:
         return container.settings.nvidia_max_tokens
     if provider == "deepseek":
         return container.settings.deepseek_max_tokens
+    if provider == "zenmux":
+        return container.settings.zenmux_max_tokens
     if provider == "vertex":
         return container.settings.vertex_max_tokens
     if provider == "kimi":
@@ -637,7 +642,10 @@ async def list_teams() -> dict[str, Any]:
 
 @router.get("/models")
 async def list_models(
-    provider: str = Query(default="llama", description="Provider: llama, nvidia, deepseek, vertex, kimi, or codex"),
+    provider: str = Query(
+        default="llama",
+        description="Provider: llama, nvidia, deepseek, zenmux, vertex, kimi, or codex",
+    ),
     capability: str | None = Query(default=None, description="Capability filter"),
     refresh: bool = Query(default=False, description="Ignore the catalog cache"),
 ) -> dict:
@@ -645,7 +653,7 @@ async def list_models(
     container = get_container()
     resolved_provider = resolve_provider(provider)
     llm_backend = container.get_llm_backend(resolved_provider)
-    if resolved_provider in {"nvidia", "deepseek", "vertex", "kimi", "codex"}:
+    if resolved_provider in {"nvidia", "deepseek", "zenmux", "vertex", "kimi", "codex"}:
         list_provider_models = getattr(llm_backend, "list_models", None)
         if list_provider_models is None:
             raise HTTPException(status_code=500, detail=f"{resolved_provider} provider has no catalog")

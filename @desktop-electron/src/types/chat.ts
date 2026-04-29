@@ -1,4 +1,4 @@
-export type ModelProvider = "llama" | "nvidia" | "deepseek" | "vertex" | "kimi" | "codex";
+export type ModelProvider = "llama" | "nvidia" | "deepseek" | "zenmux" | "vertex" | "kimi" | "codex";
 
 export type ReasoningPreset = "low" | "medium" | "high" | "xhigh" | "max";
 export type PromptMode = "auto" | "writing" | "exploring" | "research";
@@ -108,7 +108,8 @@ export interface ChatRequestPayload {
   model: string;
   prompt_mode: PromptMode;
   reasoning_level: ReasoningPreset;
-  reasoning_budget_tokens: number;
+  reasoning_budget_tokens: number | null;
+  max_tool_iterations?: number | null;
   workspace_root?: string;
   tool_context?: {
     workspace_root: string;
@@ -238,7 +239,7 @@ export interface TeamConfig {
   agents: TeamAgent[];
   execution_order: string[];
   coordinator?: TeamAgent;
-  max_rounds: number;
+  max_rounds: number | null;
   vote_every_rounds: number;
   consensus_threshold: number;
   force_final_vote?: boolean;
@@ -714,12 +715,13 @@ export function buildChatRequest(input: {
     message: input.message.trim(),
     stream: true,
     temperature: 0.7,
-    max_tokens: 65536,
+    max_tokens: -1,
     provider: input.provider,
     model: input.model,
     prompt_mode: input.promptMode ?? "auto",
     reasoning_level: reasoningPreset,
-    reasoning_budget_tokens: reasoningTokenBudget(reasoningPreset),
+    reasoning_budget_tokens:
+      reasoningPreset === "max" ? null : reasoningTokenBudget(reasoningPreset),
   };
 
   if (input.conversationId) payload.conversation_id = input.conversationId;

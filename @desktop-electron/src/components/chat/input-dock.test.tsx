@@ -223,6 +223,17 @@ describe("InputDock", () => {
           },
         ];
       }
+      if (provider === "zenmux") {
+        return [
+          {
+            id: "deepseek/deepseek-v4-flash-free",
+            name: "DeepSeek V4 Flash Free",
+            provider: "zenmux",
+            capabilities: ["chat", "reasoning_chat", "tools", "streaming"],
+            context_length: 1000000,
+          },
+        ];
+      }
       if (provider === "codex") {
         return [
           {
@@ -256,6 +267,7 @@ describe("InputDock", () => {
     expect(await screen.findByText("Llama Nemotron embed 1B v2")).toBeInTheDocument();
     expect(await screen.findByText(/Gemini 3\.1 custom preview/i)).toBeInTheDocument();
     expect(await screen.findByText("Kimi K2.6")).toBeInTheDocument();
+    expect(await screen.findByText("DeepSeek V4 Flash Free")).toBeInTheDocument();
   });
 
   it("shows the curated Vertex Gemini 3 models in the model selector", async () => {
@@ -294,6 +306,23 @@ describe("InputDock", () => {
     expect(within(apiGroup!).getByText("DeepSeek V4 Pro")).toBeInTheDocument();
     expect(within(nvidiaGroup!).getByText("DeepSeek V4 Flash")).toBeInTheDocument();
     expect(within(nvidiaGroup!).getByText("DeepSeek V4 Pro")).toBeInTheDocument();
+  });
+
+  it("shows ZenMux DeepSeek free models and selects the zenmux provider", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: /model and reasoning/i }));
+
+    expect(await screen.findByText("ZenMux")).toBeInTheDocument();
+    const zenmuxItem = screen.getByText("DeepSeek V4 Pro Free");
+    fireEvent.click(zenmuxItem);
+
+    expect(useAppStore.getState().provider).toBe("zenmux");
+    expect(useAppStore.getState().selectedModelId).toBe("deepseek/deepseek-v4-pro-free");
   });
 
   it("shows Kimi K2.6 and selects the kimi provider", async () => {

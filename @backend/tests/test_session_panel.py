@@ -259,7 +259,14 @@ async def test_session_browser_api_controls_lightpanda_worker(monkeypatch):
     assert click_response.status_code == 200
     assert browser_worker.calls[0] == (
         "view_navigate",
-        {"browser_id": "panel-tab", "url": "https://example.com", "width": 900, "height": 500},
+        {
+            "browser_id": "panel-tab",
+            "url": "https://example.com",
+            "width": 900,
+            "height": 500,
+            "cache_mode": "prefer_live",
+            "wait_for_styles": True,
+        },
     )
     assert browser_worker.calls[1][0] == "view_click"
 
@@ -309,6 +316,9 @@ async def test_conversation_browser_workspace_persists_annotations_and_timeline(
     stored = repo.conversations[conversation.id].metadata["browser_workspace"]
     assert stored["annotations"][0]["node_id"] == "pa_link"
     assert stored["timeline_events"]
+    assert "html" not in stored
+    assert "document_html" not in stored
+    assert "browser_snapshot" not in stored
 
 
 @pytest.mark.asyncio

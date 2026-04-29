@@ -432,9 +432,9 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
             validation = validate_web_url(url, context)
             if validation is not None:
                 return validation
-        max_chars = arguments.get("max_chars", context.limits.get("result_max_chars", 20_000))
-        if not _is_int(max_chars) or int(max_chars) < 1 or int(max_chars) > 200_000:
-            return _deny("BrowserExtractContent max_chars must be between 1 and 200000.")
+        max_chars = arguments.get("max_chars", _browser_result_max_chars(context))
+        if not _is_int(max_chars) or int(max_chars) < 1:
+            return _deny("BrowserExtractContent max_chars must be positive.")
         include_links = arguments.get("include_links", False)
         if not isinstance(include_links, bool):
             return _deny("BrowserExtractContent include_links must be a boolean.")
@@ -454,9 +454,7 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
         )
         if target_error:
             return _target_error_result(call, "BrowserExtractContent", target_error)
-        max_chars = int(
-            arguments.get("max_chars") or context.limits.get("result_max_chars", 20_000)
-        )
+        max_chars = int(arguments.get("max_chars") or _browser_result_max_chars(context))
         include_links = bool(arguments.get("include_links", False))
         await _progress(
             context,
@@ -506,8 +504,7 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
                     "max_chars": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 200000,
-                        "default": 20000,
+                        "default": 10000000,
                     },
                     "include_links": {"type": "boolean", "default": False},
                 },
@@ -683,9 +680,9 @@ def create_browser_get_html_tool(worker: LightPandaBrowserWorker) -> Tool:
             validation = validate_web_url(url, context)
             if validation is not None:
                 return validation
-        max_chars = arguments.get("max_chars", context.limits.get("result_max_chars", 20_000))
-        if not _is_int(max_chars) or int(max_chars) < 1 or int(max_chars) > 500_000:
-            return _deny("BrowserGetHtml max_chars must be between 1 and 500000.")
+        max_chars = arguments.get("max_chars", _browser_result_max_chars(context))
+        if not _is_int(max_chars) or int(max_chars) < 1:
+            return _deny("BrowserGetHtml max_chars must be positive.")
         return None
 
     async def handler(
@@ -702,9 +699,7 @@ def create_browser_get_html_tool(worker: LightPandaBrowserWorker) -> Tool:
         )
         if target_error:
             return _target_error_result(call, "BrowserGetHtml", target_error)
-        max_chars = int(
-            arguments.get("max_chars") or context.limits.get("result_max_chars", 20_000)
-        )
+        max_chars = int(arguments.get("max_chars") or _browser_result_max_chars(context))
         await _progress(
             context,
             call,
@@ -744,8 +739,7 @@ def create_browser_get_html_tool(worker: LightPandaBrowserWorker) -> Tool:
                     "max_chars": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 500000,
-                        "default": 20000,
+                        "default": 10000000,
                     },
                 },
                 "additionalProperties": False,
@@ -2576,3 +2570,14 @@ def _is_int(value: Any) -> bool:
     except (TypeError, ValueError):
         return False
     return True
+
+
+def _browser_result_max_chars(context: ToolUseContext) -> int:
+    raw_limit = context.limits.get("result_max_chars")
+    if raw_limit is None:
+        return 10_000_000
+    try:
+        parsed = int(raw_limit)
+    except (TypeError, ValueError):
+        return 10_000_000
+    return parsed if parsed > 0 else 10_000_000

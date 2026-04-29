@@ -8,10 +8,6 @@ from httpx import ASGITransport, AsyncClient
 
 from personagent.application.retry import RetryPolicy
 from personagent.application.tools import ToolOrchestrator, ToolRegistry, ToolRuntimeConfig
-from personagent.application.tools.runtime_config import (
-    DEFAULT_MAX_TOOL_ITERATIONS,
-    MAX_TOOL_ITERATIONS_HARD_CAP,
-)
 from personagent.domain.exceptions import (
     ConversationNotFoundError,
     ErrorCategory,
@@ -106,17 +102,18 @@ async def test_tool_orchestrator_unknown_tool_returns_structured_error(tmp_path:
     assert result.metadata["error"]["category"] == "tool"
 
 
-def test_tool_runtime_config_never_allows_unbounded_iterations(tmp_path: Path) -> None:
+def test_tool_runtime_config_defaults_to_unlimited_iterations(tmp_path: Path) -> None:
     default_config = ToolRuntimeConfig.from_values(workspace_root=tmp_path)
     unbounded_config = ToolRuntimeConfig.from_values(
         workspace_root=tmp_path,
         max_tool_iterations=None,
     )
-    excessive_config = ToolRuntimeConfig.from_values(
+    explicit_config = ToolRuntimeConfig.from_values(
         workspace_root=tmp_path,
         max_tool_iterations=10_000,
     )
 
-    assert default_config.max_tool_iterations == DEFAULT_MAX_TOOL_ITERATIONS
-    assert unbounded_config.max_tool_iterations == DEFAULT_MAX_TOOL_ITERATIONS
-    assert excessive_config.max_tool_iterations == MAX_TOOL_ITERATIONS_HARD_CAP
+    assert default_config.max_tool_iterations is None
+    assert unbounded_config.max_tool_iterations is None
+    assert explicit_config.max_tool_iterations == 10_000
+    assert default_config.result_max_chars is None

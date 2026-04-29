@@ -54,6 +54,12 @@ def test_team_config_validation_rejects_invalid_threshold():
         parse_team_config(raw=raw)
 
 
+def test_team_config_allows_unlimited_rounds():
+    team = parse_team_config(raw={**_serializable_default_team(), "max_rounds": None})
+
+    assert team.max_rounds is None
+
+
 def test_vote_parser_recovers_truncated_positive_vote():
     payload = _parse_vote_payload(
         '{ "approve": true, "confidence": 0.91, "blocker": false, '
@@ -178,7 +184,7 @@ async def test_team_orchestrator_forces_final_vote_when_interval_does_not_match(
         )
     ]
 
-    assert [event["round"] for event in events if event["event"] == "vote_started"] == [3]
+    assert [event["round"] for event in events if event["event"] == "vote_started"] == [2, 3]
     assert events[-1]["event"] == "team_consensus_failed"
 
 

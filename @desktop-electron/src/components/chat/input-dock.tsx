@@ -31,6 +31,7 @@ type ModelOption = {
 
 const DEEPSEEK_API_GROUP = "DeepSeek API";
 const DEEPSEEK_NVIDIA_GROUP = "DeepSeek NVIDIA";
+const ZENMUX_GROUP = "ZenMux";
 const MODEL_CATALOG_STALE_MS = 10 * 60_000;
 const CODEX_AUTH_STALE_MS = 2 * 60_000;
 
@@ -89,6 +90,8 @@ const curatedHostedModels: ModelOption[] = [
   { id: "moonshotai/kimi-k2.5", provider: "nvidia", label: "Kimi K2.5", group: "Moonshot" },
   { id: "deepseek-v4-flash", provider: "deepseek", label: "DeepSeek V4 Flash", group: DEEPSEEK_API_GROUP },
   { id: "deepseek-v4-pro", provider: "deepseek", label: "DeepSeek V4 Pro", group: DEEPSEEK_API_GROUP },
+  { id: "deepseek/deepseek-v4-flash-free", provider: "zenmux", label: "DeepSeek V4 Flash Free", group: ZENMUX_GROUP, contextLength: 1000000 },
+  { id: "deepseek/deepseek-v4-pro-free", provider: "zenmux", label: "DeepSeek V4 Pro Free", group: ZENMUX_GROUP, contextLength: 1000000 },
   { id: "deepseek-ai/deepseek-v4-flash", provider: "nvidia", label: "DeepSeek V4 Flash", group: DEEPSEEK_NVIDIA_GROUP },
   { id: "deepseek-ai/deepseek-v4-pro", provider: "nvidia", label: "DeepSeek V4 Pro", group: DEEPSEEK_NVIDIA_GROUP },
   { id: "gemini-3.1-pro-preview", provider: "vertex", label: "Gemini 3.1 Pro", group: "Google Vertex" },
@@ -108,6 +111,7 @@ const modelGroupOrder = [
   "Minimax",
   "Moonshot",
   DEEPSEEK_API_GROUP,
+  ZENMUX_GROUP,
   DEEPSEEK_NVIDIA_GROUP,
   "Google Vertex",
   "NVIDIA",
@@ -131,6 +135,7 @@ const GROUP_ICON_SLUG: Record<string, string> = {
   Minimax: "minimax",
   Moonshot: "moonshotai",
   [DEEPSEEK_API_GROUP]: "deepseek",
+  [ZENMUX_GROUP]: "deepseek",
   [DEEPSEEK_NVIDIA_GROUP]: "nvidia",
   "Google Vertex": "google",
   NVIDIA: "nvidia",
@@ -1197,6 +1202,13 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
     staleTime: MODEL_CATALOG_STALE_MS,
     refetchOnWindowFocus: false,
   });
+  const zenMuxModels = useQuery({
+    queryKey: ["models", baseUrl, "zenmux"],
+    queryFn: () => listModels(baseUrl, "zenmux"),
+    enabled: enabled && Boolean(baseUrl),
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
+  });
   const vertexModels = useQuery({
     queryKey: ["models", baseUrl, "vertex"],
     queryFn: () => listModels(baseUrl, "vertex"),
@@ -1229,6 +1241,7 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
     localModels.data,
     hostedModels.data,
     deepSeekModels.data,
+    zenMuxModels.data,
     vertexModels.data,
     kimiModels.data,
     codexModels.data,
@@ -1345,6 +1358,7 @@ function buildModelOptions(
   localModels?: LlmModel[],
   hostedModels?: LlmModel[],
   deepSeekModels?: LlmModel[],
+  zenMuxModels?: LlmModel[],
   vertexModels?: LlmModel[],
   kimiModels?: LlmModel[],
   codexModels?: LlmModel[],
@@ -1365,6 +1379,9 @@ function buildModelOptions(
   }
   for (const model of deepSeekModels ?? []) {
     add(toModelOption(model, "deepseek"));
+  }
+  for (const model of zenMuxModels ?? []) {
+    add(toModelOption(model, "zenmux"));
   }
   for (const model of vertexModels ?? []) {
     add(toModelOption(model, "vertex"));
@@ -1415,6 +1432,7 @@ function modelGroup(id: string, provider: ModelProvider) {
   if (provider === "kimi") return "Kimi Code";
   if (provider === "codex") return "ChatGPT Subscription";
   if (provider === "vertex") return "Google Vertex";
+  if (provider === "zenmux") return ZENMUX_GROUP;
   if (provider === "deepseek") return DEEPSEEK_API_GROUP;
   if (normalized.startsWith("openai/") || normalized.startsWith("gpt-")) return "OpenAI";
   if (normalized.startsWith("qwen/")) return "Qwen";
@@ -1445,6 +1463,10 @@ function formatModelLabel(value: string) {
     "moonshotai/kimi-k2.5": "Kimi K2.5",
     "deepseek-v4-flash": "DeepSeek V4 Flash",
     "deepseek-v4-pro": "DeepSeek V4 Pro",
+    "deepseek/deepseek-v4-flash-free": "DeepSeek V4 Flash Free",
+    "deepseek/deepseek-v4-pro-free": "DeepSeek V4 Pro Free",
+    "deepseek/deepseek-v4-flash": "DeepSeek V4 Flash",
+    "deepseek/deepseek-v4-pro": "DeepSeek V4 Pro",
     "deepseek-ai/deepseek-v4-flash": "DeepSeek V4 Flash",
     "deepseek-ai/deepseek-v4-pro": "DeepSeek V4 Pro",
     "nvidia/nemotron-3-nano-30b-a3b": "Nemotron 3 Nano 30B",
@@ -1509,6 +1531,13 @@ function ContextWindowIndicator() {
     staleTime: MODEL_CATALOG_STALE_MS,
     refetchOnWindowFocus: false,
   });
+  const zenMuxModels = useQuery({
+    queryKey: ["models", baseUrl, "zenmux"],
+    queryFn: () => listModels(baseUrl, "zenmux"),
+    enabled: Boolean(baseUrl),
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
+  });
   const vertexModels = useQuery({
     queryKey: ["models", baseUrl, "vertex"],
     queryFn: () => listModels(baseUrl, "vertex"),
@@ -1535,6 +1564,7 @@ function ContextWindowIndicator() {
     localModels.data,
     hostedModels.data,
     deepSeekModels.data,
+    zenMuxModels.data,
     vertexModels.data,
     kimiModels.data,
     codexModels.data,

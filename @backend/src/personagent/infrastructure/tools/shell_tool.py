@@ -175,7 +175,8 @@ def create_shell_tool() -> Tool:
             arguments.get("timeout_ms"),
             default=int(context.limits.get("shell_timeout_ms", 10_000)),
         )
-        max_chars = int(context.limits.get("result_max_chars", 20_000))
+        raw_max_chars = context.limits.get("result_max_chars")
+        max_chars = int(raw_max_chars) if raw_max_chars is not None else None
 
         await context.emit_progress(
             ToolProgress(
@@ -742,7 +743,9 @@ def _bounded_timeout(value: object, *, default: int) -> int:
     return max(1, min(timeout, 60_000))
 
 
-def _cap_output(value: str, max_chars: int) -> str:
+def _cap_output(value: str, max_chars: int | None) -> str:
+    if max_chars is None or max_chars <= 0:
+        return value
     if len(value) <= max_chars:
         return value
     return value[:max_chars] + "\n[Output truncated.]"

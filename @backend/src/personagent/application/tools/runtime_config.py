@@ -5,8 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_MAX_TOOL_ITERATIONS = 8
-MAX_TOOL_ITERATIONS_HARD_CAP = 60
+DEFAULT_MAX_TOOL_ITERATIONS: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,16 +14,16 @@ class ToolRuntimeConfig:
 
     workspace_root: Path
     allowed_roots: tuple[Path, ...]
-    max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS
+    max_tool_iterations: int | None = DEFAULT_MAX_TOOL_ITERATIONS
     max_concurrency: int = 4
-    read_max_bytes: int = 128_000
-    read_default_limit: int = 1_000
-    read_max_lines: int = 1_000
+    read_max_bytes: int = 10_000_000
+    read_default_limit: int = 10_000
+    read_max_lines: int = 100_000
     search_timeout_ms: int = 15_000
     shell_timeout_ms: int = 10_000
     web_timeout_ms: int = 15_000
-    web_max_bytes: int = 512_000
-    result_max_chars: int = 20_000
+    web_max_bytes: int = 10_000_000
+    result_max_chars: int | None = None
     tool_result_storage_root: Path | None = None
     web_allowed_domains: tuple[str, ...] = ()
     web_blocked_domains: tuple[str, ...] = ("localhost", "127.0.0.1", "0.0.0.0")
@@ -40,14 +39,14 @@ class ToolRuntimeConfig:
         allowed_roots: list[str | Path] | tuple[str | Path, ...] | None = None,
         max_tool_iterations: int | None = DEFAULT_MAX_TOOL_ITERATIONS,
         max_concurrency: int = 4,
-        read_max_bytes: int = 128_000,
-        read_default_limit: int = 1_000,
-        read_max_lines: int = 1_000,
+        read_max_bytes: int = 10_000_000,
+        read_default_limit: int = 10_000,
+        read_max_lines: int = 100_000,
         search_timeout_ms: int = 15_000,
         shell_timeout_ms: int = 10_000,
         web_timeout_ms: int = 15_000,
-        web_max_bytes: int = 512_000,
-        result_max_chars: int = 20_000,
+        web_max_bytes: int = 10_000_000,
+        result_max_chars: int | None = None,
         tool_result_storage_root: str | Path | None = None,
         web_allowed_domains: list[str] | tuple[str, ...] | None = None,
         web_blocked_domains: list[str] | tuple[str, ...] | None = None,
@@ -70,7 +69,7 @@ class ToolRuntimeConfig:
             shell_timeout_ms=max(1, shell_timeout_ms),
             web_timeout_ms=max(1, web_timeout_ms),
             web_max_bytes=max(1, web_max_bytes),
-            result_max_chars=max(1, result_max_chars),
+            result_max_chars=_optional_positive_int(result_max_chars),
             tool_result_storage_root=(
                 Path(tool_result_storage_root).expanduser().resolve()
                 if tool_result_storage_root
@@ -91,10 +90,19 @@ class ToolRuntimeConfig:
         )
 
 
-def _bounded_tool_iterations(value: int | None) -> int:
+def _bounded_tool_iterations(value: int | None) -> int | None:
     if value is None:
-        return DEFAULT_MAX_TOOL_ITERATIONS
-    return min(MAX_TOOL_ITERATIONS_HARD_CAP, max(1, int(value)))
+        return None
+    return max(1, int(value))
 
 
-__all__ = ["DEFAULT_MAX_TOOL_ITERATIONS", "MAX_TOOL_ITERATIONS_HARD_CAP", "ToolRuntimeConfig"]
+def _optional_positive_int(value: int | None) -> int | None:
+    if value is None:
+        return None
+    parsed = int(value)
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+__all__ = ["DEFAULT_MAX_TOOL_ITERATIONS", "ToolRuntimeConfig"]

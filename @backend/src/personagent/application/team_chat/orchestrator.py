@@ -480,7 +480,9 @@ class _Blackboard:
 
     def vote_triggers(self, round_index: int, team: TeamConfig) -> list[str]:
         triggers: list[str] = []
-        if team.force_final_vote and round_index == team.max_rounds:
+        if round_index % team.vote_every_rounds == 0:
+            triggers.append("scheduled_interval")
+        if team.force_final_vote and team.max_rounds is not None and round_index == team.max_rounds:
             triggers.append("final_round")
         if self.has_real_blocker():
             triggers.append("blocker_present")
@@ -990,7 +992,8 @@ class TeamChatOrchestrator:
         yield _coverage_matrix_event(run_id, conversation.id, 0, blackboard)
         yield _blackboard_snapshot_event(run_id, conversation.id, 0, blackboard)
 
-        for round_index in range(1, team.max_rounds + 1):
+        round_index = 1
+        while team.max_rounds is None or round_index <= team.max_rounds:
             if cancel_event.is_set():
                 yield _cancelled_event(run_id, conversation.id)
                 return
@@ -1112,6 +1115,7 @@ class TeamChatOrchestrator:
 
             vote_triggers = blackboard.vote_triggers(round_index, team)
             if not vote_triggers:
+                round_index += 1
                 continue
 
             yield {
@@ -1154,6 +1158,7 @@ class TeamChatOrchestrator:
             has_critical_blocker = any(vote.critical_blocker for vote in last_votes)
             consensus_reached = approvals >= required and not has_critical_blocker
             if not consensus_reached:
+                round_index += 1
                 continue
 
             consensus = {
@@ -1634,7 +1639,7 @@ class TeamChatOrchestrator:
             result = await self._llm_backend.chat_completion(
                 messages=self._vote_messages(request, team, agent, round_index, blackboard),
                 temperature=0,
-                max_tokens=384,
+                max_tokens=agent.max_tokens,
                 stream=False,
                 model=request.model,
                 provider=request.provider,
@@ -1679,7 +1684,7 @@ class TeamChatOrchestrator:
         result = await self._llm_backend.chat_completion(
             messages=self._execution_contract_messages(request, team, blackboard),
             temperature=team.coordinator.temperature,
-            max_tokens=min(team.coordinator.max_tokens, 1400),
+            max_tokens=team.coordinator.max_tokens,
             stream=False,
             model=request.model,
             provider=request.provider,
@@ -1729,7 +1734,7 @@ class TeamChatOrchestrator:
         result = await self._llm_backend.chat_completion(
             messages=self._coordinator_planning_messages(request, team, round_index, blackboard),
             temperature=team.coordinator.temperature,
-            max_tokens=min(team.coordinator.max_tokens, 1024),
+            max_tokens=team.coordinator.max_tokens,
             stream=False,
             model=request.model,
             provider=request.provider,
@@ -2191,7 +2196,7 @@ def _coherency_score_event(
 
 def _should_vote(round_index: int, team: TeamConfig) -> bool:
     return round_index % team.vote_every_rounds == 0 or (
-        team.force_final_vote and round_index == team.max_rounds
+        team.force_final_vote and team.max_rounds is not None and round_index == team.max_rounds
     )
 
 

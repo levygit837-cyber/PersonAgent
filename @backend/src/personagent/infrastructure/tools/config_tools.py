@@ -5,10 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from personagent.application.tools.runtime_config import (
-    DEFAULT_MAX_TOOL_ITERATIONS,
-    MAX_TOOL_ITERATIONS_HARD_CAP,
-)
 from personagent.domain.tools import (
     Tool,
     ToolArguments,
@@ -32,10 +28,9 @@ _SETTINGS: dict[str, dict[str, Any]] = {
     "default_model": {"source": "metadata", "type": "string"},
     "max_tool_iterations": {
         "source": "limits",
-        "type": "integer",
+        "type": "optional_integer",
         "min": 1,
-        "max": MAX_TOOL_ITERATIONS_HARD_CAP,
-        "default": DEFAULT_MAX_TOOL_ITERATIONS,
+        "default": None,
     },
     "max_concurrency": {"source": "limits", "type": "integer", "min": 1, "max": 16},
     "auto_compact": {"source": "metadata", "type": "boolean"},
@@ -171,7 +166,7 @@ def _get_config_value(key: str, context: ToolUseContext) -> Any:
     if key == "permission_mode":
         return context.permissions.get("mode", "manual")
     if key == "max_tool_iterations":
-        return context.limits.get("max_tool_iterations", DEFAULT_MAX_TOOL_ITERATIONS)
+        return context.limits.get("max_tool_iterations")
     if key == "max_concurrency":
         return context.limits.get("max_concurrency", 4)
     values = context.metadata.setdefault("config", {})
@@ -209,7 +204,9 @@ def _coerce_value(key: str, value: Any) -> Any:
         if isinstance(value, str) and value.strip().lower() in {"true", "false", "1", "0"}:
             return value.strip().lower() in {"true", "1"}
         raise ValueError(f"{key} must be a boolean.")
-    if value_type == "integer":
+    if value_type in {"integer", "optional_integer"}:
+        if value_type == "optional_integer" and value is None:
+            return None
         if isinstance(value, bool):
             raise ValueError(f"{key} must be an integer.")
         try:

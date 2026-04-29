@@ -419,19 +419,25 @@ class ToolOrchestrator:
         )
 
     def _cap_result(self, result: ToolResult, context: ToolUseContext) -> ToolResult:
+        raw_context_limit = context.limits.get("result_max_chars")
+        if raw_context_limit is None:
+            return result
+        try:
+            context_limit = int(raw_context_limit)
+        except (TypeError, ValueError):
+            context_limit = 0
+        if context_limit <= 0:
+            return result
+
         raw_result_limit = (
-            result.metadata.get("max_result_size_chars", result.metadata.get("limit", 20_000))
+            result.metadata.get("max_result_size_chars", result.metadata.get("limit", context_limit))
             if isinstance(result.metadata, dict)
-            else 20_000
+            else context_limit
         )
         try:
-            result_limit = 20_000 if raw_result_limit is None else int(raw_result_limit)
+            result_limit = context_limit if raw_result_limit is None else int(raw_result_limit)
         except (TypeError, ValueError):
-            result_limit = 20_000
-        try:
-            context_limit = int(context.limits.get("result_max_chars", 20_000))
-        except (TypeError, ValueError):
-            context_limit = 20_000
+            result_limit = context_limit
         max_chars = max(1, min(result_limit, context_limit))
         if len(result.content) <= max_chars:
             return result

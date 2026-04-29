@@ -111,8 +111,9 @@ def create_skill_tool() -> Tool:
                 is_error=True,
             )
         content = skill.body
-        max_chars = int(context.limits.get("result_max_chars", 20_000))
-        truncated = len(content) > max_chars
+        raw_max_chars = context.limits.get("result_max_chars")
+        max_chars = int(raw_max_chars) if raw_max_chars is not None else None
+        truncated = max_chars is not None and len(content) > max_chars
         if truncated:
             content = content[:max_chars] + "\n[Skill truncated.]"
         data = {

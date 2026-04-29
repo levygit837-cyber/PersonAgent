@@ -38,6 +38,8 @@ class SessionBrowserViewport(BaseModel):
 
     width: int = Field(default=1024, ge=320, le=2400)
     height: int = Field(default=720, ge=240, le=1800)
+    cache_mode: str = Field(default="prefer_live", pattern="^(prefer_live|prefer_cached)$")
+    wait_for_styles: bool = True
 
 
 class SessionBrowserNavigateRequest(SessionBrowserViewport):
@@ -152,6 +154,8 @@ async def get_session_browser_view(
     browser_id: str,
     width: int = Query(default=1024, ge=320, le=2400),
     height: int = Query(default=720, ge=240, le=1800),
+    cache_mode: str = Query(default="prefer_live", pattern="^(prefer_live|prefer_cached)$"),
+    wait_for_styles: bool = Query(default=True),
 ) -> dict[str, Any]:
     """Return the current LightPanda-rendered browser viewport."""
 
@@ -160,6 +164,8 @@ async def get_session_browser_view(
             browser_id=browser_id,
             width=width,
             height=height,
+            cache_mode=cache_mode,
+            wait_for_styles=wait_for_styles,
         )
     except BrowserUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -327,6 +333,8 @@ async def navigate_session_browser(
             url=request.url,
             width=request.width,
             height=request.height,
+            cache_mode=request.cache_mode,
+            wait_for_styles=request.wait_for_styles,
         )
     except BrowserUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -349,6 +357,8 @@ async def move_session_browser_history(
             direction=request.direction,
             width=request.width,
             height=request.height,
+            cache_mode=request.cache_mode,
+            wait_for_styles=request.wait_for_styles,
         )
     except BrowserUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -368,6 +378,8 @@ async def reload_session_browser(
             browser_id=browser_id,
             width=request.width,
             height=request.height,
+            cache_mode=request.cache_mode,
+            wait_for_styles=request.wait_for_styles,
         )
     except BrowserUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -476,13 +488,21 @@ async def get_conversation_browser_view(
     browser_id: str,
     width: int = Query(default=1024, ge=320, le=2400),
     height: int = Query(default=720, ge=240, le=1800),
+    cache_mode: str = Query(default="prefer_live", pattern="^(prefer_live|prefer_cached)$"),
+    wait_for_styles: bool = Query(default=True),
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> dict[str, Any]:
     """Return a Browser Workspace view enriched with conversation annotations/timeline."""
 
     conversation = await _load_conversation(conversation_id, session)
     try:
-        view = await _browser_worker().view_snapshot(browser_id=browser_id, width=width, height=height)
+        view = await _browser_worker().view_snapshot(
+            browser_id=browser_id,
+            width=width,
+            height=height,
+            cache_mode=cache_mode,
+            wait_for_styles=wait_for_styles,
+        )
     except BrowserUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except BrowserError as exc:
@@ -506,6 +526,8 @@ async def navigate_conversation_browser(
             url=request.url,
             width=request.width,
             height=request.height,
+            cache_mode=request.cache_mode,
+            wait_for_styles=request.wait_for_styles,
         )
     except BrowserUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -550,6 +572,8 @@ async def move_conversation_browser_history(
             direction=request.direction,
             width=request.width,
             height=request.height,
+            cache_mode=request.cache_mode,
+            wait_for_styles=request.wait_for_styles,
         )
     except BrowserUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -587,7 +611,13 @@ async def reload_conversation_browser(
 
     conversation = await _load_conversation(conversation_id, session)
     try:
-        view = await _browser_worker().view_reload(browser_id=browser_id, width=request.width, height=request.height)
+        view = await _browser_worker().view_reload(
+            browser_id=browser_id,
+            width=request.width,
+            height=request.height,
+            cache_mode=request.cache_mode,
+            wait_for_styles=request.wait_for_styles,
+        )
     except BrowserUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except BrowserError as exc:
