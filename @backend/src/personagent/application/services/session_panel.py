@@ -113,7 +113,6 @@ class SessionPanelService:
         current_branch_result: _RunResult,
         errors: list[str],
     ) -> dict[str, Any] | None:
-        workspace = self._workspace()
         if repo_result.ok:
             data = _json_object(repo_result.stdout)
             default_branch = data.get("defaultBranchRef")
@@ -617,7 +616,7 @@ async def _run_async(command: list[str], cwd: Path, timeout: int = 5) -> _RunRes
             stdout_data.decode("utf-8", errors="replace"),
             stderr_data.decode("utf-8", errors="replace"),
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
             await proc.wait()

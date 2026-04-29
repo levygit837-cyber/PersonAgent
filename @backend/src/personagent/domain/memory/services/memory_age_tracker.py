@@ -7,7 +7,7 @@ se deve incluir avisos de staleness no contexto.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +45,7 @@ class MemoryAgeTracker:
         Returns:
             MemoryAge com idade calculada.
         """
-        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
         diff_ms = max(0, now_ms - mtime_ms)
 
         diff_hours = diff_ms / (1000 * 3600)

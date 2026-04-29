@@ -7,8 +7,13 @@ para uma conversa, usando os serviços especializados (Git, PersonaMd, etc.).
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+import yaml
 
 from personagent.domain.context.models import (
     ContextBuildResult,
@@ -18,8 +23,83 @@ from personagent.domain.context.models import (
 from personagent.domain.context.repositories import ContextRepository
 from personagent.domain.context.services.git_context import GitContextService
 from personagent.domain.context.services.personamd_loader import PersonaMdLoader
-from personagent.domain.memory.repositories.memory_repository import MemoryRepository
 from personagent.domain.memory.models.memory_types import MemoryScope
+from personagent.domain.memory.repositories.memory_repository import MemoryRepository
+
+_SENSITIVE_KEY_PARTS = (
+    "key",
+    "token",
+    "secret",
+    "password",
+    "credential",
+    "auth",
+    "cookie",
+)
+
+_SAFE_SETTINGS_FIELDS = (
+    "app_name",
+    "app_version",
+    "app_env",
+    "app_host",
+    "app_port",
+    "log_level",
+    "llama_server_url",
+    "llama_model_path",
+    "llama_ctx_size",
+    "llama_n_gpu_layers",
+    "llama_temperature",
+    "llama_max_tokens",
+    "llama_cache_type_k",
+    "llama_cache_type_v",
+    "llama_threads",
+    "llama_reasoning",
+    "llama_reasoning_budget",
+    "llama_verbose",
+    "llama_timeout_seconds",
+    "llama_stream_read_timeout_seconds",
+    "llama_auto_start",
+    "nvidia_base_url",
+    "nvidia_default_model",
+    "nvidia_timeout_seconds",
+    "nvidia_stream_read_timeout_seconds",
+    "nvidia_models_cache_ttl_seconds",
+    "deepseek_base_url",
+    "deepseek_default_model",
+    "deepseek_max_tokens",
+    "deepseek_context_window",
+    "deepseek_timeout_seconds",
+    "deepseek_stream_read_timeout_seconds",
+    "deepseek_models_cache_ttl_seconds",
+    "vertex_location",
+    "vertex_default_model",
+    "vertex_context_window",
+    "vertex_timeout_seconds",
+    "vertex_stream_read_timeout_seconds",
+    "vertex_models_cache_ttl_seconds",
+    "kimi_base_url",
+    "kimi_default_model",
+    "kimi_max_tokens",
+    "kimi_context_window",
+    "kimi_timeout_seconds",
+    "kimi_stream_read_timeout_seconds",
+    "embedding_server_url",
+    "embedding_model",
+    "embedding_dimensions",
+    "embedding_timeout_seconds",
+    "embedding_auto_start",
+    "lightpanda_enabled",
+    "lightpanda_cdp_url",
+    "lightpanda_timeout_ms",
+    "lightpanda_search_base_url",
+    "lightpanda_session_ttl_seconds",
+    "operational_memory_enabled",
+    "operational_memory_capture_tools_enabled",
+    "operational_memory_recall_enabled",
+    "operational_memory_embedding_enabled",
+    "operational_memory_max_capture_chars",
+    "operational_memory_chunk_max_chars",
+    "operational_memory_recall_top_k",
+)
 
 
 class ContextBuilder:
@@ -153,14 +233,32 @@ class ContextBuilder:
             if index:
                 long_term_memory_index = index.content
 
+        project_config = self._safe_project_config()
+
         return UserContext(
             persona_md=persona_md if persona_md else None,
             memory_files=tuple(memory_files),
             current_date=current_date,
-            user_settings={},  # TODO: carregar de configurações
-            project_config={},  # TODO: carregar de config.yaml
+            user_settings=self._safe_user_settings(project_config),
+            project_config=project_config,
             long_term_memory_index=long_term_memory_index,
         )
+
+    def _safe_user_settings(self, project_config: Mapping[str, Any]) -> dict[str, Any]:
+        """Return runtime settings that are safe to expose in prompt context."""
+        return safe_settings_context(project_config)
+
+    def _safe_project_config(self) -> dict[str, Any]:
+        """Return a redacted `config.yaml` subset for prompt context."""
+        config_path = self._workspace_root / "config.yaml"
+        if not config_path.exists():
+            return {}
+        try:
+            with open(config_path, encoding="utf-8") as file:
+                raw = yaml.safe_load(file) or {}
+        except (OSError, yaml.YAMLError):
+            return {}
+        return redact_sensitive_mapping(raw) if isinstance(raw, Mapping) else {}
 
     def _get_relevant_environment(self) -> dict[str, str]:
         """Retorna variáveis de ambiente relevantes.
@@ -200,3 +298,55 @@ class ContextBuilder:
         """
         if self._context_repository:
             await self._context_repository.clear_context(conversation_id)
+
+
+def safe_settings_context(project_config: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a small config snapshot without credentials or tokens."""
+    flattened: dict[str, Any] = {}
+    for section_name, section in project_config.items():
+        if not isinstance(section, Mapping):
+            continue
+        for key, value in section.items():
+            flattened[f"{section_name}_{key}"] = value
+    return redact_sensitive_mapping(
+        {field: flattened[field] for field in _SAFE_SETTINGS_FIELDS if field in flattened}
+    )
+
+
+def redact_sensitive_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Recursively redact sensitive keys from a mapping before prompt injection."""
+    redacted: dict[str, Any] = {}
+    for key, item in value.items():
+        key_text = str(key)
+        if _is_sensitive_key(key_text):
+            redacted[key_text] = "[redacted]"
+        elif isinstance(item, Mapping):
+            redacted[key_text] = redact_sensitive_mapping(item)
+        elif isinstance(item, list):
+            redacted[key_text] = [_redact_sensitive_value(child) for child in item]
+        elif isinstance(item, str) and _is_url_with_credentials(item):
+            redacted[key_text] = "[redacted]"
+        else:
+            redacted[key_text] = item
+    return redacted
+
+
+def _redact_sensitive_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return redact_sensitive_mapping(value)
+    if isinstance(value, list):
+        return [_redact_sensitive_value(item) for item in value]
+    return value
+
+
+def _is_sensitive_key(key: str) -> bool:
+    normalized = key.lower()
+    return any(part in normalized for part in _SENSITIVE_KEY_PARTS)
+
+
+def _is_url_with_credentials(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return bool(parsed.scheme and parsed.netloc and (parsed.username or parsed.password))

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -19,7 +19,7 @@ class TestMemoryAgeTracker:
 
     def _mtime_ms(self, hours_ago: float = 0, days_ago: float = 0) -> int:
         """Helper to compute mtime_ms relative to now."""
-        now = datetime.now(timezone.utc).timestamp()
+        now = datetime.now(UTC).timestamp()
         delta_seconds = hours_ago * 3600 + days_ago * 86400
         return int((now - delta_seconds) * 1000)
 
@@ -54,7 +54,7 @@ class TestMemoryAgeTracker:
 
     def test_calculate_just_now(self, tracker):
         """Test age calculation for a brand new memory."""
-        mtime = int(datetime.now(timezone.utc).timestamp() * 1000)
+        mtime = int(datetime.now(UTC).timestamp() * 1000)
         age = tracker.calculate(mtime)
 
         assert age.days == 0

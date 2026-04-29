@@ -10,13 +10,12 @@ Responsible for:
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from personagent.domain.memory.models.memory_file import MemoryFile, MemoryHeader
 from personagent.domain.memory.models.memory_types import MemoryScope, MemoryType
-
 
 # Regex for extracting YAML frontmatter between --- delimiters.
 # Uses lookbehind to ensure line start and limits matches to 2000 chars.
@@ -203,10 +202,11 @@ class MemoryScanner:
             key = key.strip()
             value = value.strip()
             # Remove external quotes but preserve internal quotes.
-            if len(value) >= 2:
-                if (value.startswith('"') and value.endswith('"')) or \
-                   (value.startswith("'") and value.endswith("'")):
-                    value = value[1:-1]
+            if len(value) >= 2 and (
+                (value.startswith('"') and value.endswith('"'))
+                or (value.startswith("'") and value.endswith("'"))
+            ):
+                value = value[1:-1]
             result[key] = value
         return result
 
@@ -247,7 +247,7 @@ class MemoryScanner:
 
     def _format_age(self, mtime_ms: int) -> str:
         """Format a timestamp as relative age."""
-        now = datetime.now(timezone.utc).timestamp() * 1000
+        now = datetime.now(UTC).timestamp() * 1000
         diff_ms = now - mtime_ms
         diff_hours = diff_ms / (1000 * 3600)
         if diff_hours < 1:

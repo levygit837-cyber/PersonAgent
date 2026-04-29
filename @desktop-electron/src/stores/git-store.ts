@@ -18,7 +18,7 @@ import {
 } from "../api/client";
 import { useAppStore } from "./app-store";
 
-const GIT_STATUS_POLL_MS = 15_000;
+const GIT_STATE_STALE_MS = 5 * 60_000;
 
 export function useGitStatus(enabled: boolean, workspaceRootOverride?: string | null) {
   const baseUrl = useAppStore((state) => state.baseUrl);
@@ -29,10 +29,9 @@ export function useGitStatus(enabled: boolean, workspaceRootOverride?: string | 
     queryKey: ["git-status", baseUrl, workspaceRoot],
     queryFn: () => getGitStatus(baseUrl, workspaceRoot),
     enabled: enabled && Boolean(baseUrl) && Boolean(workspaceRoot),
-    refetchInterval: GIT_STATUS_POLL_MS,
-    staleTime: 0,
-    gcTime: 0,
-    refetchOnWindowFocus: true,
+    staleTime: GIT_STATE_STALE_MS,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -45,9 +44,9 @@ export function useGitBranches(enabled: boolean, workspaceRootOverride?: string 
     queryKey: ["git-branches", baseUrl, workspaceRoot],
     queryFn: () => listGitBranches(baseUrl, workspaceRoot),
     enabled: enabled && Boolean(baseUrl) && Boolean(workspaceRoot),
-    staleTime: 0,
-    gcTime: 0,
-    refetchOnWindowFocus: true,
+    staleTime: GIT_STATE_STALE_MS,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -60,9 +59,9 @@ export function useGitRecentActions(enabled: boolean, workspaceRootOverride?: st
     queryKey: ["git-recent-actions", baseUrl, workspaceRoot],
     queryFn: () => getGitRecentActions(baseUrl, workspaceRoot),
     enabled: enabled && Boolean(baseUrl) && Boolean(workspaceRoot),
-    staleTime: 0,
-    gcTime: 0,
-    refetchOnWindowFocus: true,
+    staleTime: GIT_STATE_STALE_MS,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -75,9 +74,9 @@ export function useGitPullRequests(enabled: boolean, workspaceRootOverride?: str
     queryKey: ["git-pull-requests", baseUrl, workspaceRoot],
     queryFn: () => listGitPullRequests(baseUrl, workspaceRoot),
     enabled: enabled && Boolean(baseUrl) && Boolean(workspaceRoot),
-    staleTime: 0,
-    gcTime: 0,
-    refetchOnWindowFocus: true,
+    staleTime: GIT_STATE_STALE_MS,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -90,7 +89,7 @@ export function useWorkspaceProjects(enabled: boolean) {
     enabled: enabled && Boolean(baseUrl),
     staleTime: 30_000,
     gcTime: 5 * 60_000,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
   });
 }
 

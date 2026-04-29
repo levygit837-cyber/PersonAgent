@@ -23,7 +23,11 @@ import { useChatStore } from "../../stores/chat-store";
 import { emptySessionUsage, type SessionPanelSnapshot } from "../../types/chat";
 import { TooltipProvider } from "../ui/tooltip";
 import { ChatWorkspace } from "./chat-workspace";
-import { SESSION_PANEL_CACHE_STORAGE_KEY } from "./session-panel";
+import {
+  SESSION_PANEL_CACHE_STORAGE_KEY,
+  browserMirrorSrcDoc,
+  sanitizeBrowserMirrorHtml,
+} from "./session-panel";
 
 vi.mock("../../api/client", () => ({
   actSessionBrowser: vi.fn(),
@@ -331,7 +335,7 @@ describe("SessionPanel", () => {
     expect(window.localStorage.getItem(SESSION_PANEL_CACHE_STORAGE_KEY)).toBeNull();
   });
 
-  it("opens the summary from the persisted snapshot while the background refresh is pending", async () => {
+  it("opens the summary from the persisted snapshot and refreshes only after a state event", async () => {
     const cachedSnapshot: SessionPanelSnapshot = {
       ...snapshot,
       title: "Cached Debug Session",
@@ -350,14 +354,19 @@ describe("SessionPanel", () => {
         },
       }),
     );
-    getSessionPanelMock.mockReturnValue(new Promise<SessionPanelSnapshot>(() => {}));
+    getSessionPanelMock.mockResolvedValue(snapshot);
 
     renderWithProviders(<ChatWorkspace />);
     fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
 
     expect(await screen.findByText("Cached Debug Session")).toBeInTheDocument();
     expect(screen.getByText("99")).toBeInTheDocument();
-    expect(getSessionPanelMock).toHaveBeenCalledWith("http://localhost:8000", "conversation-1", "/tmp/personagent");
+    expect(getSessionPanelMock).not.toHaveBeenCalled();
+
+    fireEvent(window, new CustomEvent("personagent:session-panel-changed"));
+    await waitFor(() =>
+      expect(getSessionPanelMock).toHaveBeenCalledWith("http://localhost:8000", "conversation-1", "/tmp/personagent"),
+    );
   });
 
   it("opens project item details as a closeable browser tab inside the panel", async () => {
@@ -649,6 +658,61 @@ describe("SessionPanel", () => {
     expect(screen.getByRole("button", { name: "Reload page" })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: "Enter URL" })).toBeInTheDocument();
     expect(screen.queryByText("Start or open a conversation to view session data.")).not.toBeInTheDocument();
+  });
+});
+
+describe("browser mirror sanitizer", () => {
+  it("removes active content while preserving normal links and safe images", () => {
+    const html = sanitizeBrowserMirrorHtml(`
+      <html>
+        <head>
+          <base href="https://evil.example/">
+          <meta http-equiv="refresh" content="0;url=https://evil.example">
+          <link rel="modulepreload" href="/app.js">
+          <link rel="preload" as="script" href="/worker.js">
+        </head>
+        <body onload="steal()">
+          <script>alert("x")</script>
+          <iframe srcdoc="<script>alert(1)</script>"></iframe>
+          <object data="https://evil.example/payload"></object>
+          <a href="javascript:alert(1)" onclick="steal()">Bad</a>
+          <a href="https://example.com/docs">Docs</a>
+          <form action="javascript:alert(1)" formaction="javascript:alert(2)"></form>
+          <img src="data:image/png;base64,abc" onerror="steal()">
+          <img src="data:text/html;base64,PHNjcmlwdD4=">
+        </body>
+      </html>
+    `);
+
+    expect(html).not.toContain("<script>alert");
+    expect(html).not.toContain("<iframe");
+    expect(html).not.toContain("<object");
+    expect(html).not.toContain("<base");
+    expect(html).not.toContain("http-equiv");
+    expect(html).not.toContain("modulepreload");
+    expect(html).not.toContain("onload");
+    expect(html).not.toContain("onclick");
+    expect(html).not.toContain("onerror");
+    expect(html).not.toContain("javascript:");
+    expect(html).not.toContain("data:text/html");
+    expect(html).toContain('href="https://example.com/docs"');
+    expect(html).toContain('src="data:image/png;base64,abc"');
+  });
+
+  it("uses a nonce-only script policy for injected mirror controls", () => {
+    const srcDoc = browserMirrorSrcDoc(
+      "<html><head></head><body><button onclick=\"steal()\">Open</button></body></html>",
+      "https://example.com/page",
+      "browser:test",
+      [],
+    );
+
+    const nonce = srcDoc.match(/<script nonce="([^"]+)">/)?.[1];
+    expect(nonce).toBeTruthy();
+    expect(srcDoc).toContain(`script-src 'nonce-${nonce}'`);
+    expect(srcDoc).not.toContain("script-src 'self' 'unsafe-inline'");
+    expect(srcDoc).not.toContain('onclick="steal()"');
+    expect(srcDoc).toContain('<base href="https://example.com/page">');
   });
 });
 

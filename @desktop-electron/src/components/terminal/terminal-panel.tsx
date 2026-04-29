@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { TerminalManager } from "./terminal-manager";
+import { useAppStore } from "../../stores/app-store";
 import { useTerminalStore } from "../../stores/terminal-store";
 
 interface TerminalPanelProps {
@@ -11,14 +12,15 @@ const TERMINAL_HEIGHT = 280;
 export function TerminalPanel({ open }: TerminalPanelProps) {
   const leftInstanceCount = useTerminalStore((s) => s.leftPane.instances.length);
   const rightInstanceCount = useTerminalStore((s) => s.rightPane?.instances.length ?? 0);
+  const selectedWorkspace = useAppStore((s) => s.selectedWorkspace);
   const totalInstances = leftInstanceCount + rightInstanceCount;
 
   // Ensure at least one terminal exists when panel opens
   useEffect(() => {
     if (open && totalInstances === 0) {
-      useTerminalStore.getState().addInstance("left", "Shell");
+      useTerminalStore.getState().addInstance("left", "Shell", selectedWorkspace);
     }
-  }, [open, totalInstances]);
+  }, [open, selectedWorkspace, totalInstances]);
 
   return (
     <div

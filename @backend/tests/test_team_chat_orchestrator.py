@@ -7,7 +7,6 @@ from uuid import UUID
 
 import pytest
 
-from personagent.application.tools import ToolRegistry, ToolRuntimeConfig
 from personagent.application.team_chat import (
     TeamChatOrchestrator,
     TeamChatRequest,
@@ -16,6 +15,7 @@ from personagent.application.team_chat import (
     parse_team_config,
 )
 from personagent.application.team_chat.orchestrator import _parse_json_object, _parse_vote_payload
+from personagent.application.tools import ToolRegistry, ToolRuntimeConfig
 from personagent.domain.models.conversation import Conversation
 from personagent.domain.models.inference_result import InferenceResult, StreamChunk
 from personagent.domain.repositories.conversation_repository import ConversationRepository

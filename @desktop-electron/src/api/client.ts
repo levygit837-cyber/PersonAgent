@@ -169,10 +169,14 @@ export async function resolveBackendUrl(current?: string | null) {
 }
 
 async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method?.toUpperCase() ?? "GET";
+  const hasBody = init?.body !== undefined && init.body !== null;
+  const shouldSendJsonContentType =
+    hasBody && (typeof FormData === "undefined" || !(init?.body instanceof FormData));
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(shouldSendJsonContentType && method !== "GET" && method !== "HEAD" ? { "Content-Type": "application/json" } : {}),
       ...(init?.headers ?? {}),
     },
   });

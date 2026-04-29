@@ -31,6 +31,8 @@ type ModelOption = {
 
 const DEEPSEEK_API_GROUP = "DeepSeek API";
 const DEEPSEEK_NVIDIA_GROUP = "DeepSeek NVIDIA";
+const MODEL_CATALOG_STALE_MS = 10 * 60_000;
+const CODEX_AUTH_STALE_MS = 2 * 60_000;
 
 type ComposerMentionKind = "file" | "directory" | "skill";
 
@@ -1083,43 +1085,50 @@ function ModelReasoningSelector({ enabled }: { enabled: boolean }) {
     queryKey: ["models", baseUrl, "llama"],
     queryFn: () => listModels(baseUrl, "llama"),
     enabled: enabled && Boolean(baseUrl),
-    staleTime: 60_000,
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
   });
   const hostedModels = useQuery({
     queryKey: ["models", baseUrl, "nvidia"],
     queryFn: () => listModels(baseUrl, "nvidia"),
     enabled: enabled && Boolean(baseUrl),
-    staleTime: 60_000,
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
   });
   const deepSeekModels = useQuery({
     queryKey: ["models", baseUrl, "deepseek"],
     queryFn: () => listModels(baseUrl, "deepseek"),
     enabled: enabled && Boolean(baseUrl),
-    staleTime: 60_000,
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
   });
   const vertexModels = useQuery({
     queryKey: ["models", baseUrl, "vertex"],
     queryFn: () => listModels(baseUrl, "vertex"),
     enabled: enabled && Boolean(baseUrl),
-    staleTime: 60_000,
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
   });
   const kimiModels = useQuery({
     queryKey: ["models", baseUrl, "kimi"],
     queryFn: () => listModels(baseUrl, "kimi"),
     enabled: enabled && Boolean(baseUrl),
-    staleTime: 60_000,
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
   });
   const codexModels = useQuery({
     queryKey: ["models", baseUrl, "codex"],
     queryFn: () => listModels(baseUrl, "codex"),
     enabled: enabled && Boolean(baseUrl),
-    staleTime: 60_000,
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
   });
   const codexAuth = useQuery({
     queryKey: ["codex-auth", baseUrl],
     queryFn: () => getCodexAuthStatus(baseUrl),
     enabled: enabled && Boolean(baseUrl),
-    staleTime: 15_000,
+    staleTime: CODEX_AUTH_STALE_MS,
+    refetchOnWindowFocus: false,
   });
   const modelOptions = buildModelOptions(
     localModels.data,
@@ -1388,37 +1397,43 @@ function ContextWindowIndicator() {
     queryKey: ["models", baseUrl, "llama"],
     queryFn: () => listModels(baseUrl, "llama"),
     enabled: Boolean(baseUrl),
-    staleTime: 60_000,
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
   });
   const hostedModels = useQuery({
     queryKey: ["models", baseUrl, "nvidia"],
     queryFn: () => listModels(baseUrl, "nvidia"),
     enabled: Boolean(baseUrl),
-    staleTime: 60_000,
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
   });
   const deepSeekModels = useQuery({
     queryKey: ["models", baseUrl, "deepseek"],
     queryFn: () => listModels(baseUrl, "deepseek"),
     enabled: Boolean(baseUrl),
-    staleTime: 60_000,
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
   });
   const vertexModels = useQuery({
     queryKey: ["models", baseUrl, "vertex"],
     queryFn: () => listModels(baseUrl, "vertex"),
     enabled: Boolean(baseUrl),
-    staleTime: 60_000,
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
   });
   const kimiModels = useQuery({
     queryKey: ["models", baseUrl, "kimi"],
     queryFn: () => listModels(baseUrl, "kimi"),
     enabled: Boolean(baseUrl),
-    staleTime: 60_000,
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
   });
   const codexModels = useQuery({
     queryKey: ["models", baseUrl, "codex"],
     queryFn: () => listModels(baseUrl, "codex"),
     enabled: Boolean(baseUrl),
-    staleTime: 60_000,
+    staleTime: MODEL_CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
   });
 
   const modelOptions = buildModelOptions(

@@ -55,6 +55,7 @@ from personagent.infrastructure.persistence.models import (
     TeamRunORM,
 )
 from personagent.interfaces.api.errors import error_event
+from personagent.interfaces.api.state_events import publish_state_change
 from personagent.interfaces.config.di_container import DIContainer, get_container
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -674,7 +675,10 @@ async def codex_auth_logout() -> dict[str, Any]:
     if logout is None:
         raise HTTPException(status_code=500, detail="codex provider sem logout")
     try:
-        return await logout()
+        result = await logout()
+        publish_state_change("codex-auth", {"provider": "codex"})
+        publish_state_change("models", {"provider": "codex"})
+        return result
     except LLMBackendConnectionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except LLMBackendError as exc:

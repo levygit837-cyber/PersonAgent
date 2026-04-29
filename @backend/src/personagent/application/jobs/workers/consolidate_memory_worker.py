@@ -60,7 +60,7 @@ class ConsolidateMemoryWorker:
             lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (IOError, OSError):
+            except OSError:
                 logger.info("consolidation_lock_busy", project_slug=project_slug)
                 return {"skipped": True, "reason": "lock_busy"}
 
@@ -87,7 +87,7 @@ class ConsolidateMemoryWorker:
                 try:
                     fcntl.flock(lock_fd, fcntl.LOCK_UN)
                     os.close(lock_fd)
-                except (IOError, OSError):
+                except OSError:
                     pass
 
     async def _execute_action(

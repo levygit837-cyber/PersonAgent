@@ -4,6 +4,7 @@ import { Sidebar } from "./components/layout/sidebar";
 import { TitleBar } from "./components/layout/titlebar";
 import { OpenPrWorkspace } from "./components/open-pr/open-pr-workspace";
 import { SkillsWorkspace } from "./components/skills/skills-workspace";
+import { StateEventBridge } from "./components/system/state-event-bridge";
 import { useAppStore } from "./stores/app-store";
 import { ChatStoreProvider, createChatStore, type ChatStoreApi } from "./stores/chat-store";
 
@@ -28,6 +29,7 @@ export function App() {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
+      <StateEventBridge />
       <TitleBar />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <Sidebar />
@@ -81,6 +83,7 @@ function CompactApp() {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
+      <StateEventBridge />
       <TitleBar compactTitle={launchContext.title || "Compact"} />
       <main className="min-h-0 flex-1 overflow-hidden">
         <ChatStoreProvider store={store}>

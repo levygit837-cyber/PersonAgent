@@ -7,7 +7,6 @@ usar MemoryFileORM para queries rápidas).
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -131,16 +130,10 @@ class FileSystemMemoryRepository(MemoryRepository):
         content = "\n".join(lines)
         if len(content.encode("utf-8")) > max_bytes:
             content = content[:max_bytes].rsplit("\n", 1)[0]
-            byte_truncated = True
-        else:
-            byte_truncated = False
 
         line_list = content.split("\n")
         if len(line_list) > max_lines:
             content = "\n".join(line_list[:max_lines])
-            line_truncated = True
-        else:
-            line_truncated = False
 
         memory_dir.mkdir(parents=True, exist_ok=True)
         index_path.write_text(content + "\n", encoding="utf-8")
@@ -193,13 +186,15 @@ class FileSystemMemoryRepository(MemoryRepository):
 
         resolved = target.expanduser().resolve()
         root = self.root_dir.expanduser().resolve()
-        if not str(resolved).startswith(str(root)):
-            raise ValueError(f"Path {target} is outside memory root {root}")
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            raise ValueError(f"Path {target} is outside memory root {root}") from None
 
     def _infer_scope(self, file_path: Path) -> MemoryScope:
         """Infere o escopo a partir da estrutura de diretórios."""
         try:
-            rel = file_path.relative_to(self.root_dir)
+            rel = file_path.expanduser().resolve().relative_to(self.root_dir.expanduser().resolve())
         except ValueError:
             return MemoryScope.PRIVATE
 

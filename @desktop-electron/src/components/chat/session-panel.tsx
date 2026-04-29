@@ -107,9 +107,8 @@ const summaryTab: BrowserTab = {
 };
 
 export const SESSION_PANEL_CACHE_STORAGE_KEY = "personagent_session_panel_cache_v1";
-const SESSION_PANEL_BACKGROUND_REFETCH_MS = 15_000;
-const SESSION_PANEL_VISIBLE_REFETCH_MS = 5_000;
 const SESSION_PANEL_STREAMING_REFETCH_MS = 1_500;
+const SESSION_PANEL_STALE_MS = 5 * 60_000;
 const SESSION_PANEL_CACHE_LIMIT = 24;
 const SESSION_PANEL_CACHE_TEXT_LIMIT = 12_000;
 const BROWSER_LOADING_MESSAGES = [
@@ -268,13 +267,10 @@ export function SessionPanel({
     enabled: Boolean(visible && baseUrl && conversationId),
     initialData: () => cachedPanel?.snapshot,
     initialDataUpdatedAt: () => cachedPanel?.cachedAt,
-    refetchInterval: isStreaming
-      ? SESSION_PANEL_STREAMING_REFETCH_MS
-      : visible
-        ? SESSION_PANEL_VISIBLE_REFETCH_MS
-        : SESSION_PANEL_BACKGROUND_REFETCH_MS,
+    refetchInterval: isStreaming ? SESSION_PANEL_STREAMING_REFETCH_MS : false,
     refetchIntervalInBackground: true,
-    staleTime: 0,
+    staleTime: SESSION_PANEL_STALE_MS,
+    refetchOnWindowFocus: false,
   });
 
   useEffect(() => {
@@ -2148,21 +2144,24 @@ function browserHostname(url: string) {
   }
 }
 
-function browserMirrorSrcDoc(
+export function browserMirrorSrcDoc(
   html: string,
   currentUrl: string,
   browserId: string,
   elementMap: SessionBrowserElement[],
 ) {
   const sanitizedHtml = sanitizeBrowserMirrorHtml(html);
+  const scriptNonce = createCspNonce();
   const base = `<base href="${escapeHtmlAttribute(currentUrl)}">`;
   const csp = [
-    "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'",
+    "default-src * data: blob:",
     "img-src * data: blob:",
     "style-src * 'unsafe-inline'",
-    "script-src 'self' 'unsafe-inline' blob:",
+    `script-src 'nonce-${scriptNonce}'`,
     "font-src * data:",
-    "frame-src * data: blob:",
+    "frame-src 'none'",
+    "object-src 'none'",
+    "base-uri *",
   ].join("; ");
   const meta = `<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(csp)}">`;
   const overlayStyle = `<style>
@@ -2301,7 +2300,7 @@ function browserMirrorSrcDoc(
 	  pointer-events: none !important;
 	}
 	</style>`;
- const script = `<script>
+ const script = `<script nonce="${escapeHtmlAttribute(scriptNonce)}">
 	(() => {
 	  const browserId = ${JSON.stringify(browserId)};
 	  const knownElements = ${scriptJson(
@@ -2942,12 +2941,48 @@ function browserMirrorSrcDoc(
   return `${meta}${base}${overlayStyle}${script}${sanitizedHtml}`;
 }
 
-function sanitizeBrowserMirrorHtml(html: string) {
-  return html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "")
-    .replace(/<script\b[^>]*\/?>/gi, "")
-    .replace(/<link\b(?=[^>]*\brel=["']?modulepreload\b)[^>]*>/gi, "")
-    .replace(/<link\b(?=[^>]*\brel=["']?preload\b)(?=[^>]*\bas=["']?(?:script|worker)\b)[^>]*>/gi, "");
+export function sanitizeBrowserMirrorHtml(html: string) {
+  const parser = new DOMParser();
+  const document = parser.parseFromString(html || "<!doctype html><html><body></body></html>", "text/html");
+  for (const element of Array.from(
+    document.querySelectorAll(
+      [
+        "script",
+        "iframe",
+        "object",
+        "embed",
+        "base",
+        "meta[http-equiv]",
+      ].join(","),
+    ),
+  )) {
+    element.remove();
+  }
+  for (const link of Array.from(document.querySelectorAll("link"))) {
+    const rel = link.getAttribute("rel")?.toLowerCase() ?? "";
+    const as = link.getAttribute("as")?.toLowerCase() ?? "";
+    if (rel === "modulepreload" || (rel === "preload" && (as === "script" || as === "worker"))) {
+      link.remove();
+    }
+  }
+  for (const element of Array.from(document.querySelectorAll("*"))) {
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      if (name.startsWith("on") || name === "srcdoc" || isUnsafeMirrorUrlAttribute(element, name, attribute.value)) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  }
+  return `<!doctype html>\n${document.documentElement.outerHTML}`;
+}
+
+function isUnsafeMirrorUrlAttribute(element: Element, name: string, value: string) {
+  if (!["href", "src", "action", "formaction", "xlink:href"].includes(name)) return false;
+  const normalized = value.trim().replace(/[\u0000-\u001f\u007f\s]+/g, "").toLowerCase();
+  if (normalized.startsWith("javascript:") || normalized.startsWith("vbscript:")) return true;
+  if (!normalized.startsWith("data:")) return false;
+  const tagName = element.tagName.toLowerCase();
+  return !(name === "src" && tagName === "img" && /^data:image\/(?:png|jpe?g|gif|webp);/i.test(normalized));
 }
 
 function escapeHtmlAttribute(value: string) {
@@ -2956,6 +2991,18 @@ function escapeHtmlAttribute(value: string) {
 
 function scriptJson(value: unknown) {
   return JSON.stringify(value).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+}
+
+function createCspNonce() {
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function browserCssLabel(value?: string) {

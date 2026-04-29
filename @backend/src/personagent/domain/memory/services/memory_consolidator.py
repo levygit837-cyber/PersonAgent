@@ -10,14 +10,13 @@ Periodicamente revisa memórias existentes e as reorganiza:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import structlog
 
 from personagent.domain.memory.models.memory_file import MemoryFile, MemoryHeader
-from personagent.domain.memory.models.memory_types import MemoryScope
 from personagent.domain.memory.repositories.memory_repository import MemoryRepository
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
@@ -107,7 +106,7 @@ class MemoryConsolidator:
 
     def _age_days(self, mtime_ms: int) -> int:
         """Calcula idade em dias."""
-        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
         return max(0, (now_ms - mtime_ms) // (1000 * 86400))
 
     async def _llm_consolidate(self, context: str) -> list[dict[str, Any]]:

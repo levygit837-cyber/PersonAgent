@@ -11,6 +11,7 @@ Cobrem:
 from __future__ import annotations
 
 import time
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -23,7 +24,6 @@ from personagent.domain.memory.services.memory_consolidator import MemoryConsoli
 from personagent.domain.memory.services.memory_extractor import MemoryExtractor
 from personagent.domain.memory.services.memory_formatter import MemoryFormatter
 from personagent.domain.memory.services.memory_recall_selector import MemoryRecallSelector
-from personagent.domain.memory.services.memory_scanner import MemoryScanner
 from personagent.domain.models.conversation import Conversation, Message, Role
 from personagent.infrastructure.persistence.memory.filesystem_memory_repository import (
     FileSystemMemoryRepository,
@@ -316,7 +316,7 @@ class TestMemoryE2EFlow:
     async def test_consolidation_processes_oldest_first(self, repo, tmp_memory_dir, mock_llm):
         """Testa que consolidator processa memórias antigas primeiro."""
         # Cria 3 memórias com mtimes diferentes
-        for i, name in enumerate(["old", "middle", "new"]):
+        for name in ["old", "middle", "new"]:
             mem = MemoryFile(
                 path=tmp_memory_dir / f"{name}.md",
                 memory_type=MemoryType.PROJECT,
@@ -436,10 +436,10 @@ class TestMemoryE2EFlow:
     async def test_age_tracker_staleness(self):
         """Testa cálculo de idade e staleness."""
         tracker = MemoryAgeTracker()
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         # Memória de 10 dias atrás
-        old_mtime = int((datetime.now(timezone.utc).timestamp() - 10 * 86400) * 1000)
+        old_mtime = int((datetime.now(UTC).timestamp() - 10 * 86400) * 1000)
         age = tracker.calculate(old_mtime)
         assert age.days == 10
         assert age.is_stale is True

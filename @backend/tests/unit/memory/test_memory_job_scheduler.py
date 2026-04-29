@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from personagent.application.jobs.memory_job import JobStatus, JobType, MemoryJob
+from personagent.application.jobs.memory_job import JobType, MemoryJob
 from personagent.application.jobs.memory_job_scheduler import MemoryJobScheduler
 
 
@@ -24,7 +24,10 @@ class TestMemoryJobScheduler:
     def test_register_handler(self, scheduler):
         """Test handler registration."""
         scheduler.initialize()
-        handler = lambda job: {"result": "ok"}
+
+        def handler(job):
+            return {"result": "ok"}
+
         scheduler.register_handler(JobType.EXTRACT_MEMORIES, handler)
         assert JobType.EXTRACT_MEMORIES in scheduler._handlers
 

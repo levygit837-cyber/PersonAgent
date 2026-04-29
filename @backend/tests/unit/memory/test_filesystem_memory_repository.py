@@ -8,7 +8,6 @@ import pytest
 
 from personagent.domain.memory.models.memory_file import MemoryFile
 from personagent.domain.memory.models.memory_types import MemoryScope, MemoryType
-from personagent.domain.memory.services.memory_scanner import MemoryScanner
 from personagent.infrastructure.persistence.memory.filesystem_memory_repository import (
     FileSystemMemoryRepository,
 )
@@ -210,3 +209,15 @@ class TestFileSystemMemoryRepository:
 
         with pytest.raises(ValueError, match="outside memory root"):
             await repo.read(outside)
+
+    @pytest.mark.asyncio
+    async def test_containment_rejects_sibling_prefix_escape(self, tmp_path: Path):
+        """Test that sibling paths with the same prefix are rejected."""
+        root = tmp_path / "memory-root"
+        sibling = tmp_path / "memory-root2"
+        root.mkdir()
+        sibling.mkdir()
+        repo = FileSystemMemoryRepository(root_dir=root)
+
+        with pytest.raises(ValueError, match="outside memory root"):
+            await repo.read(sibling / "escape.md")

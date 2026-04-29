@@ -13,7 +13,7 @@ import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from personagent.application.jobs.memory_job import JobStatus, JobType, MemoryJob
+from personagent.application.jobs.memory_job import JobType, MemoryJob
 
 logger = structlog.get_logger(__name__)
 

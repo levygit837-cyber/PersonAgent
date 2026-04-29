@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from personagent.infrastructure.config.settings import get_settings
+from personagent.interfaces.api.state_events import publish_state_change
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -79,6 +80,12 @@ def _run_git_command(cwd: Path, args: list[str], timeout: int = 10) -> subproces
         ["git", *args],
         timeout=timeout,
     )
+
+
+def _publish_git_change(cwd: Path, *resources: str) -> None:
+    scope = {"workspace_root": str(cwd.resolve())}
+    for resource in resources:
+        publish_state_change(resource, scope)
 
 
 def _is_git_repo(cwd: Path) -> bool:
@@ -1208,6 +1215,7 @@ async def create_git_pull_request_comment(number: int, payload: GitPullRequestCo
 
     output = _git_output(result)
     url = next((line.strip() for line in output.splitlines() if line.strip().startswith("http")), None)
+    _publish_git_change(cwd, "git-recent-actions", "git-pull-requests")
     return {"success": True, "output": output, "url": url}
 
 
@@ -1289,6 +1297,7 @@ async def git_create_branch(payload: GitBranchCreateRequest) -> dict[str, Any]:
     if switch_result.returncode != 0:
         raise HTTPException(status_code=409, detail=_git_error("git switch failed", switch_result))
 
+    _publish_git_change(cwd, "git-status", "git-branches")
     return {"success": True, "branch": branch_name, "output": switch_result.stdout.strip()}
 
 
@@ -1321,6 +1330,7 @@ async def git_create_worktree(payload: GitWorktreeCreateRequest) -> dict[str, An
     if add_result.returncode != 0:
         raise HTTPException(status_code=409, detail=_git_error("git worktree add failed", add_result))
 
+    _publish_git_change(cwd, "git-status", "git-branches")
     return {
         "success": True,
         "branch": branch_name,
@@ -1360,6 +1370,7 @@ async def git_checkout_branch(payload: GitCheckoutRequest) -> dict[str, Any]:
 
     current_result = _run_git_command(cwd, ["branch", "--show-current"])
     current_branch = current_result.stdout.strip() if current_result.returncode == 0 else branch_name
+    _publish_git_change(cwd, "git-status", "git-branches")
     return {"success": True, "branch": current_branch, "output": switch_result.stdout.strip()}
 
 
@@ -1393,6 +1404,7 @@ async def git_commit(payload: GitCommitRequest) -> dict[str, Any]:
 
     sha_result = _run_git_command(cwd, ["rev-parse", "HEAD"])
     short_result = _run_git_command(cwd, ["rev-parse", "--short", "HEAD"])
+    _publish_git_change(cwd, "git-status", "git-branches", "git-recent-actions")
     return {
         "success": True,
         "message": message,
@@ -1430,6 +1442,7 @@ async def git_push(payload: GitPushRequest) -> dict[str, Any]:
     if push_result.returncode != 0:
         raise HTTPException(status_code=500, detail=_git_error("git push failed", push_result))
 
+    _publish_git_change(cwd, "git-status", "git-branches", "git-recent-actions", "git-pull-requests")
     return {
         "success": True,
         "branch": branch,
@@ -1455,6 +1468,7 @@ async def git_open_pr(payload: GitPrRequest) -> dict[str, Any]:
     if pr_result.returncode == 0:
         # Extract URL from output
         url = pr_result.stdout.strip().splitlines()[-1]
+        _publish_git_change(cwd, "git-recent-actions", "git-pull-requests")
         return {"success": True, "url": url, "output": pr_result.stdout.strip()}
 
     # Fallback: return remote URL
@@ -1465,4 +1479,5 @@ async def git_open_pr(payload: GitPrRequest) -> dict[str, Any]:
     if remote_url:
         remote_url = remote_url.replace(":", "/").replace("git@", "https://")
 
+    _publish_git_change(cwd, "git-recent-actions", "git-pull-requests")
     return {"success": False, "url": remote_url, "output": pr_result.stderr.strip()}

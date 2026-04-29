@@ -20,6 +20,7 @@ from personagent.interfaces.api.routes import (
     skills,
     workspace,
 )
+from personagent.interfaces.api.state_events import router as state_events_router
 from personagent.interfaces.config.di_container import get_container
 
 logger = structlog.get_logger(__name__)
@@ -136,6 +137,7 @@ def create_app() -> FastAPI:
     app.include_router(memory.router)
     app.include_router(workspace.router)
     app.include_router(qa.router)
+    app.include_router(state_events_router)
 
     @app.get("/health")
     async def health_check() -> dict:

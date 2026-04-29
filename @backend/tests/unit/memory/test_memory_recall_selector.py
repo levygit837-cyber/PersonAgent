@@ -40,7 +40,6 @@ class MockMemoryRepository:
 
     async def scan(self, memory_dir: Path, max_files: int = 200):
         from personagent.domain.memory.models.memory_file import MemoryHeader
-        from personagent.domain.memory.models.memory_types import MemoryType
         headers = []
         for name, desc in self._files.items():
             path = memory_dir / name
@@ -56,7 +55,6 @@ class MockMemoryRepository:
 
     async def read(self, file_path: Path, max_lines: int = 200, max_bytes: int = 25_000):
         from personagent.domain.memory.models.memory_file import MemoryFile
-        from personagent.domain.memory.models.memory_types import MemoryType
         return MemoryFile(
             path=file_path,
             memory_type=MemoryType.USER,

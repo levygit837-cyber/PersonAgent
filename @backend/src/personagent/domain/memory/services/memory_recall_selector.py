@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
 
 from personagent.domain.memory.models.memory_file import MemoryHeader
 from personagent.domain.memory.models.relevant_memory import RelevantMemory
@@ -21,7 +20,6 @@ from personagent.domain.memory.repositories.memory_repository import MemoryRepos
 from personagent.domain.memory.services.memory_age_tracker import MemoryAgeTracker
 from personagent.domain.memory.services.memory_scanner import MemoryScanner
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
-
 
 # Prompt do selector (adaptado do PersonAgent)
 _SELECTOR_SYSTEM_PROMPT = (
@@ -187,7 +185,11 @@ class MemoryRecallSelector:
             return data.get("selected_memories", [])
         except (json.JSONDecodeError, AttributeError):
             # Fallback: parseia linhas que parecem filenames
-            lines = [line.strip("- * ") for line in raw.split("\n") if ".md" in line]
+            lines = [
+                re.sub(r"^\s*(?:[-*]\s+|\d+[.)]\s*)", "", line).strip().strip('"\'')
+                for line in raw.split("\n")
+                if ".md" in line
+            ]
             return lines[: self._max_recall]
 
     def _find_header_by_name(

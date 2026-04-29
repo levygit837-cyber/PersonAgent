@@ -1,5 +1,6 @@
 import { Columns2, Plus, X } from "lucide-react";
 import { Button } from "../ui/button";
+import { useAppStore } from "../../stores/app-store";
 import { useTerminalStore, type TerminalInstance, type TerminalPane } from "../../stores/terminal-store";
 import { TerminalView } from "./terminal-view";
 
@@ -23,6 +24,7 @@ function TerminalPaneComponent({ pane, showPanelActions }: TerminalPaneProps) {
   const splitMode = useTerminalStore((s) => s.splitMode);
   const toggleSplit = useTerminalStore((s) => s.toggleSplit);
   const toggleOpen = useTerminalStore((s) => s.toggleOpen);
+  const selectedWorkspace = useAppStore((s) => s.selectedWorkspace);
 
   const hasInstances = instances.length > 0;
 
@@ -64,7 +66,7 @@ function TerminalPaneComponent({ pane, showPanelActions }: TerminalPaneProps) {
             variant="ghost"
             size="iconSm"
             onClick={() => {
-              const newId = addInstance(pane);
+              const newId = addInstance(pane, undefined, selectedWorkspace);
               setActiveInstance(pane, newId);
             }}
             className="h-6 w-6 rounded-lg text-muted-foreground hover:text-foreground"
@@ -121,7 +123,7 @@ function TerminalPaneComponent({ pane, showPanelActions }: TerminalPaneProps) {
               variant="ghost"
               size="sm"
               onClick={() => {
-                const newId = addInstance(pane);
+                const newId = addInstance(pane, undefined, selectedWorkspace);
                 setActiveInstance(pane, newId);
               }}
               className="h-7 gap-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground"

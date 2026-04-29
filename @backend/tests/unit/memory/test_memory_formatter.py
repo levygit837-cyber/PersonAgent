@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from personagent.domain.memory.models.relevant_memory import RelevantMemory
 from personagent.domain.memory.services.memory_formatter import MemoryFormatter
 

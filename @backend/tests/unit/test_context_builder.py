@@ -146,6 +146,44 @@ class TestContextBuilder:
         assert len(result.user_context.current_date) == 10  # YYYY-MM-DD format
 
     @pytest.mark.asyncio
+    async def test_build_context_includes_redacted_project_config(self, temp_workspace, repository):
+        """Test that config.yaml is included without exposing secrets."""
+        (temp_workspace / "config.yaml").write_text(
+            """
+app:
+  name: "PersonAgent"
+  port: 8000
+nvidia:
+  api_key: "secret-nvidia-key"
+  default_model: "openai/gpt-oss-120b"
+postgres:
+  password: "secret-db-password"
+  host: "localhost"
+vertex:
+  auth_mode: "adc"
+  location: "global"
+""".strip(),
+            encoding="utf-8",
+        )
+        builder = ContextBuilder(
+            workspace_root=temp_workspace,
+            context_repository=repository,
+            enable_persona_md=True,
+        )
+
+        result = await builder.build_context("conv-1", use_cache=False)
+
+        assert result.user_context.project_config["app"]["name"] == "PersonAgent"
+        assert result.user_context.project_config["nvidia"]["default_model"] == "openai/gpt-oss-120b"
+        assert result.user_context.project_config["postgres"]["host"] == "localhost"
+        assert result.user_context.project_config["nvidia"]["api_key"] == "[redacted]"
+        assert result.user_context.project_config["postgres"]["password"] == "[redacted]"
+        assert result.user_context.project_config["vertex"]["auth_mode"] == "[redacted]"
+        assert "secret-nvidia-key" not in str(result.user_context.project_config)
+        assert "secret-db-password" not in str(result.user_context.project_config)
+        assert "secret" not in str(result.user_context.user_settings).lower()
+
+    @pytest.mark.asyncio
     async def test_build_context_with_additional_directories(self, temp_workspace, repository):
         """Test building context with additional directories."""
         # Create additional directory

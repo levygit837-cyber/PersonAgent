@@ -5,7 +5,6 @@ Valida que recall e extração funcionam corretamente durante o fluxo de chat.
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import pytest

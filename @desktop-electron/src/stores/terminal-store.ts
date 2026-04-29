@@ -7,6 +7,7 @@ export interface TerminalInstance {
   name: string;
   pane: TerminalPane;
   content: string;
+  cwd?: string;
   cols: number;
   rows: number;
   alive: boolean;
@@ -57,6 +58,34 @@ function ensureTerminalApi() {
 
 function createEmptyPane(): TerminalPaneState {
   return { instances: [], activeInstanceId: null, nextId: 1 };
+}
+
+const terminalCommandBuffers = new Map<string, string>();
+
+function trackTerminalInput(id: string, data: string, workspaceRoot?: string) {
+  let buffer = terminalCommandBuffers.get(id) ?? "";
+  for (const char of data) {
+    if (char === "\r" || char === "\n") {
+      const command = buffer.trim();
+      buffer = "";
+      if (/\b(?:git|codex)\b/.test(command)) {
+        window.dispatchEvent(
+          new CustomEvent("personagent:terminal-state-command", {
+            detail: { command, workspaceRoot },
+          }),
+        );
+      }
+      continue;
+    }
+    if (char === "\u007f" || char === "\b") {
+      buffer = buffer.slice(0, -1);
+      continue;
+    }
+    if (char >= " " && char !== "\u001b") {
+      buffer += char;
+    }
+  }
+  terminalCommandBuffers.set(id, buffer.slice(-500));
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => {
@@ -139,7 +168,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
       setPaneState(pane, (p) => ({
         instances: [
           ...p.instances,
-          { id, name: instanceName, pane, content: "", cols: 80, rows: 24, alive: true },
+          { id, name: instanceName, pane, content: "", cwd, cols: 80, rows: 24, alive: true },
         ],
         activeInstanceId: p.activeInstanceId ?? id,
         nextId: p.nextId + 1,
@@ -196,6 +225,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
           name: "Terminal 1",
           pane: "right",
           content: "",
+          cwd: state.leftPane.instances.find((inst) => inst.id === state.leftPane.activeInstanceId)?.cwd,
           cols: 80,
           rows: 24,
           alive: true,
@@ -238,6 +268,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
     },
 
     writeToTerminal: (id, data) => {
+      const state = get();
+      const instance =
+        state.leftPane.instances.find((item) => item.id === id) ??
+        state.rightPane?.instances.find((item) => item.id === id);
+      trackTerminalInput(id, data, instance?.cwd);
       try {
         ensureTerminalApi().write(id, data);
       } catch {
