@@ -1,5 +1,6 @@
 """Caso de uso: Chat Completion."""
 
+import json
 import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
@@ -31,6 +32,7 @@ from personagent.application.services import (
 from personagent.application.services.browser_cooperation import (
     attach_browser_action_proposal,
     browser_agent_context_reminder,
+    shared_browser_workspace_reminder,
 )
 from personagent.application.services.operational_memory import project_slug_from_workspace
 from personagent.application.state.services import StateManager
@@ -97,6 +99,7 @@ class _PromptPreparation:
     slash_metadata: dict[str, Any] | None = None
     context_reminders: list[str] = field(default_factory=list)
     context_attachment_metadata: list[dict[str, Any]] = field(default_factory=list)
+    browser_target: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -200,7 +203,7 @@ class ChatCompletionUseCase:
         )
         await self._capture_operational_user_message(request, context_result, conversation)
 
-        tool_context = self._build_tool_context(request, conversation) if tools else None
+        tool_context = self._build_tool_context(request, conversation, preparation) if tools else None
         result = InferenceResult(content="")
         seen_tool_call_ids: set[str] = set()
 
@@ -423,7 +426,7 @@ class ChatCompletionUseCase:
         if append_user_message:
             await self._capture_operational_user_message(request, context_result, conversation)
 
-        tool_context = self._build_tool_context(request, conversation) if tools else None
+        tool_context = self._build_tool_context(request, conversation, preparation) if tools else None
         final_finish_reason = None
         final_usage = None
         final_model = request.model
@@ -1115,6 +1118,7 @@ class ChatCompletionUseCase:
                 request=request,
                 context_reminders=attachment_context.reminders,
                 context_attachment_metadata=attachment_context.metadata,
+                browser_target=_browser_target_from_context_attachments(attachment_context.metadata),
             )
 
         resolution = self._command_service.resolve_prompt_command(request.message, workspace_root)
@@ -1231,6 +1235,7 @@ class ChatCompletionUseCase:
     ) -> _PromptPreparation:
         preparation.context_reminders = list(preparation.context_reminders) + list(reminders)
         preparation.context_attachment_metadata = list(metadata)
+        preparation.browser_target = _browser_target_from_context_attachments(metadata)
         return preparation
 
     def _user_message_metadata(self, preparation: _PromptPreparation) -> dict[str, Any]:
@@ -1625,6 +1630,12 @@ class ChatCompletionUseCase:
             runtime_reminders.append(preparation.slash_reminder)
         if preparation:
             runtime_reminders.extend(preparation.context_reminders)
+            target_context = _browser_target_reminder(preparation.browser_target)
+            if target_context:
+                runtime_reminders.append(target_context)
+        shared_browser_context = shared_browser_workspace_reminder(conversation.metadata)
+        if shared_browser_context:
+            runtime_reminders.append(shared_browser_context)
         browser_context = browser_agent_context_reminder(conversation.metadata)
         if browser_context:
             runtime_reminders.append(browser_context)
@@ -1702,6 +1713,8 @@ class ChatCompletionUseCase:
                 "has_custom_system_prompt": has_custom_system_prompt,
                 "custom_system_prompt_policy": "append_to_dynamic_system_prompt",
                 "has_browser_cooperation_context": bool(browser_context),
+                "has_shared_browser_workspace_context": bool(shared_browser_context),
+                "browser_target": preparation.browser_target if preparation else None,
             },
         )
 
@@ -2028,6 +2041,7 @@ class ChatCompletionUseCase:
         self,
         request: ChatRequestDTO,
         conversation: Conversation,
+        preparation: _PromptPreparation | None = None,
     ) -> ToolUseContext:
         if self._tool_runtime_config is None:
             raise RuntimeError("Tool runtime is not configured")
@@ -2098,6 +2112,8 @@ class ChatCompletionUseCase:
                 "plan_mode_active": plan_active,
                 "structured_output_schema": raw_context.get("structured_output_schema"),
                 "browser_cooperation": conversation.metadata.get("browser_cooperation", {}),
+                "browser_workspace": conversation.metadata.get("browser_workspace", {}),
+                "browser_target": preparation.browser_target if preparation else None,
             },
         )
 
@@ -2119,6 +2135,48 @@ class ChatCompletionUseCase:
         if not any(_is_relative_to(resolved, root) for root in allowed_roots):
             raise ValueError(f"Tool path is outside configured roots: {raw_path}")
         return resolved
+
+
+def _browser_target_from_context_attachments(
+    attachments: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    for attachment in attachments:
+        if not isinstance(attachment, dict) or attachment.get("type") != "browser_tab":
+            continue
+        page_id = str(
+            attachment.get("page_id")
+            or attachment.get("window_id")
+            or attachment.get("tab_id")
+            or ""
+        ).strip()
+        browser_id = str(attachment.get("browser_id") or "").strip()
+        if not page_id and not browser_id:
+            continue
+        return {
+            "type": "browser_tab",
+            "browser_id": browser_id,
+            "page_id": page_id,
+            "window_id": page_id,
+            "tab_id": str(attachment.get("tab_id") or page_id).strip(),
+            "url": str(attachment.get("url") or "").strip(),
+            "title": str(attachment.get("title") or "").strip(),
+            "label": str(attachment.get("label") or "@Browser").strip(),
+        }
+    return None
+
+
+def _browser_target_reminder(target: dict[str, Any] | None) -> str | None:
+    if not target:
+        return None
+    return (
+        "# Browser Tab Target\n\n"
+        "The latest user message attached a specific shared Browser tab. For this turn, "
+        "Browser tools must default to this page_id/window_id, and actions must stay on "
+        "this referenced tab unless the user attaches another Browser tab.\n\n"
+        "```json\n"
+        + json.dumps(target, ensure_ascii=False, indent=2)
+        + "\n```"
+    )
 
 
 _MEMORY_FILE_PATH_RE = re.compile(

@@ -175,6 +175,7 @@ function attachmentLabel(attachment: ContextAttachment) {
   if (attachment.type === "mcp_resource") return "@mcp";
   if (attachment.type === "directory") return "@Directory";
   if (attachment.type === "skill") return attachment.invocation_name ? `@skill:${String(attachment.invocation_name)}` : "@skill";
+  if (attachment.type === "browser_tab") return "@Browser";
   if (attachment.type === "file") return "@File";
   if (attachment.type === "file_range") return "@FileRange";
   if (attachment.type === "command_context") return `/${String(attachment.command || "command")}`;
@@ -197,6 +198,10 @@ function attachmentDetail(attachment: ContextAttachment) {
   }
   if (attachment.type === "skill") return attachment.slash_name ? String(attachment.slash_name) : "";
   if (attachment.type === "mcp_resource") return attachment.server ? String(attachment.server) : "";
+  if (attachment.type === "browser_tab") {
+    if (attachment.active || attachment.is_active) return "active tab";
+    return attachment.page_id ? String(attachment.page_id) : "";
+  }
   return "";
 }
 

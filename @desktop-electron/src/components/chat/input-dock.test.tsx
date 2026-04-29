@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getCodexAuthStatus, getGitStatus, gitCheckoutBranch, gitCreateBranch, listChatCommands, listGitBranches, listModels, listSkills, listWorkspaceMentions, logoutCodex } from "../../api/client";
+import { getCodexAuthStatus, getGitStatus, gitCheckoutBranch, gitCreateBranch, listBrowserTabMentions, listChatCommands, listGitBranches, listModels, listSkills, listWorkspaceMentions, logoutCodex } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore } from "../../stores/chat-store";
 import type { ChatMessageUi, ToolBlockUi } from "../../types/chat";
@@ -37,6 +37,7 @@ vi.mock("../../api/client", () => ({
   gitPush: vi.fn(),
   gitOpenPr: vi.fn(),
   listModels: vi.fn().mockResolvedValue([]),
+  listBrowserTabMentions: vi.fn().mockResolvedValue([]),
   listChatCommands: vi.fn().mockResolvedValue([]),
   listSkills: vi.fn().mockResolvedValue([]),
   listWorkspaceMentions: vi.fn().mockResolvedValue([]),
@@ -50,6 +51,7 @@ const originalSendMessage = useChatStore.getState().sendMessage;
 
 describe("InputDock", () => {
   const listModelsMock = vi.mocked(listModels);
+  const listBrowserTabMentionsMock = vi.mocked(listBrowserTabMentions);
   const listChatCommandsMock = vi.mocked(listChatCommands);
   const listSkillsMock = vi.mocked(listSkills);
   const listWorkspaceMentionsMock = vi.mocked(listWorkspaceMentions);
@@ -63,6 +65,8 @@ describe("InputDock", () => {
   beforeEach(() => {
     listModelsMock.mockReset();
     listModelsMock.mockResolvedValue([]);
+    listBrowserTabMentionsMock.mockReset();
+    listBrowserTabMentionsMock.mockResolvedValue([]);
     listChatCommandsMock.mockReset();
     listChatCommandsMock.mockResolvedValue([]);
     listSkillsMock.mockReset();
@@ -587,6 +591,64 @@ describe("InputDock", () => {
             label: "@skill:debug-root-cause",
             invocation_name: "debug-root-cause",
             slash_name: "/debug-root-cause",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("turns @Browser autocomplete selections into browser tab context attachments", async () => {
+    const sendMessage = vi.fn();
+    useChatStore.setState({ sendMessage, conversationId: "conversation-1" });
+    listBrowserTabMentionsMock.mockResolvedValue([
+      {
+        type: "browser_tab",
+        id: "browser_tab:conversation-1:page_github",
+        label: "@Browser:github.com",
+        token: "@Browser:github.com",
+        browser_id: "conversation-1",
+        tab_id: "page_github",
+        page_id: "page_github",
+        window_id: "page_github",
+        url: "https://github.com/personagent/personagent",
+        title: "GitHub - PersonAgent",
+        runtime: "lightpanda",
+        active: true,
+        is_active: true,
+        display_path: "GitHub - PersonAgent",
+        domain: "github.com",
+        state: { scroll: { y: 120 } },
+        updated_at: "2026-04-29T10:00:00Z",
+        score: 0,
+      },
+    ]);
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InputDock />
+      </QueryClientProvider>,
+    );
+
+    const input = screen.getByPlaceholderText(/ask the local agent/i);
+    fireEvent.change(input, { target: { value: "Use @Browser:github" } });
+
+    const suggestion = await screen.findByText("GitHub - PersonAgent");
+    fireEvent.mouseDown(suggestion);
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(listBrowserTabMentionsMock).toHaveBeenCalledWith("http://localhost:8000", "conversation-1", "github");
+    expect(sendMessage).toHaveBeenCalledWith(
+      "Use @Browser:github.com",
+      undefined,
+      expect.objectContaining({
+        contextAttachments: [
+          expect.objectContaining({
+            type: "browser_tab",
+            label: "@Browser",
+            browser_id: "conversation-1",
+            page_id: "page_github",
+            url: "https://github.com/personagent/personagent",
+            active: true,
           }),
         ],
       }),

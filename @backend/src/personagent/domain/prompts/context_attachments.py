@@ -55,6 +55,8 @@ def resolve_context_attachments(
             reminder, summary = _resolve_file_range(raw, root, index=index, kind=kind)
         elif kind == "browser_annotation":
             reminder, summary = _resolve_browser_annotation(raw, index=index)
+        elif kind == "browser_tab":
+            reminder, summary = _resolve_browser_tab(raw, index=index)
         elif kind == "file":
             reminder, summary = _resolve_file(raw, root, index=index)
         elif kind == "directory":
@@ -173,6 +175,67 @@ def _resolve_browser_annotation(raw: dict[str, Any], *, index: int) -> tuple[str
             "",
             "Element visible text or extracted context:",
             quote or "(empty)",
+        ],
+    )
+    return reminder, metadata
+
+
+def _resolve_browser_tab(raw: dict[str, Any], *, index: int) -> tuple[str, dict[str, Any]]:
+    label = _attachment_label(raw, index=index, fallback="@Browser")
+    browser_id = _string(raw, "browser_id", "browserId", default="")
+    tab_id = _string(raw, "tab_id", "tabId", "page_id", "pageId", "window_id", "windowId", default="")
+    page_id = _string(raw, "page_id", "pageId", "window_id", "windowId", "tab_id", "tabId", default="")
+    url = _string(raw, "url", "current_url", "currentUrl", default="")
+    title = _string(raw, "title", "current_title", "currentTitle", default="")
+    runtime = _string(raw, "runtime", default="")
+    display_path = _string(raw, "display_path", "displayPath", default="") or _browser_tab_display_path(
+        url,
+        title,
+    )
+    state = _coerce_dict(raw.get("state"))
+    scroll = _coerce_dict(raw.get("scroll") or state.get("scroll"))
+    viewport = _coerce_dict(raw.get("viewport") or state.get("viewport"))
+    selected_element = _coerce_dict(raw.get("selected_element") or raw.get("selectedElement") or state.get("selected_element"))
+    active = bool(raw.get("active") or raw.get("is_active") or raw.get("isActive"))
+    updated_at = _string(raw, "updated_at", "updatedAt", default="")
+    metadata = {
+        "type": "browser_tab",
+        "id": raw.get("id", index),
+        "label": label,
+        "browser_id": browser_id,
+        "tab_id": tab_id or page_id,
+        "page_id": page_id or tab_id,
+        "window_id": page_id or tab_id,
+        "url": url,
+        "title": title,
+        "runtime": runtime,
+        "active": active,
+        "is_active": active,
+        "display_path": display_path,
+        "scroll": scroll,
+        "viewport": viewport,
+        "selected_element": selected_element,
+        "updated_at": updated_at,
+    }
+    reminder = _wrap_attached_context(
+        "browser_tab",
+        [
+            f"Label: {label}",
+            f"Browser ID: {browser_id or '(unknown)'}",
+            f"Page ID: {page_id or tab_id or '(unknown)'}",
+            f"URL: {url or '(unknown)'}",
+            f"Title: {title or '(untitled)'}",
+            f"Runtime: {runtime or '(unknown)'}",
+            f"Active tab: {'yes' if active else 'no'}",
+            f"Scroll: {scroll or {}}",
+            f"Viewport: {viewport or {}}",
+            f"Selected element: {selected_element or {}}",
+            "",
+            "This is a reference to the user's shared Browser panel tab. The Browser panel and "
+            "Browser tools operate on the same Browser workspace for this conversation. Treat "
+            "the page_id/window_id above as the target tab for Browser tools in this turn. Do "
+            "not open a separate copy of this page just because it was mentioned; inspect or "
+            "act on the referenced tab when browser work is needed.",
         ],
     )
     return reminder, metadata
@@ -455,6 +518,16 @@ def _string(raw: dict[str, Any], *keys: str, default: str = "") -> str:
             continue
         return str(value)
     return default
+
+
+def _coerce_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _browser_tab_display_path(url: str, title: str) -> str:
+    if url:
+        return url
+    return title or "Browser tab"
 
 
 def _int(raw: dict[str, Any], *keys: str, default: int) -> int:

@@ -1,8 +1,8 @@
-import { ArrowUp, BookOpen, Brain, ChevronDown, ChevronRight, ChevronUp, Command, FileText, Folder, LogOut, Plus, Sparkles, Square, Terminal, UsersRound, X } from "lucide-react";
+import { ArrowUp, BookOpen, Brain, ChevronDown, ChevronRight, ChevronUp, Command, FileText, Folder, Globe, LogOut, Plus, Sparkles, Square, Terminal, UsersRound, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
-import { getCodexAuthStatus, listChatCommands, listModels, listSkills, listWorkspaceMentions, logoutCodex, type WorkspaceMentionSuggestion } from "../../api/client";
+import { getCodexAuthStatus, listBrowserTabMentions, listChatCommands, listModels, listSkills, listWorkspaceMentions, logoutCodex, type BrowserTabMentionSuggestion, type WorkspaceMentionSuggestion } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore, type ComposerAnnotation } from "../../stores/chat-store";
 import { useTerminalStore, type TerminalSnippet } from "../../stores/terminal-store";
@@ -34,7 +34,7 @@ const DEEPSEEK_NVIDIA_GROUP = "DeepSeek NVIDIA";
 const MODEL_CATALOG_STALE_MS = 10 * 60_000;
 const CODEX_AUTH_STALE_MS = 2 * 60_000;
 
-type ComposerMentionKind = "file" | "directory" | "skill";
+type ComposerMentionKind = "file" | "directory" | "skill" | "browser_tab";
 
 type ComposerMention = {
   id: string;
@@ -51,6 +51,16 @@ type ComposerMention = {
   description?: string;
   path?: string;
   source?: string;
+  browserId?: string;
+  tabId?: string;
+  pageId?: string;
+  windowId?: string;
+  url?: string;
+  title?: string;
+  runtime?: string;
+  active?: boolean;
+  state?: Record<string, unknown>;
+  updatedAt?: string;
 };
 
 type MentionTrigger = {
@@ -176,6 +186,7 @@ export function InputDock({
   const sendMessage = useChatStore((state) => state.sendMessage);
   const stopStreaming = useChatStore((state) => state.stopStreaming);
   const isStreaming = useChatStore((state) => state.isStreaming);
+  const conversationId = useChatStore((state) => state.conversationId);
   const nextStepSuggestion = useChatStore((state) => state.nextStepSuggestion);
   const composerAnnotations = useChatStore((state) => state.composerAnnotations);
   const removeComposerAnnotation = useChatStore((state) => state.removeComposerAnnotation);
@@ -190,6 +201,7 @@ export function InputDock({
   const disabled = isStreaming;
   const slashToken = slashTokenFromText(text);
   const mentionTrigger = mentionTriggerFromText(text, cursorPosition);
+  const browserMentionQuery = mentionTrigger ? browserMentionQueryFromText(mentionTrigger.query) : null;
   const mentionKey = mentionTrigger ? `${mentionTrigger.start}:${mentionTrigger.end}:${mentionTrigger.query}:${text}` : null;
   const mentionOpen = Boolean(mentionTrigger && mentionKey !== dismissedMentionKey);
   const slashCommands = useQuery({
@@ -204,6 +216,12 @@ export function InputDock({
     enabled: !disabled && mentionOpen && Boolean(baseUrl) && Boolean(selectedWorkspace),
     staleTime: 5_000,
   });
+  const browserTabMentionSuggestions = useQuery({
+    queryKey: ["browser-tab-mentions", baseUrl, conversationId, browserMentionQuery ?? ""],
+    queryFn: () => listBrowserTabMentions(baseUrl, conversationId || "", browserMentionQuery ?? ""),
+    enabled: !disabled && mentionOpen && Boolean(baseUrl) && Boolean(conversationId) && browserMentionQuery !== null,
+    staleTime: 2_000,
+  });
   const skillMentionSuggestions = useQuery({
     queryKey: ["skills", baseUrl, selectedWorkspace, "mention"],
     queryFn: () => listSkills(baseUrl, selectedWorkspace),
@@ -215,9 +233,10 @@ export function InputDock({
     () => buildMentionSuggestions(
       workspaceMentionSuggestions.data ?? [],
       skillMentionSuggestions.data ?? [],
+      browserTabMentionSuggestions.data ?? [],
       mentionTrigger?.query ?? "",
     ),
-    [mentionTrigger?.query, skillMentionSuggestions.data, workspaceMentionSuggestions.data],
+    [browserTabMentionSuggestions.data, mentionTrigger?.query, skillMentionSuggestions.data, workspaceMentionSuggestions.data],
   );
   const visibleMentionSuggestions = mentionOpen ? mentionSuggestions : [];
   const canSend = Boolean(text.trim()) || selectedMentions.length > 0 || composerAnnotations.length > 0 || Boolean(pendingSnippet);
@@ -288,12 +307,18 @@ export function InputDock({
     }
     const value = text.trim();
     if (!value && selectedMentions.length === 0 && composerAnnotations.length === 0 && !pendingSnippet) return;
+    const mentionsForSubmit = autoResolveBrowserMentions(
+      value,
+      selectedMentions,
+      browserTabMentionSuggestions.data ?? [],
+      browserMentionQuery,
+    );
     const { requestAttachments, displayAttachments } = buildComposerContextAttachments(
       composerAnnotations,
       pendingSnippet,
-      selectedMentions,
+      mentionsForSubmit,
     );
-    const visibleMessage = value || attachmentOnlyMessage(composerAnnotations, pendingSnippet, selectedMentions);
+    const visibleMessage = value || attachmentOnlyMessage(composerAnnotations, pendingSnippet, mentionsForSubmit);
     const sendOptions = requestAttachments.length
       ? { contextAttachments: requestAttachments, displayAttachments }
       : undefined;
@@ -825,6 +850,7 @@ function ComposerAssist({
 function MentionSuggestionIcon({ type }: { type: ComposerMentionKind }) {
   if (type === "directory") return <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
   if (type === "skill") return <BookOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
+  if (type === "browser_tab") return <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
   return <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
 }
 
@@ -865,17 +891,22 @@ function mentionTriggerFromText(value: string, cursor: number): MentionTrigger |
 function buildMentionSuggestions(
   workspaceSuggestions: WorkspaceMentionSuggestion[],
   skills: SkillSummary[],
+  browserTabs: BrowserTabMentionSuggestion[],
   query: string,
 ): MentionSuggestion[] {
   const normalizedQuery = query.trim().toLowerCase();
   const skillQuery = normalizedQuery.startsWith("skill:")
     ? normalizedQuery.slice("skill:".length)
     : normalizedQuery;
-  const includeWorkspace = !normalizedQuery.startsWith("skill:");
-  const includeSkills = normalizedQuery.startsWith("skill:")
+  const browserQuery = browserMentionQueryFromText(query);
+  const includeBrowser = browserQuery !== null;
+  const includeWorkspace = !normalizedQuery.startsWith("skill:") && !includeBrowser;
+  const includeSkills = !includeBrowser && (
+    normalizedQuery.startsWith("skill:")
     || normalizedQuery === ""
     || "skill".startsWith(normalizedQuery)
-    || skills.some((skill) => skill.invocation_name.toLowerCase().includes(normalizedQuery));
+    || skills.some((skill) => skill.invocation_name.toLowerCase().includes(normalizedQuery))
+  );
 
   const fileItems = includeWorkspace
     ? workspaceSuggestions.map((item) => mentionSuggestionFromWorkspace(item))
@@ -891,10 +922,53 @@ function buildMentionSuggestions(
       .slice(0, 20)
       .map((skill, index) => mentionSuggestionFromSkill(skill, index))
     : [];
+  const browserItems = includeBrowser
+    ? browserTabs.map((tab) => mentionSuggestionFromBrowserTab(tab))
+    : [];
 
-  return [...fileItems, ...skillItems]
+  return [...browserItems, ...fileItems, ...skillItems]
     .sort((left, right) => left.score - right.score || left.primary.localeCompare(right.primary))
     .slice(0, 12);
+}
+
+function browserMentionQueryFromText(query: string): string | null {
+  const normalized = query.trim();
+  const lower = normalized.toLowerCase();
+  if (lower.startsWith("browser:")) return normalized.slice("browser:".length);
+  if (lower === "browser") return "";
+  if (normalized && "browser".startsWith(lower)) return "";
+  return null;
+}
+
+function mentionSuggestionFromBrowserTab(tab: BrowserTabMentionSuggestion): MentionSuggestion {
+  const domain = tab.domain || domainFromUrl(tab.url || "") || "tab";
+  const token = `@Browser:${domain}`;
+  const mention: ComposerMention = {
+    id: tab.id || `browser_tab:${tab.browser_id}:${tab.page_id || tab.tab_id}`,
+    type: "browser_tab",
+    label: "@Browser",
+    token,
+    displayPath: tab.display_path || tab.title || tab.url || domain,
+    browserId: tab.browser_id,
+    tabId: tab.tab_id,
+    pageId: tab.page_id || tab.tab_id,
+    windowId: tab.window_id || tab.page_id || tab.tab_id,
+    url: tab.url,
+    title: tab.title,
+    runtime: tab.runtime,
+    active: Boolean(tab.active || tab.is_active),
+    state: tab.state,
+    updatedAt: tab.updated_at,
+  };
+  return {
+    id: mention.id,
+    type: mention.type,
+    primary: tab.title || domain,
+    secondary: `${tab.active || tab.is_active ? "Active browser tab" : "Browser tab"} - ${tab.url || tab.page_id}`,
+    token,
+    mention,
+    score: tab.score,
+  };
 }
 
 function mentionSuggestionFromWorkspace(item: WorkspaceMentionSuggestion): MentionSuggestion {
@@ -945,6 +1019,27 @@ function mentionSuggestionFromSkill(skill: SkillSummary, index: number): Mention
     mention,
     score: 2.5 + index * 0.01,
   };
+}
+
+function autoResolveBrowserMentions(
+  value: string,
+  mentions: ComposerMention[],
+  browserTabs: BrowserTabMentionSuggestion[],
+  activeQuery: string | null,
+): ComposerMention[] {
+  if (mentions.some((mention) => mention.type === "browser_tab")) return mentions;
+  const match = value.match(/(^|\s)@Browser:([^\s"]+)/i);
+  if (!match || activeQuery === null || browserTabs.length !== 1) return mentions;
+  const suggestion = mentionSuggestionFromBrowserTab(browserTabs[0]).mention;
+  return [...mentions, suggestion];
+}
+
+function domainFromUrl(url: string) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
 }
 
 function mentionTokenForPath(displayPath: string) {
@@ -1600,6 +1695,25 @@ function buildComposerContextAttachments(
 }
 
 function contextAttachmentFromMention(mention: ComposerMention): ContextAttachment {
+  if (mention.type === "browser_tab") {
+    return {
+      type: "browser_tab",
+      id: mention.id,
+      label: mention.label,
+      browser_id: mention.browserId,
+      tab_id: mention.tabId,
+      page_id: mention.pageId || mention.tabId,
+      window_id: mention.windowId || mention.pageId || mention.tabId,
+      url: mention.url,
+      title: mention.title,
+      runtime: mention.runtime,
+      active: mention.active,
+      is_active: mention.active,
+      display_path: mention.displayPath,
+      state: mention.state,
+      updated_at: mention.updatedAt,
+    };
+  }
   if (mention.type === "directory") {
     return {
       type: "directory",

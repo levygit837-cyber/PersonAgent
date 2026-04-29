@@ -20,6 +20,7 @@ from personagent.infrastructure.browser.lightpanda import (
     _clean_extracted_content,
 )
 from personagent.infrastructure.tools import create_browser_tools
+from personagent.infrastructure.tools.browser_tools import _summarize_element_map
 from personagent.interfaces.config.di_container import DIContainer
 
 
@@ -143,6 +144,25 @@ def test_clean_extracted_content_removes_link_dense_navigation_blocks():
     assert "The 8 Biggest AI Trends For 2026" in cleaned
     assert "Enterprise AI adoption" in cleaned
     assert stats["removed_link_noise_blocks"] == 1
+
+
+def test_summarize_element_map_keeps_bounds_for_browser_visual_overlay():
+    elements = _summarize_element_map(
+        [
+            {
+                "node_id": "pa_signin",
+                "role": "link",
+                "tag": "a",
+                "text": "Sign in",
+                "selector": "a[href='/login']",
+                "bounds": {"x": 930, "y": 24, "width": 76, "height": 34},
+                "visible": True,
+            }
+        ]
+    )
+
+    assert elements[0]["node_id"] == "pa_signin"
+    assert elements[0]["bounds"] == {"x": 930, "y": 24, "width": 76, "height": 34}
 
 
 @pytest.mark.asyncio
@@ -512,6 +532,197 @@ async def test_browser_list_tabs_returns_recent_opened_pages():
 
 
 @pytest.mark.asyncio
+async def test_browser_list_tabs_returns_single_shared_current_url_without_opened_pages():
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=lambda _endpoint: None)
+    worker._current_url_cache["conversation-a"] = "https://github.com/personagent/personagent"
+
+    tabs = await worker.list_tabs(conversation_id="conversation-a", max_tabs=10)
+
+    assert tabs["type"] == "browser_tabs"
+    assert tabs["tab_count"] == 1
+    assert tabs["current_url"] == "https://github.com/personagent/personagent"
+    assert tabs["last_open_page_id"] == "conversation-a"
+    assert tabs["tabs"][0]["page_id"] == "conversation-a"
+    assert tabs["tabs"][0]["domain"] == "github.com"
+    assert tabs["tabs"][0]["is_current_page"] is True
+
+
+@pytest.mark.asyncio
+async def test_browser_list_tabs_falls_back_to_pre_conversation_panel_session():
+    page = ScriptedPage()
+    page.url = "https://github.com/"
+    context = FakeContext(page=page)
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=lambda _endpoint: None)
+    worker._sessions["browser:panel-tab"] = _BrowserSession(
+        browser=FakeBrowser(context=context),
+        context=context,
+        page=page,
+        current_url="https://github.com/",
+        current_page_id="browser:panel-tab",
+    )
+
+    tabs = await worker.list_tabs(conversation_id="conversation-a", max_tabs=10)
+
+    assert tabs["type"] == "browser_tabs"
+    assert tabs["source"] == "shared_panel_sessions"
+    assert tabs["tab_count"] == 1
+    assert tabs["tabs"][0]["browser_id"] == "browser:panel-tab"
+    assert tabs["tabs"][0]["page_id"] == "browser:panel-tab"
+    assert tabs["tabs"][0]["final_url"] == "https://github.com/"
+
+
+@pytest.mark.asyncio
+async def test_browser_list_tabs_merges_current_conversation_and_panel_sessions():
+    conversation_page = ScriptedPage()
+    conversation_page.url = "https://example.com/"
+    panel_page = ScriptedPage()
+    panel_page.url = "https://github.com/"
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=lambda _endpoint: None)
+    worker._sessions["conversation-a"] = _BrowserSession(
+        browser=FakeBrowser(context=FakeContext(page=conversation_page)),
+        context=FakeContext(page=conversation_page),
+        page=conversation_page,
+        current_url="https://example.com/",
+        current_page_id="conversation-a",
+    )
+    worker._sessions["browser:panel-tab"] = _BrowserSession(
+        browser=FakeBrowser(context=FakeContext(page=panel_page)),
+        context=FakeContext(page=panel_page),
+        page=panel_page,
+        current_url="https://github.com/",
+        current_page_id="browser:panel-tab",
+    )
+
+    tabs = await worker.list_tabs(conversation_id="conversation-a", max_tabs=10)
+
+    assert tabs["tab_count"] == 2
+    assert [tab["page_id"] for tab in tabs["tabs"]] == ["conversation-a", "browser:panel-tab"]
+    assert [tab["final_url"] for tab in tabs["tabs"]] == ["https://example.com/", "https://github.com/"]
+
+
+@pytest.mark.asyncio
+async def test_panel_browser_page_id_targets_live_panel_session_without_browser_open(tmp_path):
+    page = ScriptedPage()
+    page.url = "https://github.com/"
+    context = FakeContext(page=page)
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=lambda _endpoint: None)
+    worker._sessions["browser:panel-tab"] = _BrowserSession(
+        browser=FakeBrowser(context=context),
+        context=context,
+        page=page,
+        current_url="https://github.com/",
+    )
+    tools = {tool.definition.name: tool for tool in create_browser_tools(worker)}
+    tool_context = _tool_context(tmp_path, conversation_id="conversation-a")
+
+    switch_call = ToolCall(
+        id="call_switch",
+        name="BrowserSwitchTab",
+        arguments={"page_id": "browser:panel-tab"},
+    )
+    switch_result = await tools["BrowserSwitchTab"].call(
+        switch_call.arguments,
+        tool_context,
+        switch_call,
+    )
+    switch_data = json.loads(switch_result.content)
+
+    assert switch_result.status == ToolExecutionStatus.COMPLETED
+    assert switch_data["active_tab_id"] == "browser:panel-tab"
+    assert switch_data["tab_count"] == 1
+    assert switch_data["tabs"][0]["final_url"] == "https://github.com/"
+
+    map_call = ToolCall(
+        id="call_map",
+        name="BrowserGetElementMap",
+        arguments={"page_id": "browser:panel-tab"},
+    )
+    map_result = await tools["BrowserGetElementMap"].call(
+        map_call.arguments,
+        tool_context,
+        map_call,
+    )
+    map_data = json.loads(map_result.content)
+
+    assert map_result.status == ToolExecutionStatus.COMPLETED
+    assert map_data["active_tab_id"] == "browser:panel-tab"
+    assert map_data["url"] == "https://github.com/"
+
+
+@pytest.mark.asyncio
+async def test_browser_act_uses_previous_element_metadata_when_remap_drops_node():
+    page = StaleNodeActionPage()
+    page.url = "https://github.com/"
+    context = FakeContext(page=page)
+    browser_id = "browser:panel-tab"
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=lambda _endpoint: None)
+    worker._sessions[browser_id] = _BrowserSession(
+        browser=FakeBrowser(context=context),
+        context=context,
+        page=page,
+        current_url="https://github.com/",
+        current_page_id=browser_id,
+    )
+    worker._element_map_cache[browser_id] = [
+        {
+            "node_id": "pa_1eidf0u",
+            "role": "link",
+            "tag": "a",
+            "text": "Sign in Sign in",
+            "href": "https://github.com/login",
+            "selector": "a[href='/login']",
+            "bounds": {"x": 930, "y": 24, "width": 76, "height": 34},
+            "visible": True,
+        }
+    ]
+
+    view = await worker.view_act(
+        browser_id=browser_id,
+        node_id="pa_1eidf0u",
+        action="click",
+        width=1024,
+        height=720,
+    )
+
+    assert page.action_arg is not None
+    assert page.action_arg["selector"] == "a[href='/login']"
+    assert page.action_arg["targetText"] == "Sign in Sign in"
+    assert view["last_action"]["target"]["selector"] == "a[href='/login']"
+    assert view["last_action"]["result"]["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_panel_browser_page_id_can_extract_content_without_browser_open():
+    page = ScriptedPage()
+    page.url = "https://github.com/"
+    context = FakeContext(page=page)
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=lambda _endpoint: None)
+    worker._sessions["browser:panel-tab"] = _BrowserSession(
+        browser=FakeBrowser(context=context),
+        context=context,
+        page=page,
+        current_url="https://github.com/",
+    )
+
+    html = await worker.get_html(
+        conversation_id="browser:panel-tab",
+        page_id="browser:panel-tab",
+        max_chars=1_000,
+    )
+    content = await worker.extract_content(
+        conversation_id="browser:panel-tab",
+        page_id="browser:panel-tab",
+        max_chars=1_000,
+        include_links=False,
+    )
+
+    assert html["page_id"] == "browser:panel-tab"
+    assert "https://github.com/" in html["html"]
+    assert content["page_id"] == "browser:panel-tab"
+    assert "Content from https://github.com/" in content["content"]
+
+
+@pytest.mark.asyncio
 async def test_browser_open_accepts_url_with_matching_search_id(tmp_path):
     page = ScriptedPage()
     context = FakeContext(page=page)
@@ -858,6 +1069,44 @@ async def test_browser_tools_preserve_state_by_conversation(tmp_path):
     html_result = await tools["BrowserGetHtml"].call(html_call.arguments, context, html_call)
     assert "<h1>Example Domain</h1>" in json.loads(html_result.content)["html"]
     assert worker.sessions["conversation-a"]["opened"] == "https://example.com/"
+
+
+@pytest.mark.asyncio
+async def test_browser_tools_default_to_attached_browser_tab_and_block_conflicts(tmp_path):
+    worker = FakeBrowserWorker()
+    tools = {tool.definition.name: tool for tool in create_browser_tools(worker)}
+    context = _tool_context(tmp_path, conversation_id="conversation-a")
+    context.metadata["browser_target"] = {
+        "type": "browser_tab",
+        "browser_id": "conversation-a",
+        "page_id": "page_attached",
+        "window_id": "page_attached",
+        "url": "https://github.com/personagent/personagent",
+    }
+
+    content_call = ToolCall(id="call_content", name="BrowserExtractContent", arguments={})
+    content_result = await tools["BrowserExtractContent"].call(
+        content_call.arguments,
+        context,
+        content_call,
+    )
+    content_data = json.loads(content_result.content)
+    assert content_result.status == ToolExecutionStatus.COMPLETED
+    assert content_data["page_id"] == "page_attached"
+
+    screenshot_call = ToolCall(
+        id="call_screenshot",
+        name="BrowserScreenshot",
+        arguments={"page_id": "page_other"},
+    )
+    screenshot_result = await tools["BrowserScreenshot"].call(
+        screenshot_call.arguments,
+        context,
+        screenshot_call,
+    )
+    screenshot_data = json.loads(screenshot_result.content)
+    assert screenshot_result.status == ToolExecutionStatus.ERROR
+    assert screenshot_data["browser_target_conflict"] is True
 
 
 @pytest.mark.asyncio
@@ -1635,6 +1884,33 @@ class ScriptedPage(FakePage):
 
     async def screenshot(self, **_kwargs):
         return b"browser-image"
+
+
+class StaleNodeActionPage(ScriptedPage):
+    def __init__(self):
+        super().__init__()
+        self.action_arg: dict[str, object] | None = None
+        self.element_map_calls = 0
+
+    async def evaluate(self, script, arg=None):
+        if isinstance(arg, dict) and "nodeId" in arg:
+            self.action_arg = arg
+            return {
+                "ok": True,
+                "node_id": arg["nodeId"],
+                "action": arg["action"],
+                "url": self.url,
+                "selector": arg.get("selector"),
+                "tag": "A",
+                "bounds": {"x": 930, "y": 24, "width": 76, "height": 34},
+            }
+        script_text = str(script)
+        if "data-pa-node-id" in script_text and "mapped" in script_text:
+            self.element_map_calls += 1
+            return []
+        if "navigator.userAgent" in script_text:
+            return "Chrome"
+        return await super().evaluate(script, arg)
 
 
 class PopupScrollPage(ScriptedPage):

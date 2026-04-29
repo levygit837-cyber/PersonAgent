@@ -138,8 +138,9 @@ TOOL_PROMPTS: dict[str, str] = {
         "have only a search_id, BrowserOpen can use it by itself to open that search's first result."
     ),
     "BrowserListTabs": (
-        "List opened browser pages/tabs in the current conversation. Use it during long or multi-query "
-        "research to recover page_id/window_id values and avoid extracting the wrong source."
+        "List opened browser pages/tabs in the current conversation. The user's Browser panel and "
+        "these browser tools share the same browser workspace, so use this to recover panel tab "
+        "page_id/window_id values and avoid extracting or acting on the wrong source."
     ),
     "BrowserExtractContent": (
         "Extract structured readable content from a URL, page_id/window_id, or the last BrowserOpen "

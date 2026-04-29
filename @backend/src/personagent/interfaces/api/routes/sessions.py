@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -927,6 +928,31 @@ async def clear_conversation_browser_timeline(
     return _workspace_payload(conversation, browser_id)
 
 
+@router.get("/{conversation_id}/browser/mentions")
+async def list_conversation_browser_mentions(
+    conversation_id: str,
+    q: str = Query(default=""),
+    limit: int = Query(default=20, ge=1, le=50),
+    session: AsyncSession = DB_SESSION_DEPENDENCY,
+) -> list[dict[str, Any]]:
+    """Return Browser tab mention suggestions for the shared conversation browser."""
+
+    conversation = await _load_conversation(conversation_id, session)
+    metadata_workspace = _browser_workspace(conversation)
+    browser_id = str(metadata_workspace.get("active_browser_id") or conversation_id)
+    service = _browser_workspace_service(session)
+    if service is not None:
+        payload = await service.payload(conversation, browser_id)
+    else:
+        payload = _workspace_payload(conversation, browser_id)
+    return _browser_tab_mention_suggestions(
+        payload,
+        browser_id=browser_id,
+        query=q,
+        limit=limit,
+    )
+
+
 @router.post("/titles/verify")
 async def verify_session_titles(
     request: SessionTitleVerifyRequest,
@@ -1039,7 +1065,23 @@ async def _persist_browser_workspace_view(
         workspace["current_url"] = view.get("url")
         workspace["current_title"] = view.get("title") or ""
     workspace["last_element_map"] = _compact_element_map(view.get("element_map"))
-    workspace["tabs"] = _coerce_list(view.get("tabs"))[:50]
+    tabs = _coerce_list(view.get("tabs"))[:50]
+    if not tabs:
+        active_tab_id = str(workspace.get("active_tab_id") or browser_id)
+        current_url = str(view.get("url") or workspace.get("current_url") or "")
+        tabs = [
+            {
+                "tab_id": active_tab_id,
+                "id": active_tab_id,
+                "url": current_url,
+                "title": str(view.get("title") or workspace.get("current_title") or ""),
+                "runtime": str(view.get("runtime") or "lightpanda"),
+                "active": True,
+                "is_active": True,
+                "history": [current_url] if current_url and current_url != "about:blank" else [],
+            }
+        ]
+    workspace["tabs"] = tabs
     view.update(_workspace_payload(conversation, browser_id))
     snapshot = view.get("browser_snapshot")
     if isinstance(snapshot, dict):
@@ -1198,6 +1240,115 @@ def _workspace_payload(conversation, browser_id: str) -> dict[str, Any]:
             ),
         },
     }
+
+
+def _browser_tab_mention_suggestions(
+    payload: dict[str, Any],
+    *,
+    browser_id: str,
+    query: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    workspace_state = _coerce_dict(payload.get("workspace_state"))
+    tabs = _coerce_list(payload.get("tabs"))
+    active_tab_id = str(payload.get("active_tab_id") or workspace_state.get("active_tab_id") or browser_id)
+    if not tabs and str(workspace_state.get("current_url") or ""):
+        tabs = [
+            {
+                "tab_id": active_tab_id,
+                "id": active_tab_id,
+                "url": str(workspace_state.get("current_url") or ""),
+                "title": str(workspace_state.get("current_title") or ""),
+                "runtime": str(workspace_state.get("runtime") or "lightpanda"),
+                "active": True,
+                "is_active": True,
+                "state": {},
+            }
+        ]
+    normalized_query = _normalize_browser_mention_query(query)
+    suggestions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, tab in enumerate(tabs[:50]):
+        tab_id = str(tab.get("tab_id") or tab.get("id") or active_tab_id or browser_id)
+        url = str(tab.get("url") or tab.get("final_url") or "")
+        title = str(tab.get("title") or "")
+        domain = _domain_from_url(url)
+        haystack = " ".join([domain, url, title, tab_id]).lower()
+        if normalized_query and normalized_query not in haystack:
+            continue
+        if tab_id in seen:
+            continue
+        seen.add(tab_id)
+        active = bool(tab.get("active") or tab.get("is_active") or tab_id == active_tab_id)
+        score = _browser_mention_score(normalized_query, domain, url, title, active, index)
+        label_domain = domain or "tab"
+        suggestions.append(
+            {
+                "type": "browser_tab",
+                "id": f"browser_tab:{browser_id}:{tab_id}",
+                "label": f"@Browser:{label_domain}",
+                "token": f"@Browser:{label_domain}",
+                "browser_id": browser_id,
+                "tab_id": tab_id,
+                "page_id": tab_id,
+                "window_id": tab_id,
+                "url": url,
+                "title": title,
+                "runtime": str(tab.get("runtime") or workspace_state.get("runtime") or ""),
+                "active": active,
+                "is_active": active,
+                "display_path": title or url or tab_id,
+                "domain": domain,
+                "state": _coerce_dict(tab.get("state")),
+                "updated_at": str(tab.get("updated_at") or ""),
+                "score": score,
+            }
+        )
+    return sorted(suggestions, key=lambda item: (float(item.get("score") or 99), str(item.get("display_path") or "")))[:limit]
+
+
+def _normalize_browser_mention_query(query: str) -> str:
+    normalized = str(query or "").strip().lower()
+    if normalized.startswith("@"):
+        normalized = normalized[1:]
+    if normalized.startswith("browser:"):
+        normalized = normalized[len("browser:") :]
+    elif normalized == "browser":
+        normalized = ""
+    return normalized.strip()
+
+
+def _browser_mention_score(
+    query: str,
+    domain: str,
+    url: str,
+    title: str,
+    active: bool,
+    index: int,
+) -> float:
+    score = 0.0 if active else 1.0
+    if not query:
+        return score + index * 0.01
+    if domain.lower() == query:
+        return score
+    if domain.lower().startswith(query):
+        return score + 0.1
+    if query in domain.lower():
+        return score + 0.2
+    if title.lower().startswith(query):
+        return score + 0.4
+    if query in title.lower():
+        return score + 0.6
+    if query in url.lower():
+        return score + 0.8
+    return score + 2.0
+
+
+def _domain_from_url(url: str) -> str:
+    try:
+        return str(urlparse(url).netloc or "").lower()
+    except ValueError:
+        return ""
 
 
 def _append_timeline_event(

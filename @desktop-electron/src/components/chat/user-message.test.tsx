@@ -66,6 +66,29 @@ describe("UserMessage", () => {
     expect(screen.getByText(".personagent/skills/debug-root-cause/SKILL.md")).toBeInTheDocument();
   });
 
+  it("renders @Browser tab attachments with tab context", () => {
+    render(
+      <UserMessage
+        message={message("Use @Browser:github.com", {
+          context_attachments: [
+            {
+              type: "browser_tab",
+              label: "@Browser",
+              display_path: "GitHub - PersonAgent",
+              page_id: "page_github",
+              url: "https://github.com/personagent/personagent",
+              active: true,
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("@Browser")).toBeInTheDocument();
+    expect(screen.getByText("GitHub - PersonAgent")).toBeInTheDocument();
+    expect(screen.getByText("active tab")).toBeInTheDocument();
+  });
+
   it("highlights annotation messages with file and line references", () => {
     render(
       <UserMessage

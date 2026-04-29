@@ -27,11 +27,6 @@ export function browserMirrorSrcDoc(
 	html[data-pa-browser-mode="annotate"] * {
 	  cursor: crosshair !important;
 	}
-	html[data-pa-browser-mode="action"],
-	html[data-pa-browser-mode="action"] body,
-	html[data-pa-browser-mode="action"] * {
-	  cursor: pointer !important;
-	}
 	.pa-browser-inspect-target {
 	  scroll-margin: 6px !important;
 	}
@@ -391,7 +386,7 @@ export function browserMirrorSrcDoc(
 	  };
 
 	  const applyMode = (nextMode) => {
-	    mode = nextMode === "annotate" || nextMode === "action" ? nextMode : "browse";
+	    mode = nextMode === "annotate" ? nextMode : "browse";
 	    document.documentElement.setAttribute("data-pa-browser-mode", mode);
 	    if (mode === "browse") clearHover();
 	  };
@@ -574,10 +569,6 @@ export function browserMirrorSrcDoc(
 	  };
 	  const normalizeCandidate = (element, x, y) => {
 	    if (!isVisibleCandidate(element)) return null;
-	    const interactive = element.closest ? element.closest(interactiveSelector) : null;
-	    if (mode === "action" && interactive && interactive !== element && isVisibleCandidate(interactive) && containsPoint(interactive, x, y)) {
-	      return interactive;
-	    }
 	    if (["PATH", "USE", "G"].includes(element.tagName)) {
 	      const svg = element.closest ? element.closest("svg") : null;
 	      if (svg && isVisibleCandidate(svg) && containsPoint(svg, x, y)) return svg;
@@ -599,8 +590,8 @@ export function browserMirrorSrcDoc(
 	      parent = parent.parentElement;
 	    }
 	    let score = Math.log(area + 1) * 12 + Math.min(centerDistance / 4, 100) - Math.min(depth * 2, 48);
-	    if (interactive) score -= mode === "action" ? 160 : 12;
-	    if (semantic) score -= mode === "action" ? 35 : 6;
+	    if (interactive) score -= 12;
+	    if (semantic) score -= 6;
 	    if (text) score -= 14;
 	    if (area > viewportArea * 0.65 && !interactive) score += 160;
 	    if (area < 24) score += 30;
@@ -746,7 +737,7 @@ export function browserMirrorSrcDoc(
 	    }
 	  };
 	  const scheduleHover = (event) => {
-	    if (mode !== "annotate" && mode !== "action") return;
+	    if (mode !== "annotate") return;
 	    pendingMouse = { x: event.clientX, y: event.clientY };
 	    if (hoverFrame) return;
 	    hoverFrame = window.requestAnimationFrame(() => {
@@ -1073,7 +1064,7 @@ export function browserMirrorSrcDoc(
 	        importance: "high",
 	      });
 	    }
-	    if (mode === "annotate" || mode === "action") {
+	    if (mode === "annotate") {
 	      const target = activeTarget && containsPoint(activeTarget, event.clientX, event.clientY)
 	        ? activeTarget
 	        : targetFromPoint(event.clientX, event.clientY);

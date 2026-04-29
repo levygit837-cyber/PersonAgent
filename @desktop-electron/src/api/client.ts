@@ -330,6 +330,27 @@ export interface WorkspaceMentionSuggestion {
   score: number;
 }
 
+export interface BrowserTabMentionSuggestion {
+  type: "browser_tab";
+  id: string;
+  label: string;
+  token: string;
+  browser_id: string;
+  tab_id: string;
+  page_id: string;
+  window_id?: string;
+  url?: string;
+  title?: string;
+  runtime?: string;
+  active?: boolean;
+  is_active?: boolean;
+  display_path: string;
+  domain?: string;
+  state?: Record<string, unknown>;
+  updated_at?: string;
+  score: number;
+}
+
 export function listWorkspaceMentions(
   baseUrl: string,
   query: string,
@@ -338,6 +359,19 @@ export function listWorkspaceMentions(
 ) {
   const params = new URLSearchParams({ q: query, workspace_root: workspaceRoot, limit: String(limit) });
   return requestJson<WorkspaceMentionSuggestion[]>(baseUrl, `/workspace/mentions?${params.toString()}`);
+}
+
+export function listBrowserTabMentions(
+  baseUrl: string,
+  conversationId: string,
+  query: string,
+  limit = 20,
+) {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  return requestJson<BrowserTabMentionSuggestion[]>(
+    baseUrl,
+    `/sessions/${encodeURIComponent(conversationId)}/browser/mentions?${params.toString()}`,
+  );
 }
 
 export function getSessionProjectDetail(

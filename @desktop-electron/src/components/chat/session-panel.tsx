@@ -49,11 +49,14 @@ import { useAppStore } from "../../stores/app-store";
 import { useChatStore, type ComposerAnnotation } from "../../stores/chat-store";
 import type {
   ChangedFile,
+  ChatMessageUi,
   ProjectItem,
   SessionPanelSnapshot,
   SessionSource,
   SessionUsage,
   SessionUsageMetric,
+  ToolBlockStatus,
+  ToolBlockUi,
 } from "../../types/chat";
 import { emptySessionUsage } from "../../types/chat";
 import { Button } from "../ui/button";
@@ -86,7 +89,7 @@ type BrowserState = {
   draftUrl: string;
   history: string[];
   historyIndex: number;
-  mode: "browse" | "annotate" | "action";
+  mode: "browse" | "annotate";
   selectedNodeId?: string;
   elementMetadata: Record<string, BrowserElementMetadata>;
   annotationDraft: string;
@@ -121,6 +124,24 @@ type BrowserGhostTrace = {
   effect: string;
   visible: boolean;
   nonce: number;
+};
+
+type BrowserToolVisualEffect = "map" | "click" | "type" | "scroll" | "extract" | "highlight";
+
+type BrowserToolVisual = {
+  id: string;
+  toolName: string;
+  status: ToolBlockStatus;
+  effect: BrowserToolVisualEffect;
+  browserId?: string;
+  pageId?: string;
+  windowId?: string;
+  url?: string;
+  nodeId?: string;
+  target?: BrowserElementMetadata;
+  elements: BrowserElementMetadata[];
+  coordinates?: { x: number; y: number };
+  data: Record<string, unknown>;
 };
 
 const summaryTab: BrowserTab = {
@@ -187,6 +208,7 @@ export function SessionPanel({
   const conversationId = useChatStore((state) => state.conversationId);
   const isStreaming = useChatStore((state) => state.isStreaming);
   const liveUsage = useChatStore((state) => state.liveSessionUsage);
+  const chatMessages = useChatStore((state) => state.messages);
   const addComposerAnnotation = useChatStore((state) => state.addComposerAnnotation);
   const approvePendingTool = useChatStore((state) => state.approvePendingTool);
   const rejectPendingTool = useChatStore((state) => state.rejectPendingTool);
@@ -195,6 +217,7 @@ export function SessionPanel({
   const [tabs, setTabs] = useState<BrowserTab[]>([summaryTab]);
   const [activeTabId, setActiveTabId] = useState(summaryTab.id);
   const browserRequestIdsRef = useRef<Record<string, number>>({});
+  const browserWorkspacePersistKeysRef = useRef<Record<string, string>>({});
   const cooperationSocketsRef = useRef<Record<string, WebSocket>>({});
   const cachedPanel = useMemo(
     () => readSessionPanelCache(baseUrl, conversationId, workspaceRoot),
@@ -233,6 +256,8 @@ export function SessionPanel({
 
   const usage = useMemo(() => mergeUsage(snapshot?.usage, liveUsage), [snapshot?.usage, liveUsage]);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? summaryTab;
+  const browserToolVisual = useMemo(() => latestBrowserToolVisual(chatMessages), [chatMessages]);
+  const appliedBrowserToolViewRef = useRef("");
 
   const openDetailTab = (detail: SessionDetailView) => {
     const tab: BrowserTab = {
@@ -359,6 +384,61 @@ export function SessionPanel({
       };
     });
   };
+
+  useEffect(() => {
+    if (!browserToolVisual || browserToolVisual.status !== "completed") return;
+    const view = browserViewFromToolVisual(browserToolVisual);
+    if (!view) return;
+    const matchingTab = tabs.find((tab) => {
+      if (!isBrowserTab(tab)) return false;
+      return browserToolVisualAppliesToBrowser(browserToolVisual, tab.browser ?? createEmptyBrowserState(tab.id));
+    });
+    if (!matchingTab) return;
+    const applyKey = [
+      browserToolVisual.id,
+      view.url || "",
+      view.title || "",
+      view.active_tab_id || "",
+      browserToolVisual.data.image_data ? String(browserToolVisual.data.image_data).length : "",
+    ].join(":");
+    if (appliedBrowserToolViewRef.current === applyKey) return;
+    appliedBrowserToolViewRef.current = applyKey;
+    applyBrowserView(matchingTab.id, view, { addHistory: browserToolVisual.effect !== "map" });
+  }, [browserToolVisual, tabs]);
+
+  useEffect(() => {
+    if (!baseUrl || !conversationId) return;
+    tabs.forEach((tab) => {
+      if (!isBrowserTab(tab) || !tab.browser?.view || !tab.browser.currentUrl) return;
+      const browser = tab.browser;
+      const view = browser.view;
+      if (!view) return;
+      const persistKey = [
+        conversationId,
+        browser.browserId,
+        browser.currentUrl,
+        view.active_tab_id || "",
+        view.title || "",
+        view.viewport_width || 1024,
+        view.viewport_height || 720,
+      ].join(":");
+      if (browserWorkspacePersistKeysRef.current[tab.id] === persistKey) return;
+      browserWorkspacePersistKeysRef.current[tab.id] = persistKey;
+      void getSessionBrowserView(
+        baseUrl,
+        browser.browserId,
+        {
+          width: view.viewport_width || 1024,
+          height: view.viewport_height || 720,
+        },
+        conversationId,
+      )
+        .then((nextView) => applyBrowserView(tab.id, nextView))
+        .catch(() => {
+          delete browserWorkspacePersistKeysRef.current[tab.id];
+        });
+    });
+  }, [baseUrl, conversationId, tabs]);
 
   const setBrowserError = (tabId: string, error: unknown, requestId?: number) => {
     updateBrowserTab(tabId, (browser) => {
@@ -573,7 +653,7 @@ export function SessionPanel({
     }
   };
 
-  const actOnBrowserElement = async (
+  const activateBrowserElement = async (
     tabId: string,
     nodeId: string,
     viewport: SessionBrowserViewport,
@@ -796,11 +876,12 @@ export function SessionPanel({
             onBrowserTextSelect={(selection) => addBrowserTextSelection(activeTab.id, selection)}
             onBrowserAnnotationDraftChange={(value) => updateAnnotationDraft(activeTab.id, value)}
             onBrowserAnnotationSave={() => void saveBrowserAnnotation(activeTab.id)}
-            onBrowserAction={(nodeId, viewport) => void actOnBrowserElement(activeTab.id, nodeId, viewport)}
+            onBrowserElementActivate={(nodeId, viewport) => void activateBrowserElement(activeTab.id, nodeId, viewport)}
             onBrowserCooperationModeChange={(mode) => void setBrowserCooperationMode(activeTab.id, mode)}
             onBrowserEvents={(events) => void recordBrowserEvents(activeTab.id, events)}
             onBrowserProposalDecision={(proposal, decision) => void decideBrowserProposal(activeTab.id, proposal, decision)}
             canPersistBrowserWorkspace={Boolean(conversationId)}
+            browserToolVisual={browserToolVisual}
           />
         ) : !conversationId ? (
           <EmptyPanel text="Start or open a conversation to view session data." />
@@ -833,11 +914,12 @@ export function SessionPanel({
             onBrowserTextSelect={(selection) => addBrowserTextSelection(activeTab.id, selection)}
             onBrowserAnnotationDraftChange={(value) => updateAnnotationDraft(activeTab.id, value)}
             onBrowserAnnotationSave={() => void saveBrowserAnnotation(activeTab.id)}
-            onBrowserAction={(nodeId, viewport) => void actOnBrowserElement(activeTab.id, nodeId, viewport)}
+            onBrowserElementActivate={(nodeId, viewport) => void activateBrowserElement(activeTab.id, nodeId, viewport)}
             onBrowserCooperationModeChange={(mode) => void setBrowserCooperationMode(activeTab.id, mode)}
             onBrowserEvents={(events) => void recordBrowserEvents(activeTab.id, events)}
             onBrowserProposalDecision={(proposal, decision) => void decideBrowserProposal(activeTab.id, proposal, decision)}
             canPersistBrowserWorkspace={Boolean(conversationId)}
+            browserToolVisual={browserToolVisual}
           />
         )}
       </div>
@@ -1164,6 +1246,7 @@ function ProjectGroup({
 
 function DetailTabContent({
   tab,
+  browserToolVisual,
   onBrowserDraftChange,
   onBrowserLoad,
   onBrowserNavigate,
@@ -1178,13 +1261,14 @@ function DetailTabContent({
   onBrowserTextSelect,
   onBrowserAnnotationDraftChange,
   onBrowserAnnotationSave,
-  onBrowserAction,
+  onBrowserElementActivate,
   onBrowserCooperationModeChange,
   onBrowserEvents,
   onBrowserProposalDecision,
   canPersistBrowserWorkspace,
 }: {
   tab: BrowserTab;
+  browserToolVisual?: BrowserToolVisual;
   onBrowserDraftChange: (value: string) => void;
   onBrowserLoad: (viewport: SessionBrowserViewport) => void;
   onBrowserNavigate: (value: string, viewport: SessionBrowserViewport) => void;
@@ -1199,7 +1283,7 @@ function DetailTabContent({
   onBrowserTextSelect: (selection: BrowserTextSelectionMetadata) => void;
   onBrowserAnnotationDraftChange: (value: string) => void;
   onBrowserAnnotationSave: () => void;
-  onBrowserAction: (nodeId: string, viewport: SessionBrowserViewport, action?: "click" | "submit") => void;
+  onBrowserElementActivate: (nodeId: string, viewport: SessionBrowserViewport, action?: "click" | "submit") => void;
   onBrowserCooperationModeChange: (mode: SessionBrowserCooperationMode | "off") => void;
   onBrowserEvents: (events: SessionBrowserCooperationEvent[]) => void;
   onBrowserProposalDecision: (
@@ -1212,6 +1296,7 @@ function DetailTabContent({
     return (
       <BrowserTabContent
         browser={tab.browser ?? createEmptyBrowserState(tab.id)}
+        browserToolVisual={browserToolVisual}
         onDraftChange={onBrowserDraftChange}
         onLoadView={onBrowserLoad}
         onNavigate={onBrowserNavigate}
@@ -1226,7 +1311,7 @@ function DetailTabContent({
         onTextSelect={onBrowserTextSelect}
         onAnnotationDraftChange={onBrowserAnnotationDraftChange}
         onAnnotationSave={onBrowserAnnotationSave}
-        onBrowserAction={onBrowserAction}
+        onBrowserElementActivate={onBrowserElementActivate}
         onCooperationModeChange={onBrowserCooperationModeChange}
         onBrowserEvents={onBrowserEvents}
         onProposalDecision={onBrowserProposalDecision}
@@ -1267,6 +1352,7 @@ function DetailTabContent({
 
 function BrowserTabContent({
   browser,
+  browserToolVisual,
   onDraftChange,
   onLoadView,
   onNavigate,
@@ -1281,13 +1367,14 @@ function BrowserTabContent({
   onTextSelect,
   onAnnotationDraftChange,
   onAnnotationSave,
-  onBrowserAction,
+  onBrowserElementActivate,
   onCooperationModeChange,
   onBrowserEvents,
   onProposalDecision,
   canPersistWorkspace,
 }: {
   browser: BrowserState;
+  browserToolVisual?: BrowserToolVisual;
   onDraftChange: (value: string) => void;
   onLoadView: (viewport: SessionBrowserViewport) => void;
   onNavigate: (value: string, viewport: SessionBrowserViewport) => void;
@@ -1302,7 +1389,7 @@ function BrowserTabContent({
   onTextSelect: (selection: BrowserTextSelectionMetadata) => void;
   onAnnotationDraftChange: (value: string) => void;
   onAnnotationSave: () => void;
-  onBrowserAction: (nodeId: string, viewport: SessionBrowserViewport, action?: "click" | "submit") => void;
+  onBrowserElementActivate: (nodeId: string, viewport: SessionBrowserViewport, action?: "click" | "submit") => void;
   onCooperationModeChange: (mode: SessionBrowserCooperationMode | "off") => void;
   onBrowserEvents: (events: SessionBrowserCooperationEvent[]) => void;
   onProposalDecision: (
@@ -1342,6 +1429,9 @@ function BrowserTabContent({
   const annotations = browser.view?.annotations || browser.view?.browser_snapshot?.annotations || [];
   const timelineEvents = browser.view?.timeline_events || browser.view?.browser_snapshot?.timeline_events || [];
   const backendTabs = browser.view?.tabs || browser.view?.browser_snapshot?.tabs || [];
+  const visibleBrowserToolVisual = browserToolVisualAppliesToBrowser(browserToolVisual, browser)
+    ? browserToolVisual
+    : undefined;
   const cooperation = browserCooperationFromView(browser.view);
   const cooperationEnabled = Boolean(cooperation?.enabled);
   const cooperationMode = cooperationEnabled ? cooperation?.mode ?? cooperation?.agent_control ?? "observe_only" : "off";
@@ -1415,18 +1505,9 @@ function BrowserTabContent({
         onNavigate(data.url, viewport());
       } else if (data.type === "personagent-session-browser:element" && typeof data.nodeId === "string") {
         const element = normalizeBrowserElementMetadata(data.element, data.nodeId);
-        if (browser.mode === "action") {
-          const mapped = elementMap.some((item) => item.node_id === data.nodeId);
-          if (mapped) {
-            onBrowserAction(data.nodeId, viewport());
-          } else {
-            onElementSelect(data.nodeId, element);
-          }
-        } else {
-          onElementSelect(data.nodeId, element);
-        }
+        onElementSelect(data.nodeId, element);
       } else if (data.type === "personagent-session-browser:element-action" && typeof data.nodeId === "string") {
-        onBrowserAction(data.nodeId, viewport(), data.action === "submit" ? "submit" : "click");
+        onBrowserElementActivate(data.nodeId, viewport(), data.action === "submit" ? "submit" : "click");
       } else if (data.type === "personagent-session-browser:text-selection") {
         const selection = normalizeBrowserTextSelection(data.selection);
         if (selection) {
@@ -1439,7 +1520,7 @@ function BrowserTabContent({
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [browser.browserId, browser.mode, elementMap, onBrowserAction, onBrowserEvents, onElementSelect, onNavigate, onTextSelect]);
+  }, [browser.browserId, onBrowserElementActivate, onBrowserEvents, onElementSelect, onNavigate, onTextSelect]);
 
   useEffect(() => {
     if (browser.mode !== "annotate" || !browser.selectedNodeId) return;
@@ -1484,6 +1565,29 @@ function BrowserTabContent({
   ]);
 
   useEffect(() => {
+    if (!visibleBrowserToolVisual || !browser.view) return;
+    const surface = showRenderedPage ? imageRef.current : viewportRef.current;
+    const point = browserToolVisualPoint(visibleBrowserToolVisual, elementMap, browser.view, surface);
+    if (!point) return;
+    setGhostTrace((current) => ({
+      x: point.x,
+      y: point.y,
+      effect: visibleBrowserToolVisual.effect,
+      visible: true,
+      nonce: current.nonce + 1,
+    }));
+    const timeout = window.setTimeout(() => {
+      setGhostTrace((current) => ({ ...current, effect: "highlight" }));
+    }, 850);
+    return () => window.clearTimeout(timeout);
+  }, [
+    browser.view,
+    elementMap,
+    showRenderedPage,
+    visibleBrowserToolVisual,
+  ]);
+
+  useEffect(() => {
     if (!mirrorDocument || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
       setMirrorUrl("");
       return;
@@ -1519,11 +1623,7 @@ function BrowserTabContent({
     if (browser.mode !== "browse" && pixelHoverElement?.node_id) {
       event.preventDefault();
       event.stopPropagation();
-      if (browser.mode === "action") {
-        onBrowserAction(pixelHoverElement.node_id, viewport());
-      } else {
-        onElementSelect(pixelHoverElement.node_id, pixelHoverElement as BrowserElementMetadata);
-      }
+      onElementSelect(pixelHoverElement.node_id, pixelHoverElement as BrowserElementMetadata);
       return;
     }
     if (!imageRef.current) return;
@@ -1610,14 +1710,6 @@ function BrowserTabContent({
         >
           <MessageSquarePlus className="h-3.5 w-3.5" />
         </BrowserModeButton>
-        <BrowserModeButton
-          label="Action mode"
-          active={browser.mode === "action"}
-          disabled={!canInspectBrowser || !canPersistWorkspace}
-          onClick={() => onModeChange(browser.mode === "action" ? "browse" : "action")}
-        >
-          <MousePointerClick className="h-3.5 w-3.5" />
-        </BrowserModeButton>
         <BrowserCooperationModeMenu
           value={cooperationMode}
           disabled={!canPersistWorkspace}
@@ -1639,9 +1731,7 @@ function BrowserTabContent({
         <span className="min-w-0 flex-1 truncate">
           {browser.mode === "annotate"
             ? "Annotation mode · hover and click an element"
-            : browser.mode === "action"
-              ? "Action mode · click mapped elements"
-              : `${elementMap.length} mapped elements${backendTabs.length > 1 ? ` · ${backendTabs.length} tabs` : ""}`}
+            : `${elementMap.length} mapped elements${backendTabs.length > 1 ? ` · ${backendTabs.length} tabs` : ""}`}
         </span>
         {annotations.length ? (
           <span className="inline-flex items-center gap-1">
@@ -1707,6 +1797,14 @@ function BrowserTabContent({
             view={browser.view}
             surface={showRenderedPage ? imageRef.current : viewportRef.current}
             onDecision={onProposalDecision}
+          />
+        ) : null}
+        {visibleBrowserToolVisual && browser.view ? (
+          <BrowserToolVisualOverlay
+            visual={visibleBrowserToolVisual}
+            elementMap={elementMap}
+            view={browser.view}
+            surface={showRenderedPage ? imageRef.current : viewportRef.current}
           />
         ) : null}
         <BrowserGhostCursor trace={ghostTrace} />
@@ -1913,6 +2011,47 @@ function BrowserCooperationModeMenu({
   );
 }
 
+function BrowserToolVisualOverlay({
+  visual,
+  elementMap,
+  view,
+  surface,
+}: {
+  visual: BrowserToolVisual;
+  elementMap: SessionBrowserElement[];
+  view: SessionBrowserView;
+  surface: HTMLElement | null;
+}) {
+  const elements = browserToolOverlayElements(visual, elementMap);
+  if (!elements.length) return null;
+  const isMap = visual.effect === "map";
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[32]" aria-hidden="true">
+      {elements.slice(0, isMap ? 120 : 8).map((element, index) => {
+        if (!element.bounds) return null;
+        const isTarget = Boolean(visual.nodeId && element.node_id === visual.nodeId);
+        return (
+          <div
+            key={`${visual.id}-${element.node_id || index}`}
+            data-testid={`browser-tool-highlight-${element.node_id || index}`}
+            className={cn(
+              "absolute rounded-[4px] border transition-all duration-150",
+              isMap
+                ? "border-amber-300/85 bg-amber-300/10 shadow-[0_0_0_1px_rgba(251,191,36,0.14)]"
+                : "border-primary bg-primary/16 shadow-[0_0_0_3px_rgba(34,150,255,0.14)]",
+              isTarget && "border-2 border-primary bg-primary/22 shadow-[0_0_0_4px_rgba(34,150,255,0.20)]",
+            )}
+            style={browserRenderedElementStyle(element.bounds, surface, view)}
+          />
+        );
+      })}
+      <div className="absolute right-3 top-3 z-[33] rounded-full border border-glass-border/35 bg-background/92 px-2.5 py-1 text-[10px] font-medium text-muted-foreground shadow-floating backdrop-blur-xl">
+        {browserToolVisualLabel(visual)}
+      </div>
+    </div>
+  );
+}
+
 function BrowserProposalOverlay({
   proposal,
   target,
@@ -2026,6 +2165,7 @@ function BrowserGhostCursor({ trace }: { trace: BrowserGhostTrace }) {
   const effect = trace.effect || "highlight";
   return (
     <div
+      data-testid="browser-ghost-cursor"
       className="pointer-events-none absolute z-[35] transition-transform duration-500 ease-out"
       style={{ transform: `translate3d(${trace.x}px, ${trace.y}px, 0)` }}
       aria-hidden="true"
@@ -2344,6 +2484,211 @@ function normalizeBrowserUrl(value: string) {
   if (!trimmed) return "";
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
   return `https://${trimmed}`;
+}
+
+function latestBrowserToolVisual(messages: ChatMessageUi[]): BrowserToolVisual | undefined {
+  for (const message of [...messages].reverse()) {
+    if (message.role !== "agent") continue;
+    for (const block of [...message.toolBlocks].reverse()) {
+      const visual = browserToolVisualFromBlock(block);
+      if (visual) return visual;
+    }
+  }
+  return undefined;
+}
+
+function browserToolVisualFromBlock(block: ToolBlockUi): BrowserToolVisual | undefined {
+  const effect = browserToolEffect(block);
+  if (!effect) return undefined;
+  const data = block.data ?? {};
+  const lastAction = recordValue(data.last_action);
+  const result = recordValue(lastAction.result);
+  const elements = browserToolElements(data);
+  const nodeId =
+    browserStringValue(lastAction.node_id) ??
+    browserStringValue(data.node_id) ??
+    browserStringValue(data.target_node_id);
+  const target =
+    normalizeBrowserElementMetadata(lastAction.target, nodeId || "") ??
+    (nodeId ? elements.find((element) => element.node_id === nodeId) : undefined) ??
+    normalizeBrowserElementMetadata({ ...result, node_id: nodeId || result.node_id || "browser_result" }, nodeId || "browser_result");
+  const x = numericValue(lastAction.x ?? data.x);
+  const y = numericValue(lastAction.y ?? data.y);
+  return {
+    id: `${block.id}:${block.status}:${browserStringValue(data.type) || block.name}`,
+    toolName: block.name,
+    status: block.status,
+    effect,
+    browserId: browserStringValue(data.browser_id),
+    pageId: browserStringValue(data.page_id) ?? browserStringValue(data.active_tab_id),
+    windowId: browserStringValue(data.window_id),
+    url: browserStringValue(data.url) ?? browserStringValue(data.final_url),
+    nodeId,
+    target,
+    elements,
+    coordinates: x !== undefined && y !== undefined ? { x, y } : undefined,
+    data,
+  };
+}
+
+function browserToolEffect(block: ToolBlockUi): BrowserToolVisualEffect | undefined {
+  if (!block.name.startsWith("Browser")) return undefined;
+  if (block.name === "BrowserListTabs" || block.name === "BrowserReadContentChunk" || block.name === "BrowserCloseTab") {
+    return undefined;
+  }
+  if (block.name === "BrowserGetElementMap") return "map";
+  if (block.name === "BrowserClick") return "click";
+  if (block.name === "BrowserType") return "type";
+  if (block.name === "BrowserScroll" || block.name === "BrowserHistory") return "scroll";
+  if (block.name === "BrowserScreenshot" || block.name === "BrowserExtractContent" || block.name === "BrowserGetHtml") return "extract";
+  if (block.name === "BrowserAct") {
+    const data = block.data ?? {};
+    const action = String(recordValue(data.last_action).action ?? data.action ?? "").toLowerCase();
+    if (/click|submit|hover/.test(action)) return "click";
+    if (/type|fill|press|select/.test(action)) return "type";
+    if (/scroll/.test(action)) return "scroll";
+    if (/screenshot|text|html/.test(action)) return "extract";
+    return "highlight";
+  }
+  return "highlight";
+}
+
+function browserToolElements(data: Record<string, unknown>) {
+  const rawElements = recordArray(data.elements).length ? recordArray(data.elements) : recordArray(data.element_map);
+  return rawElements
+    .map((item, index) => normalizeBrowserElementMetadata(item, browserStringValue(item.node_id) || `browser_tool_${index}`))
+    .filter((item): item is BrowserElementMetadata => Boolean(item));
+}
+
+function browserToolVisualAppliesToBrowser(visual: BrowserToolVisual | undefined, browser: BrowserState) {
+  if (!visual) return false;
+  if (visual.url && browser.currentUrl && normalizeComparableUrl(visual.url) !== normalizeComparableUrl(browser.currentUrl)) {
+    return false;
+  }
+  const viewRecord = recordValue(browser.view);
+  const browserIds = new Set(
+    [
+      browser.browserId,
+      browser.view?.browser_id,
+      browser.view?.active_tab_id,
+      viewRecord.page_id,
+      viewRecord.window_id,
+    ]
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean),
+  );
+  const visualIds = [visual.browserId, visual.pageId, visual.windowId]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter(Boolean);
+  if (visualIds.length && visualIds.some((id) => browserIds.has(id))) return true;
+  if (!visualIds.length) return true;
+  if (visual.url && browser.currentUrl) return true;
+  return false;
+}
+
+function browserViewFromToolVisual(visual: BrowserToolVisual): SessionBrowserView | undefined {
+  const data = visual.data;
+  const hasRenderableView = Boolean(
+    browserStringValue(data.url) &&
+      (browserStringValue(data.image_data) ||
+        browserStringValue(data.document_html) ||
+        browserStringValue(data.html) ||
+        recordArray(data.element_map).length),
+  );
+  if (!hasRenderableView) return undefined;
+  return {
+    ...data,
+    type: "browser_view",
+    browser_id: browserStringValue(data.browser_id) || visual.browserId || "",
+    url: browserStringValue(data.url) || visual.url || "",
+    title: browserStringValue(data.title) || "",
+    html: browserStringValue(data.html) || "",
+    document_html: browserStringValue(data.document_html) || browserStringValue(data.html) || "",
+    render_mode: browserRenderModeValue(data.render_mode),
+    css_fidelity: browserStringValue(data.css_fidelity) || "pixel",
+    element_map: browserToolElements({ element_map: data.element_map }),
+    annotations: Array.isArray(data.annotations) ? (data.annotations as SessionBrowserAnnotation[]) : [],
+    timeline_events: Array.isArray(data.timeline_events) ? (data.timeline_events as SessionBrowserTimelineEvent[]) : [],
+    user_agent: browserStringValue(data.user_agent) || "",
+    image_data: browserStringValue(data.image_data) || "",
+    image_mime_type: browserStringValue(data.image_mime_type) || "",
+    screenshot_method: browserStringValue(data.screenshot_method) || "",
+    screenshot_error: browserStringValue(data.screenshot_error) || "",
+    viewport_width: numericValue(data.viewport_width) || 1024,
+    viewport_height: numericValue(data.viewport_height) || 720,
+    can_capture: typeof data.can_capture === "boolean" ? data.can_capture : true,
+  };
+}
+
+function browserToolOverlayElements(visual: BrowserToolVisual, elementMap: SessionBrowserElement[]) {
+  const candidates = visual.effect === "map" ? [...visual.elements] : [];
+  if (visual.target) candidates.unshift(visual.target);
+  if (visual.nodeId) {
+    const mapped = visual.elements.find((element) => element.node_id === visual.nodeId) ?? elementMap.find((element) => element.node_id === visual.nodeId);
+    if (mapped) candidates.unshift(mapped);
+  }
+  const seen = new Set<string>();
+  return candidates.filter((element, index) => {
+    const bounds = element.bounds;
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) return false;
+    const key = element.node_id || `${bounds.x}:${bounds.y}:${index}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return visual.effect !== "map" || element.visible !== false;
+  });
+}
+
+function browserToolVisualPoint(
+  visual: BrowserToolVisual,
+  elementMap: SessionBrowserElement[],
+  view: SessionBrowserView,
+  surface: HTMLElement | null,
+) {
+  if (visual.coordinates) {
+    const rect = surface?.getBoundingClientRect();
+    const scaleX = rect?.width ? rect.width / Math.max(1, view.viewport_width || rect.width) : 1;
+    const scaleY = rect?.height ? rect.height / Math.max(1, view.viewport_height || rect.height) : 1;
+    return { x: Math.round(visual.coordinates.x * scaleX), y: Math.round(visual.coordinates.y * scaleY) };
+  }
+  const [target] = browserToolOverlayElements(visual, elementMap);
+  if (target?.bounds) {
+    const style = browserRenderedElementStyle(target.bounds, surface, view);
+    return {
+      x: Math.round(style.left + style.width / 2),
+      y: Math.round(style.top + style.height / 2),
+    };
+  }
+  if (visual.effect === "scroll") {
+    const rect = surface?.getBoundingClientRect();
+    return { x: Math.round((rect?.width || view.viewport_width || 420) / 2), y: Math.round((rect?.height || view.viewport_height || 640) / 2) };
+  }
+  return undefined;
+}
+
+function browserToolVisualLabel(visual: BrowserToolVisual) {
+  if (visual.effect === "map") return `Mapped ${visual.elements.length} elements`;
+  const targetText = visual.target?.text || visual.target?.name || visual.nodeId || "";
+  if (visual.effect === "click") return targetText ? `Click ${targetText}` : "Browser click";
+  if (visual.effect === "type") return targetText ? `Input ${targetText}` : "Browser input";
+  if (visual.effect === "scroll") return "Browser scroll";
+  if (visual.effect === "extract") return "Browser read";
+  return visual.toolName;
+}
+
+function browserStringValue(value: unknown) {
+  if (typeof value === "string" && value.trim()) return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function browserRenderModeValue(value: unknown): SessionBrowserView["render_mode"] {
+  const mode = browserStringValue(value);
+  if (mode === "html_mirror" || mode === "computed_html" || mode === "pixel" || mode === "screenshot") return mode;
+  return "screenshot";
+}
+
+function normalizeComparableUrl(value: string) {
+  return value.trim().replace(/\/+$/, "");
 }
 
 const BROWSER_FORWARD_KEYS = new Set([

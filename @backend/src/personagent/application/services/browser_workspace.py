@@ -68,6 +68,7 @@ class BrowserWorkspaceService:
         await self._upsert_tabs(workspace, view, active_tab_id=active_tab_id, runtime=runtime)
         await self._session.commit()
         payload = await self.payload(conversation, browser_id)
+        _mirror_compact_browser_workspace(conversation, browser_id=browser_id, payload=payload)
         view.update(payload)
         snapshot = view.get("browser_snapshot")
         if isinstance(snapshot, dict):
@@ -504,6 +505,28 @@ def _tab_to_dict(tab: BrowserTabORM) -> dict[str, Any]:
         "created_at": _iso(tab.created_at),
         "updated_at": _iso(tab.updated_at),
     }
+
+
+def _mirror_compact_browser_workspace(
+    conversation,
+    *,
+    browser_id: str,
+    payload: dict[str, Any],
+) -> None:
+    metadata = _coerce_dict(getattr(conversation, "metadata", {}))
+    if getattr(conversation, "metadata", None) is not metadata:
+        conversation.metadata = metadata
+    workspace_state = _coerce_dict(payload.get("workspace_state"))
+    compact = {
+        "active_browser_id": str(workspace_state.get("active_browser_id") or browser_id),
+        "active_tab_id": str(payload.get("active_tab_id") or workspace_state.get("active_tab_id") or browser_id),
+        "current_url": str(workspace_state.get("current_url") or ""),
+        "current_title": str(workspace_state.get("current_title") or ""),
+        "last_element_map": _coerce_list(workspace_state.get("last_element_map"))[:220],
+        "tabs": _coerce_list(payload.get("tabs"))[:50],
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    metadata["browser_workspace"] = compact
 
 
 def _annotation_to_dict(annotation: BrowserAnnotationORM, browser_id: str) -> dict[str, Any]:

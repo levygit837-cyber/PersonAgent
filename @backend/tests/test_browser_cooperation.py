@@ -13,6 +13,7 @@ from personagent.application.services.browser_cooperation import (
     _normalize_event,
     attach_browser_action_proposal,
     browser_agent_context_reminder,
+    shared_browser_workspace_reminder,
 )
 from personagent.domain.models.conversation import Conversation
 from personagent.domain.repositories.conversation_repository import ConversationRepository
@@ -222,6 +223,32 @@ def test_browser_agent_context_reminder_includes_compact_event_and_action_channe
     assert "useful_timeline" in reminder
     assert "recent_agent_events" in reminder
     assert "proposal-1" in reminder
+
+
+def test_shared_browser_workspace_reminder_informs_model_about_panel_browser():
+    reminder = shared_browser_workspace_reminder(
+        {
+            "browser_workspace": {
+                "active_browser_id": "conversation-1",
+                "active_tab_id": "page_github",
+                "current_url": "https://github.com/personagent/personagent",
+                "current_title": "GitHub - PersonAgent",
+                "tabs": [
+                    {
+                        "tab_id": "page_github",
+                        "url": "https://github.com/personagent/personagent",
+                        "title": "GitHub - PersonAgent",
+                        "active": True,
+                    }
+                ],
+            }
+        }
+    )
+
+    assert reminder is not None
+    assert "Shared Browser Workspace Context" in reminder
+    assert "Browser panel and your Browser tools are connected" in reminder
+    assert "page_github" in reminder
 
 
 def test_attach_browser_action_proposal_persists_browser_visible_metadata():

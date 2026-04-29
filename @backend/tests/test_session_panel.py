@@ -312,6 +312,49 @@ async def test_conversation_browser_workspace_persists_annotations_and_timeline(
 
 
 @pytest.mark.asyncio
+async def test_browser_tab_mentions_return_active_shared_tab(monkeypatch):
+    repo = MemoryConversationRepository()
+    conversation = Conversation(title="Browser mention")
+    conversation.metadata["browser_workspace"] = {
+        "active_browser_id": str(conversation.id),
+        "active_tab_id": "page_github",
+        "current_url": "https://github.com/personagent/personagent",
+        "current_title": "GitHub - PersonAgent",
+        "tabs": [
+            {
+                "tab_id": "page_github",
+                "url": "https://github.com/personagent/personagent",
+                "title": "GitHub - PersonAgent",
+                "active": True,
+                "runtime": "lightpanda",
+                "state": {"scroll": {"y": 120}},
+            }
+        ],
+    }
+    await repo.create(conversation)
+    monkeypatch.setattr(sessions, "get_container", lambda: FakeContainer(repo))
+
+    async def fake_get_db():
+        yield object()
+
+    app = FastAPI()
+    app.include_router(sessions.router)
+    app.dependency_overrides[sessions.get_db] = fake_get_db
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/sessions/{conversation.id}/browser/mentions?q=github")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["type"] == "browser_tab"
+    assert payload[0]["browser_id"] == str(conversation.id)
+    assert payload[0]["page_id"] == "page_github"
+    assert payload[0]["url"] == "https://github.com/personagent/personagent"
+    assert payload[0]["active"] is True
+
+
+@pytest.mark.asyncio
 async def test_session_project_detail_api_returns_detail(monkeypatch, tmp_path):
     repo = MemoryConversationRepository()
     conversation = Conversation(title="API detail")

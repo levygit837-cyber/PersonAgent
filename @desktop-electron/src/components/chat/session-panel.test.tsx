@@ -523,6 +523,76 @@ describe("SessionPanel", () => {
     );
   });
 
+  it("renders browser tool highlights and ghost cursor from chat tool blocks", async () => {
+    const signInElement = {
+      node_id: "pa_signin",
+      text: "Sign in",
+      role: "link",
+      tag: "a",
+      selector: "a[href='/login']",
+      href: "https://github.com/login",
+      bounds: { x: 930, y: 24, width: 76, height: 34 },
+      visible: true,
+      interactable: true,
+    };
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://github.com/", "conversation-1", "GitHub", {
+        element_map: [signInElement],
+        active_tab_id: "conversation-1",
+      }),
+    );
+    useChatStore.setState({
+      messages: [
+        {
+          id: "agent-browser-tools",
+          role: "agent",
+          label: "PersonAgent",
+          content: "",
+          reasoning: "",
+          reasoningBlocks: [],
+          toolBlocks: [
+            {
+              id: "call_map",
+              name: "BrowserGetElementMap",
+              status: "completed",
+              title: "Mapped browser elements",
+              message: "Mapped browser elements",
+              content: "",
+              isCollapsed: false,
+              data: {
+                type: "browser_element_map",
+                browser_id: "conversation-1",
+                page_id: "conversation-1",
+                active_tab_id: "conversation-1",
+                url: "https://github.com/",
+                title: "GitHub",
+                element_count: 1,
+                elements: [signInElement],
+              },
+            },
+          ],
+          teamEvents: [],
+          parts: [],
+          isStreaming: false,
+          isReasoningStreaming: false,
+        },
+      ],
+    });
+
+    renderWithProviders(<ChatWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+    await screen.findByText("Agent Usage");
+    const addTabButton = screen.getByRole("button", { name: "New panel tab" });
+    fireEvent.pointerDown(addTabButton, { button: 0, ctrlKey: false });
+    fireEvent.click(addTabButton);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Browser" }));
+
+    expect(await screen.findByTestId("browser-tool-highlight-pa_signin")).toBeInTheDocument();
+    expect(await screen.findByTestId("browser-ghost-cursor")).toBeInTheDocument();
+    expect(screen.getByText("Mapped 1 elements")).toBeInTheDocument();
+  });
+
   it("hides the empty browser hint while a navigation is rendering and shows the loaded url after", async () => {
     let resolveInitialLoad!: (value: SessionBrowserView) => void;
     getSessionBrowserViewMock.mockImplementation(
@@ -762,6 +832,7 @@ describe("SessionPanel", () => {
     expect(screen.getByRole("button", { name: "Forward" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Reload page" })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: "Enter URL" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Action mode" })).not.toBeInTheDocument();
     expect(screen.queryByText("Start or open a conversation to view session data.")).not.toBeInTheDocument();
   });
 });
@@ -818,6 +889,8 @@ describe("browser mirror sanitizer", () => {
     expect(srcDoc).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(srcDoc).not.toContain('onclick="steal()"');
     expect(srcDoc).toContain('<base href="https://example.com/page">');
+    expect(srcDoc).not.toContain('data-pa-browser-mode="action"');
+    expect(srcDoc).not.toContain('mode === "action"');
   });
 
   it("injects browser cooperation event batching and safe redaction hooks", () => {

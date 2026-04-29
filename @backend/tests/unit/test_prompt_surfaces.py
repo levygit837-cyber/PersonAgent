@@ -163,6 +163,34 @@ def test_context_attachments_expand_browser_annotations_without_files(tmp_path):
     assert "User annotation: Use this result" in result.reminders[0]
 
 
+def test_context_attachments_expand_browser_tab_targets(tmp_path):
+    result = resolve_context_attachments(
+        [
+            {
+                "type": "browser_tab",
+                "id": "browser_tab:conversation-1:page_github",
+                "label": "@Browser",
+                "browser_id": "conversation-1",
+                "tab_id": "page_github",
+                "page_id": "page_github",
+                "url": "https://github.com/personagent/personagent",
+                "title": "GitHub - PersonAgent",
+                "runtime": "lightpanda",
+                "active": True,
+                "state": {"scroll": {"y": 120}},
+            }
+        ],
+        workspace_root=tmp_path,
+    )
+
+    assert result.metadata[0]["type"] == "browser_tab"
+    assert result.metadata[0]["browser_id"] == "conversation-1"
+    assert result.metadata[0]["page_id"] == "page_github"
+    assert result.metadata[0]["scroll"] == {"y": 120}
+    assert "shared Browser panel tab" in result.reminders[0]
+    assert "page_github" in result.reminders[0]
+
+
 def test_context_attachments_reject_paths_outside_workspace(tmp_path):
     outside = tmp_path.parent / "outside.txt"
     outside.write_text("outside", encoding="utf-8")

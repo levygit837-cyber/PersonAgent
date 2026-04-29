@@ -522,6 +522,43 @@ def browser_agent_context_reminder(metadata: Mapping[str, Any]) -> str | None:
     )
 
 
+def shared_browser_workspace_reminder(metadata: Mapping[str, Any]) -> str | None:
+    """Return always-on context for the shared Browser workspace."""
+
+    workspace = _coerce_dict(metadata.get("browser_workspace"))
+    current_url = str(workspace.get("current_url") or "").strip()
+    tabs = [
+        _compact_shared_browser_tab(tab)
+        for tab in _coerce_list(workspace.get("tabs"))
+        if isinstance(tab, Mapping)
+    ]
+    tabs = [tab for tab in tabs if tab.get("url") or tab.get("page_id")]
+    active_tab_id = str(workspace.get("active_tab_id") or "").strip()
+    active_browser_id = str(workspace.get("active_browser_id") or "").strip()
+    if not current_url and not tabs and not active_tab_id:
+        return None
+    payload = {
+        "browser_scope": "shared_panel_and_agent_browser",
+        "browser_id": active_browser_id,
+        "active_tab_id": active_tab_id,
+        "current_url": current_url,
+        "current_title": str(workspace.get("current_title") or "").strip(),
+        "tabs": tabs[:5],
+    }
+    return (
+        "# Shared Browser Workspace Context\n\n"
+        "The user's Browser panel and your Browser tools are connected to the same Browser "
+        "workspace for this conversation. When the user refers to browser actions, tabs, "
+        "URLs, scroll position, or the open page, treat that as the shared panel browser, "
+        "not a private browser owned only by the model. Use BrowserListTabs to refresh the "
+        "shared tab state and use page_id/window_id from the shared tab list when a tab is "
+        "already open.\n\n"
+        "```json\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+        + "\n```"
+    )
+
+
 def build_browser_agent_context(state: Mapping[str, Any]) -> dict[str, Any]:
     """Build the compact BrowserAgentContext JSON object."""
 
@@ -548,6 +585,21 @@ def build_browser_agent_context(state: Mapping[str, Any]) -> dict[str, Any]:
             "active_proposal_id": page_state.get("active_proposal_id"),
         },
         "pending_action_proposals": _coerce_list(state.get("pending_action_proposals"))[:MAX_PENDING_PROPOSALS],
+    }
+
+
+def _compact_shared_browser_tab(tab: Mapping[str, Any]) -> dict[str, Any]:
+    page_id = str(tab.get("page_id") or tab.get("window_id") or tab.get("tab_id") or tab.get("id") or "")
+    state = _coerce_dict(tab.get("state"))
+    return {
+        "page_id": page_id,
+        "window_id": page_id,
+        "tab_id": page_id,
+        "url": str(tab.get("url") or tab.get("final_url") or ""),
+        "title": str(tab.get("title") or ""),
+        "active": bool(tab.get("active") or tab.get("is_active")),
+        "runtime": str(tab.get("runtime") or ""),
+        "scroll": _coerce_dict(tab.get("scroll") or state.get("scroll")),
     }
 
 

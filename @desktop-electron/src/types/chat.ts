@@ -126,6 +126,7 @@ export type ContextAttachmentType =
   | "mcp_resource"
   | "terminal_output"
   | "browser_annotation"
+  | "browser_tab"
   | "viewer_annotation"
   | "command_context";
 
@@ -150,6 +151,17 @@ export interface ContextAttachment {
   selector?: string;
   role?: string;
   quote?: string;
+  browser_id?: string;
+  tab_id?: string;
+  page_id?: string;
+  window_id?: string;
+  active?: boolean;
+  is_active?: boolean;
+  runtime?: string;
+  scroll?: Record<string, unknown>;
+  viewport?: Record<string, unknown>;
+  selected_element?: Record<string, unknown>;
+  state?: Record<string, unknown>;
   directory_path?: string;
   entry_count?: number;
   name?: string;
