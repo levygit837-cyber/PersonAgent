@@ -516,6 +516,20 @@ async def test_chat_completion_executes_tool_loop(tmp_path):
     conversation = await repo.get_by_id(response.conversation_id)
     assert conversation is not None
     assert response.content == "The file contains alpha and beta."
+    assert len(llm.message_batches) == 2
+    assert [message["role"] for message in llm.message_batches[1]] == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assert llm.message_batches[1][1]["content"] == "Read notes.txt"
+    assert all(
+        "<system-reminder>" not in message.get("content", "")
+        for batch in llm.message_batches
+        for message in batch
+        if message["role"] == "user"
+    )
     assert [message.role.value for message in conversation.messages] == [
         "user",
         "assistant",
@@ -998,11 +1012,13 @@ async def test_chat_uses_dynamic_prompt_and_user_context_reminder(tmp_path):
 
     messages = llm.calls[0]["messages"]
     assert messages[0]["role"] == "system"
-    assert "# Mode Overlay: Exploring" in messages[0]["content"]
+    assert "Mode Overlay: Exploring" in messages[0]["content"]
     assert "# System Context" in messages[0]["content"]
+    assert "# User Context and Runtime Reminders" in messages[0]["content"]
+    assert "Project instruction from persona." in messages[0]["content"]
     assert messages[1]["role"] == "user"
-    assert "<system-reminder>" in messages[1]["content"]
-    assert "Project instruction from persona." in messages[1]["content"]
+    assert messages[1]["content"] == "Analise a codebase"
+    assert "<system-reminder>" not in messages[1]["content"]
 
 
 @pytest.mark.asyncio
@@ -1029,7 +1045,7 @@ async def test_local_llama_auto_prompt_mode_skips_llm_prompt_analysis(tmp_path):
     )
 
     assert len(llm.calls) == 1
-    assert "# Mode Overlay: Exploring" in llm.calls[0]["messages"][0]["content"]
+    assert "Mode Overlay: Exploring" in llm.calls[0]["messages"][0]["content"]
 
 
 @pytest.mark.asyncio
@@ -1056,7 +1072,7 @@ async def test_zenmux_auto_prompt_mode_skips_llm_prompt_analysis(tmp_path):
     )
 
     assert len(llm.calls) == 1
-    assert "# Mode Overlay: Exploring" in llm.calls[0]["messages"][0]["content"]
+    assert "Mode Overlay: Exploring" in llm.calls[0]["messages"][0]["content"]
 
 
 @pytest.mark.asyncio
@@ -1116,11 +1132,15 @@ async def test_chat_custom_system_prompt_is_appended_to_dynamic_prompt(tmp_path)
 
     messages = llm.calls[0]["messages"]
     assert messages[0]["role"] == "system"
-    assert "# Mode Overlay: Writing" in messages[0]["content"]
+    assert messages[0]["content"].startswith("# Response Style Contract")
+    assert "# Personality and Collaboration" in messages[0]["content"]
+    assert "Mode Overlay: Writing" in messages[0]["content"]
     assert "# Custom System Instructions" in messages[0]["content"]
     assert "agent-state policy" in messages[0]["content"]
     assert "CUSTOM SYSTEM" in messages[0]["content"]
-    assert "Keep user context." in messages[1]["content"]
+    assert "# User Context and Runtime Reminders" in messages[0]["content"]
+    assert "Keep user context." in messages[0]["content"]
+    assert messages[1]["content"] == "Implemente algo"
 
 
 @pytest.mark.asyncio
@@ -1151,6 +1171,8 @@ async def test_prompt_preview_returns_final_prompt_metrics_without_completion(tm
 
     assert llm.calls == []
     assert preview["system_prompt"]
+    assert preview["system_prompt"].startswith("# Response Style Contract")
+    assert preview["user_context_message"] is None
     assert preview["line_count"] == len(preview["system_prompt"].splitlines())
     assert preview["char_count"] == len(preview["system_prompt"])
     assert preview["estimated_tokens"] > 0
@@ -1159,14 +1181,17 @@ async def test_prompt_preview_returns_final_prompt_metrics_without_completion(tm
     assert "implementation" in preview["agent_states"]
     assert "runtime_validation" in preview["agent_states"]
     assert "state_implementation" in preview["state_sections_used"]
+    assert "response_style_contract" in preview["sections"]
+    assert "personality_and_collaboration" in preview["sections"]
+    assert "acting_contract" in preview["sections"]
     assert "todo_write_policy" in preview["sections"]
     assert "parallel_tool_use" in preview["sections"]
     assert "agent_state" in preview["surfaces"]
     assert "todo" in preview["surfaces"]
     assert "parallel_tool_use" in preview["surfaces"]
-    assert "# Agent State: Implementation" in preview["system_prompt"]
-    assert "# TodoWrite Policy" in preview["system_prompt"]
-    assert "# Parallel Tool Use" in preview["system_prompt"]
+    assert "Agent State: Implementation" in preview["system_prompt"]
+    assert "TodoWrite Policy" in preview["system_prompt"]
+    assert "Parallel Tool Use" in preview["system_prompt"]
 
 
 @pytest.mark.asyncio
@@ -1186,7 +1211,7 @@ async def test_chat_prompt_includes_deferred_tool_prompts(tmp_path):
     await use_case.execute(ChatRequestDTO(message="Analyze available skills", tools_enabled=True))
 
     messages = llm.calls[0]["messages"]
-    assert "## Skill" in messages[0]["content"]
+    assert "Tool: Skill" in messages[0]["content"]
     assert "Load a SKILL.md" in messages[0]["content"]
     assert "may be deferred from the initial callable schema" in messages[0]["content"]
     assert "You have access to the following tools: Skill" not in messages[0]["content"]
@@ -1223,7 +1248,9 @@ async def test_chat_compacts_history_when_context_threshold_is_exceeded():
     assert saved is not None
     assert saved.metadata["context_compaction"]["compacted"] is True
     assert saved.messages[0].metadata["context_compaction"] is True
+    assert saved.messages[0].role == Role.SYSTEM
     assert "Summary of old work" in saved.messages[0].content
+    assert "<system-reminder>" not in saved.messages[0].content
 
 
 def test_llama_payload_and_stream_tool_call_parsing():
@@ -1338,9 +1365,13 @@ class MemoryConversationRepository(ConversationRepository):
 class FakeToolCallingLLM(LLMBackendRepository):
     def __init__(self):
         self.calls = 0
+        self.message_batches: list[list[dict]] = []
 
     async def chat_completion(self, *args, **kwargs) -> InferenceResult:
         self.calls += 1
+        messages = kwargs.get("messages")
+        if isinstance(messages, list):
+            self.message_batches.append(messages)
         if self.calls == 1:
             return InferenceResult(
                 content="",
@@ -1559,8 +1590,9 @@ class EmptyStopAfterToolLLM(LLMBackendRepository):
         if self.calls == 2:
             yield StreamChunk(finish_reason="stop")
             return
-        assert messages[-1]["role"] == "user"
-        assert "stopped after tool results" in messages[-1]["content"]
+        assert messages[0]["role"] == "system"
+        assert "stopped after tool results" in messages[0]["content"]
+        assert messages[-1]["role"] == "tool"
         assert not kwargs.get("tools")
         yield StreamChunk(content="Recovered final answer.")
         yield StreamChunk(finish_reason="stop")

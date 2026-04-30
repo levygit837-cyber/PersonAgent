@@ -25,39 +25,34 @@ def get_tool_sections(tools: list[str] | None = None) -> tuple[SystemPromptSecti
 
     def tool_usage_section() -> str:
         available = ", ".join(sorted(tool_set))
-        return f"""# Available Tools
+        return f"""Available Tools
 
 Callable tools exposed in this request: {available}.
 
-When using tools:
-- Provide required parameters in the exact schema.
-- Read tool results before deciding the next step.
-- If a tool fails, use the error to change approach.
-- Prefer the most specific available tool for the job."""
+Use exact schemas, read tool results before deciding the next step, and change approach when a tool returns an error. Prefer the most specific available tool for the job. This section is operational guidance, not a template for the final response."""
 
     def file_operations_section() -> str:
-        lines = ["# File Operations", ""]
+        guidance: list[str] = []
         if "Read" in tool_set:
-            lines.append("- Use Read to examine file contents before making claims or edits.")
+            guidance.append("Read examines file contents before claims or edits")
         if "Edit" in tool_set:
-            lines.append("- Use Edit for targeted modifications with exact old_string matches.")
+            guidance.append("Edit handles targeted modifications with exact old_string matches")
         if "Write" in tool_set:
-            lines.append("- Use Write only when creating a new file or replacing a whole file intentionally.")
+            guidance.append("Write is only for creating a new file or intentionally replacing a whole file")
         if "Glob" in tool_set:
-            lines.append("- Use Glob for file discovery when the path is unknown.")
+            guidance.append("Glob discovers files when the path is unknown")
         if "Grep" in tool_set:
-            lines.append("- Use Grep for focused text or symbol search before reading many files.")
-        lines.append("- Be precise with file paths: use absolute paths or resolve relative paths correctly.")
-        return "\n".join(lines)
+            guidance.append("Grep performs focused text or symbol search before reading many files")
+        body = "; ".join(guidance) or "Use file tools according to their schemas"
+        return (
+            "File Operations\n\n"
+            f"{body}. Be precise with file paths: use absolute paths or resolve relative paths correctly."
+        )
 
     def shell_section() -> str:
-        return """# Shell Commands
+        return """Shell Commands
 
-- Shell commands are executed in a read-only mode by default
-- For read-only commands (cat, grep, git, etc.), no approval is needed
-- For write/exec/network commands, user approval may be required depending on permission mode
-- Critical commands are denied instead of being sent for approval
-- Always prefer using dedicated tools over shell commands when available"""
+Shell commands are read-only by default. Read-only commands such as cat, grep, and git do not need approval, while write/exec/network commands may require approval depending on permission mode. Critical commands are denied instead of being sent for approval. Prefer dedicated tools over shell commands when available."""
 
     sections: list[SystemPromptSection] = [SystemPromptSection("tool_usage", tool_usage_section)]
     if tool_set.intersection({"Read", "Write", "Edit", "Glob", "Grep"}):

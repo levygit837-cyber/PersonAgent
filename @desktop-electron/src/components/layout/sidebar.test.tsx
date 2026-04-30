@@ -242,18 +242,50 @@ describe("Sidebar", () => {
     expect(await screen.findByText("Backend Workspace Session")).toBeInTheDocument();
   });
 
-  it("keeps workspace folder order stable after the selected workspace changes", async () => {
+  it("orders workspace folders by their latest session timestamp", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            id: "older_session",
+            title: "Older Workspace Session",
+            created_at: "2026-04-28T10:00:00Z",
+            updated_at: "2026-04-28T10:00:00Z",
+            message_count: 1,
+            workspace_root: "/home/user/my-project",
+          },
+          {
+            id: "newer_session",
+            title: "Newer Workspace Session",
+            created_at: "2026-04-29T10:00:00Z",
+            updated_at: "2026-04-29T10:00:00Z",
+            message_count: 1,
+            workspace_root: "/home/user/other-project",
+          },
+        ]),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    useAppStore.setState({
+      convWorkspaceMap: {},
+      selectedWorkspace: "/home/user/my-project",
+      recentWorkspaces: ["/home/user/my-project"],
+    });
+
     renderSidebar();
 
     expect(await screen.findByText("my-project")).toBeInTheDocument();
     expect(await screen.findByText("other-project")).toBeInTheDocument();
-    expect(workspaceFolderNames()).toEqual(["my-project", "other-project"]);
+    expect(workspaceFolderNames()).toEqual(["other-project", "my-project"]);
 
     await act(async () => {
       await useAppStore.getState().selectWorkspace("/home/user/other-project");
     });
 
-    expect(workspaceFolderNames()).toEqual(["my-project", "other-project"]);
+    expect(workspaceFolderNames()).toEqual(["other-project", "my-project"]);
   });
 
   it("opens the desktop workspace picker from the workspace menu", async () => {

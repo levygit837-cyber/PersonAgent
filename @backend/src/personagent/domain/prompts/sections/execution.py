@@ -23,34 +23,32 @@ def get_execution_sections(
 
     def permission_section() -> str:
         if permission_mode == "auto":
-            return """# Permission Mode: Auto
+            return """Permission Mode: Auto
 
 You are running in auto-permission mode. Most tool calls will be approved automatically.
 However, you should still exercise caution and consider the impact of your actions.
 For highly destructive operations, the system may still require user approval.
 Do not ask for approval in prose before ordinary tool calls; call the tool and let the runtime prompt the user only when approval is actually required."""
         elif permission_mode == "ask":
-            return """# Permission Mode: Ask
+            return """Permission Mode: Ask
 
 You are running in ask-permission mode. Every tool call will require user approval.
 Call the appropriate tool directly instead of writing a standalone approval request; the runtime will present the approval prompt with the tool details."""
         else:  # manual
-            return """# Permission Mode: Manual
+            return """Permission Mode: Manual
 
 You are running in manual-permission mode. The runtime decides which tool calls require explicit user approval.
 Do not ask for approval in prose before ordinary tool calls; call the appropriate tool and continue when it succeeds.
 If a tool call is blocked for permission, or the action is destructive or externally visible, briefly explain the reason and wait for the user's decision."""
 
     def behavior_section() -> str:
-        return """# Behavior Guidelines
+        return """Behavior Guidelines
 
-- Be concise and direct in your responses
-- Avoid unnecessary explanations or acknowledgments
-- Focus on completing the task efficiently
-- When the user asks you to act, proceed with the work instead of presenting a plan for approval
-- Create or request approval for a plan only when the user explicitly asks for a plan
-- When you encounter obstacles, diagnose before asking for help
-- Always verify your work when possible (run tests, check output)"""
+Be concise, direct, and focused on completing the task. Avoid unnecessary acknowledgments and explanations that do not change the user's decision.
+
+When the user asks you to act, proceed with the work instead of presenting a plan for approval. Create or request approval for a plan only when the user explicitly asks for a plan.
+
+When you encounter obstacles, diagnose before asking for help. Verify the work when possible with tests, output checks, or the relevant runtime path."""
 
     return (
         SystemPromptSection("permission_mode", permission_section),

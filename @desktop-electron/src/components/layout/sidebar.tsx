@@ -234,6 +234,17 @@ interface WorkspaceGroup {
   conversations: import("../../types/chat").ConversationSummary[];
 }
 
+function getWorkspaceGroupTimestamp(group: WorkspaceGroup) {
+  return group.conversations.reduce(
+    (latest, conversation) => Math.max(latest, getConversationTimestamp(conversation)),
+    0,
+  );
+}
+
+function compareWorkspaceGroupsByRecency(left: WorkspaceGroup, right: WorkspaceGroup) {
+  return getWorkspaceGroupTimestamp(right) - getWorkspaceGroupTimestamp(left);
+}
+
 function useGroupedConversations() {
   const baseUrl = useAppStore((state) => state.baseUrl);
   const convWorkspaceMap = useAppStore((state) => state.convWorkspaceMap);
@@ -265,12 +276,11 @@ function useGroupedConversations() {
       }
     }
 
-    // Preserve API list order. Opening a session changes selectedWorkspace, and sorting by it makes folders jump.
     const groups: WorkspaceGroup[] = Array.from(byWorkspace.entries()).map(([ws, convs]) => ({
       workspace: ws,
       name: workspaceName(ws) ?? ws,
       conversations: [...convs].sort(compareConversationsByRecency),
-    }));
+    })).sort(compareWorkspaceGroupsByRecency);
 
     return { groups };
   }, [conversations.data, convWorkspaceMap, selectedWorkspace]);

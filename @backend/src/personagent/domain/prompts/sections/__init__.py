@@ -2,6 +2,7 @@
 
 from personagent.domain.prompts.sections.agent import (
     get_agent_sections,
+    get_frontloaded_agent_sections,
 )
 from personagent.domain.prompts.sections.base import (
     get_base_sections,
@@ -24,4 +25,5 @@ __all__ = [
     "get_agent_state_sections",
     "render_agent_state_policy",
     "get_agent_sections",
+    "get_frontloaded_agent_sections",
 ]

@@ -23,7 +23,11 @@ def get_rich_tool_prompt_sections(
         return ()
 
     def render() -> str:
-        blocks = ["# Tool Prompts", "", "Use these tool-specific contracts when deciding what to call and how to interpret results."]
+        blocks = [
+            "Tool Prompts",
+            "",
+            "Use these tool-specific contracts when deciding what to call and how to interpret results. They are lookup guidance, not a style template for final answers. Tool outputs may be long or list-shaped; compress them before answering the user.",
+        ]
         for name in selected:
             definition = definitions_by_name.get(name)
             blocks.append(_render_tool_prompt(name, definition))
@@ -41,21 +45,18 @@ def _render_tool_prompt(name: str, definition: ToolDefinition | None) -> str:
     when_not_to_use = definition.when_not_to_use if definition else ()
     examples = definition.examples if definition else ()
     base = custom or TOOL_PROMPTS.get(name) or f"Use {name} according to its schema and returned data."
-    lines = [f"## {name}", base.strip()]
+    lines = [f"Tool: {name}", base.strip()]
     if definition and definition.should_defer and not definition.always_load:
         lines.append(
             "This tool may be deferred from the initial callable schema. Use ToolSearch with "
             f"`select:{definition.name}` or an allowed-tool expansion before assuming it can be called directly."
         )
     if when_to_use:
-        lines.append("Use when:")
-        lines.extend(f"- {item}" for item in when_to_use)
+        lines.append(f"Use when: {'; '.join(when_to_use)}.")
     if when_not_to_use:
-        lines.append("Do not use when:")
-        lines.extend(f"- {item}" for item in when_not_to_use)
+        lines.append(f"Do not use when: {'; '.join(when_not_to_use)}.")
     if examples:
-        lines.append("Examples:")
-        lines.extend(f"- {item}" for item in examples)
+        lines.append(f"Examples: {'; '.join(examples)}.")
     return "\n".join(lines)
 
 

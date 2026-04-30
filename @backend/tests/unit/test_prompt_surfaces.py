@@ -369,11 +369,11 @@ async def test_prompt_builder_composes_surfaces_tool_prompts_memory_and_reminder
         runtime_reminders=["# Slash Command Context\n\nExpanded command."],
     )
 
-    assert "# Mode Overlay: Writing" in result.content
-    assert "# Mode Overlay: Research" in result.content
-    assert "# Tool Prompts" in result.content
+    assert "Mode Overlay: Writing" in result.content
+    assert "Mode Overlay: Research" in result.content
+    assert "Tool Prompts" in result.content
     assert "Read before editing." in result.content
-    assert "# Skill Inventory" in result.content
+    assert "Skill Inventory" in result.content
     assert "# Session Memory" in result.content
     assert result.content.index("# Dynamic Context Boundary") < result.content.index("# Session Memory")
     assert result.user_context_message is not None

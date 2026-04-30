@@ -270,11 +270,23 @@ class FakePromptPreviewUseCase:
 
     async def preview_prompt(self, request):
         self.requests.append(request)
-        prompt = "# Identity and Objective\n\n# Mode Overlay: Writing"
+        prompt = (
+            "# Response Style Contract\n\n"
+            "# Personality and Collaboration\n\n"
+            "# Identity and Objective\n\n"
+            "# Acting Contract\n\n"
+            "Mode Overlay: Writing"
+        )
         return {
             "system_prompt": prompt,
-            "user_context_message": "<system-reminder>context</system-reminder>",
-            "sections": ["identity_and_objective", "mode_writing"],
+            "user_context_message": None,
+            "sections": [
+                "response_style_contract",
+                "personality_and_collaboration",
+                "identity_and_objective",
+                "acting_contract",
+                "mode_writing",
+            ],
             "surfaces": ["system", "mode:writing"],
             "dynamic_sections": ["system_context"],
             "mode": "writing",
@@ -413,7 +425,6 @@ async def test_prompt_preview_endpoint_returns_prompt_package_without_completion
                 "prompt_mode": "writing",
                 "tools_enabled": True,
                 "allowed_tools": ["Read", "TodoWrite"],
-                "workspace_root": "/tmp",
             },
         )
 
@@ -422,7 +433,7 @@ async def test_prompt_preview_endpoint_returns_prompt_package_without_completion
     assert use_case.requests
     assert use_case.requests[0].tools_enabled is True
     assert use_case.requests[0].allowed_tools == ["Read", "TodoWrite"]
-    assert body["system_prompt"].startswith("# Identity and Objective")
+    assert body["system_prompt"].startswith("# Response Style Contract")
     assert body["line_count"] == len(body["system_prompt"].splitlines())
     assert body["char_count"] == len(body["system_prompt"])
     assert body["model"] == "deepseek-ai/deepseek-v4-flash"

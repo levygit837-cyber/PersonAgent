@@ -28,12 +28,14 @@ from personagent.domain.prompts.prompt import (
     parallel_tool_use_section,
     provider_boundary_section,
     provider_data_boundary,
+    response_style_runtime_reminder_section,
     todo_write_policy_section,
 )
 from personagent.domain.prompts.sections import (
     get_agent_sections,
     get_agent_state_sections,
     get_execution_sections,
+    get_frontloaded_agent_sections,
     get_tool_sections,
 )
 from personagent.domain.prompts.sections.tool_prompts import get_rich_tool_prompt_sections
@@ -121,6 +123,8 @@ class PromptBuilder:
 
         # Obtém seções base
         base_sections = get_default_prompt_sections()
+        if self._enable_agent_sections:
+            base_sections = self._with_frontloaded_agent_sections(base_sections)
 
         # Obtém seções de ferramentas
         tool_sections = get_tool_sections(available_tools) + get_rich_tool_prompt_sections(
@@ -150,6 +154,7 @@ class PromptBuilder:
             agent_sections += (self._session_memory_section(session_memory),)
         if relevant_memories:
             agent_sections += (self._relevant_memories_section(relevant_memories),)
+        agent_sections += (response_style_runtime_reminder_section(),)
 
         # Cria SystemPromptParts
         parts = SystemPromptParts(
@@ -261,10 +266,14 @@ class PromptBuilder:
         if sections.intersection(
             {
                 "identity_and_objective",
+                "response_style_contract",
+                "response_style_runtime_reminder",
+                "personality_and_collaboration",
+                "acting_contract",
+                "final_response_contract",
                 "work_management",
                 "evidence_and_tool_use",
                 "safety_and_user_work",
-                "final_response_contract",
                 "provider_data_boundary",
             }
         ):
@@ -304,6 +313,19 @@ class PromptBuilder:
             add("slash")
             add("reminder")
         return names
+
+    def _with_frontloaded_agent_sections(
+        self,
+        base_sections: tuple[SystemPromptSection, ...],
+    ) -> tuple[SystemPromptSection, ...]:
+        """Insert stable persona sections immediately after response style."""
+
+        frontloaded = get_frontloaded_agent_sections()
+        if not frontloaded:
+            return base_sections
+        if not base_sections:
+            return frontloaded
+        return (base_sections[0], *frontloaded, *base_sections[1:])
 
     def _prompt_tool_names(
         self,
@@ -433,12 +455,11 @@ class PromptBuilder:
 
     def _context_lifecycle_section(self) -> SystemPromptSection:
         def render() -> str:
-            return """# Context Lifecycle Surfaces
+            return """Context Lifecycle Surfaces
 
-- Prompt construction uses cacheable stable sections before the dynamic boundary and runtime sections after it.
-- Session memory, slash command reminders, system context, and user context can change per turn and must be treated as current.
-- Conversation compaction may replace older messages with a structured reminder. Use the reminder for continuity and recent messages for exact state.
-- Next-step suggestions are generated outside the main answer and must not affect the final answer unless the user explicitly follows them."""
+Prompt construction uses cacheable stable sections before the dynamic boundary and runtime sections after it. Session memory, slash command reminders, system context, and user context can change per turn and must be treated as current.
+
+Conversation compaction may replace older messages with a structured reminder; use it for continuity and recent messages for exact state. Next-step suggestions are generated outside the main answer and must not affect the final answer unless the user explicitly follows them."""
 
         return SystemPromptSection("context_lifecycle", render)
 
@@ -452,12 +473,12 @@ class PromptBuilder:
 
         def render() -> str:
             lines = [
-                "# Prompt Commands",
+                "Prompt Commands",
                 "",
-                "Markdown slash commands can provide reusable prompt instructions. If the user invokes one, the expanded command content appears as a runtime reminder.",
+                "Markdown slash commands can provide reusable prompt instructions. If the user invokes one, the expanded command content appears as a runtime reminder. This inventory is lookup data; do not imitate it as a final-answer list.",
             ]
             for command in visible[:80]:
-                detail = f"- {command.slash_name}: {command.description or 'Prompt command'}"
+                detail = f"{command.slash_name}: {command.description or 'Prompt command'}"
                 if command.argument_hint:
                     detail += f" Args: {command.argument_hint}"
                 if command.when_to_use:
@@ -477,12 +498,12 @@ class PromptBuilder:
 
         def render() -> str:
             lines = [
-                "# Skill Inventory",
+                "Skill Inventory",
                 "",
-                "Skills are progressive-disclosure instruction packs. Load a skill with the Skill tool only when its description matches the current task.",
+                "Skills are progressive-disclosure instruction packs. Load a skill with the Skill tool only when its description matches the current task. This inventory is lookup data; do not imitate it as a final-answer list.",
             ]
             for skill in visible[:100]:
-                detail = f"- {skill.name}: {skill.description or 'Local skill'}"
+                detail = f"{skill.name}: {skill.description or 'Local skill'}"
                 if skill.when_to_use:
                     detail += f" When: {skill.when_to_use}"
                 if skill.user_invocable:

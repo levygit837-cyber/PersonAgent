@@ -1185,18 +1185,19 @@ class ChatCompletionUseCase:
         self,
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        reminder = (
+            "The previous provider pass stopped after tool results without a visible "
+            "final answer. Use the tool results already present in the conversation "
+            "and respond now with the final answer. Do not call more tools for this "
+            "recovery pass."
+        )
+        if messages and messages[0].get("role") == "system":
+            updated = dict(messages[0])
+            updated["content"] = f"{updated.get('content') or ''}\n\n{reminder}"
+            return [updated, *messages[1:]]
         return [
+            {"role": "system", "content": reminder},
             *messages,
-            {
-                "role": "user",
-                "content": (
-                    "<system-reminder>\n"
-                    "The previous provider pass stopped after tool results without a visible "
-                    "final answer. Use the tool results already present above and respond now "
-                    "with the final answer. Do not call more tools for this recovery pass.\n"
-                    "</system-reminder>"
-                ),
-            },
         ]
 
     def _empty_model_response_notice(self, *, provider: str, model: str) -> str:
@@ -1835,6 +1836,7 @@ class ChatCompletionUseCase:
             supports_parallel_tool_calls=self._supports_parallel_tool_calls(request, tools),
         )
         system_prompt = built_prompt.content
+        user_context_message = built_prompt.user_context_message
         sections_used = list(built_prompt.sections_used)
         has_custom_system_prompt = bool(request.system_prompt and request.system_prompt.strip())
         if has_custom_system_prompt:
@@ -1848,13 +1850,18 @@ class ChatCompletionUseCase:
                 f"{request.system_prompt.strip()}"
             )
             sections_used.append("custom_system_instructions")
-        final_prompt_tokens = estimate_text_tokens(system_prompt) + estimate_text_tokens(
-            built_prompt.user_context_message or ""
-        )
+        if user_context_message:
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                "# User Context and Runtime Reminders\n\n"
+                f"{self._clean_user_context_for_system_prompt(user_context_message)}"
+            )
+            sections_used.append("user_context_runtime")
+        final_prompt_tokens = estimate_text_tokens(system_prompt)
         memory_metadata = conversation.metadata.get("_operational_memory_prompt") or {}
         return _PromptPackage(
             system_prompt=system_prompt,
-            user_context_message=built_prompt.user_context_message,
+            user_context_message=None,
             metadata={
                 "prompt_mode": built_prompt.metadata.get("prompt_mode"),
                 "requested_prompt_mode": built_prompt.metadata.get("requested_prompt_mode"),
@@ -1905,6 +1912,7 @@ class ChatCompletionUseCase:
                 "memory_trace": memory_trace,
                 "has_custom_system_prompt": has_custom_system_prompt,
                 "custom_system_prompt_policy": "append_to_dynamic_system_prompt",
+                "user_context_in_system_prompt": bool(user_context_message),
                 "has_browser_cooperation_context": bool(browser_context),
                 "has_shared_browser_workspace_context": bool(shared_browser_context),
                 "browser_target": preparation.browser_target if preparation else None,
@@ -1994,14 +2002,18 @@ class ChatCompletionUseCase:
             ):
                 rendered["reasoning_details"] = reasoning_details
             messages.append(rendered)
-        if not prompt_package.user_context_message:
-            return messages
-        insert_at = 1 if messages and messages[0].get("role") == "system" else 0
-        messages.insert(
-            insert_at,
-            {"role": "user", "content": prompt_package.user_context_message},
-        )
         return messages
+
+    @staticmethod
+    def _clean_user_context_for_system_prompt(content: str) -> str:
+        """Remove legacy reminder tags before folding user context into system."""
+
+        cleaned = content.strip()
+        start_tag = "<system-reminder>"
+        end_tag = "</system-reminder>"
+        if cleaned.startswith(start_tag) and cleaned.endswith(end_tag):
+            cleaned = cleaned[len(start_tag) : -len(end_tag)].strip()
+        return cleaned
 
     def _estimate_request_tokens(
         self,
@@ -2151,14 +2163,13 @@ class ChatCompletionUseCase:
 
         summary = await self._summarize_messages(older, request)
         summary_message = Message(
-            role=Role.USER,
+            role=Role.SYSTEM,
             content=(
-                "<system-reminder>\n"
+                "Conversation Continuity Summary\n\n"
                 "Earlier conversation messages were compacted to stay within the context "
                 "window. Use this summary as continuity context, then rely on the recent "
                 "messages below for exact current state.\n\n"
-                f"{summary}\n"
-                "</system-reminder>"
+                f"{summary}"
             ),
             metadata={
                 "context_compaction": True,

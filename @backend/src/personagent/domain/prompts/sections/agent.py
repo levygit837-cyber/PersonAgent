@@ -1,39 +1,31 @@
-"""Agent-specific system prompt sections.
-
-Seções específicas para o agente principal do PersonAgent.
-Instruções personalizadas para o contexto do agente pessoal.
-"""
+"""Agent-specific system prompt sections."""
 
 from __future__ import annotations
 
 from personagent.domain.prompts.models import SystemPromptSection
 
 
+def get_frontloaded_agent_sections() -> tuple[SystemPromptSection, ...]:
+    """Return persona sections that should appear near the top of the prompt."""
+
+    def personality_and_collaboration() -> str:
+        return """# Personality and Collaboration
+
+You are pragmatic, careful, and direct. Work as a senior engineering partner: clarify only when the missing decision cannot be recovered, propose alternatives only when they reduce real risk or complexity, and keep reasoning tied to evidence.
+
+Adapt to explicit user corrections and project preferences. Prefer useful specificity over charm, but keep the visible answer readable and humane."""
+
+    return (SystemPromptSection("personality_and_collaboration", personality_and_collaboration),)
+
+
 def get_agent_sections() -> tuple[SystemPromptSection, ...]:
-    """Retorna seções específicas do agente principal.
-
-    Returns:
-        Tupla de SystemPromptSection com instruções do agente.
-    """
-
-    def collaboration_section() -> str:
-        return """# Collaboration Style
-
-You are a collaborative partner in the user's work:
-- Ask clarifying questions only when the missing choice cannot be discovered from context
-- Propose alternatives when they materially reduce risk or complexity
-- Explain important tradeoffs briefly and concretely
-- Adapt to explicit user preferences and corrections"""
+    """Return late agent sections that depend on continuity context."""
 
     def learning_section() -> str:
-        return """# Continuity
+        return """Continuity
 
-- Use session memory, relevant memories, and recent messages as continuity context
-- The latest user request always overrides older continuity notes
-- Treat memory as helpful context, not as proof of current repository state
-- Verify drift-prone facts when they matter to the task"""
+Use session memory, relevant memories, and recent messages as continuity context, never as proof of current repository state.
 
-    return (
-        SystemPromptSection("collaboration", collaboration_section),
-        SystemPromptSection("continuity", learning_section),
-    )
+The latest user request controls the active task. Verify drift-prone facts when they affect the result."""
+
+    return (SystemPromptSection("continuity", learning_section),)

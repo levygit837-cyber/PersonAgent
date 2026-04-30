@@ -11,6 +11,10 @@ from personagent.domain.models.inference_result import InferenceResult, StreamCh
 from personagent.domain.prompts import infer_prompt_mode
 from personagent.domain.prompts.models import AgentStateProfile, PromptProfile, SystemPromptSection
 from personagent.domain.prompts.prompt import PROMPT_DYNAMIC_BOUNDARY, get_mode_prompt_section
+from personagent.domain.prompts.sections.states import (
+    ORDERED_AGENT_STATES,
+    get_agent_state_sections,
+)
 from personagent.domain.prompts.services import (
     AgentStateResolver,
     PromptBuilder,
@@ -50,10 +54,57 @@ class TestPromptBuilder:
 
         assert result.content is not None
         assert len(result.content) > 0
+        assert result.content.startswith("# Response Style Contract")
+        assert "# Personality and Collaboration" in result.content
         assert "# Identity and Objective" in result.content
-        assert "# Work Management" in result.content
-        assert "# Evidence and Tool Use" in result.content
-        assert "# Provider Data Boundary" in result.content
+        assert "# Acting Contract" in result.content
+        assert "# Final Response Contract" in result.content
+        assert "Provider Data Boundary" in result.content
+
+    @pytest.mark.asyncio
+    async def test_response_style_and_personality_are_frontloaded(
+        self, system_context, user_context
+    ):
+        """Response style and personality should have priority before identity/action rules."""
+        builder = PromptBuilder(permission_mode="manual", enable_agent_sections=True)
+        result = await builder.build(system_context, user_context)
+
+        response_index = result.content.index("# Response Style Contract")
+        personality_index = result.content.index("# Personality and Collaboration")
+        identity_index = result.content.index("# Identity and Objective")
+        acting_index = result.content.index("# Acting Contract")
+        final_index = result.content.index("# Final Response Contract")
+
+        assert response_index < personality_index < identity_index < acting_index < final_index
+
+    @pytest.mark.asyncio
+    async def test_response_style_contract_discourages_report_bloat(
+        self, system_context, user_context
+    ):
+        """The stable prompt should explicitly prefer concise prose over report formatting."""
+        builder = PromptBuilder(permission_mode="manual", enable_agent_sections=True)
+        result = await builder.build(
+            system_context,
+            user_context,
+            available_tools=["Read", "Grep", "Glob", "TodoWrite"],
+            supports_parallel_tool_calls=True,
+        )
+
+        assert "Default final answers should be easy to read" in result.content
+        assert "Avoid long wall-of-text paragraphs" in result.content
+        assert "paragraph labels like `Resultado:`" in result.content
+        assert "flat dash bullets exactly as `- conteudo`" in result.content
+        assert "do not convert it into `1.`, `2.`, `3.` steps" in result.content
+        assert "Do not use tables or diagrams by default" in result.content
+        assert "Avoid emoji markers" in result.content
+        assert "constant tables" in result.content
+        assert "If the user asks for result, evidence, uncertainty, and validation" in result.content
+        assert "Response Style Runtime Reminder" in result.content
+        assert "response_style_runtime_reminder" in result.sections_used
+        bullet_lines = [
+            line for line in result.content.splitlines() if line.lstrip().startswith("- ")
+        ]
+        assert len(bullet_lines) == 0
 
     @pytest.mark.asyncio
     async def test_build_with_tools(self, system_context, user_context):
@@ -115,8 +166,8 @@ class TestPromptBuilder:
         builder = PromptBuilder(permission_mode="manual", enable_agent_sections=True)
         result = await builder.build(system_context, user_context)
 
-        assert "# Collaboration Style" in result.content
-        assert "# Continuity" in result.content
+        assert "# Personality and Collaboration" in result.content
+        assert "Continuity" in result.content
         assert "PersonAgent" in result.content
 
     @pytest.mark.asyncio
@@ -125,8 +176,8 @@ class TestPromptBuilder:
         builder = PromptBuilder(permission_mode="manual", enable_agent_sections=False)
         result = await builder.build(system_context, user_context)
 
-        assert "# Collaboration Style" not in result.content
-        assert "# Continuity" not in result.content
+        assert "# Personality and Collaboration" not in result.content
+        assert "Continuity" not in result.content
 
     @pytest.mark.asyncio
     async def test_build_includes_system_context(self, system_context, user_context):
@@ -231,9 +282,10 @@ class TestPromptBuilder:
         result = await builder.build(system_context, user_context)
 
         assert len(result.sections_used) > 0
+        assert "response_style_contract" in result.sections_used
+        assert "personality_and_collaboration" in result.sections_used
         assert "identity_and_objective" in result.sections_used
-        assert "work_management" in result.sections_used
-        assert "evidence_and_tool_use" in result.sections_used
+        assert "acting_contract" in result.sections_used
         assert "provider_data_boundary" in result.sections_used
 
     @pytest.mark.asyncio
@@ -254,9 +306,9 @@ class TestPromptBuilder:
             supports_parallel_tool_calls=False,
         )
 
-        assert "# TodoWrite Policy" not in without_todo.content
+        assert "TodoWrite Policy" not in without_todo.content
         assert "todo_write_policy" not in without_todo.sections_used
-        assert "# TodoWrite Policy" in with_todo.content
+        assert "TodoWrite Policy" in with_todo.content
         assert "todo_write_policy" in with_todo.sections_used
         assert "Keep exactly one todo in progress" in with_todo.content
 
@@ -284,9 +336,9 @@ class TestPromptBuilder:
             supports_parallel_tool_calls=True,
         )
 
-        assert "# Parallel Tool Use" not in single_tool.content
-        assert "# Parallel Tool Use" in multiple_tools.content
-        assert "# Parallel Tool Use" in provider_supported.content
+        assert "Parallel Tool Use" not in single_tool.content
+        assert "Parallel Tool Use" in multiple_tools.content
+        assert "Parallel Tool Use" in provider_supported.content
         assert "parallel_tool_use" in multiple_tools.sections_used
 
     @pytest.mark.asyncio
@@ -310,9 +362,9 @@ class TestPromptBuilder:
             available_tools=["Read"],
         )
 
-        assert "# Mode Overlay: Writing" in result.content
-        assert "# Agent State: Implementation" in result.content
-        assert "# Agent State: Runtime Validation" in result.content
+        assert "Mode Overlay: Writing" in result.content
+        assert "Agent State: Implementation" in result.content
+        assert "Agent State: Runtime Validation" in result.content
         assert "state_implementation" in result.sections_used
         assert result.metadata["agent_states"] == [
             "intake",
@@ -393,11 +445,13 @@ class TestPromptBuilder:
 
         local = await builder.build(system_context, user_context, provider="llama", model="local")
         hosted = await builder.build(system_context, user_context, provider="nvidia", model="hosted")
+        deepseek = await builder.build(system_context, user_context, provider="deepseek", model="deepseek-v4-flash")
         codex = await builder.build(system_context, user_context, provider="codex", model="gpt-5.5")
         unknown = await builder.build(system_context, user_context, provider="custom", model="custom")
 
         assert local.metadata["provider_data_boundary"] == "local_model_local_tools"
         assert hosted.metadata["provider_data_boundary"] == "hosted_model_external_provider_local_tools"
+        assert deepseek.metadata["provider_data_boundary"] == "hosted_model_external_provider_local_tools"
         assert codex.metadata["provider_data_boundary"] == "codex_subscription_external_model_local_tools"
         assert unknown.metadata["provider_data_boundary"] == "unknown_provider_local_tools"
         assert "Do not claim that all data stays local" in hosted.content
@@ -648,7 +702,7 @@ class TestPromptBuilder:
         )
 
         assert result.metadata["prompt_mode"] == "research"
-        assert "# Mode Overlay: Research" in result.content
+        assert "Mode Overlay: Research" in result.content
 
     @pytest.mark.parametrize("mode", ["writing", "exploring", "research"])
     def test_each_mode_prompt_has_compact_instruction_lines(self, mode):
@@ -656,9 +710,21 @@ class TestPromptBuilder:
 
         assert isinstance(content, str)
         lines = content.splitlines()
-        assert 7 <= len(lines) <= 20
-        assert lines[0] == f"# Mode Overlay: {mode.title()}"
+        assert 5 <= len(lines) <= 12
+        assert lines[0] == f"Mode Overlay: {mode.title()}"
         assert "80" not in content
+
+    def test_agent_state_overlays_are_compact(self):
+        """Each state overlay should stay behavior-focused and visually light."""
+        sections = get_agent_state_sections(ORDERED_AGENT_STATES)
+
+        for section in sections:
+            content = section.compute()
+            assert isinstance(content, str)
+            bullet_lines = [
+                line for line in content.splitlines() if line.lstrip().startswith("- ")
+            ]
+            assert len(bullet_lines) <= 3, section.name
 
     @pytest.mark.asyncio
     async def test_dynamic_boundary_is_inserted(self, system_context, user_context):
