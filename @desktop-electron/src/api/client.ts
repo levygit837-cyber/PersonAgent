@@ -314,6 +314,29 @@ async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit)
   return (await response.json()) as T;
 }
 
+export async function fetchBackendText(url: string, init?: RequestInit): Promise<string> {
+  const authHeaders = await personAgentAuthHeaders();
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      ...authHeaders,
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (!response.ok) {
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      // Non-JSON error bodies keep status text.
+    }
+    throw new PersonAgentApiError(
+      extractApiErrorEnvelope(body, response.status, response.statusText),
+    );
+  }
+  return response.text();
+}
+
 export function listConversations(baseUrl: string) {
   return requestJson<ConversationSummary[]>(baseUrl, "/conversations");
 }

@@ -27,6 +27,7 @@ import {
   clickSessionBrowser,
   connectSessionBrowserCooperation,
   createSessionBrowserAnnotation,
+  fetchBackendText,
   getSessionBrowserView,
   getSessionPanel,
   getSessionProjectDetail,
@@ -2105,8 +2106,7 @@ function BrowserTabContent({
     }
     let cancelled = false;
     setRemoteDocumentHtml("");
-    fetch(documentUrl)
-      .then((response) => (response.ok ? response.text() : ""))
+    fetchBackendText(documentUrl)
       .then((html) => {
         if (!cancelled) setRemoteDocumentHtml(html);
       })

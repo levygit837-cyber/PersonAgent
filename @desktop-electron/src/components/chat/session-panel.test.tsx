@@ -7,6 +7,7 @@ import {
   clickSessionBrowser,
   connectSessionBrowserCooperation,
   createSessionBrowserAnnotation,
+  fetchBackendText,
   getSessionBrowserView,
   getSessionPanel,
   getSessionProjectDetail,
@@ -51,6 +52,7 @@ vi.mock("../../api/client", () => ({
     remote_url: null,
   }),
   forkConversation: vi.fn(),
+  fetchBackendText: vi.fn(),
   clickSessionBrowser: vi.fn(),
   connectSessionBrowserCooperation: vi.fn(),
   createSessionBrowserAnnotation: vi.fn(),
@@ -207,6 +209,7 @@ describe("SessionPanel", () => {
   const keySessionBrowserMock = vi.mocked(keySessionBrowser);
   const scrollSessionBrowserMock = vi.mocked(scrollSessionBrowser);
   const setSessionBrowserCooperationMock = vi.mocked(setSessionBrowserCooperation);
+  const fetchBackendTextMock = vi.mocked(fetchBackendText);
   const listModelsMock = vi.mocked(listModels);
   const listChatCommandsMock = vi.mocked(listChatCommands);
 
@@ -267,6 +270,8 @@ describe("SessionPanel", () => {
         cooperation: { enabled: true, mode: "observe_only", agent_control: "observe_only", browser_id: "conversation-1" },
       },
     });
+    fetchBackendTextMock.mockReset();
+    fetchBackendTextMock.mockResolvedValue("");
     getSessionPanelMock.mockReset();
     getSessionPanelMock.mockResolvedValue(snapshot);
     getSessionProjectDetailMock.mockReset();
@@ -492,13 +497,9 @@ describe("SessionPanel", () => {
   it("loads HTML mirror documents from artifact refs", async () => {
     const originalCreateObjectUrl = URL.createObjectURL;
     const originalRevokeObjectUrl = URL.revokeObjectURL;
-    const originalFetch = globalThis.fetch;
     URL.createObjectURL = vi.fn(() => "blob:browser-document-ref");
     URL.revokeObjectURL = vi.fn();
-    globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      text: async () => "<html><body><main>Stored mirror</main></body></html>",
-    })) as unknown as typeof fetch;
+    vi.mocked(fetchBackendText).mockResolvedValue("<html><body><main>Stored mirror</main></body></html>");
     getSessionBrowserViewMock.mockResolvedValue(
       browserView("https://example.com", "conversation-1", "Example Domain", {
         html: "",
@@ -517,7 +518,7 @@ describe("SessionPanel", () => {
       await openBrowserPanelTab();
 
       await waitFor(() =>
-        expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect(fetchBackendText).toHaveBeenCalledWith(
           "http://localhost:8000/artifacts/conversation-1/browser-documents/document.html",
         ),
       );
@@ -525,7 +526,6 @@ describe("SessionPanel", () => {
     } finally {
       URL.createObjectURL = originalCreateObjectUrl;
       URL.revokeObjectURL = originalRevokeObjectUrl;
-      globalThis.fetch = originalFetch;
     }
   });
 
