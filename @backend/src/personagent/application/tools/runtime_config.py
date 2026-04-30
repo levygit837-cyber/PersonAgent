@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from personagent.infrastructure.artifacts import DEFAULT_ARTIFACT_ROOT
+
 DEFAULT_MAX_TOOL_ITERATIONS: int | None = None
 
 
@@ -23,8 +25,8 @@ class ToolRuntimeConfig:
     shell_timeout_ms: int = 10_000
     web_timeout_ms: int = 15_000
     web_max_bytes: int = 10_000_000
-    result_max_chars: int | None = None
-    tool_result_storage_root: Path | None = None
+    result_max_chars: int | None = 60_000
+    tool_result_storage_root: Path | None = DEFAULT_ARTIFACT_ROOT
     web_allowed_domains: tuple[str, ...] = ()
     web_blocked_domains: tuple[str, ...] = ("localhost", "127.0.0.1", "0.0.0.0")
     web_allow_private_hosts: bool = False
@@ -46,7 +48,7 @@ class ToolRuntimeConfig:
         shell_timeout_ms: int = 10_000,
         web_timeout_ms: int = 15_000,
         web_max_bytes: int = 10_000_000,
-        result_max_chars: int | None = None,
+        result_max_chars: int | None = 60_000,
         tool_result_storage_root: str | Path | None = None,
         web_allowed_domains: list[str] | tuple[str, ...] | None = None,
         web_blocked_domains: list[str] | tuple[str, ...] | None = None,
@@ -73,7 +75,7 @@ class ToolRuntimeConfig:
             tool_result_storage_root=(
                 Path(tool_result_storage_root).expanduser().resolve()
                 if tool_result_storage_root
-                else None
+                else DEFAULT_ARTIFACT_ROOT.expanduser().resolve()
             ),
             web_allowed_domains=tuple(item.lower() for item in (web_allowed_domains or ())),
             web_blocked_domains=tuple(

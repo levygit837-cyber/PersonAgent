@@ -85,8 +85,12 @@ export interface PersistedMessage {
 
 export interface GeneratedImage {
   mime_type: string;
-  data: string;
+  data?: string;
   alt?: string;
+  artifact_id?: string;
+  url?: string;
+  size_bytes?: number;
+  sha256?: string;
 }
 
 export interface ConversationDetail {

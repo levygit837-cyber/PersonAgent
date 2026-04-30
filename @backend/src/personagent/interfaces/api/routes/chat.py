@@ -153,7 +153,7 @@ class ChatResponse(BaseModel):
     usage: dict | None = None
     model: str | None = None
     provider: str | None = None
-    images: list[dict[str, str]] = Field(default_factory=list)
+    images: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PromptPreviewResponse(BaseModel):
@@ -534,6 +534,7 @@ def _create_chat_use_case(
         operational_memory_service=container.get_operational_memory_service(),
         context_window_tokens=resolve_context_window_tokens(container, provider),
         default_output_tokens=resolve_default_output_tokens(container, provider),
+        artifact_root=container.settings.personagent_artifact_root,
     )
 
 
@@ -874,6 +875,7 @@ async def chat_completion(
         operational_memory_service=container.get_operational_memory_service(),
         context_window_tokens=resolve_context_window_tokens(container, provider),
         default_output_tokens=resolve_default_output_tokens(container, provider),
+        artifact_root=container.settings.personagent_artifact_root,
     )
 
     conversation_id = None
@@ -963,6 +965,7 @@ async def chat_completion_stream(
         operational_memory_service=container.get_operational_memory_service(),
         context_window_tokens=resolve_context_window_tokens(container, provider),
         default_output_tokens=resolve_default_output_tokens(container, provider),
+        artifact_root=container.settings.personagent_artifact_root,
     )
 
     conversation_id = None

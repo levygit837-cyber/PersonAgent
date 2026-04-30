@@ -304,9 +304,12 @@ function ShellToolEvent({ block, nested = false, forceExpanded = false }: { bloc
         </button>
       </div>
       {hasOutput && !outputCollapsed ? (
-        <pre className="ml-4 mt-2 max-h-72 overflow-auto rounded-xl border border-glass-border/35 bg-card/80 p-3 font-mono text-[11px] leading-5 text-muted-foreground shadow-soft">
-          {output}
-        </pre>
+        <div className="ml-4 mt-2 overflow-hidden rounded-xl border border-glass-border/35 bg-card/80 shadow-soft">
+          <ArtifactNotice block={block} />
+          <pre className="max-h-72 overflow-auto p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+            {output}
+          </pre>
+        </div>
       ) : null}
     </div>
   );
@@ -389,6 +392,7 @@ function GenericToolEvent({ block, nested = false, forceExpanded = false }: { bl
               className="max-h-80 w-full object-contain bg-background/60"
             />
           ) : null}
+          <ArtifactNotice block={block} />
           {output.trim() ? (
             <pre className={browserImage ? "max-h-72 overflow-auto border-t border-glass-border/35 p-3 font-mono text-[11px] leading-5 text-muted-foreground" : "max-h-72 overflow-auto p-3 font-mono text-[11px] leading-5 text-muted-foreground"}>
               {output}
@@ -416,6 +420,7 @@ function SearchOutputPanel({ block, rows }: { block: ToolBlockUi; rows: SearchOu
           ))}
         </dl>
       ) : null}
+      <ArtifactNotice block={block} />
       {rows.length > 0 ? (
         <div className={metadata.length > 0 ? "mt-3 max-h-72 overflow-auto font-mono text-[11px] leading-5" : "max-h-72 overflow-auto font-mono text-[11px] leading-5"}>
           {rows.map((row, index) => (
@@ -431,6 +436,18 @@ function SearchOutputPanel({ block, rows }: { block: ToolBlockUi; rows: SearchOu
           No output returned.
         </div>
       )}
+    </div>
+  );
+}
+
+function ArtifactNotice({ block }: { block: ToolBlockUi }) {
+  const storageRef = stringValue(block.data?.storage_ref);
+  if (!storageRef) return null;
+  const originalChars = numberValue(block.data?.original_chars);
+  return (
+    <div className="border-b border-glass-border/35 bg-secondary/[0.25] px-3 py-2 font-mono text-[11px] leading-5 text-muted-foreground">
+      Full output saved: <span className="break-all text-foreground/80">{storageRef}</span>
+      {originalChars ? <span className="text-muted-foreground/70"> ({originalChars} chars)</span> : null}
     </div>
   );
 }

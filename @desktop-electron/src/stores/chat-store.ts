@@ -2747,13 +2747,14 @@ function applyImageChunks(
   set: (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
 ) {
   if (images.length === 0) return;
+  const normalizedImages = normalizeGeneratedImageUrls(images);
   set((state) => ({
     messages: state.messages.map((item) => {
       if (item.id !== agentId) return item;
       const next = closeActiveReasoning(item, true);
       return {
         ...next,
-        parts: appendImageParts(next.parts, next.id, images),
+        parts: appendImageParts(next.parts, next.id, normalizedImages),
       };
     }),
   }));
@@ -3021,12 +3022,28 @@ function isRenderablePersistedMessage(message: PersistedMessage) {
 
 function imageListFromMetadata(value: unknown): GeneratedImage[] {
   if (!Array.isArray(value)) return [];
-  return value.filter(isGeneratedImage);
+  return normalizeGeneratedImageUrls(value.filter(isGeneratedImage));
 }
 
 function isGeneratedImage(value: unknown): value is GeneratedImage {
   if (!isRecord(value)) return false;
-  return typeof value.mime_type === "string" && typeof value.data === "string";
+  return (
+    typeof value.mime_type === "string" &&
+    (typeof value.data === "string" ||
+      typeof value.url === "string" ||
+      typeof value.artifact_id === "string")
+  );
+}
+
+function normalizeGeneratedImageUrls(images: GeneratedImage[]) {
+  const baseUrl = useAppStore.getState().baseUrl.replace(/\/+$/, "");
+  return images.map((image) => {
+    if (!image.url || /^https?:\/\//i.test(image.url) || image.url.startsWith("data:") || image.url.startsWith("blob:")) {
+      return image;
+    }
+    const url = image.url.startsWith("/") ? `${baseUrl}${image.url}` : `${baseUrl}/${image.url}`;
+    return { ...image, url };
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

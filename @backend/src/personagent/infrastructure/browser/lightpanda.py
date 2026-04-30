@@ -19,6 +19,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 import httpx
 import structlog
 
+from personagent.infrastructure.artifacts import store_bytes_artifact, store_text_artifact
 from personagent.infrastructure.browser.content_cleanup import (
     MARKDOWN_LINK_PATTERN as _MARKDOWN_LINK_PATTERN,
 )
@@ -40,6 +41,7 @@ from personagent.infrastructure.browser.models import (
 from personagent.infrastructure.browser.models import (
     BrowserSession as _BrowserSession,
 )
+from personagent.infrastructure.browser.page_cache import get_browser_page_cache
 from personagent.infrastructure.browser.url_utils import (
     browser_empty_fallback_html as _browser_empty_fallback_html,
 )
@@ -87,14 +89,14 @@ _HTML_ATTR_PATTERN = re.compile(
     r"(?P<name>[a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?P<value>\"[^\"]*\"|'[^']*'|[^\s\"'>`]+)"
 )
 _CSS_URL_PATTERN = re.compile(r"url\((?P<quote>['\"]?)(?P<url>[^)'\"\s][^)'\"]*)(?P=quote)\)")
-_STYLESHEET_CACHE_TTL_SECONDS = float(os.getenv("PERSONAGENT_BROWSER_CSS_CACHE_TTL_SECONDS", "3600"))
-_MAX_STYLESHEET_CACHE_ENTRIES = int(os.getenv("PERSONAGENT_BROWSER_CSS_CACHE_ENTRIES", "1024"))
+_STYLESHEET_CACHE_TTL_SECONDS = float(os.getenv("PERSONAGENT_BROWSER_CSS_CACHE_TTL_SECONDS", "900"))
+_MAX_STYLESHEET_CACHE_ENTRIES = int(os.getenv("PERSONAGENT_BROWSER_CSS_CACHE_ENTRIES", "256"))
 _MAX_STYLESHEET_HREFS_PER_PAGE = int(os.getenv("PERSONAGENT_BROWSER_CSS_MAX_HREFS", "32"))
 _STYLESHEET_CACHE_DIR = Path(
     os.getenv("PERSONAGENT_BROWSER_CSS_CACHE_DIR", str(Path.home() / ".cache/personagent/browser-css"))
 )
-_RENDER_SNAPSHOT_CACHE_TTL_SECONDS = float(os.getenv("PERSONAGENT_BROWSER_RENDER_CACHE_TTL_SECONDS", "300"))
-_MAX_RENDER_SNAPSHOT_CACHE_ENTRIES = int(os.getenv("PERSONAGENT_BROWSER_RENDER_CACHE_ENTRIES", "64"))
+_RENDER_SNAPSHOT_CACHE_TTL_SECONDS = float(os.getenv("PERSONAGENT_BROWSER_RENDER_CACHE_TTL_SECONDS", "180"))
+_MAX_RENDER_SNAPSHOT_CACHE_ENTRIES = int(os.getenv("PERSONAGENT_BROWSER_RENDER_CACHE_ENTRIES", "16"))
 _RAW_CDP_RETRY_DELAYS = (0.0, 0.5, 1.5, 3.0, 5.0)
 _MAX_CONSOLE_ENTRIES_PER_PAGE = 200
 _MAX_BROWSER_SCRIPT_CHARS = 10_000
@@ -1073,8 +1075,13 @@ class LightPandaBrowserWorker:
         cdp_url: str = "http://127.0.0.1:9222",
         timeout_ms: int = 30_000,
         search_base_url: str = _DEFAULT_SEARCH_BASE_URL,
-        session_ttl_seconds: int = 900,
-        max_sessions: int = 32,
+        session_ttl_seconds: int = 600,
+        max_sessions: int = 12,
+        artifact_root: str | Path | None = None,
+        render_cache_entries: int = _MAX_RENDER_SNAPSHOT_CACHE_ENTRIES,
+        render_cache_ttl_seconds: float = _RENDER_SNAPSHOT_CACHE_TTL_SECONDS,
+        css_cache_entries: int = _MAX_STYLESHEET_CACHE_ENTRIES,
+        css_cache_ttl_seconds: float = _STYLESHEET_CACHE_TTL_SECONDS,
         auto_start_lightpanda: bool = True,
         connector: Connector | None = None,
     ) -> None:
@@ -1085,6 +1092,11 @@ class LightPandaBrowserWorker:
         self.search_provider = _infer_search_provider(self.search_base_url)
         self.session_ttl_seconds = max(1, int(session_ttl_seconds))
         self.max_sessions = max(1, int(max_sessions))
+        self.artifact_root = Path(artifact_root).expanduser() if artifact_root else None
+        self._max_render_snapshot_cache_entries = max(1, int(render_cache_entries))
+        self._render_snapshot_cache_ttl_seconds = max(1.0, float(render_cache_ttl_seconds))
+        self._max_stylesheet_cache_entries = max(1, int(css_cache_entries))
+        self._stylesheet_cache_ttl_seconds = max(1.0, float(css_cache_ttl_seconds))
         self.auto_start_lightpanda = auto_start_lightpanda
         self._connector = connector
         self._lock = asyncio.Lock()
@@ -2750,7 +2762,7 @@ class LightPandaBrowserWorker:
             stylesheet_count > 0 and stylesheet_loaded_count >= stylesheet_count
         )
         is_lightpanda = user_agent.lower().startswith("lightpanda/")
-        image_data = ""
+        image_bytes = b""
         image_error = ""
         if is_lightpanda:
             image_error = "LightPanda has no graphical rendering engine; using DOM mirror."
@@ -2763,7 +2775,7 @@ class LightPandaBrowserWorker:
                     screenshot(type="png", full_page=False),
                     timeout=min(max(self.timeout_ms / 1000, 1.0), 10.0),
                 )
-                image_data = base64.b64encode(raw_image).decode("ascii")
+                image_bytes = bytes(raw_image)
             except Exception as exc:
                 image_error = str(exc)
                 logger.warning("lightpanda_browser_view_screenshot_failed", error=image_error)
@@ -2772,7 +2784,7 @@ class LightPandaBrowserWorker:
             session.current_url = current_url
             self._remember_current_url(browser_id, current_url)
         session.touch()
-        render_mode = "html_mirror" if is_lightpanda or not image_data else "pixel"
+        render_mode = "html_mirror" if is_lightpanda or not image_bytes else "pixel"
         runtime = "lightpanda" if is_lightpanda else "chrome_cdp"
         css_fidelity = self._css_fidelity(
             html=html,
@@ -2810,8 +2822,37 @@ class LightPandaBrowserWorker:
             else [{"frame_id": "main", "url": current_url, "title": title, "parent_frame_id": ""}]
         )
         cooperation_events = await self._drain_cooperation_events(page, browser_id, active_tab_id)
+        document_artifact = (
+            store_text_artifact(
+                category="browser-documents",
+                conversation_id=browser_id,
+                content=html,
+                suffix=".html",
+                mime_type="text/html; charset=utf-8",
+                root=self.artifact_root,
+                ttl_seconds=max(self.session_ttl_seconds, self._render_snapshot_cache_ttl_seconds),
+            )
+            if html.strip()
+            else None
+        )
+        preview_artifact = (
+            store_bytes_artifact(
+                category="browser-previews",
+                conversation_id=browser_id,
+                content=image_bytes,
+                suffix=".png",
+                mime_type="image/png",
+                root=self.artifact_root,
+                ttl_seconds=max(self.session_ttl_seconds, self._render_snapshot_cache_ttl_seconds),
+            )
+            if image_bytes
+            else None
+        )
         browser_snapshot = {
-            "document_html": html,
+            "document_ref": document_artifact.artifact_id if document_artifact else "",
+            "document_url": document_artifact.url if document_artifact else "",
+            "preview_image_ref": preview_artifact.artifact_id if preview_artifact else "",
+            "preview_image_url": preview_artifact.url if preview_artifact else "",
             "url": current_url,
             "title": title,
             "render_mode": render_mode,
@@ -2838,8 +2879,8 @@ class LightPandaBrowserWorker:
             "browser_id": browser_id,
             "url": current_url,
             "title": title,
-            "html": html,
-            "document_html": html,
+            "document_ref": document_artifact.artifact_id if document_artifact else "",
+            "document_url": document_artifact.url if document_artifact else "",
             "render_mode": render_mode,
             "runtime": runtime,
             "css_fidelity": css_fidelity,
@@ -2862,13 +2903,15 @@ class LightPandaBrowserWorker:
             "scroll_y": scroll_state.get("scroll_y", 0),
             "browser_snapshot": browser_snapshot,
             "user_agent": user_agent,
-            "image_data": image_data,
-            "image_mime_type": "image/png" if image_data else "",
-            "screenshot_method": "playwright_page_screenshot" if image_data else "",
+            "preview_image_ref": preview_artifact.artifact_id if preview_artifact else "",
+            "preview_image_url": preview_artifact.url if preview_artifact else "",
+            "image_data": "",
+            "image_mime_type": "image/png" if preview_artifact else "",
+            "screenshot_method": "playwright_page_screenshot" if preview_artifact else "",
             "screenshot_error": image_error,
             "viewport_width": viewport_width,
             "viewport_height": viewport_height,
-            "can_capture": bool(image_data),
+            "can_capture": bool(preview_artifact),
         }
         self._store_render_snapshot_cache(render_cache_key, view, aliases=[render_cache_url_key])
         return view
@@ -3181,14 +3224,14 @@ class LightPandaBrowserWorker:
                 continue
             self._render_snapshot_cache.pop(key, None)
             self._render_snapshot_cache[key] = (
-                now + _RENDER_SNAPSHOT_CACHE_TTL_SECONDS,
+                now + self._render_snapshot_cache_ttl_seconds,
                 self._clone_render_snapshot(view, status="stored"),
             )
-        if len(self._render_snapshot_cache) > _MAX_RENDER_SNAPSHOT_CACHE_ENTRIES:
+        if len(self._render_snapshot_cache) > self._max_render_snapshot_cache_entries:
             expired = [key for key, (expires_at, _) in self._render_snapshot_cache.items() if expires_at <= now]
             for key in expired:
                 self._render_snapshot_cache.pop(key, None)
-            while len(self._render_snapshot_cache) > _MAX_RENDER_SNAPSHOT_CACHE_ENTRIES:
+            while len(self._render_snapshot_cache) > self._max_render_snapshot_cache_entries:
                 self._render_snapshot_cache.pop(next(iter(self._render_snapshot_cache)))
 
     @staticmethod
@@ -3316,7 +3359,7 @@ class LightPandaBrowserWorker:
             return cached[1], True
         disk_cached = self._read_stylesheet_disk_cache(href, now=now)
         if disk_cached:
-            self._stylesheet_cache[href] = (now + _STYLESHEET_CACHE_TTL_SECONDS, disk_cached)
+            self._stylesheet_cache[href] = (now + self._stylesheet_cache_ttl_seconds, disk_cached)
             return disk_cached, True
         response = await client.get(href)
         if response.status_code >= 400:
@@ -3326,13 +3369,13 @@ class LightPandaBrowserWorker:
         if "css" not in content_type.lower() and "{" not in css_text[:1000]:
             return "", False
         css_text = self._rewrite_css_urls(css_text[:350_000], href)
-        self._stylesheet_cache[href] = (now + _STYLESHEET_CACHE_TTL_SECONDS, css_text)
-        self._write_stylesheet_disk_cache(href, css_text, expires_at=now + _STYLESHEET_CACHE_TTL_SECONDS)
-        if len(self._stylesheet_cache) > _MAX_STYLESHEET_CACHE_ENTRIES:
+        self._stylesheet_cache[href] = (now + self._stylesheet_cache_ttl_seconds, css_text)
+        self._write_stylesheet_disk_cache(href, css_text, expires_at=now + self._stylesheet_cache_ttl_seconds)
+        if len(self._stylesheet_cache) > self._max_stylesheet_cache_entries:
             expired = [key for key, (expires_at, _) in self._stylesheet_cache.items() if expires_at <= now]
             for key in expired:
                 self._stylesheet_cache.pop(key, None)
-            while len(self._stylesheet_cache) > _MAX_STYLESHEET_CACHE_ENTRIES:
+            while len(self._stylesheet_cache) > self._max_stylesheet_cache_entries:
                 self._stylesheet_cache.pop(next(iter(self._stylesheet_cache)))
         return css_text, False
 
@@ -3380,7 +3423,7 @@ class LightPandaBrowserWorker:
                 key=lambda path: path.stat().st_mtime,
                 reverse=True,
             )
-            for path in entries[_MAX_STYLESHEET_CACHE_ENTRIES:]:
+            for path in entries[self._max_stylesheet_cache_entries:]:
                 with suppress(Exception):
                     path.unlink()
 
@@ -5248,6 +5291,7 @@ class LightPandaBrowserWorker:
         self._element_map_cache.pop(conversation_id, None)
         self._console_cache.pop(conversation_id, None)
         self._cooperation_event_cache.pop(conversation_id, None)
+        get_browser_page_cache().clear_conversation(conversation_id)
         for cache_key in [key for key in self._render_snapshot_cache if key.startswith(f"{conversation_id}::")]:
             self._render_snapshot_cache.pop(cache_key, None)
         for page in self._session_pages(session):

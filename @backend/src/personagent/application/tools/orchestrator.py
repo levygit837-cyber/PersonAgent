@@ -8,7 +8,6 @@ from collections.abc import AsyncIterator
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
-from tempfile import gettempdir
 from typing import Any
 
 from personagent.application.tools.registry import ToolRegistry
@@ -31,6 +30,9 @@ from personagent.domain.tools import (
     ToolResult,
     ToolUseContext,
 )
+from personagent.infrastructure.artifacts import DEFAULT_ARTIFACT_ROOT, safe_segment
+
+DEFAULT_TOOL_RESULT_MAX_CHARS = 60_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,13 +421,14 @@ class ToolOrchestrator:
         )
 
     def _cap_result(self, result: ToolResult, context: ToolUseContext) -> ToolResult:
-        raw_context_limit = context.limits.get("result_max_chars")
-        if raw_context_limit is None:
-            return result
+        raw_context_limit = context.limits.get(
+            "result_max_chars",
+            self._config.result_max_chars or DEFAULT_TOOL_RESULT_MAX_CHARS,
+        )
         try:
-            context_limit = int(raw_context_limit)
+            context_limit = DEFAULT_TOOL_RESULT_MAX_CHARS if raw_context_limit is None else int(raw_context_limit)
         except (TypeError, ValueError):
-            context_limit = 0
+            context_limit = DEFAULT_TOOL_RESULT_MAX_CHARS
         if context_limit <= 0:
             return result
 
@@ -452,12 +455,14 @@ class ToolOrchestrator:
             "truncated": True,
             "original_chars": len(result.content),
             "storage_ref": storage_ref,
+            "storage_kind": "local_file" if storage_ref else None,
         }
         data = {
             **result.data,
             "truncated": True,
             "original_chars": len(result.content),
             "storage_ref": storage_ref,
+            "storage_kind": "local_file" if storage_ref else None,
         }
         return replace(result, content=truncated, metadata=metadata, data=data)
 
@@ -478,6 +483,7 @@ class ToolOrchestrator:
                     "truncated": True,
                     "original_chars": len(result.content),
                     "storage_ref": storage_ref,
+                    "storage_kind": "local_file" if storage_ref else None,
                 }
             )
             for _attempt in range(20):
@@ -491,6 +497,7 @@ class ToolOrchestrator:
                             "truncated": True,
                             "original_chars": len(result.content),
                             "storage_ref": storage_ref,
+                            "storage_kind": "local_file" if storage_ref else None,
                         },
                         data=data,
                     )
@@ -533,11 +540,15 @@ class ToolOrchestrator:
 
     def _persist_large_result(self, result: ToolResult, context: ToolUseContext) -> str | None:
         raw_root = context.limits.get("tool_result_storage_root")
-        root = Path(str(raw_root)).expanduser() if raw_root else Path(gettempdir())
-        storage_dir = root / "personagent-tool-results" / context.conversation_id
+        root = (
+            Path(str(raw_root)).expanduser()
+            if raw_root
+            else self._config.tool_result_storage_root or DEFAULT_ARTIFACT_ROOT
+        )
+        storage_dir = root / "tool-results" / safe_segment(context.conversation_id)
         try:
             storage_dir.mkdir(parents=True, exist_ok=True)
-            path = storage_dir / f"{result.tool_call_id}.txt"
+            path = storage_dir / f"{safe_segment(result.tool_call_id)}.txt"
             path.write_text(result.content, encoding="utf-8")
             return str(path)
         except OSError:

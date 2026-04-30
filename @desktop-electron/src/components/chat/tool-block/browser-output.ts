@@ -157,6 +157,7 @@ function browserExtractOutput(block: ToolBlockUi, data: Record<string, unknown>)
     keyValueLine("Cache key", stringValue(data.cache_key)),
     keyValueLine("Content chars", numberValue(data.content_chars)),
     keyValueLine("Chunks", numberValue(data.chunk_count)),
+    keyValueLine("Full output", stringValue(data.storage_ref)),
     data.inline_content_truncated === true ? "Inline content truncated: true" : undefined,
     content.trim() ? `\n${content.trimEnd()}` : stringValue(data.message),
   ]);

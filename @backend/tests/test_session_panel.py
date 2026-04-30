@@ -9,7 +9,9 @@ from personagent.application.services import session_panel
 from personagent.application.services.session_panel import SessionPanelService
 from personagent.domain.models.conversation import Conversation, Message, Role
 from personagent.domain.repositories.conversation_repository import ConversationRepository
-from personagent.interfaces.api.routes import sessions
+from personagent.infrastructure.artifacts import store_bytes_artifact, store_text_artifact
+from personagent.infrastructure.config.settings import reset_settings
+from personagent.interfaces.api.routes import artifacts, sessions
 
 
 class MemoryConversationRepository(ConversationRepository):
@@ -538,3 +540,44 @@ async def test_project_snapshot_uses_clean_branch_ids(monkeypatch, tmp_path):
     assert [branch["id"] for branch in snapshot["project"]["branches"]] == ["main"]
     assert snapshot["project"]["branches"][0]["title"] == "main"
     assert snapshot["project"]["branches"][0]["active"] is True
+
+
+@pytest.mark.asyncio
+async def test_artifact_route_serves_whitelisted_payloads_and_blocks_invalid_ids(monkeypatch, tmp_path):
+    monkeypatch.setenv("PERSONAGENT_ARTIFACT_ROOT", str(tmp_path))
+    reset_settings()
+    image = store_bytes_artifact(
+        category="generated-images",
+        conversation_id="conversation-1",
+        content=b"image-bytes",
+        suffix=".png",
+        mime_type="image/png",
+        root=tmp_path,
+    )
+    blocked = store_text_artifact(
+        category="generated-images",
+        conversation_id="conversation-1",
+        content="<svg></svg>",
+        suffix=".svg",
+        mime_type="image/svg+xml",
+        root=tmp_path,
+    )
+    app = FastAPI()
+    app.include_router(artifacts.router)
+    transport = ASGITransport(app=app)
+
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            served = await client.get(image.url)
+            assert served.status_code == 200
+            assert served.content == b"image-bytes"
+            assert served.headers["content-type"].startswith("image/png")
+            assert served.headers["content-disposition"].startswith("inline;")
+
+            missing = await client.get("/artifacts/conversation-1/generated-images/missing.png")
+            assert missing.status_code == 404
+
+            rejected = await client.get(blocked.url)
+            assert rejected.status_code == 403
+    finally:
+        reset_settings()

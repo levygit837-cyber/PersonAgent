@@ -12,6 +12,7 @@ from personagent.infrastructure.config.settings import get_settings
 from personagent.infrastructure.persistence.database import init_db
 from personagent.interfaces.api.errors import install_error_handlers
 from personagent.interfaces.api.routes import (
+    artifacts,
     chat,
     conversations,
     memory,
@@ -130,6 +131,7 @@ def create_app() -> FastAPI:
     install_error_handlers(app)
 
     # Routes
+    app.include_router(artifacts.router)
     app.include_router(chat.router)
     app.include_router(conversations.router)
     app.include_router(sessions.router)

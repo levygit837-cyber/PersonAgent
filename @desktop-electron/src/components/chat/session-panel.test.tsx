@@ -434,6 +434,64 @@ describe("SessionPanel", () => {
     expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
   });
 
+  it("renders browser preview images from artifact refs", async () => {
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://example.com", "conversation-1", "Example Domain", {
+        image_data: "",
+        preview_image_url: "/artifacts/conversation-1/browser-previews/preview.png",
+      }),
+    );
+
+    renderWithProviders(<ChatWorkspace />);
+
+    await openBrowserPanelTab();
+
+    expect(await screen.findByTitle("Browser https://example.com")).toHaveAttribute(
+      "src",
+      "http://localhost:8000/artifacts/conversation-1/browser-previews/preview.png",
+    );
+  });
+
+  it("loads HTML mirror documents from artifact refs", async () => {
+    const originalCreateObjectUrl = URL.createObjectURL;
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    const originalFetch = globalThis.fetch;
+    URL.createObjectURL = vi.fn(() => "blob:browser-document-ref");
+    URL.revokeObjectURL = vi.fn();
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      text: async () => "<html><body><main>Stored mirror</main></body></html>",
+    })) as unknown as typeof fetch;
+    getSessionBrowserViewMock.mockResolvedValue(
+      browserView("https://example.com", "conversation-1", "Example Domain", {
+        html: "",
+        document_html: "",
+        document_url: "/artifacts/conversation-1/browser-documents/document.html",
+        render_mode: "html_mirror",
+        css_fidelity: "embedded",
+        image_data: "",
+        image_mime_type: "",
+      }),
+    );
+
+    try {
+      renderWithProviders(<ChatWorkspace />);
+
+      await openBrowserPanelTab();
+
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+          "http://localhost:8000/artifacts/conversation-1/browser-documents/document.html",
+        ),
+      );
+      expect(await screen.findByTitle("Browser https://example.com")).toHaveAttribute("src", "blob:browser-document-ref");
+    } finally {
+      URL.createObjectURL = originalCreateObjectUrl;
+      URL.revokeObjectURL = originalRevokeObjectUrl;
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("shows browser tracing data and changes cooperation mode from the toolbar", async () => {
     getSessionBrowserViewMock.mockResolvedValue(
       browserView("https://example.com", "conversation-1", "Example", {

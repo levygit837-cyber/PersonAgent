@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import base64
 import json
+import time
 from pathlib import Path
 
 import pytest
 
 from personagent.application.tools import ToolOrchestrator, ToolRegistry, ToolRuntimeConfig
 from personagent.domain.tools import ToolCall, ToolExecutionStatus, ToolUseContext
+from personagent.infrastructure.artifacts import load_artifact
 from personagent.infrastructure.browser import (
     BrowserSearchResult,
     BrowserUnavailableError,
@@ -19,6 +20,7 @@ from personagent.infrastructure.browser.lightpanda import (
     _clean_browser_url,
     _clean_extracted_content,
 )
+from personagent.infrastructure.browser.page_cache import BrowserPageCache
 from personagent.infrastructure.tools import create_browser_tools
 from personagent.infrastructure.tools.browser_tools import _summarize_element_map
 from personagent.interfaces.config.di_container import DIContainer
@@ -128,7 +130,8 @@ async def test_lightpanda_browser_view_navigation_returns_screenshot_payload():
     assert result["type"] == "browser_view"
     assert result["url"] == "https://example.com"
     assert result["image_mime_type"] == "image/png"
-    assert result["image_data"] == base64.b64encode(b"browser-image").decode("ascii")
+    assert result["image_data"] == ""
+    assert result["preview_image_url"]
     assert page.viewport_size == {"width": 800, "height": 500}
 
 
@@ -214,7 +217,12 @@ async def test_lightpanda_browser_view_uses_computed_fallback_when_css_not_ready
     assert result["render_mode"] == "computed_html"
     assert result["css_fidelity"] == "computed"
     assert result["style_ready"] is True
-    assert "personagent-css-fidelity" in result["document_html"]
+    document = load_artifact(
+        category="browser-documents",
+        conversation_id="panel-browser",
+        artifact_id=result["document_ref"],
+    )
+    assert "personagent-css-fidelity" in document.path.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -247,7 +255,7 @@ async def test_lightpanda_browser_render_cache_returns_cached_snapshot():
     assert first["render_cache_key"] == cached["render_cache_key"]
     assert cached["render_cache_status"] == "hit"
     assert cached["browser_snapshot"]["render_cache_status"] == "hit"
-    assert cached["document_html"] == first["document_html"]
+    assert cached["document_ref"] == first["document_ref"]
 
 
 def test_clean_browser_url_strips_encoded_invisible_suffix():
@@ -1295,6 +1303,53 @@ async def test_browser_content_chunks_read_multiple_chunks_without_link_dump(tmp
     assert chunk_data["links"] == []
     assert chunk_data["links_summary"]["suppressed"] is True
     assert chunk_data["returned_chars"] <= 6_000
+
+
+def test_browser_page_cache_stores_chunks_on_disk_and_evicts_by_ttl_and_lru(tmp_path):
+    cache = BrowserPageCache(
+        root=tmp_path,
+        ttl_seconds=60,
+        per_conversation_limit=1,
+        global_limit=2,
+    )
+    first = cache.store(
+        conversation_id="conversation-a",
+        cache_key="first",
+        url="https://example.com/first",
+        title="First",
+        page_id="page-1",
+        content_chars=10,
+        chunk_size=5,
+        chunks=["alpha", "beta"],
+        chunk_ranges=[(0, 5), (5, 10)],
+        links=[],
+        links_summary={},
+        buttons=[],
+    )
+    second = cache.store(
+        conversation_id="conversation-a",
+        cache_key="second",
+        url="https://example.com/second",
+        title="Second",
+        page_id="page-2",
+        content_chars=5,
+        chunk_size=5,
+        chunks=["gamma"],
+        chunk_ranges=[(0, 5)],
+        links=[],
+        links_summary={},
+        buttons=[],
+    )
+
+    assert cache.get("conversation-a", "first") is None
+    assert not first.directory.exists()
+    loaded = cache.get("conversation-a", "second")
+    assert loaded is not None
+    assert cache.read_chunks(loaded, 1, 1) == ["gamma"]
+
+    second.expires_at = time.time() - 1
+    assert cache.get("conversation-a", "second") is None
+    assert not second.directory.exists()
 
 
 @pytest.mark.asyncio

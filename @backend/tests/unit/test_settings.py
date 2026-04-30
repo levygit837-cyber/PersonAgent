@@ -234,8 +234,17 @@ def test_lightpanda_settings_defaults():
     assert settings.browser_cdp_url is None
     assert settings.lightpanda_timeout_ms == 30_000
     assert settings.lightpanda_search_base_url == "https://search.yahoo.com/search"
-    assert settings.lightpanda_session_ttl_seconds == 900
-    assert settings.lightpanda_max_sessions == 32
+    assert settings.personagent_artifact_root == "~/.cache/personagent/artifacts"
+    assert settings.tools_result_max_chars == 60_000
+    assert settings.lightpanda_session_ttl_seconds == 600
+    assert settings.lightpanda_max_sessions == 12
+    assert settings.personagent_browser_page_cache_ttl_seconds == 1_800
+    assert settings.personagent_browser_page_cache_per_conversation == 8
+    assert settings.personagent_browser_page_cache_global_entries == 128
+    assert settings.personagent_browser_render_cache_entries == 16
+    assert settings.personagent_browser_render_cache_ttl_seconds == 180
+    assert settings.personagent_browser_css_cache_entries == 256
+    assert settings.personagent_browser_css_cache_ttl_seconds == 900
     assert settings.prompt_context_analysis_timeout_seconds == 12
     assert settings.prompt_context_analysis_long_timeout_seconds == 30
     assert settings.prompt_context_analysis_failure_cooldown_seconds == 15

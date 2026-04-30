@@ -252,7 +252,8 @@ function TooltipIconButton({
 
 const GeneratedImageContent = memo(function GeneratedImageContent({ image }: { image: GeneratedImage }) {
   const mimeType = image.mime_type || "image/png";
-  const src = `data:${mimeType};base64,${image.data}`;
+  const src = image.url || (image.data ? `data:${mimeType};base64,${image.data}` : "");
+  if (!src) return null;
   return (
     <figure className="my-3 max-w-3xl">
       <img

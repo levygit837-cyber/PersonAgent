@@ -66,6 +66,7 @@ async def _chat(
             llm_backend=llm_backend,
             tool_registry=container.get_tool_registry(),
             tool_runtime_config=container.get_tool_runtime_config(),
+            artifact_root=container.settings.personagent_artifact_root,
         )
 
         conv_id = UUID(conversation_id) if conversation_id else None

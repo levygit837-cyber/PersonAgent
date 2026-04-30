@@ -285,8 +285,10 @@ function browserViewIsPlaceholder(view: SessionBrowserView | undefined) {
   return (
     !view.can_capture &&
     !String(view.image_data || "").trim() &&
+    !String(view.preview_image_url || "").trim() &&
     !String(view.html || "").trim() &&
-    !String(view.document_html || "").trim()
+    !String(view.document_html || "").trim() &&
+    !String(view.document_url || "").trim()
   );
 }
 
@@ -334,7 +336,11 @@ function rememberBrowserRenderView(browserId: string, view: SessionBrowserView) 
     width: view.viewport_width || 1024,
     height: view.viewport_height || 720,
   });
-  const cachedView = { ...view, render_cache_key: view.render_cache_key || key, render_cache_status: "stored" };
+  const cachedView = compactBrowserViewForMemory({
+    ...view,
+    render_cache_key: view.render_cache_key || key,
+    render_cache_status: "stored",
+  });
   for (const cacheKey of Array.from(new Set([key, fallbackKey]))) {
     browserRenderCache.delete(cacheKey);
     browserRenderCache.set(cacheKey, cachedView);
@@ -348,6 +354,32 @@ function rememberBrowserRenderView(browserId: string, view: SessionBrowserView) 
       if (cacheKey === oldest) browserRenderCacheByUrl.delete(urlKey);
     }
   }
+}
+
+function compactBrowserViewForMemory(view: SessionBrowserView): SessionBrowserView {
+  const snapshot = view.browser_snapshot
+    ? {
+        ...view.browser_snapshot,
+        html: "",
+        document_html: "",
+        image_data: "",
+      }
+    : view.browser_snapshot;
+  return {
+    ...view,
+    html: "",
+    document_html: "",
+    image_data: "",
+    browser_snapshot: snapshot,
+  };
+}
+
+function resolveBackendUrlPath(baseUrl: string, value?: string) {
+  const raw = browserStringValue(value);
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("data:") || raw.startsWith("blob:")) return raw;
+  const root = baseUrl.replace(/\/+$/, "");
+  return raw.startsWith("/") ? `${root}${raw}` : `${root}/${raw}`;
 }
 
 function readBrowserRenderCache(
@@ -1826,6 +1858,7 @@ function BrowserTabContent({
   ) => void;
   canPersistWorkspace: boolean;
 }) {
+  const baseUrl = useAppStore((state) => state.baseUrl);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -1834,6 +1867,7 @@ function BrowserTabContent({
   const lastBrowserIdRef = useRef(browser.browserId);
   const [mirrorUrl, setMirrorUrl] = useState("");
   const [mirrorReady, setMirrorReady] = useState(false);
+  const [remoteDocumentHtml, setRemoteDocumentHtml] = useState("");
   const [pixelHoverNodeId, setPixelHoverNodeId] = useState<string | null>(null);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [tracingOpen, setTracingOpen] = useState(false);
@@ -1844,9 +1878,17 @@ function BrowserTabContent({
   const imageSource =
     browser.view?.image_data && browser.view.image_mime_type
       ? `data:${browser.view.image_mime_type};base64,${browser.view.image_data}`
-      : "";
+      : resolveBackendUrlPath(
+          baseUrl,
+          browser.view?.preview_image_url || browser.view?.browser_snapshot?.preview_image_url,
+        );
   const showRenderedPage = Boolean(imageSource && browser.currentUrl);
-  const documentHtml = browser.view?.document_html || browser.view?.browser_snapshot?.document_html || browser.view?.html || "";
+  const inlineDocumentHtml = browser.view?.document_html || browser.view?.browser_snapshot?.document_html || browser.view?.html || "";
+  const documentUrl = resolveBackendUrlPath(
+    baseUrl,
+    browser.view?.document_url || browser.view?.browser_snapshot?.document_url,
+  );
+  const documentHtml = inlineDocumentHtml || remoteDocumentHtml;
   const elementMap = browser.view?.element_map || browser.view?.browser_snapshot?.element_map || [];
   const annotations = browser.view?.annotations || browser.view?.browser_snapshot?.annotations || [];
   const timelineEvents = browser.view?.timeline_events || browser.view?.browser_snapshot?.timeline_events || [];
@@ -1962,6 +2004,26 @@ function BrowserTabContent({
     if (browser.mode !== "annotate" || !browser.selectedNodeId) return;
     annotationInputRef.current?.focus();
   }, [browser.mode, browser.selectedNodeId]);
+
+  useEffect(() => {
+    if (inlineDocumentHtml || !documentUrl) {
+      setRemoteDocumentHtml("");
+      return;
+    }
+    let cancelled = false;
+    setRemoteDocumentHtml("");
+    fetch(documentUrl)
+      .then((response) => (response.ok ? response.text() : ""))
+      .then((html) => {
+        if (!cancelled) setRemoteDocumentHtml(html);
+      })
+      .catch(() => {
+        if (!cancelled) setRemoteDocumentHtml("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [documentUrl, inlineDocumentHtml]);
 
   useEffect(() => {
     if (!browser.loading) {

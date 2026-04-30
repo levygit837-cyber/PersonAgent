@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     app_port: int = Field(default=8000, alias="APP_PORT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     secret_key: str = Field(default="change-me", alias="SECRET_KEY")
+    personagent_artifact_root: str = Field(
+        default="~/.cache/personagent/artifacts",
+        alias="PERSONAGENT_ARTIFACT_ROOT",
+    )
 
     # --- PostgreSQL ---
     postgres_host: str = Field(default="localhost", alias="POSTGRES_HOST")
@@ -219,7 +223,7 @@ class Settings(BaseSettings):
     tools_web_timeout_ms: int = Field(default=15_000, alias="TOOLS_WEB_TIMEOUT_MS")
     tools_web_max_bytes: int = Field(default=10_000_000, alias="TOOLS_WEB_MAX_BYTES")
     tools_result_max_chars: int | None = Field(
-        default=None, alias="TOOLS_RESULT_MAX_CHARS", validate_default=True
+        default=60_000, alias="TOOLS_RESULT_MAX_CHARS", validate_default=True
     )
 
     @field_validator("tools_result_max_chars", mode="before")
@@ -412,10 +416,38 @@ class Settings(BaseSettings):
         alias="LIGHTPANDA_SEARCH_BASE_URL",
     )
     lightpanda_session_ttl_seconds: int = Field(
-        default=900,
+        default=600,
         alias="LIGHTPANDA_SESSION_TTL_SECONDS",
     )
-    lightpanda_max_sessions: int = Field(default=32, alias="LIGHTPANDA_MAX_SESSIONS")
+    lightpanda_max_sessions: int = Field(default=12, alias="LIGHTPANDA_MAX_SESSIONS")
+    personagent_browser_page_cache_ttl_seconds: int = Field(
+        default=1_800,
+        alias="PERSONAGENT_BROWSER_PAGE_CACHE_TTL_SECONDS",
+    )
+    personagent_browser_page_cache_per_conversation: int = Field(
+        default=8,
+        alias="PERSONAGENT_BROWSER_PAGE_CACHE_PER_CONVERSATION",
+    )
+    personagent_browser_page_cache_global_entries: int = Field(
+        default=128,
+        alias="PERSONAGENT_BROWSER_PAGE_CACHE_GLOBAL_ENTRIES",
+    )
+    personagent_browser_render_cache_entries: int = Field(
+        default=16,
+        alias="PERSONAGENT_BROWSER_RENDER_CACHE_ENTRIES",
+    )
+    personagent_browser_render_cache_ttl_seconds: int = Field(
+        default=180,
+        alias="PERSONAGENT_BROWSER_RENDER_CACHE_TTL_SECONDS",
+    )
+    personagent_browser_css_cache_entries: int = Field(
+        default=256,
+        alias="PERSONAGENT_BROWSER_CSS_CACHE_ENTRIES",
+    )
+    personagent_browser_css_cache_ttl_seconds: int = Field(
+        default=900,
+        alias="PERSONAGENT_BROWSER_CSS_CACHE_TTL_SECONDS",
+    )
 
     @property
     def db_url(self) -> str:

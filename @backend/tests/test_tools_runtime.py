@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -11,7 +12,7 @@ from personagent.application.tools import ToolOrchestrator, ToolRegistry, ToolRu
 from personagent.application.use_cases.chat_completion import ChatCompletionUseCase
 from personagent.application.use_cases.context import BuildContextUseCase
 from personagent.domain.models.conversation import Conversation, Message, Role
-from personagent.domain.models.inference_result import InferenceResult, StreamChunk
+from personagent.domain.models.inference_result import GeneratedImage, InferenceResult, StreamChunk
 from personagent.domain.prompts.services import PromptContextAnalyzer
 from personagent.domain.repositories.conversation_repository import ConversationRepository
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
@@ -230,14 +231,20 @@ async def test_orchestrator_applies_tool_definition_result_limit(tmp_path):
     )
     orchestrator = ToolOrchestrator(
         ToolRegistry([tool]),
-        ToolRuntimeConfig.from_values(workspace_root=tmp_path, result_max_chars=180),
+        ToolRuntimeConfig.from_values(
+            workspace_root=tmp_path,
+            result_max_chars=180,
+            tool_result_storage_root=tmp_path / "artifacts",
+        ),
     )
+    context = _tool_context(tmp_path)
+    context.limits["tool_result_storage_root"] = str(tmp_path / "artifacts")
 
     events = [
         event
         async for event in orchestrator.execute(
             [ToolCall(id="call_limited", name="limited_read", arguments={})],
-            _tool_context(tmp_path),
+            context,
         )
     ]
 
@@ -245,7 +252,59 @@ async def test_orchestrator_applies_tool_definition_result_limit(tmp_path):
     assert result is not None
     assert result.metadata["truncated"] is True
     assert result.metadata["max_result_size_chars"] == 12
+    assert result.metadata["original_chars"] == 100
+    assert result.metadata["storage_kind"] == "local_file"
+    assert result.data["storage_ref"] == result.metadata["storage_ref"]
+    storage_path = Path(result.metadata["storage_ref"])
+    assert storage_path == tmp_path / "artifacts" / "tool-results" / "test" / "call_limited.txt"
+    assert storage_path.read_text(encoding="utf-8") == "x" * 100
     assert result.content == "x" * 12 + "\n[Output truncated.]"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_defaults_tool_result_limit_to_sixty_thousand(tmp_path):
+    async def handler(args, context, call):
+        return ToolResult(
+            tool_call_id=call.id,
+            tool_name="default_limited",
+            content="y" * 60_001,
+        )
+
+    tool = build_tool(
+        definition=ToolDefinition(
+            name="default_limited",
+            description="Default limited",
+            input_schema={"type": "object", "properties": {}},
+        ),
+        handler=handler,
+    )
+    orchestrator = ToolOrchestrator(
+        ToolRegistry([tool]),
+        ToolRuntimeConfig.from_values(
+            workspace_root=tmp_path,
+            tool_result_storage_root=tmp_path / "artifacts",
+        ),
+    )
+    context = _tool_context(tmp_path)
+    context.limits.pop("result_max_chars", None)
+    context.limits["tool_result_storage_root"] = str(tmp_path / "artifacts")
+
+    events = [
+        event
+        async for event in orchestrator.execute(
+            [ToolCall(id="call_default_limit", name="default_limited", arguments={})],
+            context,
+        )
+    ]
+
+    result = events[-1].result
+    assert result is not None
+    assert result.metadata["truncated"] is True
+    assert result.metadata["max_result_size_chars"] == 60_000
+    assert result.metadata["original_chars"] == 60_001
+    assert result.content.startswith("y" * 60_000)
+    storage_path = Path(result.metadata["storage_ref"])
+    assert storage_path.read_text(encoding="utf-8") == "y" * 60_001
 
 
 @pytest.mark.asyncio
@@ -270,14 +329,19 @@ async def test_orchestrator_preserves_json_when_capping_structured_result(tmp_pa
     )
     orchestrator = ToolOrchestrator(
         ToolRegistry([tool]),
-        ToolRuntimeConfig.from_values(workspace_root=tmp_path),
+        ToolRuntimeConfig.from_values(
+            workspace_root=tmp_path,
+            tool_result_storage_root=tmp_path / "artifacts",
+        ),
     )
+    context = _tool_context(tmp_path)
+    context.limits["tool_result_storage_root"] = str(tmp_path / "artifacts")
 
     events = [
         event
         async for event in orchestrator.execute(
             [ToolCall(id="call_html", name="BrowserGetHtml", arguments={})],
-            _tool_context(tmp_path),
+            context,
         )
     ]
 
@@ -358,6 +422,66 @@ async def test_chat_completion_executes_tool_loop(tmp_path):
     ]
     assert conversation.messages[1].tool_calls is not None
     assert conversation.messages[2].tool_call_id == "call_read"
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_stores_generated_images_as_artifact_refs(tmp_path):
+    repo = MemoryConversationRepository()
+    artifact_root = tmp_path / "artifacts"
+    use_case = ChatCompletionUseCase(
+        conversation_repo=repo,
+        llm_backend=ImageOutputLLM(),
+        artifact_root=artifact_root,
+    )
+
+    response = await use_case.execute(ChatRequestDTO(message="Generate an image", tools_enabled=False))
+
+    assert len(response.images) == 1
+    image = response.images[0]
+    assert image.data == ""
+    assert image.artifact_id
+    assert image.url.startswith("/artifacts/")
+    stored_path = artifact_root / "generated-images" / str(response.conversation_id) / image.artifact_id
+    assert stored_path.read_bytes() == b"image"
+
+    conversation = await repo.get_by_id(response.conversation_id)
+    assert conversation is not None
+    stored_metadata = conversation.messages[-1].metadata["images"][0]
+    assert "data" not in stored_metadata
+    assert stored_metadata["artifact_id"] == image.artifact_id
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_stores_generated_images_as_artifact_refs(tmp_path):
+    repo = MemoryConversationRepository()
+    artifact_root = tmp_path / "artifacts"
+    use_case = ChatCompletionUseCase(
+        conversation_repo=repo,
+        llm_backend=ImageOutputLLM(),
+        artifact_root=artifact_root,
+    )
+
+    chunks = [
+        chunk
+        async for chunk in use_case.execute_stream(
+            ChatRequestDTO(message="Generate an image", tools_enabled=False)
+        )
+    ]
+
+    image_chunk = next(chunk for chunk in chunks if chunk.images)
+    image = image_chunk.images[0]
+    assert image.data == ""
+    assert image.artifact_id
+
+    saved = next(chunk for chunk in chunks if chunk.metadata.get("event") == "conversation_saved")
+    conversation_id = UUID(saved.metadata["conversation_id"])
+    stored_path = artifact_root / "generated-images" / str(conversation_id) / image.artifact_id
+    assert stored_path.read_bytes() == b"image"
+    conversation = await repo.get_by_id(conversation_id)
+    assert conversation is not None
+    stored_metadata = conversation.messages[-1].metadata["images"][0]
+    assert "data" not in stored_metadata
+    assert stored_metadata["url"] == image.url
 
 
 @pytest.mark.asyncio
@@ -1152,6 +1276,25 @@ class CapturingLLM(LLMBackendRepository):
 
     async def chat_completion_stream(self, *args, **kwargs):
         yield StreamChunk(content="ok")
+
+    async def health_check(self) -> dict:
+        return {"status": "healthy"}
+
+    async def get_model_info(self) -> dict:
+        return {}
+
+
+class ImageOutputLLM(LLMBackendRepository):
+    async def chat_completion(self, *args, **kwargs) -> InferenceResult:
+        return InferenceResult(
+            content="Rendered image",
+            images=[GeneratedImage(mime_type="image/png", data="aW1hZ2U=", alt="Generated image")],
+        )
+
+    async def chat_completion_stream(self, *args, **kwargs):
+        yield StreamChunk(content="Rendered image")
+        yield StreamChunk(images=[GeneratedImage(mime_type="image/png", data="aW1hZ2U=", alt="Generated image")])
+        yield StreamChunk(finish_reason="stop")
 
     async def health_check(self) -> dict:
         return {"status": "healthy"}

@@ -18,6 +18,7 @@ from personagent.domain.prompts.services import PromptBuilder, PromptContextAnal
 from personagent.domain.repositories.conversation_repository import ConversationRepository
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.infrastructure.browser import LightPandaBrowserWorker
+from personagent.infrastructure.browser.page_cache import get_browser_page_cache
 from personagent.infrastructure.config.settings import get_settings
 from personagent.infrastructure.llm.codex_subscription_adapter import CodexSubscriptionAdapter
 from personagent.infrastructure.llm.deepseek_adapter import DeepSeekAdapter
@@ -442,6 +443,12 @@ class DIContainer:
     def get_lightpanda_browser_worker(self) -> LightPandaBrowserWorker:
         """Retorna o worker LightPanda usado pelas ferramentas de browser."""
         if self._lightpanda_browser_worker is None:
+            get_browser_page_cache().configure(
+                root=self._settings.personagent_artifact_root,
+                ttl_seconds=self._settings.personagent_browser_page_cache_ttl_seconds,
+                per_conversation_limit=self._settings.personagent_browser_page_cache_per_conversation,
+                global_limit=self._settings.personagent_browser_page_cache_global_entries,
+            )
             self._lightpanda_browser_worker = LightPandaBrowserWorker(
                 enabled=self._settings.lightpanda_enabled,
                 cdp_url=self._settings.browser_cdp_url or self._settings.lightpanda_cdp_url,
@@ -449,6 +456,11 @@ class DIContainer:
                 search_base_url=self._settings.lightpanda_search_base_url,
                 session_ttl_seconds=self._settings.lightpanda_session_ttl_seconds,
                 max_sessions=self._settings.lightpanda_max_sessions,
+                artifact_root=self._settings.personagent_artifact_root,
+                render_cache_entries=self._settings.personagent_browser_render_cache_entries,
+                render_cache_ttl_seconds=self._settings.personagent_browser_render_cache_ttl_seconds,
+                css_cache_entries=self._settings.personagent_browser_css_cache_entries,
+                css_cache_ttl_seconds=self._settings.personagent_browser_css_cache_ttl_seconds,
                 auto_start_lightpanda=not bool(self._settings.browser_cdp_url),
             )
         return self._lightpanda_browser_worker
@@ -469,7 +481,10 @@ class DIContainer:
                 web_timeout_ms=self._settings.tools_web_timeout_ms,
                 web_max_bytes=self._settings.tools_web_max_bytes,
                 result_max_chars=self._settings.tools_result_max_chars,
-                tool_result_storage_root=self._settings.tools_result_storage_root,
+                tool_result_storage_root=(
+                    self._settings.tools_result_storage_root
+                    or self._settings.personagent_artifact_root
+                ),
                 web_allowed_domains=self._settings.tool_web_allowed_domain_list,
                 web_blocked_domains=self._settings.tool_web_blocked_domain_list,
                 skill_roots=self._settings.tool_skill_root_paths,

@@ -25,6 +25,7 @@ from personagent.domain.tools import (
     build_tool,
 )
 from personagent.infrastructure.browser import LightPandaBrowserWorker
+from personagent.infrastructure.browser.page_cache import get_browser_page_cache
 from personagent.infrastructure.tools.web_tools import validate_web_url
 
 _BROWSER_ACTION_ARBITER = BrowserActionArbiter()
@@ -111,8 +112,7 @@ _LOW_QUALITY_PATH_MARKERS = (
     "/topics/",
     "/vetted/",
 )
-_PAGE_CACHE: dict[str, dict[str, dict[str, Any]]] = {}
-_LATEST_CACHE_KEY: dict[str, str] = {}
+_PAGE_CACHE = get_browser_page_cache()
 _BROWSER_OPEN_URL_KEYS = ("url", "result_url", "final_url", "href", "link")
 _BROWSER_OPEN_INDEX_KEYS = (
     "result_index",
@@ -519,7 +519,7 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
                     "max_chars": {
                         "type": "integer",
                         "minimum": 1,
-                        "default": 10000000,
+                        "default": 60000,
                     },
                     "include_links": {"type": "boolean", "default": False},
                 },
@@ -551,7 +551,9 @@ def create_browser_read_content_chunk_tool() -> Tool:
         cache_key = arguments.get("cache_key")
         if cache_key is not None and (not isinstance(cache_key, str) or not cache_key.strip()):
             return _deny("BrowserReadContentChunk cache_key must be a non-empty string.")
-        if not _resolve_cache_key(_browser_session_id(context), cache_key):
+        browser_id = _browser_session_id(context)
+        resolved_cache_key = _resolve_cache_key(browser_id, cache_key)
+        if not resolved_cache_key or _PAGE_CACHE.get(browser_id, resolved_cache_key) is None:
             return _deny("No cached browser page. Run BrowserExtractContent first.")
         chunk_index = arguments.get("chunk_index", 1)
         if not _is_int(chunk_index) or int(chunk_index) < 1:
@@ -573,37 +575,37 @@ def create_browser_read_content_chunk_tool() -> Tool:
         cache_key = _resolve_cache_key(browser_id, arguments.get("cache_key"))
         if not cache_key:
             return _error(call, "BrowserReadContentChunk", "No cached browser page.")
-        entry = _PAGE_CACHE.get(browser_id, {}).get(cache_key)
+        entry = _PAGE_CACHE.get(browser_id, cache_key)
         if not entry:
             return _error(call, "BrowserReadContentChunk", f"No cached page for {cache_key}.")
 
-        chunks = entry["chunks"]
-        if not chunks:
+        if entry.chunk_count <= 0:
             return _error(call, "BrowserReadContentChunk", f"No readable chunks for {cache_key}.")
         requested_index = int(arguments.get("chunk_index") or 1)
         requested_count = int(arguments.get("chunk_count") or 1)
         include_links = bool(arguments.get("include_links", False))
-        start_index = min(max(1, int(arguments.get("chunk_index") or 1)), len(chunks))
+        start_index = min(max(1, int(arguments.get("chunk_index") or 1)), entry.chunk_count)
         count = min(max(1, int(arguments.get("chunk_count") or 1)), _MAX_CHUNK_COUNT)
-        selected = chunks[start_index - 1 : start_index - 1 + count]
-        ranges = entry.get("chunk_ranges") if isinstance(entry.get("chunk_ranges"), list) else []
-        links_summary = entry.get("links_summary", {})
-        returned_links = entry.get("links", []) if include_links else []
+        selected = _PAGE_CACHE.read_chunks(entry, start_index, count)
+        metadata = _PAGE_CACHE.metadata(entry)
+        ranges = metadata.get("chunk_ranges") if isinstance(metadata.get("chunk_ranges"), list) else []
+        links_summary = metadata.get("links_summary", {})
+        returned_links = metadata.get("links", []) if include_links else []
         data = {
             "type": "browser_content_chunks",
             "browser_id": browser_id,
             "cache_key": cache_key,
-            "url": entry["url"],
-            "title": entry["title"],
-            "page_id": entry.get("page_id"),
-            "window_id": entry.get("page_id"),
-            "content_chars": entry.get("content_chars", 0),
-            "chunk_size": entry.get("chunk_size", _DEFAULT_CHUNK_SIZE),
+            "url": entry.url,
+            "title": entry.title,
+            "page_id": entry.page_id,
+            "window_id": entry.page_id,
+            "content_chars": entry.content_chars,
+            "chunk_size": entry.chunk_size or _DEFAULT_CHUNK_SIZE,
             "requested_chunk_index": requested_index,
             "requested_chunk_count": requested_count,
             "chunk_index": start_index,
             "chunk_count": len(selected),
-            "total_chunks": len(chunks),
+            "total_chunks": entry.chunk_count,
             "returned_chars": sum(len(content) for content in selected),
             "chunks": [
                 {
@@ -621,7 +623,7 @@ def create_browser_read_content_chunk_tool() -> Tool:
             ],
             "links": returned_links,
             "links_summary": links_summary,
-            "buttons": entry.get("buttons", []),
+            "buttons": metadata.get("buttons", []),
         }
         return _json_result(call, "BrowserReadContentChunk", data)
 
@@ -1199,11 +1201,14 @@ def create_browser_close_tab_tool(worker: LightPandaBrowserWorker) -> Tool:
             return _target_error_result(call, "BrowserCloseTab", target_error)
         await _progress(context, call, "Closing browser tab...", {"page_id": target_id})
         try:
+            browser_id = _browser_session_id(context)
             data = await worker.close_tab(
-                conversation_id=_browser_session_id(context),
+                conversation_id=browser_id,
                 page_id=target_id,
                 max_tabs=min(max(1, int(arguments.get("max_tabs") or 20)), 50),
             )
+            closed_page_id = str(data.get("closed_page_id") or target_id or "").strip() or None
+            _PAGE_CACHE.clear_conversation(browser_id, page_id=closed_page_id)
         except Exception as exc:
             return _error(call, "BrowserCloseTab", str(exc), exc)
         return _json_result(call, "BrowserCloseTab", data)
@@ -2058,30 +2063,32 @@ def _cache_page_content(conversation_id: str, data: dict[str, Any]) -> dict[str,
     if not raw_links:
         raw_links = _extract_markdown_links(content)
     links, links_summary = _curate_links(raw_links, content=content, source_url=url)
-    entry = {
-        "url": url,
-        "title": title,
-        "page_id": _coerce_page_or_window_id(data.get("page_id"), data.get("window_id")),
-        "content_chars": len(content),
-        "chunk_size": _DEFAULT_CHUNK_SIZE,
-        "chunks": chunks,
-        "chunk_ranges": ranges,
-        "links": links,
-        "links_summary": links_summary,
-        "buttons": data.get("buttons") if isinstance(data.get("buttons"), list) else [],
-    }
-    _PAGE_CACHE.setdefault(conversation_id, {})[cache_key] = entry
-    _LATEST_CACHE_KEY[conversation_id] = cache_key
+    page_id = _coerce_page_or_window_id(data.get("page_id"), data.get("window_id"))
+    buttons = data.get("buttons") if isinstance(data.get("buttons"), list) else []
+    entry = _PAGE_CACHE.store(
+        conversation_id=conversation_id,
+        cache_key=cache_key,
+        url=url,
+        title=title,
+        page_id=page_id,
+        content_chars=len(content),
+        chunk_size=_DEFAULT_CHUNK_SIZE,
+        chunks=chunks,
+        chunk_ranges=ranges,
+        links=links,
+        links_summary=links_summary,
+        buttons=buttons,
+    )
     return {
         "cache_key": cache_key,
         "content_chars": len(content),
         "chunk_size": _DEFAULT_CHUNK_SIZE,
         "chunk_count": len(chunks),
-        "page_id": entry.get("page_id"),
-        "window_id": entry.get("page_id"),
-        "links": entry["links"],
-        "links_summary": entry["links_summary"],
-        "buttons": entry["buttons"],
+        "page_id": entry.page_id,
+        "window_id": entry.page_id,
+        "links": links,
+        "links_summary": links_summary,
+        "buttons": buttons,
     }
 
 
@@ -2187,9 +2194,7 @@ def _is_low_quality_link(link: dict[str, str], source_url: str) -> bool:
 
 
 def _resolve_cache_key(conversation_id: str, raw_cache_key: Any) -> str | None:
-    if isinstance(raw_cache_key, str) and raw_cache_key.strip():
-        return raw_cache_key.strip()
-    return _LATEST_CACHE_KEY.get(conversation_id)
+    return _PAGE_CACHE.resolve_key(conversation_id, raw_cache_key)
 
 
 def _normalize_browser_open_arguments(arguments: ToolArguments) -> dict[str, Any]:
@@ -2672,9 +2677,9 @@ def _is_int(value: Any) -> bool:
 def _browser_result_max_chars(context: ToolUseContext) -> int:
     raw_limit = context.limits.get("result_max_chars")
     if raw_limit is None:
-        return 10_000_000
+        return 60_000
     try:
         parsed = int(raw_limit)
     except (TypeError, ValueError):
-        return 10_000_000
-    return parsed if parsed > 0 else 10_000_000
+        return 60_000
+    return parsed if parsed > 0 else 60_000

@@ -9,15 +9,29 @@ class GeneratedImage:
     """Imagem gerada por um modelo multimodal."""
 
     mime_type: str
-    data: str
+    data: str = ""
     alt: str = ""
+    artifact_id: str = ""
+    url: str = ""
+    size_bytes: int = 0
+    sha256: str = ""
 
-    def to_dict(self) -> dict[str, str]:
-        return {
+    def to_dict(self) -> dict[str, str | int]:
+        data: dict[str, str | int] = {
             "mime_type": self.mime_type,
-            "data": self.data,
             "alt": self.alt,
         }
+        if self.data:
+            data["data"] = self.data
+        if self.artifact_id:
+            data["artifact_id"] = self.artifact_id
+        if self.url:
+            data["url"] = self.url
+        if self.size_bytes:
+            data["size_bytes"] = self.size_bytes
+        if self.sha256:
+            data["sha256"] = self.sha256
+        return data
 
 
 @dataclass(frozen=True, slots=True)

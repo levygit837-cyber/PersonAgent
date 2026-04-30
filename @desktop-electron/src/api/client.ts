@@ -187,7 +187,11 @@ export type SessionBrowserCooperationWsEvent =
   | { type: "error"; error: string };
 
 export interface SessionBrowserSnapshot {
-  document_html: string;
+  document_html?: string;
+  document_ref?: string;
+  document_url?: string;
+  preview_image_ref?: string;
+  preview_image_url?: string;
   url: string;
   title: string;
   render_mode?: "screenshot" | "html_mirror" | "computed_html" | "pixel";
@@ -219,6 +223,8 @@ export interface SessionBrowserView {
   title: string;
   html?: string;
   document_html?: string;
+  document_ref?: string;
+  document_url?: string;
   render_mode?: "screenshot" | "html_mirror" | "computed_html" | "pixel";
   runtime?: "lightpanda" | "chrome_cdp" | string;
   css_fidelity?: "pixel" | "original" | "embedded" | "computed" | "fallback_html" | string;
@@ -241,8 +247,10 @@ export interface SessionBrowserView {
   workspace_state?: SessionBrowserWorkspaceState;
   last_action?: Record<string, unknown>;
   user_agent?: string;
-  image_data: string;
-  image_mime_type: string;
+  preview_image_ref?: string;
+  preview_image_url?: string;
+  image_data?: string;
+  image_mime_type?: string;
   screenshot_method: string;
   screenshot_error?: string;
   viewport_width: number;

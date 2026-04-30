@@ -1,6 +1,8 @@
 """Caso de uso: Chat Completion."""
 
 import asyncio
+import base64
+import binascii
 import json
 import re
 from collections.abc import AsyncIterator, Awaitable
@@ -79,6 +81,7 @@ from personagent.domain.tools import (
     ToolResult,
     ToolUseContext,
 )
+from personagent.infrastructure.artifacts import store_bytes_artifact
 
 logger = structlog.get_logger(__name__)
 
@@ -148,6 +151,7 @@ class ChatCompletionUseCase:
         operational_memory_service: OperationalMemoryService | None = None,
         context_window_tokens: int = 262_144,
         default_output_tokens: int = 65_536,
+        artifact_root: str | Path | None = None,
     ):
         self._conversation_repo = conversation_repo
         self._llm_backend = llm_backend
@@ -168,6 +172,7 @@ class ChatCompletionUseCase:
         self._operational_memory_service = operational_memory_service
         self._context_window_tokens = max(4_096, int(context_window_tokens))
         self._default_output_tokens = max(1, int(default_output_tokens))
+        self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
         self._state_manager = StateManager.get_instance()
 
     async def execute(self, request: ChatRequestDTO) -> ChatResponseDTO:
@@ -227,6 +232,10 @@ class ChatCompletionUseCase:
                     provider=request.provider,
                     reasoning_level=request.reasoning_level,
                     reasoning_budget_tokens=request.reasoning_budget_tokens,
+                )
+                result = replace(
+                    result,
+                    images=self._store_generated_images(str(conversation.id), result.images),
                 )
 
                 assistant_msg = self._assistant_message_from_result(result)
@@ -465,6 +474,7 @@ class ChatCompletionUseCase:
 
                 async for forwarded_chunk in self._stream_assistant_pass(
                     request=request,
+                    conversation_id=str(conversation.id),
                     messages=messages,
                     tools=tools,
                     seen_tool_call_ids=seen_tool_call_ids,
@@ -494,6 +504,7 @@ class ChatCompletionUseCase:
                     )
                     async for forwarded_chunk in self._stream_assistant_pass(
                         request=request,
+                        conversation_id=str(conversation.id),
                         messages=self._messages_with_final_answer_reminder(messages),
                         tools=[],
                         seen_tool_call_ids=seen_tool_call_ids,
@@ -740,6 +751,42 @@ class ChatCompletionUseCase:
             },
         )
 
+    def _store_generated_images(
+        self,
+        conversation_id: str,
+        images: list[GeneratedImage],
+    ) -> list[GeneratedImage]:
+        stored: list[GeneratedImage] = []
+        for image in images:
+            if image.url or image.artifact_id or not image.data:
+                stored.append(image)
+                continue
+            try:
+                raw = base64.b64decode(image.data, validate=True)
+            except (binascii.Error, ValueError):
+                stored.append(image)
+                continue
+            mime_type = image.mime_type or "image/png"
+            artifact = store_bytes_artifact(
+                category="generated-images",
+                conversation_id=conversation_id,
+                content=raw,
+                suffix=_image_suffix(mime_type),
+                mime_type=mime_type,
+                root=self._artifact_root,
+            )
+            stored.append(
+                GeneratedImage(
+                    mime_type=mime_type,
+                    alt=image.alt,
+                    artifact_id=artifact.artifact_id,
+                    url=artifact.url,
+                    size_bytes=artifact.size_bytes,
+                    sha256=artifact.sha256,
+                )
+            )
+        return stored
+
     def _tool_message_from_result(self, result: ToolResult) -> Message:
         return Message(
             role=Role.TOOL,
@@ -981,6 +1028,7 @@ class ChatCompletionUseCase:
         self,
         *,
         request: ChatRequestDTO,
+        conversation_id: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         seen_tool_call_ids: set[str],
@@ -999,6 +1047,11 @@ class ChatCompletionUseCase:
             reasoning_budget_tokens=request.reasoning_budget_tokens,
         ):
             chunk = self._normalize_provider_stream_chunk(request, state, chunk)
+            if chunk.images:
+                chunk = replace(
+                    chunk,
+                    images=self._store_generated_images(conversation_id, chunk.images),
+                )
             chunk_metadata = {
                 "provider": request.provider,
                 "model": request.model,
@@ -2359,6 +2412,15 @@ def _context_after_turn_metadata(
         if state.tool_calls:
             output_tokens += estimate_text_tokens(json.dumps(state.tool_calls, ensure_ascii=False))
     return {"context_tokens_after_turn_estimated": base_tokens + max(0, output_tokens)}
+
+
+def _image_suffix(mime_type: str) -> str:
+    normalized = mime_type.split(";", 1)[0].strip().lower()
+    if normalized == "image/jpeg":
+        return ".jpg"
+    if normalized == "image/webp":
+        return ".webp"
+    return ".png"
 
 
 def _usage_int(usage: dict[str, int] | None, keys: tuple[str, ...]) -> int | None:

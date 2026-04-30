@@ -209,7 +209,7 @@ class ToolDefinition:
     examples: tuple[str, ...] = ()
     cacheable_prompt: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
-    max_result_size_chars: int = 20_000
+    max_result_size_chars: int = 60_000
     timeout_ms: int | None = None
     strict: bool = True
     should_defer: bool = False

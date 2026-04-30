@@ -106,6 +106,28 @@ describe("MessageFeed scroll behavior", () => {
     expect(geometry.scrollTop).toBe(2000);
   });
 
+  it("virtualizes long conversations and loads older blocks on demand", () => {
+    const messages = Array.from({ length: 95 }, (_, index) =>
+      buildMessage({
+        id: `message-${index}`,
+        role: index % 2 === 0 ? "user" : "agent",
+        label: index % 2 === 0 ? "You" : "PersonAgent",
+        content: `Message ${index}`,
+        parts: [{ kind: "content", id: `part-${index}`, content: `Message ${index}` }],
+      }),
+    );
+    useChatStore.setState({ messages });
+
+    render(<MessageFeed />);
+
+    expect(screen.queryByText("Message 0")).not.toBeInTheDocument();
+    expect(screen.getByText("Message 94")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show 15 older messages" }));
+
+    expect(screen.getByText("Message 0")).toBeInTheDocument();
+  });
+
   function flushRaf() {
     const pending = rafCallbacks;
     rafCallbacks = [];

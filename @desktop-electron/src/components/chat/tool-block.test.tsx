@@ -507,6 +507,27 @@ describe("chat rendering", () => {
     expect(screen.getByText("Searching...")).toBeInTheDocument();
   });
 
+  it("shows the local artifact path for truncated tool output", () => {
+    render(
+      <ToolBlock
+        forceExpanded
+        block={toolBlock({
+          name: "shell",
+          title: "Run script",
+          content: "preview line",
+          data: {
+            command: "python script.py",
+            storage_ref: "/tmp/personagent/tool-results/conversation/call.txt",
+            original_chars: 70_000,
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("/tmp/personagent/tool-results/conversation/call.txt")).toBeInTheDocument();
+    expect(screen.getByText("(70000 chars)")).toBeInTheDocument();
+  });
+
   it("classifies shell find grep and rg commands as search tools", () => {
     expect(compactToolKindFor(toolBlock({ name: "shell", data: { command: "rg Reasoning src" } }))).toBe("search");
     expect(compactToolKindFor(toolBlock({ name: "shell", data: { command: "grep -R foo src" } }))).toBe("search");
@@ -1110,6 +1131,32 @@ describe("chat rendering", () => {
     const image = screen.getByRole("img", { name: "Vertex generated image" });
     expect(image).toHaveAttribute("src", "data:image/png;base64,iVBORw0KGgo=");
     expect(screen.queryByText("Thinking...")).not.toBeInTheDocument();
+  });
+
+  it("renders generated image artifact refs without base64 data", () => {
+    const message = baseAgentMessage({
+      parts: [
+        {
+          kind: "image",
+          id: "image-ref-1",
+          image: {
+            mime_type: "image/png",
+            url: "http://localhost:8000/artifacts/conversation/generated-images/image.png",
+            artifact_id: "image.png",
+            alt: "Stored generated image",
+            size_bytes: 128,
+            sha256: "abc",
+          },
+        },
+      ],
+    });
+
+    render(<AgentMessage message={message} />);
+
+    expect(screen.getByRole("img", { name: "Stored generated image" })).toHaveAttribute(
+      "src",
+      "http://localhost:8000/artifacts/conversation/generated-images/image.png",
+    );
   });
 });
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useChatStore } from "../../stores/chat-store";
 import { AgentMessage } from "./agent-message";
 import { PlanApprovalPanel, ToolApprovalPanel } from "./plan-approval-panel";
@@ -6,6 +6,9 @@ import { UserMessage } from "./user-message";
 import type { ChatMessageUi, PlanApprovalUi } from "../../types/chat";
 
 const followThreshold = 120;
+const virtualizationThreshold = 80;
+const virtualWindowSize = 80;
+const virtualPageSize = 40;
 const scrollUpKeys = new Set(["ArrowUp", "PageUp", "Home"]);
 
 export function MessageFeed({ extraBottomPadding = false, compact = false }: { extraBottomPadding?: boolean; compact?: boolean }) {
@@ -18,9 +21,15 @@ export function MessageFeed({ extraBottomPadding = false, compact = false }: { e
   const scrollFrameRef = useRef<number | undefined>(undefined);
   const shouldAutoScrollRef = useRef(true);
   const lastMessage = messages.at(-1);
+  const [extraOlderMessages, setExtraOlderMessages] = useState(0);
+  const virtualStart = messages.length > virtualizationThreshold
+    ? Math.max(0, messages.length - virtualWindowSize - extraOlderMessages)
+    : 0;
+  const visibleMessages = useMemo(() => messages.slice(virtualStart), [messages, virtualStart]);
 
   useEffect(() => {
     shouldAutoScrollRef.current = true;
+    setExtraOlderMessages(0);
   }, [conversationId]);
 
   useEffect(() => {
@@ -120,7 +129,16 @@ export function MessageFeed({ extraBottomPadding = false, compact = false }: { e
     >
       <div className={compact ? "mx-auto flex w-full min-w-0 max-w-[720px] flex-col" : "mx-auto flex w-full min-w-0 max-w-[820px] flex-col"}>
         {error ? <ErrorBanner message={error} /> : null}
-        {messages.map((message) => {
+        {virtualStart > 0 ? (
+          <button
+            type="button"
+            className="mb-4 self-center rounded-lg border border-glass-border/35 bg-card/70 px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-primary/35 hover:text-foreground"
+            onClick={() => setExtraOlderMessages((current) => current + virtualPageSize)}
+          >
+            Show {Math.min(virtualPageSize, virtualStart)} older messages
+          </button>
+        ) : null}
+        {visibleMessages.map((message) => {
           const planApproval = planApprovalArtifact(message);
           const isActivePlan = Boolean(
             pendingPlanApproval &&
@@ -138,7 +156,7 @@ export function MessageFeed({ extraBottomPadding = false, compact = false }: { e
             </div>
           );
         })}
-        {pendingPlanApproval && !messages.some((message) => planApprovalArtifact(message)?.approvalId === pendingPlanApproval.approvalId) ? (
+        {pendingPlanApproval && !visibleMessages.some((message) => planApprovalArtifact(message)?.approvalId === pendingPlanApproval.approvalId) ? (
           <PlanApprovalPanel approval={pendingPlanApproval} />
         ) : null}
         {pendingToolApproval ? <ToolApprovalPanel approval={pendingToolApproval} /> : null}
