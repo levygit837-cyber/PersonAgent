@@ -54,8 +54,10 @@ from personagent.infrastructure.persistence.models import (
     TeamMemorySnapshotORM,
     TeamRunORM,
 )
+from personagent.interfaces.api.action_approvals import canonical_args_hash
 from personagent.interfaces.api.errors import error_event
 from personagent.interfaces.api.state_events import publish_state_change
+from personagent.interfaces.api.workspace_grants import resolve_workspace_root
 from personagent.interfaces.config.di_container import DIContainer, get_container
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -109,6 +111,10 @@ class ChatRequest(BaseModel):
     workspace_root: str | None = Field(
         default=None,
         description="Selected local workspace for tools.",
+    )
+    workspace_id: str | None = Field(
+        default=None,
+        description="Granted workspace id.",
     )
     reasoning_level: str | None = Field(
         default=None,
@@ -213,6 +219,7 @@ class ToolApprovalDecisionRequest(BaseModel):
 
     conversation_id: str = Field(..., description="Conversation ID")
     approval_id: str = Field(..., description="Pending approval ID")
+    args_hash: str | None = Field(default=None, description="Pending tool argument hash")
 
 
 class UserQuestionResponseRequest(BaseModel):
@@ -331,10 +338,21 @@ def resolve_prompt_mode(prompt_mode: str | None) -> str:
 def resolve_tool_context(request: ChatRequest) -> dict:
     """Normalize the tool context received from the client."""
     tool_context = dict(request.tool_context or {})
-    if request.workspace_root:
-        tool_context.setdefault("workspace_root", request.workspace_root)
-        tool_context.setdefault("cwd", request.workspace_root)
-        tool_context.setdefault("allowed_roots", [request.workspace_root])
+    if request.workspace_id or request.workspace_root:
+        try:
+            workspace_root = str(
+                resolve_workspace_root(
+                    workspace_id=request.workspace_id,
+                    workspace_root=request.workspace_root,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        if request.workspace_id:
+            tool_context.setdefault("workspace_id", request.workspace_id)
+        tool_context["workspace_root"] = workspace_root
+        tool_context["cwd"] = workspace_root
+        tool_context["allowed_roots"] = [workspace_root]
     return tool_context
 
 
@@ -356,6 +374,8 @@ def resolve_team_workspace_id(request: ChatRequest, tool_context: dict[str, Any]
     raw = tool_context.get("workspace_id")
     if isinstance(raw, str) and raw.strip():
         return raw.strip()
+    if request.workspace_id:
+        return request.workspace_id.strip()
     workspace_root = tool_context.get("workspace_root") or request.workspace_root
     if isinstance(workspace_root, str) and workspace_root.strip():
         return workspace_root.strip()
@@ -535,6 +555,7 @@ def _create_chat_use_case(
         context_window_tokens=resolve_context_window_tokens(container, provider),
         default_output_tokens=resolve_default_output_tokens(container, provider),
         artifact_root=container.settings.personagent_artifact_root,
+        artifact_ttl_seconds=container.settings.personagent_artifact_ttl_seconds,
     )
 
 
@@ -565,6 +586,19 @@ async def _approve_pending_tool_call(
 
     context = use_case._build_tool_context(resume_request, conversation)
     arguments = dict(pending.get("arguments") or {})
+    expected_hash = str(
+        pending.get("args_hash")
+        or canonical_args_hash(
+            "chat.tool_approval",
+            {
+                "tool_call_id": pending.get("tool_call_id"),
+                "tool_name": pending.get("tool_name"),
+                "arguments": arguments,
+            },
+        )
+    )
+    if not request.args_hash or request.args_hash != expected_hash:
+        raise HTTPException(status_code=403, detail="Tool approval argument hash mismatch.")
     validation = await tool.validate_input(arguments, context)
     if validation is not None and not validation.allowed:
         raise HTTPException(
@@ -876,6 +910,7 @@ async def chat_completion(
         context_window_tokens=resolve_context_window_tokens(container, provider),
         default_output_tokens=resolve_default_output_tokens(container, provider),
         artifact_root=container.settings.personagent_artifact_root,
+        artifact_ttl_seconds=container.settings.personagent_artifact_ttl_seconds,
     )
 
     conversation_id = None
@@ -966,6 +1001,7 @@ async def chat_completion_stream(
         context_window_tokens=resolve_context_window_tokens(container, provider),
         default_output_tokens=resolve_default_output_tokens(container, provider),
         artifact_root=container.settings.personagent_artifact_root,
+        artifact_ttl_seconds=container.settings.personagent_artifact_ttl_seconds,
     )
 
     conversation_id = None

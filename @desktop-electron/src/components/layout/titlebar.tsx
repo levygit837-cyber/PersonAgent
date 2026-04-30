@@ -18,7 +18,7 @@ export function TitleBar({ compactTitle }: { compactTitle?: string }) {
           aria-label="Minimize"
           variant="ghost"
           size="icon"
-          className="h-9 w-10 rounded-none"
+          className="no-drag h-9 w-10 rounded-none"
           onClick={() => void window.personAgent?.window.minimize()}
         >
           <Minus className="h-3 w-3" />
@@ -27,7 +27,7 @@ export function TitleBar({ compactTitle }: { compactTitle?: string }) {
           aria-label="Maximize"
           variant="ghost"
           size="icon"
-          className="h-9 w-10 rounded-none"
+          className="no-drag h-9 w-10 rounded-none"
           onClick={() => void window.personAgent?.window.maximizeToggle()}
         >
           <Square className="h-3 w-3" />
@@ -36,7 +36,7 @@ export function TitleBar({ compactTitle }: { compactTitle?: string }) {
           aria-label="Close"
           variant="ghost"
           size="icon"
-          className="h-9 w-10 rounded-none hover:bg-destructive/90 hover:text-destructive-foreground"
+          className="no-drag h-9 w-10 rounded-none hover:bg-destructive/90 hover:text-destructive-foreground"
           onClick={() => void window.personAgent?.window.close()}
         >
           <X className="h-3.5 w-3.5" />

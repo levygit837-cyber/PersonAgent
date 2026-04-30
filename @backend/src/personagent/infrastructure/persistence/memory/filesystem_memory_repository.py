@@ -7,6 +7,7 @@ usar MemoryFileORM para queries rápidas).
 
 from __future__ import annotations
 
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,7 @@ class FileSystemMemoryRepository(MemoryRepository):
         """Escreve um arquivo de memória com frontmatter."""
         self._validate_containment(memory_file.path)
         memory_file.path.parent.mkdir(parents=True, exist_ok=True)
+        _chmod_private_tree(memory_file.path.parent, root=self.root_dir)
 
         frontmatter_lines = ["---"]
         for key, value in memory_file.to_frontmatter_dict().items():
@@ -79,6 +81,7 @@ class FileSystemMemoryRepository(MemoryRepository):
 
         raw = "\n".join(frontmatter_lines) + "\n\n" + memory_file.content
         memory_file.path.write_text(raw, encoding="utf-8")
+        _chmod_private_file(memory_file.path)
         return memory_file.path
 
     async def delete(self, file_path: Path) -> bool:
@@ -136,7 +139,9 @@ class FileSystemMemoryRepository(MemoryRepository):
             content = "\n".join(line_list[:max_lines])
 
         memory_dir.mkdir(parents=True, exist_ok=True)
+        _chmod_private_tree(memory_dir, root=self.root_dir)
         index_path.write_text(content + "\n", encoding="utf-8")
+        _chmod_private_file(index_path)
 
         return index_path
 
@@ -208,3 +213,23 @@ class FileSystemMemoryRepository(MemoryRepository):
         if "project" in parts:
             return MemoryScope.PROJECT
         return MemoryScope.PRIVATE
+
+
+def _chmod_private_tree(path: Path, *, root: Path) -> None:
+    current = path.expanduser().resolve()
+    stop_at = root.expanduser().resolve()
+    while True:
+        try:
+            current.relative_to(stop_at)
+        except ValueError:
+            break
+        with suppress(OSError):
+            current.chmod(0o700)
+        if current == stop_at or current == current.parent:
+            break
+        current = current.parent
+
+
+def _chmod_private_file(path: Path) -> None:
+    with suppress(OSError):
+        path.chmod(0o600)

@@ -13,6 +13,7 @@ describe("Sidebar", () => {
   const deprecatedSectionLabel = ["L", "ab"].join("");
 
   beforeEach(() => {
+    delete window.personAgent;
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -253,6 +254,32 @@ describe("Sidebar", () => {
     });
 
     expect(workspaceFolderNames()).toEqual(["my-project", "other-project"]);
+  });
+
+  it("opens the desktop workspace picker from the workspace menu", async () => {
+    const selectWorkspace = vi.fn(async () => ({ workspaceId: "wks_new", root: "/home/user/new-project" }));
+    window.personAgent = {
+      dialog: {
+        selectWorkspace,
+      },
+      settings: {
+        get: vi.fn(),
+        set: vi.fn(async () => true),
+      },
+      workspace: {
+        grant: vi.fn(async () => ({ workspaceId: "wks_new", root: "/home/user/new-project" })),
+      },
+    } as unknown as Window["personAgent"];
+
+    renderSidebar();
+
+    fireEvent.pointerDown(screen.getAllByRole("button", { name: /my-project/i })[0]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: /select workspace/i }));
+
+    await waitFor(() => {
+      expect(selectWorkspace).toHaveBeenCalledWith("/home/user/my-project");
+      expect(useAppStore.getState().selectedWorkspace).toBe("/home/user/new-project");
+    });
   });
 
   it("renders visual session state indicators", async () => {

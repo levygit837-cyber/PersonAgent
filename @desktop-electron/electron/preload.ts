@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer } from "electron";
 
 const api = {
   platform: process.platform,
+  auth: {
+    getHeaders: () => ipcRenderer.invoke("auth:get-headers") as Promise<Record<string, string>>,
+  },
   window: {
     minimize: () => ipcRenderer.invoke("window:minimize") as Promise<void>,
     maximizeToggle: () => ipcRenderer.invoke("window:maximize-toggle") as Promise<boolean>,
@@ -14,16 +17,21 @@ const api = {
   },
   dialog: {
     selectWorkspace: (initialPath?: string) =>
-      ipcRenderer.invoke("dialog:select-workspace", initialPath) as Promise<string | null>,
+      ipcRenderer.invoke("dialog:select-workspace", initialPath) as Promise<{ workspaceId: string; root: string } | null>,
+  },
+  workspace: {
+    grant: (workspaceRoot: string) =>
+      ipcRenderer.invoke("workspace:grant", workspaceRoot) as Promise<{ workspaceId: string; root: string }>,
   },
   fs: {
-    readDir: (dirPath: string, workspaceRoot?: string) =>
-      ipcRenderer.invoke("fs:read-dir", dirPath, workspaceRoot) as Promise<Array<{ name: string; isDirectory: boolean; path: string }>>,
-    readFile: (filePath: string, workspaceRoot?: string) =>
-      ipcRenderer.invoke("fs:read-file", filePath, workspaceRoot) as Promise<string>,
+    readDir: (dirPath: string, workspaceRoot?: string, workspaceId?: string) =>
+      ipcRenderer.invoke("fs:read-dir", dirPath, workspaceRoot, workspaceId) as Promise<Array<{ name: string; isDirectory: boolean; path: string }>>,
+    readFile: (filePath: string, workspaceRoot?: string, workspaceId?: string) =>
+      ipcRenderer.invoke("fs:read-file", filePath, workspaceRoot, workspaceId) as Promise<string>,
   },
   terminal: {
-    create: (id: string, cwd?: string) => ipcRenderer.invoke("terminal:create", id, cwd) as Promise<boolean>,
+    create: (id: string, cwd?: string, workspaceRoot?: string, workspaceId?: string) =>
+      ipcRenderer.invoke("terminal:create", id, cwd, workspaceRoot, workspaceId) as Promise<boolean>,
     write: (id: string, data: string) => ipcRenderer.invoke("terminal:write", id, data) as Promise<boolean>,
     resize: (id: string, cols: number, rows: number) => ipcRenderer.invoke("terminal:resize", id, cols, rows) as Promise<boolean>,
     kill: (id: string) => ipcRenderer.invoke("terminal:kill", id) as Promise<boolean>,

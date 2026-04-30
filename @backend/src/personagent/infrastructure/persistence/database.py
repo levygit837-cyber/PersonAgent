@@ -66,6 +66,32 @@ OPTIONAL_OPERATIONAL_MEMORY_SCHEMA_STATEMENTS = (
 OPERATIONAL_MEMORY_SCHEMA_STATEMENTS = (
     "ALTER TABLE memory_events DROP CONSTRAINT IF EXISTS memory_events_conversation_id_fkey",
     "ALTER TABLE memory_decisions DROP CONSTRAINT IF EXISTS memory_decisions_conversation_id_fkey",
+    "ALTER TABLE memory_structured_items ADD COLUMN IF NOT EXISTS trust_level VARCHAR(20) NOT NULL DEFAULT 'medium'",
+    "ALTER TABLE memory_structured_items ADD COLUMN IF NOT EXISTS importance DOUBLE PRECISION NOT NULL DEFAULT 0.5",
+    "ALTER TABLE memory_structured_items ADD COLUMN IF NOT EXISTS search_text TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE memory_structured_items ADD COLUMN IF NOT EXISTS search_vector TSVECTOR",
+    "ALTER TABLE memory_structured_items ADD COLUMN IF NOT EXISTS state_reason TEXT",
+    "ALTER TABLE memory_structured_items ADD COLUMN IF NOT EXISTS superseded_by_id UUID",
+    "ALTER TABLE memory_structured_items ADD COLUMN IF NOT EXISTS last_verified_at TIMESTAMPTZ",
+    "ALTER TABLE memory_structured_items ADD COLUMN IF NOT EXISTS ranking_metadata JSONB NOT NULL DEFAULT '{}'::jsonb",
+    """
+    UPDATE memory_structured_items
+    SET search_text = trim(concat_ws(' ', summary, primary_path, source_type, item_type, paths::text, evidence::text)),
+        search_vector = to_tsvector('simple', trim(concat_ws(' ', summary, primary_path, source_type, item_type, paths::text, evidence::text)))
+    WHERE search_text = '' OR search_vector IS NULL
+    """,
+    "ALTER TABLE memory_recall_logs ADD COLUMN IF NOT EXISTS workspace_root TEXT",
+    "ALTER TABLE memory_recall_logs ADD COLUMN IF NOT EXISTS conversation_id UUID",
+    "ALTER TABLE memory_recall_logs ADD COLUMN IF NOT EXISTS recall_scope VARCHAR(40) NOT NULL DEFAULT 'workspace'",
+    "ALTER TABLE memory_recall_logs ADD COLUMN IF NOT EXISTS query_intent VARCHAR(80) NOT NULL DEFAULT 'specific'",
+    "ALTER TABLE memory_recall_logs ADD COLUMN IF NOT EXISTS candidate_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE memory_recall_logs ADD COLUMN IF NOT EXISTS selected_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE memory_recall_logs ADD COLUMN IF NOT EXISTS discarded_candidates JSONB NOT NULL DEFAULT '[]'::jsonb",
+    "ALTER TABLE memory_recall_logs ADD COLUMN IF NOT EXISTS included_reasons JSONB NOT NULL DEFAULT '[]'::jsonb",
+    "ALTER TABLE memory_recall_logs ADD COLUMN IF NOT EXISTS ranking_breakdown JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE memory_recall_logs ADD COLUMN IF NOT EXISTS token_usage JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE memory_recall_logs ADD COLUMN IF NOT EXISTS budget_tokens INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE memory_recall_logs ADD COLUMN IF NOT EXISTS budget_used INTEGER NOT NULL DEFAULT 0",
     """
     DO $$
     BEGIN
@@ -98,6 +124,14 @@ OPERATIONAL_MEMORY_SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_memory_structured_primary_path ON memory_structured_items(primary_path)",
     "CREATE INDEX IF NOT EXISTS idx_memory_structured_source_chunk ON memory_structured_items(source_chunk_id)",
     "CREATE INDEX IF NOT EXISTS idx_memory_structured_hash ON memory_structured_items(content_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_status ON memory_structured_items(status)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_trust ON memory_structured_items(trust_level)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_structured_search_vector ON memory_structured_items USING gin(search_vector)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_recall_logs_workspace_created ON memory_recall_logs(workspace_root, created_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_outbox_dedupe_key ON memory_outbox(dedupe_key)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_outbox_status_next_attempt ON memory_outbox(status, next_attempt_at)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_outbox_event ON memory_outbox(event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_outbox_project_created ON memory_outbox(project_slug, created_at)",
 )
 
 

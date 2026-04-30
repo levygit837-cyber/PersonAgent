@@ -6,6 +6,7 @@ import html
 import ipaddress
 import json
 import re
+import socket
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -281,8 +282,36 @@ def _is_private_host(hostname: str) -> bool:
     try:
         ip = ipaddress.ip_address(hostname)
     except ValueError:
+        return _hostname_resolves_private(hostname)
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+    )
+
+
+def _hostname_resolves_private(hostname: str) -> bool:
+    try:
+        results = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except OSError:
         return False
-    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
+    for result in results:
+        address = result[4][0]
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            continue
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+        ):
+            return True
+    return False
 
 
 def _extract_text(value: str, content_type: str) -> str:

@@ -1,7 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions, type IpcMainInvokeEvent } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import * as pty from "node-pty";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -17,8 +20,15 @@ type CompactLaunchContext = {
 let mainWindow: BrowserWindow | null = null;
 const compactWindows = new Map<string, BrowserWindow>();
 const compactContextsByWebContentsId = new Map<number, CompactLaunchContext>();
+const workspaceGrants = new Map<string, string>();
 let settingsWriteQueue: Promise<void> = Promise.resolve();
 const MAX_FILE_PREVIEW_BYTES = 2 * 1024 * 1024;
+const ALLOWED_SETTINGS_KEYS = new Set([
+  "personagent_base_url",
+  "personagent_selected_workspace",
+  "personagent_recent_workspaces",
+  "personagent_conv_workspace_map",
+]);
 
 // Terminal PTY manager
 const terminals = new Map<string, pty.IPty>();
@@ -30,10 +40,11 @@ function getDefaultShell(): string {
 
 function createTerminalInstance(id: string, cwd?: string) {
   const shell = getDefaultShell();
+  const terminalEnv = safeTerminalEnv();
   const term = pty.spawn(shell, [], {
     name: "xterm-color",
     cwd: cwd || process.env.HOME || process.cwd(),
-    env: process.env as { [key: string]: string },
+    env: terminalEnv,
   });
 
   term.onData((data) => {
@@ -51,6 +62,119 @@ function createTerminalInstance(id: string, cwd?: string) {
 
   terminals.set(id, term);
   return term;
+}
+
+function safeTerminalEnv(): { [key: string]: string } {
+  const keys = ["HOME", "PATH", "SHELL", "TERM", "LANG", "LC_ALL", "USER", "LOGNAME"];
+  const env: { [key: string]: string } = {};
+  for (const key of keys) {
+    const value = process.env[key];
+    if (typeof value === "string") env[key] = value;
+  }
+  env.TERM = env.TERM || "xterm-256color";
+  return env;
+}
+
+function localAuthTokenPath() {
+  return localEnvValue("PERSONAGENT_LOCAL_AUTH_TOKEN_PATH") || join(homedir(), ".cache", "personagent", "local_auth_token");
+}
+
+function localAuthHeaders() {
+  const configuredToken = localEnvValue("PERSONAGENT_LOCAL_AUTH_TOKEN");
+  if (configuredToken) {
+    return {
+      Authorization: `Bearer ${configuredToken}`,
+      "X-PersonAgent-Client": "desktop-electron",
+    };
+  }
+  const path = localAuthTokenPath();
+  if (!existsSync(path)) return {};
+  const token = readFileSync(path, "utf8").trim();
+  if (!token) return {};
+  return {
+    Authorization: `Bearer ${token}`,
+    "X-PersonAgent-Client": "desktop-electron",
+  };
+}
+
+function localEnvValue(key: string) {
+  const direct = process.env[key]?.trim();
+  if (direct) return direct;
+  return readProjectEnvValue(key);
+}
+
+function readProjectEnvValue(key: string) {
+  for (const envPath of projectEnvCandidates()) {
+    try {
+      const raw = readFileSync(envPath, "utf8");
+      const value = parseEnvValue(raw, key);
+      if (value) return value;
+    } catch {
+      continue;
+    }
+  }
+  return "";
+}
+
+function projectEnvCandidates() {
+  return [
+    join(process.cwd(), "..", ".env"),
+    join(__dirname, "..", "..", ".env"),
+    join(app.getPath("userData"), ".env"),
+  ];
+}
+
+function parseEnvValue(raw: string, key: string) {
+  const pattern = new RegExp(`^${key}=([^\\r\\n]*)`, "m");
+  const match = raw.match(pattern);
+  if (!match) return "";
+  return match[1].trim().replace(/^['"]|['"]$/g, "");
+}
+
+function workspaceIdForRoot(root: string) {
+  const resolved = resolve(root);
+  return `wks_${createHash("sha256").update(resolved).digest("hex").slice(0, 24)}`;
+}
+
+function registerLocalWorkspaceGrant(root: string) {
+  const resolved = resolve(assertString(root, "workspace root"));
+  const workspaceId = workspaceIdForRoot(resolved);
+  workspaceGrants.set(workspaceId, resolved);
+  return { workspaceId, root: resolved };
+}
+
+function resolveGrantedWorkspace(workspaceRoot?: string | null, workspaceId?: string | null) {
+  if (workspaceId) {
+    const granted = workspaceGrants.get(workspaceId);
+    if (!granted) throw new Error(`Unknown workspace grant: ${workspaceId}`);
+    return granted;
+  }
+  if (!workspaceRoot) return undefined;
+  const resolved = resolve(workspaceRoot);
+  if (![...workspaceGrants.values()].includes(resolved)) {
+    throw new Error(`Workspace root is not granted: ${resolved}`);
+  }
+  return resolved;
+}
+
+function assertString(value: unknown, label: string) {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a non-empty string.`);
+  return value;
+}
+
+function assertStringValue(value: unknown, label: string) {
+  if (typeof value !== "string") throw new Error(`${label} must be a string.`);
+  return value;
+}
+
+function openExternalSafe(url: string) {
+  try {
+    const parsed = new URL(url);
+    if (!["https:", "mailto:"].includes(parsed.protocol)) return;
+    void shell.openExternal(parsed.toString());
+  } catch {
+    return;
+  }
 }
 
 function desktopDebug(message: string, details?: Record<string, unknown>) {
@@ -153,10 +277,10 @@ async function createWindow() {
     backgroundColor: "#08090b",
     show: false,
     webPreferences: {
-      preload: join(__dirname, "preload.js"),
+      preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -171,7 +295,7 @@ async function createWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    openExternalSafe(url);
     return { action: "deny" };
   });
 
@@ -212,10 +336,10 @@ async function createCompactWindow(context: CompactLaunchContext) {
     backgroundColor: "#08090b",
     show: false,
     webPreferences: {
-      preload: join(__dirname, "preload.js"),
+      preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -245,7 +369,7 @@ async function createCompactWindow(context: CompactLaunchContext) {
   });
 
   compactWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    openExternalSafe(url);
     return { action: "deny" };
   });
 
@@ -304,33 +428,49 @@ ipcMain.handle("compact:get-launch-context", (event) => {
 });
 
 ipcMain.handle("settings:get", async (_event, key: string) => {
+  if (!ALLOWED_SETTINGS_KEYS.has(assertString(key, "settings key"))) {
+    throw new Error(`Unsupported settings key: ${key}`);
+  }
   const settings = await readSettings();
   return settings[key] ?? null;
 });
 
 ipcMain.handle("settings:set", async (_event, key: string, value: unknown) => {
+  if (!ALLOWED_SETTINGS_KEYS.has(assertString(key, "settings key"))) {
+    throw new Error(`Unsupported settings key: ${key}`);
+  }
   await updateSettings((settings) => {
     settings[key] = value;
   });
   return true;
 });
 
-ipcMain.handle("dialog:select-workspace", async (_event, initialPath?: string) => {
+ipcMain.handle("dialog:select-workspace", async (event, initialPath?: string) => {
+  const targetWindow = getWindowForEvent(event);
   const options: OpenDialogOptions = {
     title: "Select workspace",
-    defaultPath: initialPath,
+    defaultPath: typeof initialPath === "string" && initialPath.trim() ? initialPath : undefined,
     properties: ["openDirectory", "createDirectory"],
   };
-  const result = mainWindow
-    ? await dialog.showOpenDialog(mainWindow, options)
+  const result = targetWindow
+    ? await dialog.showOpenDialog(targetWindow, options)
     : await dialog.showOpenDialog(options);
+  targetWindow?.focus();
   if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
+  return registerLocalWorkspaceGrant(result.filePaths[0]);
 });
 
-ipcMain.handle("fs:read-dir", async (_event, dirPath: string, workspaceRoot?: string) => {
-  const resolvedPath = resolve(dirPath);
-  const resolvedWorkspace = workspaceRoot?.trim() ? resolve(workspaceRoot) : undefined;
+ipcMain.handle("workspace:grant", async (_event, workspaceRoot: string) => {
+  return registerLocalWorkspaceGrant(workspaceRoot);
+});
+
+ipcMain.handle("auth:get-headers", async () => {
+  return localAuthHeaders();
+});
+
+ipcMain.handle("fs:read-dir", async (_event, dirPath: string, workspaceRoot?: string, workspaceId?: string) => {
+  const resolvedPath = resolve(assertString(dirPath, "directory path"));
+  const resolvedWorkspace = resolveGrantedWorkspace(workspaceRoot, workspaceId);
   if (resolvedWorkspace && !isPathInside(resolvedPath, resolvedWorkspace)) {
     throw new Error(`Path '${dirPath}' is outside active workspace: ${resolvedWorkspace}`);
   }
@@ -343,9 +483,9 @@ ipcMain.handle("fs:read-dir", async (_event, dirPath: string, workspaceRoot?: st
   }));
 });
 
-ipcMain.handle("fs:read-file", async (_event, filePath: string, workspaceRoot?: string) => {
-  const resolvedPath = resolve(filePath);
-  const resolvedWorkspace = workspaceRoot?.trim() ? resolve(workspaceRoot) : undefined;
+ipcMain.handle("fs:read-file", async (_event, filePath: string, workspaceRoot?: string, workspaceId?: string) => {
+  const resolvedPath = resolve(assertString(filePath, "file path"));
+  const resolvedWorkspace = resolveGrantedWorkspace(workspaceRoot, workspaceId);
   if (resolvedWorkspace && !isPathInside(resolvedPath, resolvedWorkspace)) {
     throw new Error(`Path '${filePath}' is outside active workspace: ${resolvedWorkspace}`);
   }
@@ -360,25 +500,31 @@ ipcMain.handle("fs:read-file", async (_event, filePath: string, workspaceRoot?: 
   return readFile(resolvedPath, "utf8");
 });
 
-ipcMain.handle("terminal:create", (_event: IpcMainInvokeEvent, id: string, cwd?: string) => {
-  if (terminals.has(id)) {
-    terminals.get(id)?.kill();
-    terminals.delete(id);
+ipcMain.handle("terminal:create", (_event: IpcMainInvokeEvent, id: string, cwd?: string, workspaceRoot?: string, workspaceId?: string) => {
+  const terminalId = assertString(id, "terminal id");
+  const resolvedWorkspace = resolveGrantedWorkspace(workspaceRoot, workspaceId);
+  const resolvedCwd = cwd ? resolve(assertString(cwd, "terminal cwd")) : resolvedWorkspace;
+  if (resolvedWorkspace && resolvedCwd && !isPathInside(resolvedCwd, resolvedWorkspace)) {
+    throw new Error(`Terminal cwd is outside active workspace: ${resolvedWorkspace}`);
   }
-  createTerminalInstance(id, cwd);
+  if (terminals.has(terminalId)) {
+    terminals.get(terminalId)?.kill();
+    terminals.delete(terminalId);
+  }
+  createTerminalInstance(terminalId, resolvedCwd);
   return true;
 });
 
 ipcMain.handle("terminal:write", (_event: IpcMainInvokeEvent, id: string, data: string) => {
-  const term = terminals.get(id);
+  const term = terminals.get(assertString(id, "terminal id"));
   if (term) {
-    term.write(data);
+    term.write(assertStringValue(data, "terminal data"));
   }
   return true;
 });
 
 ipcMain.handle("terminal:resize", (_event: IpcMainInvokeEvent, id: string, cols: number, rows: number) => {
-  const term = terminals.get(id);
+  const term = terminals.get(assertString(id, "terminal id"));
   if (term) {
     term.resize(cols, rows);
   }
@@ -386,10 +532,11 @@ ipcMain.handle("terminal:resize", (_event: IpcMainInvokeEvent, id: string, cols:
 });
 
 ipcMain.handle("terminal:kill", (_event: IpcMainInvokeEvent, id: string) => {
-  const term = terminals.get(id);
+  const terminalId = assertString(id, "terminal id");
+  const term = terminals.get(terminalId);
   if (term) {
     term.kill();
-    terminals.delete(id);
+    terminals.delete(terminalId);
   }
   return true;
 });

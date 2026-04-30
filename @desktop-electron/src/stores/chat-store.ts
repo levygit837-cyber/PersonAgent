@@ -453,6 +453,7 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
         {
           conversationId: pending.conversationId,
           approvalId: pending.approvalId,
+          argsHash: pending.argsHash,
         },
         controller.signal,
       )) {
@@ -1357,6 +1358,7 @@ const contextMetadataKeys = [
   "context_window_tokens",
   "context_compacted",
   "prompt_tokens_estimated",
+  "memory_trace",
 ] as const;
 
 function attachContextMetadata(message: ChatMessageUi, chunk: StreamChunk): ChatMessageUi {
@@ -1502,6 +1504,12 @@ function toolApprovalFromChunk(chunk: StreamChunk): ToolApprovalUi {
   return {
     conversationId: String(chunk.conversation_id ?? ""),
     approvalId: String(chunk.approval_id ?? ""),
+    argsHash:
+      typeof chunk.args_hash === "string"
+        ? chunk.args_hash
+        : typeof chunk.tool_approval?.args_hash === "string"
+          ? chunk.tool_approval.args_hash
+          : undefined,
     toolCallId: String(chunk.tool_call_id ?? chunk.tool_approval?.tool_call_id ?? ""),
     toolName: String(chunk.tool_name ?? chunk.tool_approval?.tool_name ?? "tool"),
     toolInput: chunk.tool_input ?? chunk.tool_approval?.arguments,

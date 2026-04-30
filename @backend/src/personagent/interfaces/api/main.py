@@ -17,9 +17,15 @@ from personagent.interfaces.api.routes import (
     conversations,
     memory,
     qa,
+    security,
     sessions,
     skills,
     workspace,
+)
+from personagent.interfaces.api.security import (
+    cors_allowed_origins,
+    install_local_auth,
+    validate_startup_security,
 )
 from personagent.interfaces.api.state_events import router as state_events_router
 from personagent.interfaces.config.di_container import get_container
@@ -94,6 +100,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app() -> FastAPI:
     """Factory for creating the FastAPI application."""
     settings = get_settings()
+    validate_startup_security(settings)
 
     app = FastAPI(
         title=settings.app_name,
@@ -107,27 +114,12 @@ def create_app() -> FastAPI:
     # CORS
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:5174",
-            "http://127.0.0.1:5174",
-            "http://localhost:5175",
-            "http://127.0.0.1:5175",
-            "http://localhost:5176",
-            "http://127.0.0.1:5176",
-            "http://localhost:4176",
-            "http://127.0.0.1:4176",
-            # Packaged Electron desktop/file origins
-            "null",
-            "file://",
-        ],
+        allow_origins=cors_allowed_origins(settings),
         allow_credentials=True,
         allow_methods=["*"],
-        allow_headers=["*"],
+        allow_headers=["Authorization", "Content-Type", "X-PersonAgent-Client", "Cache-Control"],
     )
+    install_local_auth(app, settings)
     install_error_handlers(app)
 
     # Routes
@@ -138,21 +130,17 @@ def create_app() -> FastAPI:
     app.include_router(skills.router)
     app.include_router(memory.router)
     app.include_router(workspace.router)
+    app.include_router(security.router)
     app.include_router(qa.router)
     app.include_router(state_events_router)
 
     @app.get("/health")
     async def health_check() -> dict:
         """Health check endpoint."""
-        container = get_container()
-        default_provider = "llama" if settings.llama_auto_start else "nvidia"
-        llm_health = await container.get_llm_backend(default_provider).health_check()
         return {
             "status": "healthy",
             "app": settings.app_name,
             "version": settings.app_version,
-            "llm_provider": default_provider,
-            "llm_backend": llm_health,
         }
 
     @app.get("/")

@@ -17,6 +17,7 @@ from personagent.domain.prompts.skills import (
     set_skill_activation,
     skill_source,
 )
+from personagent.interfaces.api.workspace_grants import resolve_workspace_root
 from personagent.interfaces.config.di_container import get_container
 
 router = APIRouter(prefix="/skills", tags=["skills"])
@@ -74,8 +75,9 @@ class SkillMarketplaceInstallResponse(BaseModel):
 @router.get("", response_model=list[SkillSummary])
 async def list_skills(
     workspace_root: str | None = Query(default=None),
+    workspace_id: str | None = Query(default=None),
 ) -> list[SkillSummary]:
-    root, extra_roots = _skill_context(workspace_root)
+    root, extra_roots = _skill_context(workspace_root, workspace_id)
     skills = discover_skills(
         workspace_root=root,
         cwd=root,
@@ -91,8 +93,9 @@ async def list_skills(
 @router.get("/marketplace", response_model=list[SkillMarketplaceItem])
 async def list_marketplace_skills(
     workspace_root: str | None = Query(default=None),
+    workspace_id: str | None = Query(default=None),
 ) -> list[SkillMarketplaceItem]:
-    installed = _installed_invocation_names(workspace_root)
+    installed = _installed_invocation_names(workspace_root, workspace_id)
     return [_marketplace_item(skill, installed) for _, skill in _marketplace_skills()]
 
 
@@ -100,6 +103,7 @@ async def list_marketplace_skills(
 async def install_marketplace_skill(
     item_id: str,
     workspace_root: str | None = Query(default=None),
+    workspace_id: str | None = Query(default=None),
 ) -> SkillMarketplaceInstallResponse:
     marketplace_item = _find_marketplace_item(item_id)
     if marketplace_item is None:
@@ -112,7 +116,7 @@ async def install_marketplace_skill(
         shutil.copytree(source_dir, destination)
 
     set_skill_activation(marketplace_item[1].invocation_name, True)
-    installed = _installed_invocation_names(workspace_root)
+    installed = _installed_invocation_names(workspace_root, workspace_id)
     installed.add(marketplace_item[1].invocation_name.lower())
     return SkillMarketplaceInstallResponse(
         item=_marketplace_item(marketplace_item[1], installed),
@@ -124,8 +128,9 @@ async def install_marketplace_skill(
 async def get_skill_detail(
     invocation_name: str,
     workspace_root: str | None = Query(default=None),
+    workspace_id: str | None = Query(default=None),
 ) -> SkillDetail:
-    root, extra_roots = _skill_context(workspace_root)
+    root, extra_roots = _skill_context(workspace_root, workspace_id)
     skill = _find_installed_skill(invocation_name, root, extra_roots)
     if skill is None:
         raise HTTPException(status_code=404, detail=f"Skill not found: {invocation_name}")
@@ -142,8 +147,9 @@ async def update_skill_activation(
     invocation_name: str,
     request: SkillActivationRequest,
     workspace_root: str | None = Query(default=None),
+    workspace_id: str | None = Query(default=None),
 ) -> SkillActivationResponse:
-    root, extra_roots = _skill_context(workspace_root)
+    root, extra_roots = _skill_context(workspace_root, workspace_id)
     skill = _find_installed_skill(invocation_name, root, extra_roots)
     if skill is None:
         raise HTTPException(status_code=404, detail=f"Skill not found: {invocation_name}")
@@ -151,10 +157,19 @@ async def update_skill_activation(
     return SkillActivationResponse(invocation_name=skill.invocation_name, enabled=enabled)
 
 
-def _skill_context(workspace_root: str | None) -> tuple[str | None, tuple[str | Path, ...]]:
+def _skill_context(
+    workspace_root: str | None,
+    workspace_id: str | None = None,
+) -> tuple[str | None, tuple[str | Path, ...]]:
     container = get_container()
     runtime_config = container.get_tool_runtime_config()
-    root = workspace_root or str(runtime_config.workspace_root)
+    if workspace_root or workspace_id:
+        try:
+            root = str(resolve_workspace_root(workspace_id=workspace_id, workspace_root=workspace_root))
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+    else:
+        root = str(runtime_config.workspace_root)
     return root, tuple(runtime_config.skill_roots)
 
 
@@ -248,8 +263,11 @@ def _marketplace_item(
     )
 
 
-def _installed_invocation_names(workspace_root: str | None) -> set[str]:
-    root, extra_roots = _skill_context(workspace_root)
+def _installed_invocation_names(
+    workspace_root: str | None,
+    workspace_id: str | None = None,
+) -> set[str]:
+    root, extra_roots = _skill_context(workspace_root, workspace_id)
     return {
         skill.invocation_name.lower()
         for skill in discover_skills(

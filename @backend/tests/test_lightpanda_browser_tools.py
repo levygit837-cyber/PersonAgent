@@ -1149,6 +1149,95 @@ async def test_default_extract_walks_unextracted_opened_pages():
     assert first_content["page_id"] == first["page_id"]
     assert second_content["page_id"] == second["page_id"]
     assert first_content["url"] != second_content["url"]
+    tabs = await worker.list_tabs(conversation_id="conversation-a", max_tabs=10)
+    assert tabs["tabs"][0]["already_read"] is True
+    assert tabs["tabs"][0]["read_status"] == "read"
+
+
+@pytest.mark.asyncio
+async def test_browser_open_reuses_existing_logical_page_for_same_url():
+    context = FakeContext(page_factory=ScriptedPage)
+
+    async def connector(_endpoint: str):
+        return FakeBrowser(context=context)
+
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=connector)
+
+    first = await worker.open(conversation_id="conversation-reuse", url="https://source-a.test/article")
+    page_count_after_first = len(context.pages)
+    second = await worker.open(conversation_id="conversation-reuse", url="https://source-a.test/article")
+
+    assert second["page_id"] == first["page_id"]
+    assert second["already_open"] is True
+    assert second["reused_existing_page"] is True
+    assert len(context.pages) == page_count_after_first
+
+
+@pytest.mark.asyncio
+async def test_browser_extract_closes_previous_read_live_pages():
+    context = FakeContext(page_factory=ScriptedPage)
+
+    async def connector(_endpoint: str):
+        return FakeBrowser(context=context)
+
+    worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222", connector=connector)
+    first = await worker.open(conversation_id="conversation-close-read", url="https://source-a.test/article")
+    second = await worker.open(conversation_id="conversation-close-read", url="https://source-b.test/article")
+    session = worker._sessions["conversation-close-read"]
+    first_page = session.pages[first["page_id"]]
+
+    first_content = await worker.extract_content(
+        conversation_id="conversation-close-read",
+        max_chars=2_000,
+        include_links=False,
+    )
+    second_content = await worker.extract_content(
+        conversation_id="conversation-close-read",
+        max_chars=2_000,
+        include_links=False,
+    )
+
+    assert first_content["page_id"] == first["page_id"]
+    assert second_content["page_id"] == second["page_id"]
+    assert first_page.closed is True
+    assert first["page_id"] not in session.pages
+
+
+@pytest.mark.asyncio
+async def test_browser_extract_returns_cached_page_for_already_read_page_id(tmp_path):
+    class CountingBrowserWorker(FakeBrowserWorker):
+        def __init__(self) -> None:
+            super().__init__()
+            self.extract_calls = 0
+
+        async def extract_content(self, **kwargs):
+            self.extract_calls += 1
+            return await super().extract_content(**kwargs)
+
+    worker = CountingBrowserWorker()
+    tools = {tool.definition.name: tool for tool in create_browser_tools(worker)}
+    context = _tool_context(tmp_path, conversation_id="conversation-cache")
+
+    first_call = ToolCall(
+        id="extract_first",
+        name="BrowserExtractContent",
+        arguments={"page_id": "page_example", "max_chars": 2_000},
+    )
+    second_call = ToolCall(
+        id="extract_second",
+        name="BrowserExtractContent",
+        arguments={"page_id": "page_example", "max_chars": 2_000},
+    )
+
+    first = json.loads((await tools["BrowserExtractContent"].call(first_call.arguments, context, first_call)).content)
+    second = json.loads((await tools["BrowserExtractContent"].call(second_call.arguments, context, second_call)).content)
+
+    assert worker.extract_calls == 1
+    assert first["already_read"] is False
+    assert second["already_read"] is True
+    assert second["read_status"] == "cached"
+    assert second["duplicate_read_avoided"] is True
+    assert second["cache_key"] == first["cache_key"]
 
 
 @pytest.mark.asyncio

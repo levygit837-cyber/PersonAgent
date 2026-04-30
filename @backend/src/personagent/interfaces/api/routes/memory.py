@@ -16,6 +16,7 @@ from personagent.domain.memory.services.memory_scanner import MemoryScanner
 from personagent.infrastructure.persistence.memory.filesystem_memory_repository import (
     FileSystemMemoryRepository,
 )
+from personagent.interfaces.api.action_approvals import require_action_approval
 from personagent.interfaces.config.di_container import DIContainer, get_container
 
 router = APIRouter(prefix="/memory", tags=["memory"])
@@ -46,6 +47,8 @@ class MemoryCreateRequest(BaseModel):
     content: str = Field(..., description="Memory Markdown content")
     memory_type: MemoryType = Field(default=MemoryType.PROJECT, description="Memory type")
     scope: MemoryScope = Field(default=MemoryScope.PRIVATE, description="Persistence scope")
+    approval_id: str | None = None
+    args_hash: str | None = None
 
 
 class MemoryUpdateRequest(BaseModel):
@@ -53,6 +56,8 @@ class MemoryUpdateRequest(BaseModel):
 
     description: str | None = Field(default=None, description="New description")
     content: str | None = Field(default=None, description="New content")
+    approval_id: str | None = None
+    args_hash: str | None = None
 
 
 class MemoryResponse(BaseModel):
@@ -81,6 +86,7 @@ class OperationalRecallRequest(BaseModel):
     query: str = Field(..., description="Semantic query")
     top_k: int = Field(default=6, ge=1, le=20)
     conversation_id: str | None = None
+    current_conversation_id: str | None = None
     session_id: str | None = None
     workspace_root: str | None = None
     source_types: list[str] = Field(default_factory=list)
@@ -89,9 +95,11 @@ class OperationalRecallRequest(BaseModel):
     created_before: datetime | None = None
     latest_only: bool = False
     active_only: bool = True
+    include_statuses: list[str] = Field(default_factory=list)
     budget_tokens: int | None = Field(default=None, ge=1)
     provider: str | None = None
     model: str | None = None
+    debug: bool = False
 
 
 class OperationalReindexRequest(BaseModel):
@@ -112,6 +120,26 @@ def _validate_memory_name(name: str) -> None:
         )
     if ".." in name or "/" in name or "\\" in name:
         raise HTTPException(status_code=400, detail="Memory name contains invalid characters")
+
+
+def _memory_approval_arguments(
+    *,
+    project_slug: str,
+    memory_name: str | None = None,
+    request: BaseModel | None = None,
+    scope: MemoryScope | None = None,
+) -> dict[str, Any]:
+    data: dict[str, Any] = {"project_slug": project_slug}
+    if memory_name is not None:
+        data["memory_name"] = memory_name
+    if scope is not None:
+        data["scope"] = scope.value
+    if request is not None:
+        payload = request.model_dump(mode="json")
+        payload.pop("approval_id", None)
+        payload.pop("args_hash", None)
+        data["request"] = payload
+    return data
 
 
 # IMPORTANT: more specific routes must come before generic path-param routes.
@@ -174,6 +202,7 @@ async def preview_operational_memory_recall(
         model=request.model,
         top_k=request.top_k,
         conversation_id=request.conversation_id,
+        current_conversation_id=request.current_conversation_id,
         session_id=request.session_id,
         workspace_root=request.workspace_root,
         source_types=request.source_types,
@@ -182,6 +211,7 @@ async def preview_operational_memory_recall(
         created_before=request.created_before,
         latest_only=request.latest_only,
         active_only=request.active_only,
+        include_statuses=request.include_statuses,
         budget_tokens=request.budget_tokens,
     )
     return {
@@ -195,6 +225,13 @@ async def preview_operational_memory_recall(
         "budget_tokens": package.budget_tokens,
         "omitted_count": package.omitted_count,
         "latency_ms": package.latency_ms,
+        "recall_scope": package.recall_scope,
+        "query_intent": package.query_intent,
+        "candidate_count": package.candidate_count,
+        "token_usage": package.token_usage,
+        "included_reasons": package.included_reasons,
+        "discarded_candidates": package.discarded_candidates if request.debug else [],
+        "ranking_breakdown": package.ranking_breakdown if request.debug else {},
     }
 
 
@@ -246,6 +283,8 @@ def _structured_memory_item_payload(item: Any) -> dict[str, Any]:
         "event_types": item.event_types,
         "score": item.score,
         "status": item.status,
+        "trust_level": getattr(item, "trust_level", "medium"),
+        "importance": getattr(item, "importance", 0.5),
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "metadata": item.metadata,
     }
@@ -289,6 +328,17 @@ async def update_memory(
 ) -> dict[str, str]:
     """Update an existing memory."""
     _validate_memory_name(memory_name)
+    require_action_approval(
+        action_kind="memory.update",
+        approval_id=request.approval_id,
+        args_hash=request.args_hash,
+        arguments=_memory_approval_arguments(
+            project_slug=project_slug,
+            memory_name=memory_name,
+            request=request,
+            scope=scope,
+        ),
+    )
     from personagent.domain.memory.models.memory_file import MemoryFile
 
     memory_dir = await repo.get_memory_dir(project_slug, scope=scope)
@@ -327,10 +377,22 @@ async def delete_memory(
     project_slug: str,
     memory_name: str,
     scope: MemoryScope = PRIVATE_SCOPE_QUERY,
+    approval_id: str | None = Query(default=None),
+    args_hash: str | None = Query(default=None),
     repo: MemoryRepository = MEMORY_REPO_DEPENDENCY,
 ) -> dict[str, str]:
     """Delete a memory."""
     _validate_memory_name(memory_name)
+    require_action_approval(
+        action_kind="memory.delete",
+        approval_id=approval_id,
+        args_hash=args_hash,
+        arguments=_memory_approval_arguments(
+            project_slug=project_slug,
+            memory_name=memory_name,
+            scope=scope,
+        ),
+    )
     memory_dir = await repo.get_memory_dir(project_slug, scope=scope)
     file_path = memory_dir / f"{memory_name}.md"
 
@@ -364,6 +426,12 @@ async def create_memory(
 ) -> dict[str, str]:
     """Create a new memory."""
     _validate_memory_name(request.name)
+    require_action_approval(
+        action_kind="memory.create",
+        approval_id=request.approval_id,
+        args_hash=request.args_hash,
+        arguments=_memory_approval_arguments(project_slug=project_slug, request=request),
+    )
     from personagent.domain.memory.models.memory_file import MemoryFile
 
     memory_dir = await repo.get_memory_dir(project_slug, scope=request.scope)

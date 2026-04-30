@@ -479,6 +479,7 @@ export interface StreamChunk {
   conversation_id?: string;
   title?: string;
   approval_id?: string;
+  args_hash?: string;
   plan_id?: string;
   plan_content?: string;
   plan_status?: string;
@@ -496,6 +497,7 @@ export interface StreamChunk {
   context_window_tokens?: number;
   context_compacted?: boolean;
   prompt_tokens_estimated?: number;
+  memory_trace?: MemoryTrace;
   images?: GeneratedImage[];
   is_thinking?: boolean;
   error?: string;
@@ -514,6 +516,69 @@ export interface StreamChunk {
   tool_calls?: unknown;
   tool_iterations?: number;
   next_step_suggestion?: string | null;
+}
+
+export interface MemoryTraceClassicItem {
+  path?: string;
+  name?: string;
+  header?: string;
+  mtime_ms?: number;
+  snippet?: string;
+}
+
+export interface MemoryTraceOperationalItem {
+  type?: string;
+  summary?: string;
+  evidence?: string[];
+  paths?: string[];
+  source_ids?: string[];
+  event_types?: string[];
+  score?: number;
+  status?: string;
+  created_at?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface MemoryTraceSummary {
+  total_used: number;
+  classic_count: number;
+  rag_count: number;
+  omitted_count: number;
+  budget_used: number;
+  budget_tokens: number;
+  latency_ms: number;
+}
+
+export interface MemoryTrace {
+  classic: MemoryTraceClassicItem[];
+  operational: MemoryTraceOperationalItem[];
+  summary: MemoryTraceSummary;
+  filters_applied?: Record<string, unknown>;
+  prompt?: {
+    formatted?: string;
+    truncated?: boolean;
+  };
+}
+
+export interface SessionMemoryTopItem {
+  id: string;
+  source: "classic" | "rag" | string;
+  label: string;
+  count: number;
+  paths: string[];
+  evidence: string[];
+  messages: string[];
+}
+
+export interface SessionMemorySummary {
+  total_recalls: number;
+  rag_used: number;
+  classic_used: number;
+  omitted: number;
+  avg_latency_ms: number;
+  budget_used: number;
+  budget_tokens: number;
+  most_used: SessionMemoryTopItem[];
 }
 
 export interface SessionUsageMetric {
@@ -601,6 +666,7 @@ export interface SessionPanelSnapshot {
   changed_files: ChangedFile[];
   sources: SessionSource[];
   usage: SessionUsage;
+  memory?: SessionMemorySummary;
   project: SessionProjectSnapshot;
 }
 
@@ -629,6 +695,7 @@ export interface PlanDecisionResponse {
 
 export interface ToolApprovalPayload {
   approval_id: string;
+  args_hash?: string;
   status: string;
   tool_call_id: string;
   tool_name: string;
@@ -639,6 +706,7 @@ export interface ToolApprovalPayload {
 export interface ToolApprovalUi {
   conversationId: string;
   approvalId: string;
+  argsHash?: string;
   toolCallId: string;
   toolName: string;
   toolInput?: Record<string, unknown>;

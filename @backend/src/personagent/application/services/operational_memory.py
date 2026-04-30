@@ -18,6 +18,7 @@ from personagent.domain.memory.models.operational import (
     MemoryChunk,
     MemoryContextBudget,
     MemoryEvent,
+    MemoryItemStatus,
     OperationalMemoryEventType,
     RecallFinding,
     StructuredMemoryItem,
@@ -32,6 +33,7 @@ from personagent.domain.memory.services.operational_memory import (
 from personagent.domain.tools import ToolCall, ToolExecutionStatus, ToolResult, ToolUseContext
 
 if TYPE_CHECKING:
+    from personagent.application.services.operational_memory_queue import OperationalMemoryQueue
     from personagent.infrastructure.llm.embedding_adapter import OpenAICompatibleEmbeddingAdapter
     from personagent.infrastructure.persistence.operational_memory_repository import (
         OperationalMemoryRepository,
@@ -177,6 +179,9 @@ class OperationalMemoryService:
         semantic_candidate_limit: int = 80,
         recent_candidate_limit: int = 40,
         context_budget_tokens: int | None = None,
+        queue: OperationalMemoryQueue | None = None,
+        queue_enabled: bool = False,
+        queue_fallback_sync: bool = True,
     ) -> None:
         self._repository = repository
         self._embedding_adapter = embedding_adapter
@@ -192,6 +197,9 @@ class OperationalMemoryService:
         self._context_budget_tokens = (
             max(1, context_budget_tokens) if context_budget_tokens and context_budget_tokens > 0 else None
         )
+        self._queue = queue
+        self._queue_enabled = queue_enabled
+        self._queue_fallback_sync = queue_fallback_sync
         self._redactor = OperationalMemoryRedactor()
         self._hot_cache: dict[str, deque[RecallFinding]] = defaultdict(
             lambda: deque(maxlen=max(1, hot_cache_size))
@@ -338,6 +346,7 @@ class OperationalMemoryService:
         model: str | None = None,
         top_k: int | None = None,
         conversation_id: str | None = None,
+        current_conversation_id: str | None = None,
         session_id: str | None = None,
         workspace_root: str | None = None,
         source_types: list[str] | None = None,
@@ -346,6 +355,7 @@ class OperationalMemoryService:
         created_before: Any = None,
         latest_only: bool = False,
         active_only: bool = True,
+        include_statuses: list[str] | None = None,
         budget_tokens: int | None = None,
         context_window_tokens: int = 262_144,
     ) -> str:
@@ -356,6 +366,7 @@ class OperationalMemoryService:
             model=model,
             top_k=top_k,
             conversation_id=conversation_id,
+            current_conversation_id=current_conversation_id,
             session_id=session_id,
             workspace_root=workspace_root,
             source_types=source_types,
@@ -364,6 +375,7 @@ class OperationalMemoryService:
             created_before=created_before,
             latest_only=latest_only,
             active_only=active_only,
+            include_statuses=include_statuses,
             budget_tokens=budget_tokens,
             context_window_tokens=context_window_tokens,
         )
@@ -378,6 +390,7 @@ class OperationalMemoryService:
         model: str | None = None,
         top_k: int | None = None,
         conversation_id: str | None = None,
+        current_conversation_id: str | None = None,
         session_id: str | None = None,
         workspace_root: str | None = None,
         source_types: list[str] | None = None,
@@ -386,13 +399,50 @@ class OperationalMemoryService:
         created_before: Any = None,
         latest_only: bool = False,
         active_only: bool = True,
+        include_statuses: list[str] | None = None,
         budget_tokens: int | None = None,
         context_window_tokens: int = 262_144,
     ) -> StructuredMemoryPackage:
         if not self._recall_enabled:
+            await self._repository.record_recall_skip(
+                project_slug=project_slug,
+                query=self._redactor.redact_text(query),
+                filters={
+                    "conversation_id": conversation_id,
+                    "current_conversation_id": current_conversation_id,
+                    "session_id": session_id,
+                    "workspace_root": workspace_root,
+                    "source_types": source_types or [],
+                    "file_paths": file_paths or [],
+                    "latest_only": latest_only,
+                    "active_only": active_only,
+                    "statuses": include_statuses or [],
+                },
+                reason="recall_disabled",
+                provider=provider,
+                model=model,
+            )
             return _empty_structured_package()
         if not _should_recall_operational_memory(query):
             logger.debug("operational_memory_recall_skipped", reason="query_intent_gate")
+            await self._repository.record_recall_skip(
+                project_slug=project_slug,
+                query=self._redactor.redact_text(query),
+                filters={
+                    "conversation_id": conversation_id,
+                    "current_conversation_id": current_conversation_id,
+                    "session_id": session_id,
+                    "workspace_root": workspace_root,
+                    "source_types": source_types or [],
+                    "file_paths": file_paths or [],
+                    "latest_only": latest_only,
+                    "active_only": active_only,
+                    "statuses": include_statuses or [],
+                },
+                reason="query_intent_gate",
+                provider=provider,
+                model=model,
+            )
             return _empty_structured_package()
         query_embedding = await self._embed_query(query)
         try:
@@ -407,6 +457,7 @@ class OperationalMemoryService:
                 top_k=top_k or self._recall_top_k,
                 filters={
                     "conversation_id": conversation_id,
+                    "current_conversation_id": current_conversation_id,
                     "session_id": session_id,
                     "workspace_root": workspace_root,
                     "source_types": source_types or [],
@@ -415,6 +466,7 @@ class OperationalMemoryService:
                     "created_before": created_before,
                     "latest_only": latest_only,
                     "active_only": active_only,
+                    "statuses": include_statuses or [],
                     "semantic_candidate_limit": self._semantic_candidate_limit,
                     "recent_candidate_limit": self._recent_candidate_limit,
                 },
@@ -436,6 +488,7 @@ class OperationalMemoryService:
             stats["embedding_service"] = await self._embedding_adapter.health_check()
         else:
             stats["embedding_service"] = {"status": "disabled"}
+        stats["queue_enabled"] = self._queue_enabled
         return stats
 
     async def _capture_event(
@@ -446,19 +499,34 @@ class OperationalMemoryService:
         file_path: str | None = None,
     ) -> None:
         try:
+            if self._queue_enabled and self._queue is not None:
+                payload = {
+                    "event_id": str(event.id),
+                    "content": content,
+                    "file_path": file_path,
+                }
+                _, outbox = await self._repository.record_event_with_outbox(
+                    event,
+                    job_type="index_operational_memory_event",
+                    payload=payload,
+                    dedupe_key=f"{event.id}:index_operational_memory_event",
+                )
+                try:
+                    await self._queue.publish(outbox)
+                    await self._repository.mark_outbox_published(outbox["id"])
+                    self._remember_hot_event(event, content, file_path)
+                    return
+                except Exception as exc:
+                    logger.warning("operational_memory_queue_publish_failed", error=str(exc))
+                    if not self._queue_fallback_sync:
+                        await self._repository.mark_outbox_failed(outbox["id"], str(exc))
+                        return
+                    await self._process_indexing_event(event, content=content, file_path=file_path)
+                    await self._repository.mark_outbox_completed(outbox["id"])
+                    return
+
             await self._repository.record_event(event)
-            chunks = self._chunker.chunk_text(
-                project_slug=event.project_slug,
-                source_type=event.event_type.value,
-                source_id=str(event.id),
-                content=content,
-                file_path=file_path,
-                event_id=event.id,
-            )
-            chunks = await self._repository.record_chunks(chunks)
-            await self._safe_record_structured_items(event, chunks)
-            self._remember_hot(event, chunks)
-            await self._embed_chunks(chunks)
+            await self._process_indexing_event(event, content=content, file_path=file_path)
         except Exception:
             logger.warning(
                 "operational_memory_capture_failed",
@@ -466,6 +534,47 @@ class OperationalMemoryService:
                 project_slug=event.project_slug,
                 exc_info=True,
             )
+
+    async def process_outbox_message(self, message: dict[str, Any]) -> None:
+        """Process one RabbitMQ memory outbox message."""
+
+        outbox_id = str(message.get("id") or "")
+        payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+        event = await self._repository.get_event(payload.get("event_id") or message.get("event_id"))
+        if event is None:
+            await self._repository.mark_outbox_failed(outbox_id, "event not found")
+            return
+        try:
+            await self._repository.mark_outbox_processing(outbox_id)
+            await self._process_indexing_event(
+                event,
+                content=str(payload.get("content") or ""),
+                file_path=payload.get("file_path"),
+            )
+            await self._repository.mark_outbox_completed(outbox_id)
+        except Exception as exc:
+            await self._repository.mark_outbox_failed(outbox_id, str(exc))
+            raise
+
+    async def _process_indexing_event(
+        self,
+        event: MemoryEvent,
+        *,
+        content: str,
+        file_path: str | None = None,
+    ) -> None:
+        chunks = self._chunker.chunk_text(
+            project_slug=event.project_slug,
+            source_type=event.event_type.value,
+            source_id=str(event.id),
+            content=content,
+            file_path=file_path,
+            event_id=event.id,
+        )
+        chunks = await self._repository.record_chunks(chunks)
+        await self._safe_record_structured_items(event, chunks)
+        self._remember_hot(event, chunks)
+        await self._embed_chunks(chunks)
 
     async def _embed_chunks(self, chunks: list[MemoryChunk]) -> None:
         pending = [
@@ -548,7 +657,9 @@ class OperationalMemoryService:
                     paths=paths,
                     source_ids=[str(chunk.id)],
                     event_types=[event.event_type.value],
-                    status="active",
+                    status=_structured_status_from_event(event).value,
+                    trust_level=_trust_level_from_event(event),
+                    importance=_importance_from_event(event),
                     created_at=event.created_at,
                     metadata={
                         "project_slug": event.project_slug,
@@ -588,6 +699,29 @@ class OperationalMemoryService:
                     created_at=event.created_at,
                 )
             )
+
+    def _remember_hot_event(
+        self,
+        event: MemoryEvent,
+        content: str,
+        file_path: str | None,
+    ) -> None:
+        evidence = " ".join(content.split())[:360]
+        self._hot_cache[event.project_slug].appendleft(
+            RecallFinding(
+                finding=(
+                    f"Evento recente `{event.event_type.value}`"
+                    f"{f' via {event.tool_name}' if event.tool_name else ''}: "
+                    f"{evidence}"
+                ),
+                source_ids=[str(event.id)],
+                evidence=[evidence],
+                paths=[file_path] if file_path else list(event.paths),
+                score=0.2,
+                event_types=[event.event_type.value],
+                created_at=event.created_at,
+            )
+        )
 
     def _merge_hot_findings(
         self,
@@ -635,6 +769,8 @@ class OperationalMemoryService:
             return OperationalMemoryEventType.DIFF_APPLIED
         if data_type == "shell":
             command = str(data.get("command") or call.arguments.get("command") or "")
+            if self._looks_like_test_command(command):
+                return OperationalMemoryEventType.TEST_RESULT
             if self._looks_like_dependency_install(command):
                 return OperationalMemoryEventType.DEPENDENCY_INSTALLED
             return OperationalMemoryEventType.COMMAND_EXECUTED
@@ -720,6 +856,14 @@ class OperationalMemoryService:
             )
         )
 
+    def _looks_like_test_command(self, command: str) -> bool:
+        return bool(
+            re.search(
+                r"\b(pytest|npm\s+test|pnpm\s+test|yarn\s+test|bun\s+test|uv\s+run\s+pytest|ruff|mypy|vitest)\b",
+                command,
+            )
+        )
+
     def _compact_json(self, value: Any) -> str:
         try:
             return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
@@ -770,7 +914,76 @@ def _structured_type_from_event(event_type: OperationalMemoryEventType) -> Struc
         OperationalMemoryEventType.DEPENDENCY_INSTALLED,
     }:
         return StructuredMemoryType.COMMAND_RESULT
+    if event_type == OperationalMemoryEventType.TEST_RESULT:
+        return StructuredMemoryType.TEST_RESULT
+    if event_type in {OperationalMemoryEventType.TOOL_CALL, OperationalMemoryEventType.TOOL_RESULT}:
+        return StructuredMemoryType.TOOL_TRACE
     return StructuredMemoryType.FACT
+
+
+def _structured_status_from_event(event: MemoryEvent) -> MemoryItemStatus:
+    text = " ".join(
+        str(part or "")
+        for part in [
+            event.status,
+            event.error,
+            event.resolution,
+            event.task,
+            event.metadata.get("status") if isinstance(event.metadata, dict) else "",
+        ]
+    )
+    if re.search(r"(?i)\bsuperseded|substitu", text):
+        return MemoryItemStatus.SUPERSEDED
+    if re.search(r"(?i)\brejected|rejeitad", text):
+        return MemoryItemStatus.REJECTED
+    if re.search(r"(?i)\bstale|obsoleto|desatualizad", text):
+        return MemoryItemStatus.STALE
+    return MemoryItemStatus.ACTIVE
+
+
+def _trust_level_from_event(event: MemoryEvent) -> str:
+    if event.event_type in {
+        OperationalMemoryEventType.USER_MESSAGE,
+        OperationalMemoryEventType.ASSISTANT_MESSAGE,
+    }:
+        return "low"
+    if event.event_type in {
+        OperationalMemoryEventType.TOOL_CALL,
+        OperationalMemoryEventType.TOOL_RESULT,
+        OperationalMemoryEventType.FILE_READ,
+        OperationalMemoryEventType.COMMAND_EXECUTED,
+    }:
+        return "medium"
+    return "high"
+
+
+def _importance_from_event(event: MemoryEvent) -> float:
+    if event.event_type in {
+        OperationalMemoryEventType.DECISION,
+        OperationalMemoryEventType.AGENT_STATE,
+        OperationalMemoryEventType.DIFF_APPLIED,
+        OperationalMemoryEventType.ERROR_FOUND,
+        OperationalMemoryEventType.SOLUTION_ATTEMPTED,
+    }:
+        return 0.95
+    if event.event_type in {
+        OperationalMemoryEventType.TEST_RESULT,
+        OperationalMemoryEventType.FILE_CREATED,
+        OperationalMemoryEventType.FILE_EDITED,
+        OperationalMemoryEventType.DEPENDENCY_INSTALLED,
+    }:
+        return 0.8
+    if event.event_type in {
+        OperationalMemoryEventType.COMMAND_EXECUTED,
+        OperationalMemoryEventType.TOOL_RESULT,
+    }:
+        return 0.6
+    if event.event_type in {
+        OperationalMemoryEventType.USER_MESSAGE,
+        OperationalMemoryEventType.ASSISTANT_MESSAGE,
+    }:
+        return 0.2
+    return 0.5
 
 
 def _structured_summary(
@@ -787,6 +1000,8 @@ def _structured_summary(
         StructuredMemoryType.ERROR_SOLUTION: "Error or fix",
         StructuredMemoryType.FILE_STATE: "File state",
         StructuredMemoryType.COMMAND_RESULT: "Command result",
+        StructuredMemoryType.TEST_RESULT: "Test result",
+        StructuredMemoryType.TOOL_TRACE: "Tool trace",
         StructuredMemoryType.FACT: "Operational fact",
     }[item_type]
     source = event.event_type.value.replace("_", " ")

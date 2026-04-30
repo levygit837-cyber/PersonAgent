@@ -63,7 +63,9 @@ TOOL_PROMPTS: dict[str, str] = {
     "Read": (
         "Read file contents before editing or making claims about implementation. "
         "Use absolute paths or paths resolved against the workspace. For large files, "
-        "read focused ranges and continue reading adjacent ranges until the relevant logic is complete."
+        "read focused ranges and continue reading adjacent ranges until the relevant logic is complete. "
+        "A Read result can report has_more=true when the file continues after the returned range; "
+        "treat truncated=true as a signal that the returned range itself was cut by a system limit."
     ),
     "Write": (
         "Create new files or replace an entire file only when that is the intended operation. "
@@ -135,19 +137,26 @@ TOOL_PROMPTS: dict[str, str] = {
     "BrowserOpen": (
         "Open a known URL or a result from BrowserSearch. Keep the returned page_id/window_id when "
         "comparing multiple sources, and verify the final URL before extracting content. If you "
-        "have only a search_id, BrowserOpen can use it by itself to open that search's first result."
+        "have only a search_id, BrowserOpen can use it by itself to open that search's first result. "
+        "If the result says already_open or already_read, reuse that page_id instead of opening "
+        "or reading the same URL again."
     ),
     "BrowserListTabs": (
         "List opened browser pages/tabs in the current conversation. The user's Browser panel and "
         "these browser tools share the same browser workspace, so use this to recover panel tab "
-        "page_id/window_id values and avoid extracting or acting on the wrong source."
+        "page_id/window_id values and avoid extracting or acting on the wrong source. For parallel "
+        "research, build a page_id -> source map from this result, skip tabs marked already_read "
+        "unless force_refresh is required, and never launch two extraction/action calls for the same "
+        "page_id in the same tool turn."
     ),
     "BrowserExtractContent": (
         "Extract structured readable content from a URL, page_id/window_id, or the last BrowserOpen "
         "page. It prepares the rendered page before reading, so prefer page_id/window_id after "
         "BrowserOpen. If content_chars is larger than the returned preview, continue with "
         "BrowserReadContentChunk before synthesizing. Use include_links when links may reveal "
-        "deeper documentation, changelogs, pricing, downloads, or examples."
+        "deeper documentation, changelogs, pricing, downloads, or examples. Treat already_read, "
+        "read_status=cached, or duplicate_read_avoided as a signal to use the cached result and move "
+        "to an unread page instead of repeating the extraction."
     ),
     "BrowserReadContentChunk": (
         "Read cached page chunks after BrowserExtractContent. Use chunk_count to read multiple "

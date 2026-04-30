@@ -34,23 +34,15 @@ export function StateEventBridge() {
 
   useEffect(() => {
     if (!baseUrl || apiStatus !== "online") return;
+    const controller = new AbortController();
     const params = new URLSearchParams();
     if (selectedWorkspace) params.set("workspace_root", selectedWorkspace);
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    const source = new EventSource(`${baseUrl}/events/state${suffix}`);
-
-    const handleStateChanged = (message: MessageEvent<string>) => {
-      const event = parseStateEvent(message.data);
-      if (!event) return;
+    void streamStateEvents(`${baseUrl}/events/state${suffix}`, controller.signal, (event) => {
       invalidateStateResource(queryClient, baseUrl, event.resource, event.scope);
-    };
+    });
 
-    source.addEventListener("state.changed", handleStateChanged);
-    source.onerror = () => {
-      // EventSource reconnects automatically; fallback checks cover missed changes.
-    };
-
-    return () => source.close();
+    return () => controller.abort();
   }, [apiStatus, baseUrl, queryClient, selectedWorkspace]);
 
   useEffect(() => {
@@ -84,6 +76,56 @@ function parseStateEvent(raw: string) {
   } catch {
     return null;
   }
+}
+
+async function streamStateEvents(url: string, signal: AbortSignal, onEvent: (event: StateChangedEvent) => void) {
+  const headers = window.personAgent?.auth?.getHeaders ? await window.personAgent.auth.getHeaders() : {};
+  const response = await fetch(url, {
+    headers: {
+      ...headers,
+      Accept: "text/event-stream",
+      "Cache-Control": "no-cache",
+    },
+    signal,
+  });
+  if (!response.ok || !response.body) return;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (!signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parsed = parseStateSseBlocks(buffer);
+      buffer = parsed.rest;
+      for (const raw of parsed.events) {
+        const event = parseStateEvent(raw);
+        if (event) onEvent(event);
+      }
+    }
+  } catch {
+    // Fallback polling paths still refresh critical state.
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function parseStateSseBlocks(buffer: string) {
+  const normalized = buffer.replace(/\r\n/g, "\n");
+  const blocks = normalized.split("\n\n");
+  const rest = blocks.pop() ?? "";
+  const events: string[] = [];
+  for (const block of blocks) {
+    const data = block
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n")
+      .trim();
+    if (data) events.push(data);
+  }
+  return { events, rest };
 }
 
 function invalidateGitState(queryClient: ReturnType<typeof useQueryClient>, baseUrl: string, workspaceRoot: string) {

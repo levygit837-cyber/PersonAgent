@@ -175,7 +175,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
       }));
 
       try {
-        void ensureTerminalApi().create(id, cwd);
+        void ensureTerminalApi().create(id, cwd, cwd);
       } catch {
         // Terminal API not available in browser/dev — keep as mock
       }
@@ -240,7 +240,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
         });
 
         try {
-          void ensureTerminalApi().create(rightId);
+          void ensureTerminalApi().create(rightId, rightInstance.cwd, rightInstance.cwd);
         } catch {
           // Terminal API not available in browser/dev — keep as mock
         }

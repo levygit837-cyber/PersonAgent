@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from hashlib import sha256
 from typing import Any
 from urllib.parse import urlparse
@@ -113,6 +114,7 @@ _LOW_QUALITY_PATH_MARKERS = (
     "/vetted/",
 )
 _PAGE_CACHE = get_browser_page_cache()
+_BROWSER_EXTRACT_IN_FLIGHT: dict[tuple[str, str], asyncio.Task[dict[str, Any]]] = {}
 _BROWSER_OPEN_URL_KEYS = ("url", "result_url", "final_url", "href", "link")
 _BROWSER_OPEN_INDEX_KEYS = (
     "result_index",
@@ -297,7 +299,9 @@ def create_browser_open_tool(worker: LightPandaBrowserWorker) -> Tool:
             description=(
                 "Open a URL, a 1-based result_index from recent cached BrowserSearch results, "
                 "or the first result from a provided search_id. Returns page_id/window_id for "
-                "later extraction. If url and result_index are both provided, url wins."
+                "later extraction. Reuses an already-open logical page for the same URL when "
+                "possible, and returns already_read/read_status so duplicate reads can be avoided. "
+                "If url and result_index are both provided, url wins."
             ),
             input_schema={
                 "type": "object",
@@ -386,7 +390,9 @@ def create_browser_list_tabs_tool(worker: LightPandaBrowserWorker) -> Tool:
             description=(
                 "List browser tabs/pages from the shared Browser panel and BrowserOpen state for "
                 "the current chat conversation. Use this to recover browser_id/page_id values and "
-                "keep browser work consistent with the visible panel."
+                "keep browser work consistent with the visible panel. Each tab includes "
+                "already_read/read_status/extraction_count; do not extract a tab again unless "
+                "force_refresh is explicitly needed."
             ),
             input_schema={
                 "type": "object",
@@ -442,6 +448,9 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
         include_links = arguments.get("include_links", False)
         if not isinstance(include_links, bool):
             return _deny("BrowserExtractContent include_links must be a boolean.")
+        force_refresh = arguments.get("force_refresh", False)
+        if not isinstance(force_refresh, bool):
+            return _deny("BrowserExtractContent force_refresh must be a boolean.")
         return None
 
     async def handler(
@@ -470,6 +479,16 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
         )
         max_chars = int(arguments.get("max_chars") or _browser_result_max_chars(context))
         include_links = bool(arguments.get("include_links", False))
+        force_refresh = bool(arguments.get("force_refresh", False))
+        cached = None if force_refresh or not target_id else _PAGE_CACHE.latest_for_page(browser_id, target_id)
+        if cached is not None:
+            data = _cached_extracted_content_response(
+                cached,
+                max_chars=max_chars,
+                include_links=include_links,
+            )
+            data.setdefault("browser_id", browser_id)
+            return _json_result(call, "BrowserExtractContent", data)
         await _progress(
             context,
             call,
@@ -477,12 +496,18 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
             {"browser_id": browser_id, "url": url, "page_id": page_id, "window_id": window_id},
         )
         try:
-            data = await worker.extract_content(
-                conversation_id=browser_id,
-                url=explicit_url if explicit_url and not target_id else workspace_content_url,
-                page_id=None if workspace_content_url else target_id,
-                max_chars=max_chars,
-                include_links=include_links,
+            read_url = explicit_url if explicit_url and not target_id else workspace_content_url
+            read_page_id = None if workspace_content_url else target_id
+            data, duplicate_read_avoided = await _run_deduped_browser_extract(
+                browser_id,
+                read_page_id or read_url or "",
+                lambda: worker.extract_content(
+                    conversation_id=browser_id,
+                    url=read_url,
+                    page_id=read_page_id,
+                    max_chars=max_chars,
+                    include_links=include_links,
+                ),
             )
         except Exception as exc:
             return _error(call, "BrowserExtractContent", str(exc), exc)
@@ -493,6 +518,9 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
             data=data,
             include_links=include_links,
         )
+        data.setdefault("already_read", False)
+        data.setdefault("read_status", "read")
+        data["duplicate_read_avoided"] = bool(duplicate_read_avoided or data.get("duplicate_read_avoided"))
         return _json_result(call, "BrowserExtractContent", data)
 
     return build_tool(
@@ -502,7 +530,8 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
                 "Return organized markdown/text content from the current LightPanda page or "
                 "from a provided URL/page_id. The tool prepares the rendered page, closes common "
                 "dismissible overlays, scrolls incrementally to load lazy content, and defaults "
-                "to the last BrowserOpen page in the conversation."
+                "to the next unread BrowserOpen page in the conversation. It returns cached "
+                "content for an already-read page_id unless force_refresh=true."
             ),
             input_schema={
                 "type": "object",
@@ -522,6 +551,11 @@ def create_browser_extract_content_tool(worker: LightPandaBrowserWorker) -> Tool
                         "default": 60000,
                     },
                     "include_links": {"type": "boolean", "default": False},
+                    "force_refresh": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Set true only when the page must be re-read even if this page_id already has cached content.",
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -2014,6 +2048,69 @@ def _prepare_extracted_content_response(
     return data
 
 
+async def _run_deduped_browser_extract(
+    browser_id: str,
+    target_key: str,
+    factory: Callable[[], Awaitable[dict[str, Any]]],
+) -> tuple[dict[str, Any], bool]:
+    key_value = str(target_key or "").strip()
+    if not key_value:
+        return await factory(), False
+    key = (browser_id, key_value)
+    task = _BROWSER_EXTRACT_IN_FLIGHT.get(key)
+    owner = task is None
+    if task is None:
+        task = asyncio.create_task(factory())
+        _BROWSER_EXTRACT_IN_FLIGHT[key] = task
+    try:
+        data = await task
+        return dict(data), not owner
+    finally:
+        if owner and _BROWSER_EXTRACT_IN_FLIGHT.get(key) is task:
+            _BROWSER_EXTRACT_IN_FLIGHT.pop(key, None)
+
+
+def _cached_extracted_content_response(
+    entry: Any,
+    *,
+    max_chars: int,
+    include_links: bool,
+) -> dict[str, Any]:
+    metadata = _PAGE_CACHE.metadata(entry)
+    chunk_count = max(1, min(entry.chunk_count, _MAX_CHUNK_COUNT))
+    chunks = _PAGE_CACHE.read_chunks(entry, 1, chunk_count)
+    content = "\n\n".join(chunks).strip()
+    if len(content) > max_chars:
+        content = _trim_content(content, max_chars)
+    returned_links = metadata.get("links", []) if include_links and isinstance(metadata.get("links"), list) else []
+    links_summary = metadata.get("links_summary") if isinstance(metadata.get("links_summary"), dict) else {}
+    buttons = metadata.get("buttons") if isinstance(metadata.get("buttons"), list) else []
+    return {
+        "type": "browser_extract_content",
+        "browser_id": entry.conversation_id,
+        "url": entry.url,
+        "title": entry.title,
+        "page_id": entry.page_id,
+        "window_id": entry.page_id,
+        "content": content,
+        "content_preview": content,
+        "content_chars": entry.content_chars,
+        "chunk_size": entry.chunk_size or _DEFAULT_CHUNK_SIZE,
+        "chunk_count": entry.chunk_count,
+        "cache_key": entry.cache_key,
+        "links": returned_links,
+        "links_summary": links_summary,
+        "buttons": buttons,
+        "truncated": entry.content_chars > len(content),
+        "inline_content_truncated": entry.content_chars > len(content),
+        "content_available_in_chunks": entry.chunk_count > 1,
+        "chunks_available": entry.chunk_count > 0,
+        "already_read": True,
+        "read_status": "cached",
+        "duplicate_read_avoided": True,
+    }
+
+
 def _summarize_element_map(raw_map: Any) -> list[dict[str, Any]]:
     elements: list[dict[str, Any]] = []
     if not isinstance(raw_map, list):
@@ -2461,6 +2558,8 @@ def _normalize_browser_tab_for_tool(
     parsed = urlparse(url)
     domain = parsed.netloc
     active = bool(tab.get("active") or tab.get("is_active"))
+    extraction_count = int(tab.get("extraction_count") or 0)
+    already_read = bool(tab.get("already_read")) or extraction_count > 0
     return {
         "index": int(tab.get("index") or index or 1),
         "browser_id": str(tab.get("browser_id") or browser_id),
@@ -2476,7 +2575,9 @@ def _normalize_browser_tab_for_tool(
         "runtime": str(tab.get("runtime") or ""),
         "source_search_id": tab.get("source_search_id"),
         "opener_tool_call_id": tab.get("opener_tool_call_id"),
-        "extraction_count": int(tab.get("extraction_count") or 0),
+        "extraction_count": extraction_count,
+        "already_read": already_read,
+        "read_status": str(tab.get("read_status") or ("read" if already_read else "unread")),
         "is_last_open": bool(tab.get("is_last_open") or active),
         "is_current_page": bool(tab.get("is_current_page") or active),
         "active": active,

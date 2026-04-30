@@ -229,6 +229,7 @@ codex:
 def test_lightpanda_settings_defaults():
     settings = Settings()
 
+    assert settings.app_host == "127.0.0.1"
     assert settings.lightpanda_enabled is True
     assert settings.lightpanda_cdp_url == "http://127.0.0.1:9222"
     assert settings.browser_cdp_url is None

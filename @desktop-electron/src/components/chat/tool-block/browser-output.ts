@@ -144,6 +144,9 @@ function browserOpenOutput(data: Record<string, unknown>) {
     keyValueLine("Page ID", stringValue(data.page_id)),
     keyValueLine("Window ID", stringValue(data.window_id)),
     keyValueLine("Search ID", stringValue(data.search_id)),
+    keyValueLine("Read status", stringValue(data.read_status)),
+    data.already_open === true ? "Already open: true" : undefined,
+    data.already_read === true ? "Already read: true" : undefined,
     keyValueLine("Opened pages", numberValue(data.opened_page_count)),
   ]);
 }
@@ -155,9 +158,12 @@ function browserExtractOutput(block: ToolBlockUi, data: Record<string, unknown>)
     keyValueLine("URL", stringValue(data.url)),
     keyValueLine("Page ID", stringValue(data.page_id)),
     keyValueLine("Cache key", stringValue(data.cache_key)),
+    keyValueLine("Read status", stringValue(data.read_status)),
     keyValueLine("Content chars", numberValue(data.content_chars)),
     keyValueLine("Chunks", numberValue(data.chunk_count)),
     keyValueLine("Full output", stringValue(data.storage_ref)),
+    data.already_read === true ? "Already read: true" : undefined,
+    data.duplicate_read_avoided === true ? "Duplicate read avoided: true" : undefined,
     data.inline_content_truncated === true ? "Inline content truncated: true" : undefined,
     content.trim() ? `\n${content.trimEnd()}` : stringValue(data.message),
   ]);
@@ -205,6 +211,7 @@ function browserTabOutput(value: unknown, index: number) {
     `${index + 1}. ${stringValue(value.title) ?? stringValue(value.url) ?? "Untitled tab"}`,
     stringValue(value.url) ? `   ${stringValue(value.url)}` : undefined,
     stringValue(value.page_id) ? `   page_id: ${stringValue(value.page_id)}` : undefined,
+    stringValue(value.read_status) ? `   read_status: ${stringValue(value.read_status)}` : undefined,
   ]);
 }
 

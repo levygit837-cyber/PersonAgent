@@ -168,6 +168,30 @@ describe("chat workspace routing", () => {
           event: "prompt_context",
           context_tokens_estimated: 2048,
           context_window_tokens: 1000000,
+          memory_trace: {
+            classic: [],
+            operational: [
+              {
+                type: "session_fact",
+                summary: "Use workspace memory",
+                evidence: ["Stored from prompt context."],
+                paths: ["sessions/context"],
+                source_ids: ["mem_ctx"],
+              },
+            ],
+            summary: {
+              total_used: 1,
+              classic_count: 0,
+              rag_count: 1,
+              omitted_count: 0,
+              budget_used: 64,
+              budget_tokens: 256,
+              latency_ms: 14,
+            },
+            filters_applied: {
+              workspace_slug: "eval",
+            },
+          },
         },
         { content: "Visible " },
         {
@@ -183,6 +207,30 @@ describe("chat workspace routing", () => {
           context_tokens_estimated: 8192,
           context_tokens_after_turn_estimated: 9000,
           context_window_tokens: 1000000,
+          memory_trace: {
+            classic: [],
+            operational: [
+              {
+                type: "session_fact",
+                summary: "Use saved memory",
+                evidence: ["Stored from conversation saved."],
+                paths: ["sessions/context"],
+                source_ids: ["mem_saved"],
+              },
+            ],
+            summary: {
+              total_used: 1,
+              classic_count: 0,
+              rag_count: 1,
+              omitted_count: 0,
+              budget_used: 80,
+              budget_tokens: 256,
+              latency_ms: 20,
+            },
+            filters_applied: {
+              workspace_slug: "eval",
+            },
+          },
         },
       ]),
     );
@@ -195,6 +243,9 @@ describe("chat workspace routing", () => {
       context_tokens_estimated: 8192,
       context_tokens_after_turn_estimated: 9000,
       context_window_tokens: 1000000,
+      memory_trace: expect.objectContaining({
+        summary: expect.objectContaining({ total_used: 1, latency_ms: 20 }),
+      }),
     });
   });
 

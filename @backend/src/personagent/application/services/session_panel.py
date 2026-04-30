@@ -30,12 +30,14 @@ class SessionPanelService:
         changed_files_task = asyncio.create_task(self._changed_files_async(conversation, workspace))
         sources_task = asyncio.create_task(self._sources_async(conversation))
         usage_task = asyncio.create_task(self._usage_async(conversation))
+        memory_task = asyncio.create_task(self._memory_summary_async(conversation))
         project_task = asyncio.create_task(self._project_snapshot_async(workspace))
 
-        changed_files, sources, usage, project = await asyncio.gather(
+        changed_files, sources, usage, memory, project = await asyncio.gather(
             changed_files_task,
             sources_task,
             usage_task,
+            memory_task,
             project_task,
         )
 
@@ -46,6 +48,7 @@ class SessionPanelService:
             "changed_files": changed_files,
             "sources": sources,
             "usage": usage,
+            "memory": memory,
             "project": project,
         }
 
@@ -74,6 +77,9 @@ class SessionPanelService:
 
     async def _usage_async(self, conversation: Conversation) -> dict[str, Any]:
         return self._usage(conversation)
+
+    async def _memory_summary_async(self, conversation: Conversation) -> dict[str, Any]:
+        return self._memory_summary(conversation)
 
     async def _sources_async(self, conversation: Conversation) -> list[dict[str, Any]]:
         return self._sources(conversation)
@@ -306,6 +312,90 @@ class SessionPanelService:
 
         usage["subagents_used"]["value"] = len(seen_subagents)
         return usage
+
+    def _memory_summary(self, conversation: Conversation) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            "total_recalls": 0,
+            "rag_used": 0,
+            "classic_used": 0,
+            "omitted": 0,
+            "avg_latency_ms": 0,
+            "budget_used": 0,
+            "budget_tokens": 0,
+            "most_used": [],
+        }
+        latency_values: list[int] = []
+        by_key: dict[str, dict[str, Any]] = {}
+
+        for message in conversation.messages:
+            if message.role != Role.ASSISTANT:
+                continue
+            trace = _memory_trace(message)
+            if not trace:
+                continue
+            trace_summary = trace.get("summary") if isinstance(trace.get("summary"), dict) else {}
+            total_used = _safe_int(trace_summary.get("total_used"))
+            if total_used <= 0:
+                continue
+            summary["total_recalls"] += 1
+            summary["rag_used"] += _safe_int(trace_summary.get("rag_count"))
+            summary["classic_used"] += _safe_int(trace_summary.get("classic_count"))
+            summary["omitted"] += _safe_int(trace_summary.get("omitted_count"))
+            summary["budget_used"] += _safe_int(trace_summary.get("budget_used"))
+            summary["budget_tokens"] += _safe_int(trace_summary.get("budget_tokens"))
+            latency = _safe_int(trace_summary.get("latency_ms"))
+            if latency > 0:
+                latency_values.append(latency)
+
+            message_id = message.timestamp.isoformat()
+            for item in _memory_trace_items(trace, "classic"):
+                key = str(item.get("path") or item.get("name") or item.get("snippet") or "classic")
+                entry = by_key.setdefault(
+                    f"classic:{key}",
+                    {
+                        "id": f"classic:{key}",
+                        "source": "classic",
+                        "label": _compact_memory_label(key),
+                        "count": 0,
+                        "paths": [],
+                        "evidence": [],
+                        "messages": [],
+                    },
+                )
+                _memory_entry_add(entry, item.get("path"), item.get("snippet"), message_id)
+
+            for item in _memory_trace_items(trace, "operational"):
+                source_ids = item.get("source_ids") if isinstance(item.get("source_ids"), list) else []
+                paths = item.get("paths") if isinstance(item.get("paths"), list) else []
+                key = str((source_ids or paths or [item.get("summary") or "rag"])[0])
+                label = str((paths or [item.get("summary") or key])[0])
+                entry = by_key.setdefault(
+                    f"rag:{key}",
+                    {
+                        "id": f"rag:{key}",
+                        "source": "rag",
+                        "label": _compact_memory_label(label),
+                        "count": 0,
+                        "paths": [],
+                        "evidence": [],
+                        "messages": [],
+                    },
+                )
+                evidence = item.get("evidence")
+                _memory_entry_add(
+                    entry,
+                    paths[0] if paths else None,
+                    evidence[0] if isinstance(evidence, list) and evidence else item.get("summary"),
+                    message_id,
+                )
+
+        if latency_values:
+            summary["avg_latency_ms"] = int(sum(latency_values) / len(latency_values))
+        summary["most_used"] = sorted(
+            by_key.values(),
+            key=lambda item: (-_safe_int(item.get("count")), str(item.get("label") or "")),
+        )[:8]
+        return summary
 
     def _add_token_usage(self, usage: dict[str, Any], message: Message) -> None:
         metadata = message.metadata or {}
@@ -712,6 +802,42 @@ def _tool_data(message: Message) -> dict[str, Any]:
             return {}
         return parsed if isinstance(parsed, dict) else {}
     return {}
+
+
+def _memory_trace(message: Message) -> dict[str, Any]:
+    metadata = message.metadata or {}
+    trace = metadata.get("memory_trace")
+    return trace if isinstance(trace, dict) else {}
+
+
+def _memory_trace_items(trace: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    value = trace.get(key)
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _memory_entry_add(
+    entry: dict[str, Any],
+    path: Any,
+    evidence: Any,
+    message_id: str,
+) -> None:
+    entry["count"] = _safe_int(entry.get("count")) + 1
+    if isinstance(path, str) and path and path not in entry["paths"]:
+        entry["paths"].append(path)
+    if isinstance(evidence, str) and evidence.strip() and evidence not in entry["evidence"]:
+        entry["evidence"].append(evidence[:280])
+    if message_id not in entry["messages"]:
+        entry["messages"].append(message_id)
+
+
+def _compact_memory_label(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "memory"
+    if "/" not in text:
+        return text[:120]
+    parts = [part for part in text.split("/") if part]
+    return "/".join(parts[-2:])[:120] if parts else text[:120]
 
 
 def _diff_stats(data: dict[str, Any]) -> tuple[int, int]:

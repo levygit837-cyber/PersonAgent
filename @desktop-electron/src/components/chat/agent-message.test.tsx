@@ -74,6 +74,30 @@ describe("AgentMessage Team Mode trace", () => {
   });
 });
 
+describe("AgentMessage memory trace", () => {
+  it("shows a compact memory badge and opens the inline inspector", () => {
+    render(<AgentMessage message={memoryTraceMessage()} />);
+
+    const badge = screen.getByRole("button", { name: "Memory trace: 2 memories used" });
+    expect(badge).toHaveTextContent("Memory 2 · 62ms");
+    expect(screen.queryByText("Memory trace")).not.toBeInTheDocument();
+
+    fireEvent.click(badge);
+
+    expect(screen.getByText("Memory trace")).toBeInTheDocument();
+    expect(screen.getByText("Keep Python preferences visible")).toBeInTheDocument();
+    expect(screen.getByText("python_pref.md")).toBeInTheDocument();
+    expect(screen.getByText("Uses pytest for backend validation.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    expect(screen.getByText("62ms")).toBeInTheDocument();
+    expect(screen.getByText(/workspace_slug/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Prompt" }));
+    expect(screen.getByText(/Injected memory block/)).toBeInTheDocument();
+  });
+});
+
 function emptyPersistedAgentMessage(): ChatMessageUi {
   return {
     id: "empty-agent",
@@ -87,6 +111,55 @@ function emptyPersistedAgentMessage(): ChatMessageUi {
     parts: [],
     isStreaming: false,
     isReasoningStreaming: false,
+  };
+}
+
+function memoryTraceMessage(): ChatMessageUi {
+  return {
+    ...emptyPersistedAgentMessage(),
+    id: "agent-memory",
+    content: "Answer using memory.",
+    metadata: {
+      memory_trace: {
+        classic: [
+          {
+            path: "/home/user/.codex/memories/python_pref.md",
+            name: "python_pref.md",
+            header: "Python preference",
+            mtime_ms: 1770000000000,
+            snippet: "Uses pytest for backend validation.",
+          },
+        ],
+        operational: [
+          {
+            type: "session_fact",
+            summary: "Keep Python preferences visible",
+            evidence: ["Use uv run pytest for backend checks."],
+            paths: ["sessions/chat-1"],
+            source_ids: ["mem_1"],
+            score: 0.83,
+            status: "active",
+            created_at: "2026-04-30T10:00:00Z",
+          },
+        ],
+        summary: {
+          total_used: 2,
+          classic_count: 1,
+          rag_count: 1,
+          omitted_count: 1,
+          budget_used: 120,
+          budget_tokens: 400,
+          latency_ms: 62,
+        },
+        filters_applied: {
+          workspace_slug: "personagent",
+        },
+        prompt: {
+          formatted: "Injected memory block",
+          truncated: false,
+        },
+      },
+    },
   };
 }
 

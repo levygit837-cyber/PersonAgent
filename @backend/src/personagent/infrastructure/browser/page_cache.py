@@ -183,6 +183,22 @@ class BrowserPageCache:
         self._latest[safe_conversation] = safe_cache_key
         return entry
 
+    def latest_for_page(self, conversation_id: str, page_id: str) -> PageCacheEntry | None:
+        self.cleanup()
+        safe_conversation = safe_segment(conversation_id, fallback="conversation")
+        target_page_id = str(page_id or "").strip()
+        if not target_page_id:
+            return None
+        candidates = [
+            entry
+            for (conv, _key), entry in self._entries.items()
+            if conv == safe_conversation and entry.page_id == target_page_id
+        ]
+        if not candidates:
+            return None
+        latest = max(candidates, key=lambda entry: (entry.last_access, entry.created_at))
+        return self.get(safe_conversation, latest.cache_key)
+
     def metadata(self, entry: PageCacheEntry) -> dict[str, Any]:
         path = entry.directory / "metadata.json"
         data = json.loads(path.read_text(encoding="utf-8"))

@@ -11,14 +11,15 @@ export function browserMirrorSrcDoc(
   const scriptNonce = createCspNonce();
   const base = `<base href="${escapeHtmlAttribute(currentUrl)}">`;
   const csp = [
-    "default-src * data: blob:",
-    "img-src * data: blob:",
-    "style-src * 'unsafe-inline'",
+    "default-src 'none'",
+    "img-src http: https: data: blob:",
+    "style-src http: https: data: blob: 'unsafe-inline'",
     `script-src 'nonce-${scriptNonce}'`,
-    "font-src * data:",
+    "font-src http: https: data:",
     "frame-src 'none'",
     "object-src 'none'",
-    "base-uri *",
+    "form-action 'none'",
+    "base-uri http: https:",
   ].join("; ");
   const meta = `<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(csp)}">`;
   const overlayStyle = `<style>

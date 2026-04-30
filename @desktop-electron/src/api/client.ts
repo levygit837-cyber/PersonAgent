@@ -22,6 +22,19 @@ import type {
 
 const fallbackBaseUrls = ["http://localhost:8000", "http://localhost:8001"];
 
+async function personAgentAuthHeaders(): Promise<Record<string, string>> {
+  if (window.personAgent?.auth?.getHeaders) {
+    const headers = await window.personAgent.auth.getHeaders();
+    if (headers.Authorization) return headers;
+  }
+  const token = import.meta.env.VITE_PERSONAGENT_LOCAL_AUTH_TOKEN?.trim();
+  if (!token) return {};
+  return {
+    Authorization: `Bearer ${token}`,
+    "X-PersonAgent-Client": "desktop-electron",
+  };
+}
+
 export interface ConversationForkMessagePayload {
   role: "user" | "assistant" | "tool" | "system";
   content: string;
@@ -278,9 +291,11 @@ async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit)
   const hasBody = init?.body !== undefined && init.body !== null;
   const shouldSendJsonContentType =
     hasBody && (typeof FormData === "undefined" || !(init?.body instanceof FormData));
+  const authHeaders = await personAgentAuthHeaders();
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
+      ...authHeaders,
       ...(shouldSendJsonContentType && method !== "GET" && method !== "HEAD" ? { "Content-Type": "application/json" } : {}),
       ...(init?.headers ?? {}),
     },
@@ -301,6 +316,20 @@ async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit)
 
 export function listConversations(baseUrl: string) {
   return requestJson<ConversationSummary[]>(baseUrl, "/conversations");
+}
+
+export async function createWorkspaceGrant(baseUrl: string, workspaceRoot: string) {
+  return requestJson<{ workspace_id: string; root: string; source: string; created_at: string; last_used_at: string }>(baseUrl, "/workspace/grants", {
+    method: "POST",
+    body: JSON.stringify({ root: workspaceRoot, source: "desktop-electron" }),
+  });
+}
+
+export async function createActionApproval(baseUrl: string, actionKind: string, args: Record<string, unknown>) {
+  return requestJson<{ approval_id: string; action_kind: string; args_hash: string; expires_at: number }>(baseUrl, "/security/action-approvals", {
+    method: "POST",
+    body: JSON.stringify({ action_kind: actionKind, arguments: args }),
+  });
 }
 
 export function getConversation(baseUrl: string, id: string) {
@@ -905,24 +934,30 @@ export function gitCheckoutBranch(baseUrl: string, workspaceRoot: string, name: 
   });
 }
 
-export function gitCommit(baseUrl: string, workspaceRoot: string, message: string, autoGenerateMessage = false) {
+export async function gitCommit(baseUrl: string, workspaceRoot: string, message: string, autoGenerateMessage = false) {
+  const args = { workspace_root: workspaceRoot, message, auto_generate_message: autoGenerateMessage };
+  const approval = await createActionApproval(baseUrl, "workspace.git_commit", args);
   return requestJson<{ success: boolean; output?: string; message?: string; sha?: string | null; short_sha?: string | null }>(baseUrl, "/workspace/git-commit", {
     method: "POST",
-    body: JSON.stringify({ workspace_root: workspaceRoot, message, auto_generate_message: autoGenerateMessage }),
+    body: JSON.stringify({ ...args, approval_id: approval.approval_id, args_hash: approval.args_hash }),
   });
 }
 
-export function gitPush(baseUrl: string, workspaceRoot: string) {
+export async function gitPush(baseUrl: string, workspaceRoot: string) {
+  const args = { workspace_root: workspaceRoot };
+  const approval = await createActionApproval(baseUrl, "workspace.git_push", args);
   return requestJson<{ success: boolean; output?: string; branch?: string; upstream?: string }>(baseUrl, "/workspace/git-push", {
     method: "POST",
-    body: JSON.stringify({ workspace_root: workspaceRoot }),
+    body: JSON.stringify({ ...args, approval_id: approval.approval_id, args_hash: approval.args_hash }),
   });
 }
 
-export function gitOpenPr(baseUrl: string, workspaceRoot: string) {
+export async function gitOpenPr(baseUrl: string, workspaceRoot: string) {
+  const args = { workspace_root: workspaceRoot };
+  const approval = await createActionApproval(baseUrl, "workspace.git_pr", args);
   return requestJson<{ url: string | null; output?: string }>(baseUrl, "/workspace/git-pr", {
     method: "POST",
-    body: JSON.stringify({ workspace_root: workspaceRoot }),
+    body: JSON.stringify({ ...args, approval_id: approval.approval_id, args_hash: approval.args_hash }),
   });
 }
 
@@ -966,9 +1001,11 @@ function normalizeModel(item: unknown, provider: ModelProvider): LlmModel {
 }
 
 export async function* streamChatCompletion(baseUrl: string, payload: ChatRequestPayload, signal?: AbortSignal) {
+  const authHeaders = await personAgentAuthHeaders();
   const response = await fetch(`${baseUrl}/chat/completions/stream`, {
     method: "POST",
     headers: {
+      ...authHeaders,
       "Content-Type": "application/json",
       Accept: "text/event-stream",
       "Cache-Control": "no-cache",
@@ -1021,20 +1058,23 @@ export function cancelPlan(
   });
 }
 
-export function approveTool(baseUrl: string, input: { conversationId: string; approvalId: string }) {
+export function approveTool(baseUrl: string, input: { conversationId: string; approvalId: string; argsHash?: string }) {
   return requestJson<Record<string, unknown>>(baseUrl, "/chat/tools/approve", {
     method: "POST",
     body: JSON.stringify({
       conversation_id: input.conversationId,
       approval_id: input.approvalId,
+      args_hash: input.argsHash,
     }),
   });
 }
 
-export async function* streamApproveTool(baseUrl: string, input: { conversationId: string; approvalId: string }, signal?: AbortSignal) {
+export async function* streamApproveTool(baseUrl: string, input: { conversationId: string; approvalId: string; argsHash?: string }, signal?: AbortSignal) {
+  const authHeaders = await personAgentAuthHeaders();
   const response = await fetch(`${baseUrl}/chat/tools/approve/stream`, {
     method: "POST",
     headers: {
+      ...authHeaders,
       "Content-Type": "application/json",
       Accept: "text/event-stream",
       "Cache-Control": "no-cache",
@@ -1042,6 +1082,7 @@ export async function* streamApproveTool(baseUrl: string, input: { conversationI
     body: JSON.stringify({
       conversation_id: input.conversationId,
       approval_id: input.approvalId,
+      args_hash: input.argsHash,
     }),
     signal,
   });

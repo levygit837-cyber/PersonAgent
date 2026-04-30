@@ -6,8 +6,9 @@ import re
 import time
 import unicodedata
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import desc, func, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -18,6 +19,7 @@ from personagent.domain.memory.models.operational import (
     MemoryChunk,
     MemoryContextBudget,
     MemoryEvent,
+    OperationalMemoryEventType,
     OperationalMemoryFilter,
     RecallFinding,
     StructuredMemoryItem,
@@ -32,6 +34,7 @@ from personagent.domain.memory.services.operational_memory import (
 from personagent.infrastructure.persistence.models import (
     MemoryDecisionORM,
     MemoryEmbeddingORM,
+    MemoryOutboxORM,
     MemoryRecallLogORM,
     OperationalMemoryChunkORM,
     OperationalMemoryEventORM,
@@ -65,9 +68,15 @@ class StoredStructuredMemoryItem:
     source_type: str
     source_chunk_id: UUID | None
     primary_path: str | None
+    conversation_id: UUID | None
+    workspace_root: str | None
+    trust_level: str
+    importance: float
     created_at: Any
     distance: float | None = None
+    lexical_rank: float = 0.0
     score: float = 0.0
+    ranking_reasons: list[str] | None = None
 
 
 _RELEVANCE_STOPWORDS = {
@@ -177,29 +186,90 @@ class OperationalMemoryRepository:
 
     async def record_event(self, event: MemoryEvent) -> MemoryEvent:
         async with self._session_factory() as session:
-            row = OperationalMemoryEventORM(
-                id=event.id,
-                project_slug=event.project_slug,
-                workspace_root=event.workspace_root,
-                session_id=event.session_id,
-                conversation_id=_uuid_or_none(event.conversation_id),
-                agent_name=event.agent_name,
-                event_type=event.event_type.value,
-                task=event.task,
-                tool_name=event.tool_name,
-                status=event.status,
-                input=event.input,
-                output=event.output,
-                error=event.error,
-                resolution=event.resolution,
-                paths=event.paths,
-                metadata_=event.metadata,
-                source_hash=event.source_hash,
-                created_at=event.created_at,
-            )
-            session.add(row)
+            session.add(_event_row(event))
             await session.commit()
         return event
+
+    async def record_event_with_outbox(
+        self,
+        event: MemoryEvent,
+        *,
+        job_type: str,
+        payload: dict[str, Any],
+        dedupe_key: str,
+    ) -> tuple[MemoryEvent, dict[str, Any]]:
+        """Persist the raw event and durable outbox job in one transaction."""
+
+        async with self._session_factory() as session:
+            session.add(_event_row(event))
+            existing = await session.scalar(
+                select(MemoryOutboxORM).where(MemoryOutboxORM.dedupe_key == dedupe_key)
+            )
+            if existing is None:
+                existing = MemoryOutboxORM(
+                    id=uuid4(),
+                    event_id=event.id,
+                    project_slug=event.project_slug,
+                    workspace_root=event.workspace_root,
+                    job_type=job_type,
+                    payload=payload,
+                    status="pending",
+                    dedupe_key=dedupe_key,
+                )
+                session.add(existing)
+            await session.commit()
+            outbox = _outbox_payload(existing)
+        return event, outbox
+
+    async def get_event(self, event_id: str | UUID) -> MemoryEvent | None:
+        event_uuid = _uuid_or_none(event_id)
+        if event_uuid is None:
+            return None
+        async with self._session_factory() as session:
+            row = await session.get(OperationalMemoryEventORM, event_uuid)
+        return _event_from_row(row) if row is not None else None
+
+    async def mark_outbox_published(self, outbox_id: str | UUID) -> None:
+        await self._update_outbox(outbox_id, status="published", last_error=None)
+
+    async def mark_outbox_processing(self, outbox_id: str | UUID) -> None:
+        await self._update_outbox(outbox_id, status="processing")
+
+    async def mark_outbox_completed(self, outbox_id: str | UUID) -> None:
+        await self._update_outbox(outbox_id, status="completed", last_error=None)
+
+    async def mark_outbox_failed(self, outbox_id: str | UUID, error: str) -> None:
+        outbox_uuid = _uuid_or_none(outbox_id)
+        if outbox_uuid is None:
+            return
+        async with self._session_factory() as session:
+            row = await session.get(MemoryOutboxORM, outbox_uuid)
+            if row is None:
+                return
+            row.attempts = int(row.attempts or 0) + 1
+            row.status = "failed" if row.attempts >= 5 else "pending"
+            row.last_error = error[:2_000]
+            row.next_attempt_at = datetime.now(UTC) + timedelta(seconds=min(300, 2 ** row.attempts))
+            await session.commit()
+
+    async def _update_outbox(
+        self,
+        outbox_id: str | UUID,
+        *,
+        status: str,
+        last_error: str | None = None,
+    ) -> None:
+        outbox_uuid = _uuid_or_none(outbox_id)
+        if outbox_uuid is None:
+            return
+        async with self._session_factory() as session:
+            row = await session.get(MemoryOutboxORM, outbox_uuid)
+            if row is None:
+                return
+            row.status = status
+            row.last_error = last_error
+            row.updated_at = datetime.now(UTC)
+            await session.commit()
 
     async def record_chunks(self, chunks: list[MemoryChunk]) -> list[MemoryChunk]:
         if not chunks:
@@ -306,6 +376,7 @@ class OperationalMemoryRepository:
                 if existing is not None:
                     continue
                 primary_path = item.paths[0] if item.paths else None
+                search_text = _structured_search_text(item, primary_path, source_type)
                 if item.metadata.get("is_latest", True) and primary_path:
                     await session.execute(
                         update(StructuredMemoryItemORM)
@@ -324,6 +395,8 @@ class OperationalMemoryRepository:
                         workspace_root=item.metadata.get("workspace_root"),
                         item_type=item.type.value,
                         status=item.status,
+                        trust_level=item.trust_level,
+                        importance=float(item.importance),
                         source_type=source_type,
                         source_id=str(item.metadata.get("source_id") or source_chunk_id or ""),
                         source_chunk_id=source_chunk_id,
@@ -334,6 +407,12 @@ class OperationalMemoryRepository:
                         source_ids=item.source_ids,
                         metadata_=item.metadata,
                         content_hash=content_hash,
+                        search_text=search_text,
+                        search_vector=func.to_tsvector(text("'simple'"), search_text),
+                        state_reason=item.metadata.get("state_reason"),
+                        superseded_by_id=_uuid_or_none(item.metadata.get("superseded_by_id")),
+                        last_verified_at=item.metadata.get("last_verified_at"),
+                        ranking_metadata=item.metadata.get("ranking_metadata") or {},
                         is_latest=bool(item.metadata.get("is_latest", True)),
                         created_at=item.created_at,
                     )
@@ -404,6 +483,44 @@ class OperationalMemoryRepository:
             await session.commit()
         return decision
 
+    async def record_recall_skip(
+        self,
+        *,
+        project_slug: str,
+        query: str,
+        filters: dict[str, Any],
+        reason: str,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        memory_filter = OperationalMemoryFilter.from_mapping(filters)
+        async with self._session_factory() as session:
+            session.add(
+                MemoryRecallLogORM(
+                    project_slug=project_slug,
+                    workspace_root=memory_filter.workspace_root,
+                    conversation_id=_uuid_or_none(memory_filter.current_conversation_id),
+                    recall_scope="skipped",
+                    query_intent=reason,
+                    query=query,
+                    filters=memory_filter.to_log_dict(),
+                    result_ids=[],
+                    scores={},
+                    candidate_count=0,
+                    selected_count=0,
+                    discarded_candidates=[],
+                    included_reasons=[],
+                    ranking_breakdown={"skipped": reason},
+                    token_usage={"budget_tokens": 0, "budget_used": 0},
+                    budget_tokens=0,
+                    budget_used=0,
+                    latency_ms=0,
+                    provider=provider,
+                    model=model,
+                )
+            )
+            await session.commit()
+
     async def recall(
         self,
         *,
@@ -461,6 +578,12 @@ class OperationalMemoryRepository:
                 query_embedding=query_embedding,
                 filters=memory_filter,
             )
+            lexical = await self._structured_lexical_candidates(
+                session=session,
+                project_slug=project_slug,
+                query=query,
+                filters=memory_filter,
+            )
             recent = await self._structured_recent_candidates(
                 session=session,
                 project_slug=project_slug,
@@ -468,19 +591,40 @@ class OperationalMemoryRepository:
             )
             candidates = self._bounded_structured_candidates(
                 semantic,
+                lexical,
                 recent,
                 limit=max(25, min(50, top_k * 8)),
             )
-            scored = self._score_structured_candidates(query, candidates)
+            scored = self._score_structured_candidates(query, candidates, filters=memory_filter)
             diversified = self._dedupe_structured_candidates(scored, top_k=max(1, top_k * 4))
             items = self._to_structured_items(diversified)
             formatted, budget_used, omitted_count, selected = (
                 OperationalMemoryFormatter.format_structured_items(items, budget=budget)
             )
             latency_ms = int((time.perf_counter() - started) * 1000)
+            selected_ids = {source_id for item in selected for source_id in item.source_ids}
+            discarded = _discarded_candidate_payload(scored, selected_ids, limit=20)
+            included_reasons = _included_reason_payload(selected)
+            ranking_breakdown = {
+                "semantic_candidates": len(semantic),
+                "lexical_candidates": len(lexical),
+                "recent_candidates": len(recent),
+                "merged_candidates": len(candidates),
+                "scored_candidates": len(scored),
+                "selected_items": len(selected),
+            }
+            token_usage = {
+                "budget_tokens": int(budget.total_tokens),
+                "budget_used": int(budget_used),
+                "omitted_count": int(omitted_count),
+            }
             session.add(
                 MemoryRecallLogORM(
                     project_slug=project_slug,
+                    workspace_root=memory_filter.workspace_root,
+                    conversation_id=_uuid_or_none(memory_filter.current_conversation_id),
+                    recall_scope="conversation" if memory_filter.conversation_id else "workspace",
+                    query_intent=_query_intent(query),
                     query=query,
                     filters=memory_filter.to_log_dict(),
                     result_ids=[source_id for item in selected for source_id in item.source_ids],
@@ -489,6 +633,14 @@ class OperationalMemoryRepository:
                         for item in selected
                         for source_id in item.source_ids[:1]
                     },
+                    candidate_count=len(scored),
+                    selected_count=len(selected),
+                    discarded_candidates=discarded,
+                    included_reasons=included_reasons,
+                    ranking_breakdown=ranking_breakdown,
+                    token_usage=token_usage,
+                    budget_tokens=budget.total_tokens,
+                    budget_used=budget_used,
                     latency_ms=latency_ms,
                     provider=provider,
                     model=model,
@@ -503,6 +655,13 @@ class OperationalMemoryRepository:
             budget_tokens=budget.total_tokens,
             omitted_count=omitted_count,
             latency_ms=latency_ms,
+            recall_scope="conversation" if memory_filter.conversation_id else "workspace",
+            query_intent=_query_intent(query),
+            candidate_count=len(scored),
+            discarded_candidates=discarded,
+            included_reasons=included_reasons,
+            ranking_breakdown=ranking_breakdown,
+            token_usage=token_usage,
         )
 
     async def _structured_semantic_candidates(
@@ -537,10 +696,15 @@ class OperationalMemoryRepository:
                         smi.source_type,
                         smi.source_chunk_id,
                         smi.primary_path,
+                        smi.conversation_id,
+                        smi.workspace_root,
+                        smi.trust_level,
+                        smi.importance,
                         smi.created_at,
                         ((subvector(me.embedding, 1, 2000))::vector(2000))
                           <=> ((subvector(CAST(:query_vector AS vector(4096)), 1, 2000))::vector(2000))
-                          AS distance
+                          AS distance,
+                        0::double precision AS lexical_rank
                     FROM memory_structured_items smi
                     JOIN memory_embeddings me ON me.chunk_id = smi.source_chunk_id
                     WHERE smi.project_slug = :project_slug
@@ -556,21 +720,80 @@ class OperationalMemoryRepository:
             return []
         return _rows_to_structured_candidates(result.all())
 
+    async def _structured_lexical_candidates(
+        self,
+        *,
+        session: Any,
+        project_slug: str,
+        query: str,
+        filters: OperationalMemoryFilter,
+    ) -> list[StoredStructuredMemoryItem]:
+        lexical_query = _lexical_query_text(query)
+        if not lexical_query:
+            return []
+        params: dict[str, Any] = {
+            "project_slug": project_slug,
+            "lexical_query": lexical_query,
+            "limit": filters.semantic_candidate_limit,
+        }
+        where = _structured_where_clause("smi", filters, params)
+        try:
+            result = await session.execute(
+                text(
+                    f"""
+                    WITH q AS (SELECT plainto_tsquery('simple', :lexical_query) AS query)
+                    SELECT
+                        smi.id,
+                        smi.project_slug,
+                        smi.item_type,
+                        smi.summary,
+                        smi.evidence,
+                        smi.paths,
+                        smi.source_ids,
+                        smi.status,
+                        smi.source_type,
+                        smi.source_chunk_id,
+                        smi.primary_path,
+                        smi.conversation_id,
+                        smi.workspace_root,
+                        smi.trust_level,
+                        smi.importance,
+                        smi.created_at,
+                        NULL::double precision AS distance,
+                        ts_rank_cd(smi.search_vector, q.query)::double precision AS lexical_rank
+                    FROM memory_structured_items smi, q
+                    WHERE smi.project_slug = :project_slug
+                      AND smi.search_vector @@ q.query
+                      {where}
+                    ORDER BY lexical_rank DESC, smi.created_at DESC
+                    LIMIT :limit
+                    """
+                ),
+                params,
+            )
+        except Exception:
+            return []
+        return _rows_to_structured_candidates(result.all())
+
     def _bounded_structured_candidates(
         self,
         semantic: list[StoredStructuredMemoryItem],
+        lexical: list[StoredStructuredMemoryItem],
         recent: list[StoredStructuredMemoryItem],
         *,
         limit: int,
     ) -> list[StoredStructuredMemoryItem]:
-        if not semantic:
+        if not semantic and not lexical:
             return self._merge_structured_candidates(recent[:limit])
-        if not recent:
-            return self._merge_structured_candidates(semantic[:limit])
-        semantic_quota = max(1, int(limit * 0.7))
-        recent_quota = max(0, limit - semantic_quota)
+        semantic_quota = max(0, int(limit * 0.45))
+        lexical_quota = max(0, int(limit * 0.40))
+        recent_quota = max(0, limit - semantic_quota - lexical_quota)
         return self._merge_structured_candidates(
-            [*semantic[:semantic_quota], *recent[:recent_quota]]
+            [
+                *semantic[:semantic_quota],
+                *lexical[:lexical_quota],
+                *recent[:recent_quota],
+            ]
         )
 
     def _merge_structured_candidates(
@@ -587,14 +810,19 @@ class OperationalMemoryRepository:
                 candidate.distance is not None and candidate.distance < existing.distance
             ):
                 existing.distance = candidate.distance
+            if candidate.lexical_rank > existing.lexical_rank:
+                existing.lexical_rank = candidate.lexical_rank
         return list(merged.values())
 
     def _score_structured_candidates(
         self,
         query: str,
         candidates: list[StoredStructuredMemoryItem],
+        *,
+        filters: OperationalMemoryFilter,
     ) -> list[StoredStructuredMemoryItem]:
         query_terms = _terms(query)
+        query_text = query.lower()
         for candidate in candidates:
             text = " ".join(
                 str(part or "")
@@ -608,11 +836,44 @@ class OperationalMemoryRepository:
                 )
             )
             lexical = _lexical_score(query_terms, text)
+            exact = _exact_anchor_score(query_text, candidate)
             vector = 0.0
             if candidate.distance is not None:
                 vector = max(0.0, 1.0 - float(candidate.distance))
-            recency = 0.05 if lexical > 0 or vector > 0 else 0.0
-            candidate.score = (vector * 2.0) + lexical + _structured_type_boost(candidate.item_type) + recency
+            lexical_rank = min(1.0, max(0.0, candidate.lexical_rank) * 4.0)
+            recency = 0.05 if lexical > 0 or vector > 0 or lexical_rank > 0 else 0.0
+            same_conversation = (
+                0.18
+                if candidate.conversation_id
+                and filters.current_conversation_id
+                and str(candidate.conversation_id) == str(filters.current_conversation_id)
+                else 0.0
+            )
+            trust_multiplier = _trust_multiplier(candidate.trust_level)
+            raw_score = (
+                (vector * 1.7)
+                + lexical
+                + lexical_rank
+                + exact
+                + _structured_type_boost(candidate.item_type)
+                + same_conversation
+                + recency
+                + min(0.4, max(0.0, candidate.importance) * 0.2)
+            )
+            if candidate.trust_level == "low" and not _low_trust_memory_requested(query_terms) and exact < 0.6:
+                candidate.score = 0.0
+                candidate.ranking_reasons = ["discarded_low_trust_without_conversation_intent"]
+                continue
+            candidate.score = raw_score * trust_multiplier
+            candidate.ranking_reasons = _ranking_reasons(
+                vector=vector,
+                lexical=lexical,
+                lexical_rank=lexical_rank,
+                exact=exact,
+                same_conversation=same_conversation,
+                trust_level=candidate.trust_level,
+                item_type=candidate.item_type,
+            )
         return sorted(candidates, key=lambda item: item.score, reverse=True)
 
     def _dedupe_structured_candidates(
@@ -676,6 +937,8 @@ class OperationalMemoryRepository:
                     event_types=candidate.event_types,
                     score=round(candidate.score, 4),
                     status=candidate.status,
+                    trust_level=candidate.trust_level,
+                    importance=candidate.importance,
                     created_at=candidate.created_at,
                     metadata={
                         "project_slug": candidate.project_slug,
@@ -685,6 +948,8 @@ class OperationalMemoryRepository:
                         else None,
                         "primary_path": candidate.primary_path,
                         "distance": candidate.distance,
+                        "lexical_rank": candidate.lexical_rank,
+                        "ranking_reasons": candidate.ranking_reasons or [],
                     },
                 )
             )
@@ -719,8 +984,13 @@ class OperationalMemoryRepository:
                     smi.source_type,
                     smi.source_chunk_id,
                     smi.primary_path,
+                    smi.conversation_id,
+                    smi.workspace_root,
+                    smi.trust_level,
+                    smi.importance,
                     smi.created_at,
-                    NULL::double precision AS distance
+                    NULL::double precision AS distance,
+                    0::double precision AS lexical_rank
                 FROM memory_structured_items smi
                 WHERE smi.project_slug = :project_slug
                   {where}
@@ -792,6 +1062,11 @@ class OperationalMemoryRepository:
                     StructuredMemoryItemORM.project_slug == project_slug
                 )
             )
+            outbox_rows = await session.execute(
+                select(MemoryOutboxORM.status, func.count(MemoryOutboxORM.id))
+                .where(MemoryOutboxORM.project_slug == project_slug)
+                .group_by(MemoryOutboxORM.status)
+            )
             status_rows = await session.execute(
                 select(
                     OperationalMemoryChunkORM.embedding_status,
@@ -809,6 +1084,9 @@ class OperationalMemoryRepository:
             "decisions": int(decision_count or 0),
             "embedding_status": {
                 str(status): int(count) for status, count in status_rows.all()
+            },
+            "outbox_status": {
+                str(status): int(count) for status, count in outbox_rows.all()
             },
         }
 
@@ -949,6 +1227,254 @@ class OperationalMemoryRepository:
         return findings
 
 
+def _event_row(event: MemoryEvent) -> OperationalMemoryEventORM:
+    return OperationalMemoryEventORM(
+        id=event.id,
+        project_slug=event.project_slug,
+        workspace_root=event.workspace_root,
+        session_id=event.session_id,
+        conversation_id=_uuid_or_none(event.conversation_id),
+        agent_name=event.agent_name,
+        event_type=event.event_type.value,
+        task=event.task,
+        tool_name=event.tool_name,
+        status=event.status,
+        input=event.input,
+        output=event.output,
+        error=event.error,
+        resolution=event.resolution,
+        paths=event.paths,
+        metadata_=event.metadata,
+        source_hash=event.source_hash,
+        created_at=event.created_at,
+    )
+
+
+def _event_from_row(row: OperationalMemoryEventORM) -> MemoryEvent:
+    return MemoryEvent(
+        id=row.id,
+        project_slug=row.project_slug,
+        workspace_root=row.workspace_root,
+        session_id=row.session_id,
+        conversation_id=str(row.conversation_id) if row.conversation_id else None,
+        agent_name=row.agent_name,
+        event_type=OperationalMemoryEventType(str(row.event_type)),
+        task=row.task,
+        tool_name=row.tool_name,
+        status=row.status,
+        input=row.input or {},
+        output=row.output or {},
+        error=row.error,
+        resolution=row.resolution,
+        paths=row.paths or [],
+        metadata=row.metadata_ or {},
+        source_hash=row.source_hash,
+        created_at=row.created_at,
+    )
+
+
+def _outbox_payload(row: MemoryOutboxORM) -> dict[str, Any]:
+    return {
+        "id": str(row.id),
+        "event_id": str(row.event_id) if row.event_id else None,
+        "project_slug": row.project_slug,
+        "workspace_root": row.workspace_root,
+        "job_type": row.job_type,
+        "payload": row.payload or {},
+        "dedupe_key": row.dedupe_key,
+    }
+
+
+def _structured_search_text(
+    item: StructuredMemoryItem,
+    primary_path: str | None,
+    source_type: str,
+) -> str:
+    return " ".join(
+        part
+        for part in [
+            item.summary,
+            primary_path or "",
+            source_type,
+            item.type.value,
+            item.status,
+            item.trust_level,
+            " ".join(item.paths),
+            " ".join(item.evidence),
+            " ".join(item.event_types),
+        ]
+        if part
+    )[:20_000]
+
+
+def _lexical_query_text(query: str) -> str:
+    terms = []
+    for token in re.findall(r"[A-Za-z0-9_./:-]+", query):
+        normalized = token.strip(".,:;()[]{}'\"`")
+        if len(normalized) >= 2:
+            terms.append(normalized.replace("/", " ").replace(".", " "))
+    return " ".join(terms)[:1_000]
+
+
+def _exact_anchor_score(query_text: str, candidate: StoredStructuredMemoryItem) -> float:
+    score = 0.0
+    exact_surfaces = [
+        candidate.primary_path or "",
+        *candidate.paths,
+        candidate.source_type,
+        candidate.item_type,
+    ]
+    for surface in exact_surfaces:
+        surface_text = str(surface).lower()
+        if surface_text and surface_text in query_text:
+            score += 0.7 if "/" in surface_text or "." in surface_text else 0.35
+    for token in _identifier_tokens(query_text):
+        haystack = " ".join(
+            [
+                candidate.summary,
+                " ".join(candidate.evidence),
+                " ".join(candidate.paths),
+                candidate.primary_path or "",
+            ]
+        ).lower()
+        if token in haystack:
+            score += 0.3
+    return min(1.5, score)
+
+
+def _identifier_tokens(text: str) -> set[str]:
+    return {
+        token.lower()
+        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_./:-]{2,}", text)
+        if "/" in token or "." in token or "_" in token or "-" in token
+    }
+
+
+def _trust_multiplier(trust_level: str) -> float:
+    return {
+        "high": 1.0,
+        "medium": 0.78,
+        "low": 0.25,
+    }.get(trust_level, 0.7)
+
+
+def _ranking_reasons(
+    *,
+    vector: float,
+    lexical: float,
+    lexical_rank: float,
+    exact: float,
+    same_conversation: float,
+    trust_level: str,
+    item_type: str,
+) -> list[str]:
+    reasons = []
+    if exact > 0:
+        reasons.append("exact_anchor_match")
+    if lexical_rank > 0:
+        reasons.append("tsvector_match")
+    if lexical > 0:
+        reasons.append("term_overlap")
+    if vector > 0:
+        reasons.append("semantic_vector_match")
+    if same_conversation > 0:
+        reasons.append("same_conversation_boost")
+    if trust_level == "low":
+        reasons.append("low_trust_penalty")
+    reasons.append(f"type={item_type}")
+    return reasons
+
+
+def _discarded_candidate_payload(
+    candidates: list[StoredStructuredMemoryItem],
+    selected_ids: set[str],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    discarded = []
+    for candidate in candidates:
+        source_ids = candidate.source_ids or [str(candidate.id)]
+        if any(source_id in selected_ids for source_id in source_ids):
+            continue
+        discarded.append(
+            {
+                "id": str(candidate.id),
+                "source_ids": source_ids[:3],
+                "score": round(candidate.score, 4),
+                "type": candidate.item_type,
+                "status": candidate.status,
+                "trust_level": candidate.trust_level,
+                "reasons": candidate.ranking_reasons or [],
+                "summary": _excerpt(candidate.summary, limit=180),
+            }
+        )
+        if len(discarded) >= limit:
+            break
+    return discarded
+
+
+def _included_reason_payload(items: list[StructuredMemoryItem]) -> list[dict[str, Any]]:
+    return [
+        {
+            "source_ids": item.source_ids[:3],
+            "score": item.score,
+            "type": item.type.value,
+            "status": item.status,
+            "trust_level": item.trust_level,
+            "reasons": item.metadata.get("ranking_reasons") or [],
+        }
+        for item in items
+    ]
+
+
+def _query_intent(query: str) -> str:
+    terms = _terms(query)
+    if _low_trust_memory_requested(terms):
+        return "conversation_or_prior_interaction"
+    if any("/" in token or "." in token for token in query.split()):
+        return "file_or_path"
+    if {"erro", "error", "falha", "failed"} & terms:
+        return "error_resolution"
+    if {"comando", "command", "test", "teste"} & terms:
+        return "command_or_test"
+    return "specific"
+
+
+def _low_trust_memory_requested(query_terms: set[str]) -> bool:
+    return bool(
+        query_terms
+        & {
+            "assistant",
+            "conversa",
+            "mensagem",
+            "pergunta",
+            "resposta",
+            "usuario",
+            "user",
+        }
+    )
+
+
+def _trust_level_from_event_type(event_type: str) -> str:
+    if event_type in {"user_message", "assistant_message"}:
+        return "low"
+    if event_type in {"tool_call", "tool_result", "command_executed", "file_read"}:
+        return "medium"
+    return "high"
+
+
+def _importance_from_event_type(event_type: str) -> float:
+    if event_type in {"decision", "agent_state", "diff_applied", "error_found", "solution_attempted"}:
+        return 0.95
+    if event_type in {"test_result", "file_created", "file_edited", "dependency_installed"}:
+        return 0.8
+    if event_type in {"command_executed", "tool_result"}:
+        return 0.6
+    if event_type in {"user_message", "assistant_message"}:
+        return 0.2
+    return 0.5
+
+
 def _uuid_or_none(value: str | UUID | None) -> UUID | None:
     if value is None or isinstance(value, UUID):
         return value
@@ -984,7 +1510,14 @@ def _structured_where_clause(
     clauses: list[str] = []
     if not filters.include_raw_chunks:
         clauses.append(f"{alias}.item_type <> 'raw_chunk'")
-    if filters.active_only:
+    if filters.statuses:
+        placeholders = []
+        for index, status in enumerate(filters.statuses):
+            key = f"status_{index}"
+            params[key] = status
+            placeholders.append(f":{key}")
+        clauses.append(f"{alias}.status IN ({', '.join(placeholders)})")
+    elif filters.active_only:
         clauses.append(f"{alias}.status = 'active'")
     if filters.latest_only:
         clauses.append(f"{alias}.is_latest = true")
@@ -1075,8 +1608,13 @@ def _rows_to_structured_candidates(rows: list[Any]) -> list[StoredStructuredMemo
                 source_type=source_type,
                 source_chunk_id=row[9],
                 primary_path=row[10],
-                created_at=row[11],
-                distance=float(row[12]) if row[12] is not None else None,
+                conversation_id=row[11],
+                workspace_root=str(row[12]) if row[12] else None,
+                trust_level=str(row[13] or "medium"),
+                importance=float(row[14] or 0.5),
+                created_at=row[15],
+                distance=float(row[16]) if row[16] is not None else None,
+                lexical_rank=float(row[17] or 0.0),
             )
         )
     return candidates
@@ -1091,6 +1629,8 @@ def _structured_type_boost(item_type: str) -> float:
         StructuredMemoryType.ERROR_SOLUTION.value,
         StructuredMemoryType.FILE_STATE.value,
         StructuredMemoryType.COMMAND_RESULT.value,
+        StructuredMemoryType.TEST_RESULT.value,
+        StructuredMemoryType.TOOL_TRACE.value,
     }:
         return 0.35
     return 0.2
@@ -1107,8 +1647,12 @@ def _structured_type_from_event_type(event_type: str) -> StructuredMemoryType:
         return StructuredMemoryType.ERROR_SOLUTION
     if event_type in {"file_created", "file_edited", "file_read", "diff_applied"}:
         return StructuredMemoryType.FILE_STATE
+    if event_type == "test_result":
+        return StructuredMemoryType.TEST_RESULT
     if event_type in {"command_executed", "dependency_installed"}:
         return StructuredMemoryType.COMMAND_RESULT
+    if event_type in {"tool_call", "tool_result"}:
+        return StructuredMemoryType.TOOL_TRACE
     return StructuredMemoryType.FACT
 
 
@@ -1155,6 +1699,8 @@ def _structured_item_from_chunk_event(
         source_ids=[str(chunk.id)],
         event_types=[event_type],
         status="active",
+        trust_level=_trust_level_from_event_type(event_type),
+        importance=_importance_from_event_type(event_type),
         created_at=chunk.created_at,
         metadata=metadata,
     )
@@ -1175,6 +1721,8 @@ def _summary_from_structured_source(
         StructuredMemoryType.ERROR_SOLUTION: "Error or fix",
         StructuredMemoryType.FILE_STATE: "File state",
         StructuredMemoryType.COMMAND_RESULT: "Command result",
+        StructuredMemoryType.TEST_RESULT: "Test result",
+        StructuredMemoryType.TOOL_TRACE: "Tool trace",
         StructuredMemoryType.FACT: "Operational fact",
     }
     source = event_type.replace("_", " ")

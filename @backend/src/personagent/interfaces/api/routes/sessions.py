@@ -17,6 +17,7 @@ from personagent.application.services.browser_workspace import BrowserWorkspaceS
 from personagent.application.services.session_panel import SessionPanelService
 from personagent.infrastructure.browser.lightpanda import BrowserError, BrowserUnavailableError
 from personagent.interfaces.api.routes.chat import get_db
+from personagent.interfaces.api.workspace_grants import resolve_workspace_root
 from personagent.interfaces.config.di_container import get_container
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -1027,12 +1028,15 @@ async def dedupe_session_titles(
 async def get_session_panel(
     conversation_id: str,
     workspace_root: str | None = Query(default=None),
+    workspace_id: str | None = Query(default=None),
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> dict[str, Any]:
     """Return the aggregated session panel snapshot for one conversation."""
 
     conversation = await _load_conversation(conversation_id, session)
-    return await SessionPanelService(workspace_root).panel_snapshot(conversation)
+    return await SessionPanelService(
+        _resolve_optional_workspace(workspace_root, workspace_id)
+    ).panel_snapshot(conversation)
 
 
 @router.get("/{conversation_id}/project/details")
@@ -1041,12 +1045,22 @@ async def get_session_project_detail(
     type: str = Query(..., description="Detail type: commit, push, pr or branch."),
     id: str = Query(..., description="Project item identifier."),
     workspace_root: str | None = Query(default=None),
+    workspace_id: str | None = Query(default=None),
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> dict[str, Any]:
     """Return detail content for a project item in the floating panel window."""
 
     await _load_conversation(conversation_id, session)
-    return SessionPanelService(workspace_root).project_detail(type, id)
+    return SessionPanelService(_resolve_optional_workspace(workspace_root, workspace_id)).project_detail(type, id)
+
+
+def _resolve_optional_workspace(workspace_root: str | None, workspace_id: str | None) -> str | None:
+    if not workspace_root and not workspace_id:
+        return None
+    try:
+        return str(resolve_workspace_root(workspace_id=workspace_id, workspace_root=workspace_root))
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 async def _load_conversation(conversation_id: str, session: AsyncSession):

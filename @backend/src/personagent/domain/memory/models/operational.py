@@ -26,6 +26,7 @@ class OperationalMemoryEventType(StrEnum):
     FILE_READ = "file_read"
     DIFF_APPLIED = "diff_applied"
     COMMAND_EXECUTED = "command_executed"
+    TEST_RESULT = "test_result"
     ERROR_FOUND = "error_found"
     SOLUTION_ATTEMPTED = "solution_attempted"
     DEPENDENCY_INSTALLED = "dependency_installed"
@@ -52,6 +53,15 @@ class DecisionStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class MemoryItemStatus(StrEnum):
+    """Lifecycle of prompt-facing operational memory items."""
+
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+    REJECTED = "rejected"
+    STALE = "stale"
+
+
 class StructuredMemoryType(StrEnum):
     """Prompt-facing operational memory layers."""
 
@@ -62,6 +72,8 @@ class StructuredMemoryType(StrEnum):
     ERROR_SOLUTION = "error_solution"
     FILE_STATE = "file_state"
     COMMAND_RESULT = "command_result"
+    TEST_RESULT = "test_result"
+    TOOL_TRACE = "tool_trace"
 
 
 @dataclass(slots=True)
@@ -208,6 +220,7 @@ class OperationalMemoryFilter:
     """Filters applied before operational-memory ANN/recent retrieval."""
 
     conversation_id: str | None = None
+    current_conversation_id: str | None = None
     session_id: str | None = None
     workspace_root: str | None = None
     source_types: list[str] = field(default_factory=list)
@@ -216,6 +229,7 @@ class OperationalMemoryFilter:
     created_before: datetime | None = None
     latest_only: bool = False
     active_only: bool = True
+    statuses: list[str] = field(default_factory=list)
     include_raw_chunks: bool = False
     semantic_candidate_limit: int = 80
     recent_candidate_limit: int = 40
@@ -225,6 +239,7 @@ class OperationalMemoryFilter:
         data = filters or {}
         return cls(
             conversation_id=_string_or_none(data.get("conversation_id")),
+            current_conversation_id=_string_or_none(data.get("current_conversation_id")),
             session_id=_string_or_none(data.get("session_id")),
             workspace_root=_string_or_none(data.get("workspace_root")),
             source_types=_string_list(data.get("source_types") or data.get("source_type")),
@@ -233,6 +248,7 @@ class OperationalMemoryFilter:
             created_before=_datetime_or_none(data.get("created_before")),
             latest_only=bool(data.get("latest_only", False)),
             active_only=bool(data.get("active_only", True)),
+            statuses=_string_list(data.get("statuses") or data.get("include_statuses")),
             include_raw_chunks=bool(data.get("include_raw_chunks", False)),
             semantic_candidate_limit=max(1, int(data.get("semantic_candidate_limit") or 80)),
             recent_candidate_limit=max(0, int(data.get("recent_candidate_limit") or 40)),
@@ -241,6 +257,7 @@ class OperationalMemoryFilter:
     def to_log_dict(self) -> dict[str, Any]:
         return {
             "conversation_id": self.conversation_id,
+            "current_conversation_id": self.current_conversation_id,
             "session_id": self.session_id,
             "workspace_root": self.workspace_root,
             "source_types": list(self.source_types),
@@ -249,6 +266,7 @@ class OperationalMemoryFilter:
             "created_before": self.created_before.isoformat() if self.created_before else None,
             "latest_only": self.latest_only,
             "active_only": self.active_only,
+            "statuses": list(self.statuses),
             "include_raw_chunks": self.include_raw_chunks,
             "semantic_candidate_limit": self.semantic_candidate_limit,
             "recent_candidate_limit": self.recent_candidate_limit,
@@ -273,7 +291,7 @@ class MemoryContextBudget:
         *,
         total_tokens: int | None = None,
     ) -> MemoryContextBudget:
-        total = int(total_tokens or min(6_000, max(1_200, context_window_tokens * 0.03)))
+        total = int(total_tokens or min(2_400, max(800, context_window_tokens * 0.015)))
         session = max(1, int(total * 0.25))
         latest = max(1, int(total * 0.30))
         fact = max(1, int(total * 0.30))
@@ -299,6 +317,8 @@ class StructuredMemoryItem:
     event_types: list[str] = field(default_factory=list)
     score: float = 0.0
     status: str = "active"
+    trust_level: str = "medium"
+    importance: float = 0.5
     created_at: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -318,6 +338,13 @@ class StructuredMemoryPackage:
     budget_tokens: int
     omitted_count: int
     latency_ms: int
+    recall_scope: str = "workspace"
+    query_intent: str = "specific"
+    candidate_count: int = 0
+    discarded_candidates: list[dict[str, Any]] = field(default_factory=list)
+    included_reasons: list[dict[str, Any]] = field(default_factory=list)
+    ranking_breakdown: dict[str, Any] = field(default_factory=dict)
+    token_usage: dict[str, int] = field(default_factory=dict)
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -327,6 +354,13 @@ class StructuredMemoryPackage:
             "memory_items_omitted": self.omitted_count,
             "memory_latency_ms": self.latency_ms,
             "memory_filters_applied": self.filters_applied,
+            "memory_recall_scope": self.recall_scope,
+            "memory_query_intent": self.query_intent,
+            "memory_candidate_count": self.candidate_count,
+            "memory_discarded_candidates": self.discarded_candidates,
+            "memory_included_reasons": self.included_reasons,
+            "memory_ranking_breakdown": self.ranking_breakdown,
+            "memory_token_usage": self.token_usage,
         }
 
 

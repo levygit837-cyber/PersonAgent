@@ -118,8 +118,10 @@ def store_bytes_artifact(
     )
     storage_dir = artifact_root(root) / safe_category / safe_conversation
     storage_dir.mkdir(parents=True, exist_ok=True)
+    _chmod_private_tree(storage_dir)
     path = storage_dir / safe_artifact_id
     path.write_bytes(content)
+    _chmod_private_file(path)
     digest = sha256(content).hexdigest()
     now = datetime.now(UTC)
     expires_at = now.timestamp() + float(ttl_seconds) if ttl_seconds and ttl_seconds > 0 else None
@@ -137,6 +139,7 @@ def store_bytes_artifact(
         json.dumps(metadata, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    _chmod_private_file(storage_dir / f"{safe_artifact_id}.json")
     return StoredArtifact(
         artifact_id=safe_artifact_id,
         category=safe_category,
@@ -216,3 +219,19 @@ def delete_artifact_tree(
 
 def _base_mime_type(value: str) -> str:
     return value.split(";", 1)[0].strip().lower()
+
+
+def _chmod_private_tree(path: Path) -> None:
+    for parent in [*path.parents][::-1]:
+        if parent == parent.parent:
+            continue
+        if parent.name == ".cache" or parent.name == "personagent":
+            with suppress(OSError):
+                parent.chmod(0o700)
+    with suppress(OSError):
+        path.chmod(0o700)
+
+
+def _chmod_private_file(path: Path) -> None:
+    with suppress(OSError):
+        path.chmod(0o600)

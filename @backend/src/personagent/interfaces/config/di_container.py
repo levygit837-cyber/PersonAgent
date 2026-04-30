@@ -82,6 +82,7 @@ class DIContainer:
         self._session_title_service: SessionTitleService | None = None
         self._embedding_adapter = None
         self._operational_memory_repository = None
+        self._operational_memory_queue = None
         self._operational_memory_service: OperationalMemoryService | None = None
 
     @property
@@ -381,6 +382,23 @@ class DIContainer:
             self._operational_memory_repository = OperationalMemoryRepository(AsyncSessionLocal)
         return self._operational_memory_repository
 
+    def get_operational_memory_queue(self):
+        """Return the RabbitMQ operational-memory queue adapter when enabled."""
+        if not self._settings.operational_memory_queue_enabled:
+            return None
+        if self._operational_memory_queue is None:
+            from personagent.application.services.operational_memory_queue import (
+                OperationalMemoryQueue,
+            )
+
+            self._operational_memory_queue = OperationalMemoryQueue(
+                url=self._settings.operational_memory_queue_url,
+                exchange_name=self._settings.operational_memory_queue_exchange,
+                queue_name=self._settings.operational_memory_queue_name,
+                prefetch=self._settings.operational_memory_queue_prefetch,
+            )
+        return self._operational_memory_queue
+
     def get_operational_memory_service(self) -> OperationalMemoryService | None:
         """Return the operational RAG service when enabled."""
         if not self._settings.operational_memory_enabled:
@@ -402,6 +420,9 @@ class DIContainer:
                 ),
                 recent_candidate_limit=self._settings.operational_memory_recent_candidate_limit,
                 context_budget_tokens=self._settings.operational_memory_context_budget_tokens,
+                queue=self.get_operational_memory_queue(),
+                queue_enabled=self._settings.operational_memory_queue_enabled,
+                queue_fallback_sync=self._settings.operational_memory_queue_fallback_sync,
             )
         return self._operational_memory_service
 

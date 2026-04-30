@@ -14,7 +14,8 @@ describe("Electron CSP", () => {
     expect(csp).toContain("wss://127.0.0.1:*");
     expect(csp).toContain("frame-src");
     expect(csp).toContain("blob:");
-    expect(csp).toContain("script-src 'self' 'unsafe-inline' blob:");
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(csp).toContain("img-src 'self' data: blob: http: https:");
     expect(csp).toContain("style-src 'self' 'unsafe-inline' data: blob: http: https:");
   });

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { resolveBackendUrl } from "../api/client";
+import { createWorkspaceGrant, resolveBackendUrl } from "../api/client";
 import type { ModelProvider, ReasoningPreset } from "../types/chat";
 
 const settingsKeys = {
@@ -97,6 +97,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       convWorkspaceMap,
     });
     await get().checkBackend();
+    if (selectedWorkspace) {
+      await grantWorkspace(get().baseUrl, selectedWorkspace).catch((error) => {
+        console.error("Failed to register selected workspace grant", error);
+      });
+    }
   },
 
   checkBackend: async () => {
@@ -139,6 +144,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!normalized) return;
     const recentWorkspaces = normalizeRecent(get().recentWorkspaces, normalized);
     set({ selectedWorkspace: normalized, recentWorkspaces });
+    void grantWorkspace(get().baseUrl, normalized).catch((error) => {
+      console.error("Failed to register workspace grant", error);
+    });
     void (async () => {
       await settingsSet(settingsKeys.workspace, normalized);
       await settingsSet(settingsKeys.recentWorkspaces, recentWorkspaces);
@@ -153,7 +161,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       ? await window.personAgent.dialog.selectWorkspace(current)
       : window.prompt("Workspace path", current ?? "");
     if (selected) {
-      await get().selectWorkspace(selected);
+      await get().selectWorkspace(typeof selected === "string" ? selected : selected.root);
     }
   },
 
@@ -174,3 +182,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     return !mapped || mapped === workspace;
   },
 }));
+
+async function grantWorkspace(baseUrl: string, workspaceRoot: string) {
+  if (window.personAgent?.workspace?.grant) {
+    await window.personAgent.workspace.grant(workspaceRoot);
+  }
+  await createWorkspaceGrant(baseUrl, workspaceRoot);
+}

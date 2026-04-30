@@ -1,0 +1,53 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  backend-security-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./@backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --extra dev
+      - run: uv run ruff check src tests
+      - run: >
+          uv run pytest
+          tests/test_api_security.py
+          tests/test_workspace_api.py
+          tests/unit/test_provider_data_policy.py
+          tests/unit/test_error_architecture.py
+          tests/integration/memory/test_memory_api.py
+          tests/test_tools_runtime.py
+
+  electron-security-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./@desktop-electron
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ./@desktop-electron/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test -- client.test.ts sse.test.ts

@@ -26,13 +26,41 @@ class Settings(BaseSettings):
     app_name: str = Field(default="PersonAgent", alias="APP_NAME")
     app_version: str = Field(default="0.1.0", alias="APP_VERSION")
     app_env: str = Field(default="development", alias="APP_ENV")
-    app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
+    app_host: str = Field(default="127.0.0.1", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     secret_key: str = Field(default="change-me", alias="SECRET_KEY")
     personagent_artifact_root: str = Field(
         default="~/.cache/personagent/artifacts",
         alias="PERSONAGENT_ARTIFACT_ROOT",
+    )
+    personagent_local_auth_enabled: bool = Field(
+        default=True,
+        alias="PERSONAGENT_LOCAL_AUTH_ENABLED",
+    )
+    personagent_local_auth_token: str = Field(
+        default="",
+        alias="PERSONAGENT_LOCAL_AUTH_TOKEN",
+    )
+    personagent_local_auth_token_path: str = Field(
+        default="~/.cache/personagent/local_auth_token",
+        alias="PERSONAGENT_LOCAL_AUTH_TOKEN_PATH",
+    )
+    personagent_workspace_grants_path: str = Field(
+        default="~/.cache/personagent/workspace_grants.json",
+        alias="PERSONAGENT_WORKSPACE_GRANTS_PATH",
+    )
+    personagent_cors_allowed_origins: str | None = Field(
+        default=None,
+        alias="PERSONAGENT_CORS_ALLOWED_ORIGINS",
+    )
+    personagent_action_approval_ttl_seconds: int = Field(
+        default=300,
+        alias="PERSONAGENT_ACTION_APPROVAL_TTL_SECONDS",
+    )
+    personagent_artifact_ttl_seconds: int = Field(
+        default=7 * 24 * 60 * 60,
+        alias="PERSONAGENT_ARTIFACT_TTL_SECONDS",
     )
 
     # --- PostgreSQL ---
@@ -380,6 +408,30 @@ class Settings(BaseSettings):
     operational_memory_context_budget_tokens: int = Field(
         default=0,
         alias="OPERATIONAL_MEMORY_CONTEXT_BUDGET_TOKENS",
+    )
+    operational_memory_queue_enabled: bool = Field(
+        default=False,
+        alias="MEMORY_QUEUE_ENABLED",
+    )
+    operational_memory_queue_url: str = Field(
+        default="amqp://personagent:personagent_secret@127.0.0.1:5672/personagent",
+        alias="MEMORY_QUEUE_URL",
+    )
+    operational_memory_queue_exchange: str = Field(
+        default="personagent.memory",
+        alias="MEMORY_QUEUE_EXCHANGE",
+    )
+    operational_memory_queue_name: str = Field(
+        default="personagent.memory.operational.v1",
+        alias="MEMORY_QUEUE_NAME",
+    )
+    operational_memory_queue_prefetch: int = Field(
+        default=8,
+        alias="MEMORY_QUEUE_PREFETCH",
+    )
+    operational_memory_queue_fallback_sync: bool = Field(
+        default=True,
+        alias="MEMORY_QUEUE_FALLBACK_SYNC",
     )
     embedding_server_url: str = Field(
         default="http://localhost:8081/v1",

@@ -524,6 +524,9 @@ describe("chat rendering", () => {
       />,
     );
 
+    expect(screen.queryByText("/tmp/personagent/tool-results/conversation/call.txt")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show shell output" }));
+
     expect(screen.getByText("/tmp/personagent/tool-results/conversation/call.txt")).toBeInTheDocument();
     expect(screen.getByText("(70000 chars)")).toBeInTheDocument();
   });
@@ -655,7 +658,7 @@ describe("chat rendering", () => {
     expect(screen.queryByText("expanded only")).not.toBeInTheDocument();
   });
 
-  it("auto-collapses search output even when generic tool visibility is set to show", () => {
+  it("auto-collapses every tool output even when visibility is set to show", () => {
     const setup = render(
       <ToolBlock
         block={toolBlock({
@@ -675,6 +678,21 @@ describe("chat rendering", () => {
 
     fireEvent.click(screen.getByText("Show"));
     setup.unmount();
+
+    const generic = render(
+      <ToolBlock
+        block={toolBlock({
+          name: "WebFetch",
+          title: "WebFetch",
+          content: "fetched page",
+          data: { url: "https://example.com" },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Fetch https://example.com - Show")).toBeInTheDocument();
+    expect(screen.queryByText("fetched page")).not.toBeInTheDocument();
+    generic.unmount();
 
     render(
       <ToolBlock
@@ -773,7 +791,7 @@ describe("chat rendering", () => {
     expect(screen.queryByText("Command")).not.toBeInTheDocument();
   });
 
-  it("persists output visibility across future tool calls", () => {
+  it("keeps future tool calls collapsed after a manual expand", () => {
     const first = render(
       <ToolBlock
         block={toolBlock({
@@ -807,9 +825,10 @@ describe("chat rendering", () => {
       />,
     );
 
-    expect(screen.getByText("fetched page")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Fetch https:\/\/example\.com - Hide/ }));
+    expect(screen.getByText("Fetch https://example.com - Show")).toBeInTheDocument();
     expect(screen.queryByText("fetched page")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Fetch https:\/\/example\.com - Show/ }));
+    expect(screen.getByText("fetched page")).toBeInTheDocument();
     second.unmount();
 
     render(
@@ -833,7 +852,7 @@ describe("chat rendering", () => {
     expect(screen.queryByText("beta")).not.toBeInTheDocument();
   });
 
-  it("applies persisted visibility to grouped generic tool outputs", () => {
+  it("keeps grouped generic tool outputs individually collapsed", () => {
     const setup = render(
       <ToolBlock
         block={toolBlock({
@@ -881,9 +900,20 @@ describe("chat rendering", () => {
       />,
     );
 
-    expect(screen.getByText("Fetched 2 URLs Hide")).toBeInTheDocument();
+    expect(screen.getByText("Fetched 2 URLs >")).toBeInTheDocument();
+    expect(screen.queryByText("first page")).not.toBeInTheDocument();
+    expect(screen.queryByText("second page")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Fetched 2 URLs >"));
+
+    expect(screen.getByText("Fetch https://one.example - Show")).toBeInTheDocument();
+    expect(screen.getByText("Fetch https://two.example - Show")).toBeInTheDocument();
+    expect(screen.queryByText("first page")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Fetch https:\/\/one\.example - Show/ }));
+
     expect(screen.getByText("first page")).toBeInTheDocument();
-    expect(screen.getByText("second page")).toBeInTheDocument();
+    expect(screen.queryByText("second page")).not.toBeInTheDocument();
   });
 
   it("groups BrowserOpen calls as opened tabs with normalized output", () => {
@@ -908,8 +938,13 @@ describe("chat rendering", () => {
 
     fireEvent.click(screen.getByText("Opened 3 Tabs >"));
 
+    expect(screen.getByText("Opened One - Show")).toBeInTheDocument();
+    expect(screen.queryByText(/Final URL: https:\/\/one\.example/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Opened One - Show"));
+
     expect(screen.getByText(/Final URL: https:\/\/one\.example/)).toBeInTheDocument();
-    expect(screen.getByText(/Page ID: page-open_2/)).toBeInTheDocument();
+    expect(screen.queryByText(/Page ID: page-open_2/)).not.toBeInTheDocument();
     expect(screen.queryByText(/"type":"browser_open"/)).not.toBeInTheDocument();
   });
 
@@ -963,11 +998,37 @@ describe("chat rendering", () => {
     expect(screen.getByText("Extracted content from 2 URLs >")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Extracted content from 2 URLs >"));
 
+    expect(screen.getByText("Extracted content from One - Show")).toBeInTheDocument();
+    expect(screen.queryByText(/Cache key: page_111/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Extracted content from One - Show"));
+
     expect(screen.getByText(/Cache key: page_111/)).toBeInTheDocument();
     expect(screen.getByText(/First article content/).tagName.toLowerCase()).toBe("pre");
   });
 
-  it("keeps grouped parallel output expanded while running and collapses after completion", () => {
+  it("keeps running Browser tool input collapsed while showing the target query", () => {
+    render(
+      <ToolBlock
+        block={toolBlock({
+          name: "BrowserSearch",
+          title: "BrowserSearch",
+          status: "running",
+          content: JSON.stringify({ query: "open source LLM comparison", max_results: 4 }),
+          data: {
+            query: "open source LLM comparison",
+            max_results: 4,
+          },
+          isCollapsed: false,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Searching open source LLM comparison - Show")).toBeInTheDocument();
+    expect(screen.queryByText(/max_results/)).not.toBeInTheDocument();
+  });
+
+  it("keeps grouped parallel tool rows visible while running with outputs collapsed", () => {
     window.localStorage.setItem("personagent.toolOutputVisibility", "hide");
     const runningMessage = baseAgentMessage({
       toolBlocks: [
@@ -1004,8 +1065,10 @@ describe("chat rendering", () => {
     const { rerender } = render(<AgentMessage message={runningMessage} />);
 
     expect(screen.getByText("Fetching 2 URLs...")).toBeInTheDocument();
-    expect(screen.getByText("first page")).toBeInTheDocument();
-    expect(screen.getByText("second page partial")).toBeInTheDocument();
+    expect(screen.getByText("Fetch https://one.example - Show")).toBeInTheDocument();
+    expect(screen.getByText("Fetch https://two.example running - Show")).toBeInTheDocument();
+    expect(screen.queryByText("first page")).not.toBeInTheDocument();
+    expect(screen.queryByText("second page partial")).not.toBeInTheDocument();
 
     rerender(<AgentMessage message={completedMessage} />);
 

@@ -7,6 +7,7 @@ small boundary adapters instead of inventing their own error shapes.
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
@@ -496,30 +497,55 @@ def provider_http_error(
     retry_after: str | None = None,
 ) -> LLMBackendError:
     """Classify an HTTP provider failure into a provider-specific error."""
+    safe_detail = _redact_provider_error_detail(detail)
     metadata = {
         "provider": provider,
         "status_code": status_code,
     }
     if retry_after:
         metadata["retry_after"] = retry_after
-    message = f"{provider} HTTP {status_code}: {detail}"
+    message = f"{provider} HTTP {status_code}: {safe_detail}"
     if status_code in {401, 403}:
-        return ProviderAuthError(message, http_status=status_code, metadata=metadata)
+        return ProviderAuthError(
+            message,
+            http_status=status_code,
+            metadata=metadata,
+            safe_for_model=False,
+        )
     if status_code == 429:
-        lowered = detail.lower()
+        lowered = safe_detail.lower()
         if "quota" in lowered or "insufficient_quota" in lowered:
-            return ProviderQuotaError(message, metadata=metadata)
-        return ProviderRateLimitError(message, metadata=metadata)
-    if status_code == 413 or "context" in detail.lower() and "limit" in detail.lower():
-        return ProviderContextOverflowError(message, metadata=metadata)
+            return ProviderQuotaError(message, metadata=metadata, safe_for_model=False)
+        return ProviderRateLimitError(message, metadata=metadata, safe_for_model=False)
+    if status_code == 413 or "context" in safe_detail.lower() and "limit" in safe_detail.lower():
+        return ProviderContextOverflowError(message, metadata=metadata, safe_for_model=False)
     if status_code in {408, 409, 500, 502, 503, 504, 529}:
-        return ProviderOverloadedError(message, metadata=metadata, http_status=503)
+        return ProviderOverloadedError(
+            message,
+            metadata=metadata,
+            http_status=503,
+            safe_for_model=False,
+        )
     return ProviderHTTPError(
         message,
         http_status=status_code if 400 <= status_code <= 599 else 502,
         retryable=500 <= status_code <= 599,
         metadata=metadata,
+        safe_for_model=False,
     )
+
+
+def _redact_provider_error_detail(detail: str) -> str:
+    text = str(detail or "")
+    text = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{12,}", "Bearer [redacted]", text)
+    text = re.sub(r"\bsk-[A-Za-z0-9][A-Za-z0-9_-]{12,}\b", "[redacted]", text)
+    text = re.sub(r"\bnvapi-[A-Za-z0-9_-]{12,}\b", "[redacted]", text)
+    text = re.sub(
+        r"(?i)\b(api[_-]?key|secret|token|password)\s*[:=]\s*['\"]?[^'\"\s,}]+",
+        lambda match: f"{match.group(1)}=[redacted]",
+        text,
+    )
+    return text[:500]
 
 
 def _json_safe(value: Any, *, depth: int = 0) -> Any:

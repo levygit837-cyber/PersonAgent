@@ -26,6 +26,7 @@ from personagent.application.plan_mode import (
     plan_mode_event,
     write_plan_state,
 )
+from personagent.application.security.provider_data_policy import enforce_provider_data_policy
 from personagent.application.services import (
     NextStepSuggestionService,
     OperationalMemoryService,
@@ -53,6 +54,7 @@ from personagent.domain.exceptions import (
 )
 from personagent.domain.memory.repositories.memory_repository import MemoryRepository
 from personagent.domain.memory.services.memory_formatter import MemoryFormatter
+from personagent.domain.memory.services.memory_trace import MemoryTraceBuilder
 from personagent.domain.models.conversation import Conversation, Message, Role
 from personagent.domain.models.inference_result import GeneratedImage, InferenceResult, StreamChunk
 from personagent.domain.prompts.commands import (
@@ -82,6 +84,7 @@ from personagent.domain.tools import (
     ToolUseContext,
 )
 from personagent.infrastructure.artifacts import store_bytes_artifact
+from personagent.interfaces.api.action_approvals import canonical_args_hash
 
 logger = structlog.get_logger(__name__)
 
@@ -91,6 +94,12 @@ class _PromptPackage:
     system_prompt: str | None
     user_context_message: str | None
     metadata: dict[str, Any]
+
+
+@dataclass(slots=True)
+class _MemoryRecallResult:
+    prompt_memories: list[str] = field(default_factory=list)
+    trace: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -152,6 +161,7 @@ class ChatCompletionUseCase:
         context_window_tokens: int = 262_144,
         default_output_tokens: int = 65_536,
         artifact_root: str | Path | None = None,
+        artifact_ttl_seconds: int | None = None,
     ):
         self._conversation_repo = conversation_repo
         self._llm_backend = llm_backend
@@ -173,6 +183,7 @@ class ChatCompletionUseCase:
         self._context_window_tokens = max(4_096, int(context_window_tokens))
         self._default_output_tokens = max(1, int(default_output_tokens))
         self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
+        self._artifact_ttl_seconds = artifact_ttl_seconds if artifact_ttl_seconds and artifact_ttl_seconds > 0 else None
         self._state_manager = StateManager.get_instance()
 
     async def execute(self, request: ChatRequestDTO) -> ChatResponseDTO:
@@ -194,7 +205,7 @@ class ChatCompletionUseCase:
         conversation.add_message(user_msg)
 
         # Recall memórias relevantes
-        relevant_memories = await self._recall_relevant_memories(
+        memory_recall = await self._recall_relevant_memories(
             request, context_result, conversation
         )
 
@@ -204,8 +215,10 @@ class ChatCompletionUseCase:
             context_result,
             tools,
             preparation,
-            relevant_memories=relevant_memories,
+            relevant_memories=memory_recall.prompt_memories,
+            memory_trace=memory_recall.trace,
         )
+        self._enforce_provider_data_policy(request, prompt_package)
         await self._capture_operational_user_message(request, context_result, conversation)
 
         tool_context = self._build_tool_context(request, conversation, preparation) if tools else None
@@ -215,7 +228,7 @@ class ChatCompletionUseCase:
         try:
             iteration = 0
             while True:
-                messages, _context_metadata = await self._prepare_messages_for_llm(
+                messages, context_metadata = await self._prepare_messages_for_llm(
                     conversation,
                     request,
                     prompt_package,
@@ -238,7 +251,7 @@ class ChatCompletionUseCase:
                     images=self._store_generated_images(str(conversation.id), result.images),
                 )
 
-                assistant_msg = self._assistant_message_from_result(result)
+                assistant_msg = self._assistant_message_from_result(result, context_metadata)
                 if assistant_msg.tool_calls:
                     assistant_msg = Message(
                         role=assistant_msg.role,
@@ -423,7 +436,7 @@ class ChatCompletionUseCase:
         yield StreamChunk(metadata={"event": "status", "status": status})
 
         # Recall memórias relevantes
-        relevant_memories = await self._recall_relevant_memories(
+        memory_recall = await self._recall_relevant_memories(
             request, context_result, conversation
         )
 
@@ -433,8 +446,10 @@ class ChatCompletionUseCase:
             context_result,
             tools,
             preparation,
-            relevant_memories=relevant_memories,
+            relevant_memories=memory_recall.prompt_memories,
+            memory_trace=memory_recall.trace,
         )
+        self._enforce_provider_data_policy(request, prompt_package)
         if append_user_message:
             self._schedule_background(
                 self._capture_operational_user_message(request, context_result, conversation),
@@ -736,7 +751,11 @@ class ChatCompletionUseCase:
         await self._conversation_repo.create(conversation)
         return conversation
 
-    def _assistant_message_from_result(self, result: InferenceResult) -> Message:
+    def _assistant_message_from_result(
+        self,
+        result: InferenceResult,
+        context_metadata: dict[str, Any] | None = None,
+    ) -> Message:
         return Message(
             role=Role.ASSISTANT,
             content=result.content,
@@ -747,9 +766,23 @@ class ChatCompletionUseCase:
                 "reasoning_content": result.reasoning_content or None,
                 "finish_reason": result.finish_reason,
                 "images": [image.to_dict() for image in result.images],
+                **_context_usage_metadata(context_metadata or {}),
                 **result.metadata,
             },
         )
+
+    def _enforce_provider_data_policy(
+        self,
+        request: ChatRequestDTO,
+        prompt_package: _PromptPackage,
+    ) -> None:
+        result = enforce_provider_data_policy(
+            request=request,
+            system_prompt=prompt_package.system_prompt,
+            user_context_message=prompt_package.user_context_message,
+        )
+        prompt_package.metadata["provider_data_policy"] = result.policy
+        prompt_package.metadata["provider_data_policy_findings"] = result.findings
 
     def _store_generated_images(
         self,
@@ -774,6 +807,7 @@ class ChatCompletionUseCase:
                 suffix=_image_suffix(mime_type),
                 mime_type=mime_type,
                 root=self._artifact_root,
+                ttl_seconds=self._artifact_ttl_seconds,
             )
             stored.append(
                 GeneratedImage(
@@ -883,9 +917,18 @@ class ChatCompletionUseCase:
             if isinstance(existing, dict) and existing.get("tool_call_id") == call.id
             else new_tool_approval_id()
         )
+        args_hash = canonical_args_hash(
+            "chat.tool_approval",
+            {
+                "tool_call_id": call.id,
+                "tool_name": call.name,
+                "arguments": call.arguments,
+            },
+        )
         pending = {
             "conversation_id": str(conversation.id),
             "approval_id": approval_id,
+            "args_hash": args_hash,
             "status": "awaiting_approval",
             "tool_call_id": call.id,
             "tool_name": call.name,
@@ -922,6 +965,7 @@ class ChatCompletionUseCase:
         return {
             "conversation_id": str(conversation.id),
             "approval_id": approval_id,
+            "args_hash": args_hash,
             "tool_approval": pending,
         }
 
@@ -1480,7 +1524,7 @@ class ChatCompletionUseCase:
         request: ChatRequestDTO,
         context_result: ContextBuildResult,
         conversation: Conversation,
-    ) -> list[str]:
+    ) -> _MemoryRecallResult:
         """Execute relevant-memory recall for the current query.
 
         Args:
@@ -1489,11 +1533,14 @@ class ChatCompletionUseCase:
             conversation: Current conversation, used to track already_surfaced.
 
         Returns:
-            List of relevant memories formatted as strings.
+            Prompt memories plus a UI trace of selected memory sources.
         """
         workspace_root = context_result.system_context.workspace_root
         project_slug = self._sanitize_project_slug(workspace_root)
         formatted_memories: list[str] = []
+        classic_memories = []
+        operational_package = None
+        conversation.metadata.pop("_operational_memory_prompt", None)
 
         if self._recall_memory_use_case is not None and self._memory_repository is not None:
             try:
@@ -1519,6 +1566,7 @@ class ChatCompletionUseCase:
                     existing.update(new_paths)
                     conversation.metadata["_surfaced_memory_paths"] = list(existing)
 
+                classic_memories.extend(memories)
                 formatted_memories.extend(MemoryFormatter.format_relevant_memories(memories))
             except Exception:
                 logger.warning("memory_recall_failed", exc_info=True)
@@ -1533,7 +1581,8 @@ class ChatCompletionUseCase:
                         query=request.message,
                         provider=request.provider,
                         model=request.model,
-                        conversation_id=str(conversation.id),
+                        conversation_id=None,
+                        current_conversation_id=str(conversation.id),
                         workspace_root=workspace_root,
                         source_types=detected_source_types,
                         file_paths=detected_file_paths,
@@ -1549,7 +1598,8 @@ class ChatCompletionUseCase:
                             query=request.message,
                             provider=request.provider,
                             model=request.model,
-                            conversation_id=str(conversation.id),
+                            conversation_id=None,
+                            current_conversation_id=str(conversation.id),
                             workspace_root=workspace_root,
                             source_types=detected_source_types,
                             file_paths=detected_file_paths,
@@ -1565,7 +1615,14 @@ class ChatCompletionUseCase:
                     formatted_memories.append(operational_memory)
             except Exception:
                 logger.warning("operational_memory_recall_failed", exc_info=True)
-        return formatted_memories
+        return _MemoryRecallResult(
+            prompt_memories=formatted_memories,
+            trace=MemoryTraceBuilder.build(
+                classic_memories=classic_memories,
+                operational_package=operational_package,
+                prompt_blocks=formatted_memories,
+            ),
+        )
 
     async def _capture_operational_user_message(
         self,
@@ -1707,6 +1764,7 @@ class ChatCompletionUseCase:
         tools: list[dict[str, Any]],
         preparation: _PromptPreparation | None = None,
         relevant_memories: list[str] | None = None,
+        memory_trace: dict[str, Any] | None = None,
     ) -> _PromptPackage:
         schema_tool_names = self._available_tool_names(tools)
         tool_definitions = self._prompt_tool_definitions(request)
@@ -1835,6 +1893,16 @@ class ChatCompletionUseCase:
                 "memory_items_omitted": memory_metadata.get("memory_items_omitted"),
                 "memory_latency_ms": memory_metadata.get("memory_latency_ms"),
                 "memory_filters_applied": memory_metadata.get("memory_filters_applied"),
+                "memory_recall_scope": memory_metadata.get("memory_recall_scope"),
+                "memory_query_intent": memory_metadata.get("memory_query_intent"),
+                "memory_candidate_count": memory_metadata.get("memory_candidate_count"),
+                "memory_discarded_candidates": memory_metadata.get(
+                    "memory_discarded_candidates"
+                ),
+                "memory_included_reasons": memory_metadata.get("memory_included_reasons"),
+                "memory_ranking_breakdown": memory_metadata.get("memory_ranking_breakdown"),
+                "memory_token_usage": memory_metadata.get("memory_token_usage"),
+                "memory_trace": memory_trace,
                 "has_custom_system_prompt": has_custom_system_prompt,
                 "custom_system_prompt_policy": "append_to_dynamic_system_prompt",
                 "has_browser_cooperation_context": bool(browser_context),
@@ -2376,6 +2444,20 @@ _CONTEXT_USAGE_METADATA_KEYS = (
     "context_window_tokens",
     "context_compacted",
     "prompt_tokens_estimated",
+    "memory_trace",
+    "memory_budget_tokens",
+    "memory_budget_used",
+    "memory_items_injected",
+    "memory_items_omitted",
+    "memory_latency_ms",
+    "memory_filters_applied",
+    "memory_recall_scope",
+    "memory_query_intent",
+    "memory_candidate_count",
+    "memory_discarded_candidates",
+    "memory_included_reasons",
+    "memory_ranking_breakdown",
+    "memory_token_usage",
 )
 
 

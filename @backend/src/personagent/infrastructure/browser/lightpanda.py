@@ -80,6 +80,10 @@ Connector = Callable[[str], Awaitable[Any]]
 _DEFAULT_SEARCH_BASE_URL = "https://search.yahoo.com/search"
 _MAX_CACHED_SEARCHES_PER_CONVERSATION = 8
 _MAX_OPENED_PAGES_PER_CONVERSATION = 32
+_MAX_LIVE_PAGES_PER_SESSION = max(
+    1,
+    int(os.getenv("PERSONAGENT_BROWSER_MAX_LIVE_PAGES_PER_SESSION", "4")),
+)
 _STYLESHEET_LINK_PATTERN = re.compile(
     r"<link\b(?=[^>]*\brel\s*=\s*['\"][^'\"]*stylesheet[^'\"]*['\"])(?=[^>]*\bhref\s*=\s*['\"](?P<href>[^'\"]+)['\"])[^>]*>",
     re.IGNORECASE,
@@ -1276,6 +1280,30 @@ class LightPandaBrowserWorker:
                 )
         if target_url is None:
             raise BrowserError("BrowserOpen requires url or result_index.")
+        existing_opened_page = self._opened_page_by_url(conversation_id, target_url)
+        existing_page = (
+            session.pages.get(existing_opened_page.page_id)
+            if existing_opened_page is not None
+            else None
+        )
+        if existing_opened_page is not None and existing_page is not None and self._page_is_open(existing_page):
+            session.page = existing_page
+            session.current_url = existing_opened_page.final_url
+            session.last_open_url = existing_opened_page.final_url
+            session.last_open_page_id = existing_opened_page.page_id
+            session.current_page_id = existing_opened_page.page_id
+            self._last_open_cache[conversation_id] = existing_opened_page
+            self._remember_current_url(conversation_id, existing_opened_page.final_url)
+            self._attach_page_console_listeners(conversation_id, existing_opened_page.page_id, existing_page)
+            session.touch()
+            return self._browser_open_response(
+                conversation_id=conversation_id,
+                opened_page=existing_opened_page,
+                requested_url=target_url,
+                title=existing_opened_page.title,
+                search_id=matched_search_id or existing_opened_page.source_search_id,
+                reused_existing_page=True,
+            )
         page = await self._new_session_page(session)
         close_failed_page = page is not None
         if page is None:
@@ -1293,7 +1321,7 @@ class LightPandaBrowserWorker:
         final_url = str(getattr(page, "url", target_url) or target_url)
         session.current_url = final_url
         self._remember_current_url(conversation_id, final_url)
-        opened_page = self._cache_opened_page(
+        opened_page, reused_existing_page = self._cache_opened_page(
             conversation_id=conversation_id,
             url=target_url,
             final_url=final_url,
@@ -1301,26 +1329,25 @@ class LightPandaBrowserWorker:
             source_search_id=matched_search_id,
             opener_tool_call_id=tool_call_id,
         )
+        previous_page = session.pages.get(opened_page.page_id)
+        if previous_page is not None and previous_page is not page and self._page_is_open(previous_page):
+            await self._best_effort_resource_call("browser_reused_previous_page_close", previous_page.close)
         session.pages[opened_page.page_id] = page
         session.page = page
         session.last_open_url = opened_page.final_url
         session.last_open_page_id = opened_page.page_id
         session.current_page_id = opened_page.page_id
         self._attach_page_console_listeners(conversation_id, opened_page.page_id, page)
+        await self._cleanup_live_pages(conversation_id, session, keep_page_id=opened_page.page_id)
         session.touch()
-        return {
-            "type": "browser_open",
-            "url": target_url,
-            "final_url": final_url,
-            "title": title,
-            "search_id": matched_search_id,
-            "page_id": opened_page.page_id,
-            "window_id": opened_page.window_id,
-            "opened_page_count": len(self._opened_pages_cache.get(conversation_id, [])),
-            "recent_opened_pages": [
-                page.to_dict() for page in self._opened_pages_cache.get(conversation_id, [])[:5]
-            ],
-        }
+        return self._browser_open_response(
+            conversation_id=conversation_id,
+            opened_page=opened_page,
+            requested_url=target_url,
+            title=title,
+            search_id=matched_search_id,
+            reused_existing_page=reused_existing_page,
+        )
 
     async def extract_content(
         self,
@@ -1386,6 +1413,7 @@ class LightPandaBrowserWorker:
             session.current_url = final_url
         self._remember_current_url(conversation_id, final_url)
         opened_page = self._opened_page(conversation_id, target_page_id) if target_page_id else None
+        already_read = opened_page.extraction_count > 0 if opened_page is not None else False
         if opened_page is not None:
             if session is not None:
                 session.last_open_url = opened_page.final_url
@@ -1395,6 +1423,13 @@ class LightPandaBrowserWorker:
                 if tab_page is not None:
                     session.page = tab_page
             self._mark_opened_page_extracted(opened_page)
+            if session is not None:
+                await self._cleanup_live_pages(
+                    conversation_id,
+                    session,
+                    keep_page_id=opened_page.page_id,
+                    close_read_pages=True,
+                )
         if session is not None:
             session.touch()
         return {
@@ -1409,6 +1444,9 @@ class LightPandaBrowserWorker:
             "links": links,
             "buttons": buttons,
             "truncated": truncated,
+            "already_read": already_read,
+            "read_status": "already_read" if already_read else "read",
+            "extraction_count": opened_page.extraction_count if opened_page is not None else 0,
         }
 
     async def get_html(
@@ -1466,15 +1504,28 @@ class LightPandaBrowserWorker:
         if session is not None:
             session.current_url = final_url
         self._remember_current_url(conversation_id, final_url)
+        opened_page = None
         if session is not None and target_page_id:
             opened_page = self._opened_page(conversation_id, target_page_id)
             if opened_page is not None:
+                already_read = opened_page.extraction_count > 0
                 session.last_open_url = opened_page.final_url
                 session.last_open_page_id = opened_page.page_id
                 session.current_page_id = opened_page.page_id
                 tab_page = session.pages.get(opened_page.page_id)
                 if tab_page is not None:
                     session.page = tab_page
+                self._mark_opened_page_extracted(opened_page)
+                await self._cleanup_live_pages(
+                    conversation_id,
+                    session,
+                    keep_page_id=opened_page.page_id,
+                    close_read_pages=True,
+                )
+            else:
+                already_read = False
+        else:
+            already_read = False
         if session is not None:
             session.touch()
         return {
@@ -1486,6 +1537,11 @@ class LightPandaBrowserWorker:
             "html": html,
             "html_method": html_method,
             "truncated": truncated,
+            "already_read": already_read,
+            "read_status": "already_read" if already_read else "read",
+            "extraction_count": opened_page.extraction_count
+            if session is not None and target_page_id and opened_page is not None
+            else 0,
         }
 
     async def list_tabs(
@@ -1556,6 +1612,8 @@ class LightPandaBrowserWorker:
                     "source_search_id": None,
                     "opener_tool_call_id": None,
                     "extraction_count": 0,
+                    "already_read": False,
+                    "read_status": "unread",
                     "is_last_open": True,
                     "is_current_page": True,
                     "active": True,
@@ -3804,6 +3862,66 @@ class LightPandaBrowserWorker:
             pages.append(page)
         return pages
 
+    async def _cleanup_live_pages(
+        self,
+        conversation_id: str,
+        session: _BrowserSession,
+        *,
+        keep_page_id: str | None = None,
+        close_read_pages: bool = False,
+    ) -> None:
+        live_entries = self._live_page_entries(session)
+        if not live_entries:
+            return
+        keep_ids = {
+            str(value or "").strip()
+            for value in (keep_page_id, session.current_page_id, session.last_open_page_id)
+            if str(value or "").strip()
+        }
+        candidates: list[tuple[int, float, set[str], Any]] = []
+        for page_ids, page in live_entries:
+            if keep_ids.intersection(page_ids):
+                continue
+            opened_pages = [
+                opened_page
+                for page_id in page_ids
+                if (opened_page := self._opened_page(conversation_id, page_id)) is not None
+            ]
+            read = any(opened_page.extraction_count > 0 for opened_page in opened_pages)
+            if close_read_pages and read:
+                priority = 0
+            elif len(live_entries) > _MAX_LIVE_PAGES_PER_SESSION:
+                priority = 1 if read else 2
+            else:
+                continue
+            opened_at = min((opened_page.opened_at for opened_page in opened_pages), default=time.monotonic())
+            candidates.append((priority, opened_at, page_ids, page))
+        live_count = len(live_entries)
+        for _priority, _opened_at, page_ids, page in sorted(candidates, key=lambda item: (item[0], item[1])):
+            if live_count <= _MAX_LIVE_PAGES_PER_SESSION and not close_read_pages:
+                break
+            await self._best_effort_resource_call("browser_live_page_close", page.close)
+            for page_id in list(page_ids):
+                session.pages.pop(page_id, None)
+            live_count -= 1
+        if session.current_page_id and session.current_page_id not in session.pages:
+            session.current_page_id = keep_page_id or session.last_open_page_id
+        if session.current_page_id and session.current_page_id in session.pages:
+            session.page = session.pages[session.current_page_id]
+        elif self._session_has_open_page(session):
+            session.page = self._preferred_session_page(session)
+
+    def _live_page_entries(self, session: _BrowserSession) -> list[tuple[set[str], Any]]:
+        by_page_object: dict[int, tuple[set[str], Any]] = {}
+        for page_id, page in session.pages.items():
+            if not self._page_is_open(page):
+                continue
+            marker = id(page)
+            if marker not in by_page_object:
+                by_page_object[marker] = (set(), page)
+            by_page_object[marker][0].add(page_id)
+        return list(by_page_object.values())
+
     def _ensure_session_page_alias(
         self,
         conversation_id: str,
@@ -5004,9 +5122,26 @@ class LightPandaBrowserWorker:
         title: str,
         source_search_id: str | None,
         opener_tool_call_id: str | None,
-    ) -> BrowserOpenedPage:
+    ) -> tuple[BrowserOpenedPage, bool]:
         url = _clean_browser_url(url)
         final_url = _clean_browser_url(final_url)
+        pages = self._opened_pages_cache.setdefault(conversation_id, [])
+        existing = self._opened_page_by_url(conversation_id, final_url) or self._opened_page_by_url(
+            conversation_id,
+            url,
+        )
+        if existing is not None:
+            existing.url = url or existing.url
+            existing.final_url = final_url or existing.final_url
+            existing.title = title or existing.title
+            existing.source_search_id = source_search_id or existing.source_search_id
+            existing.opener_tool_call_id = opener_tool_call_id or existing.opener_tool_call_id
+            existing.opened_at = time.monotonic()
+            pages[:] = [page for page in pages if page.page_id != existing.page_id]
+            pages.insert(0, existing)
+            del pages[_MAX_OPENED_PAGES_PER_CONVERSATION:]
+            self._last_open_cache[conversation_id] = existing
+            return existing, True
         raw_id = f"{conversation_id}\n{final_url}\n{time.monotonic_ns()}"
         page_id = f"page_{hashlib.sha256(raw_id.encode()).hexdigest()[:12]}"
         opened_page = BrowserOpenedPage(
@@ -5017,15 +5152,46 @@ class LightPandaBrowserWorker:
             source_search_id=source_search_id,
             opener_tool_call_id=opener_tool_call_id,
         )
-        pages = self._opened_pages_cache.setdefault(conversation_id, [])
         pages.insert(0, opened_page)
         del pages[_MAX_OPENED_PAGES_PER_CONVERSATION:]
         self._last_open_cache[conversation_id] = opened_page
-        return opened_page
+        return opened_page, False
+
+    def _browser_open_response(
+        self,
+        *,
+        conversation_id: str,
+        opened_page: BrowserOpenedPage,
+        requested_url: str,
+        title: str,
+        search_id: str | None,
+        reused_existing_page: bool,
+    ) -> dict[str, Any]:
+        return {
+            "type": "browser_open",
+            "url": requested_url,
+            "final_url": opened_page.final_url,
+            "title": title or opened_page.title,
+            "search_id": search_id,
+            "page_id": opened_page.page_id,
+            "window_id": opened_page.window_id,
+            "opened_page_count": len(self._opened_pages_cache.get(conversation_id, [])),
+            "recent_opened_pages": [
+                page.to_dict() for page in self._opened_pages_cache.get(conversation_id, [])[:5]
+            ],
+            "reused_existing_page": reused_existing_page,
+            "already_open": reused_existing_page,
+            "already_read": opened_page.extraction_count > 0,
+            "read_status": self._opened_page_read_status(opened_page),
+            "extraction_count": opened_page.extraction_count,
+        }
 
     def _mark_opened_page_extracted(self, opened_page: BrowserOpenedPage) -> None:
         opened_page.extraction_count += 1
         opened_page.last_extracted_at = time.monotonic()
+
+    def _opened_page_read_status(self, opened_page: BrowserOpenedPage) -> str:
+        return "read" if opened_page.extraction_count > 0 else "unread"
 
     def _opened_page_tab(
         self,
@@ -5051,6 +5217,8 @@ class LightPandaBrowserWorker:
             "source_search_id": page.source_search_id,
             "opener_tool_call_id": page.opener_tool_call_id,
             "extraction_count": page.extraction_count,
+            "already_read": page.extraction_count > 0,
+            "read_status": self._opened_page_read_status(page),
             "is_last_open": page.page_id == last_open_page_id,
             "is_current_page": bool(current_url and current_url == page.final_url),
         }
@@ -5062,6 +5230,22 @@ class LightPandaBrowserWorker:
     ) -> BrowserOpenedPage | None:
         for opened_page in self._opened_pages_cache.get(conversation_id, []):
             if opened_page.page_id == page_id:
+                return opened_page
+        return None
+
+    def _opened_page_by_url(
+        self,
+        conversation_id: str,
+        url: str,
+    ) -> BrowserOpenedPage | None:
+        target_url = _clean_browser_url(url)
+        if not target_url:
+            return None
+        for opened_page in self._opened_pages_cache.get(conversation_id, []):
+            if _urls_equivalent(opened_page.final_url, target_url) or _urls_equivalent(
+                opened_page.url,
+                target_url,
+            ):
                 return opened_page
         return None
 
@@ -5147,7 +5331,7 @@ class LightPandaBrowserWorker:
             for page in self._opened_pages_cache.get(conversation_id, [])
             if page.extraction_count == 0
         ]
-        if len(pages) <= 1:
+        if not pages:
             return None
         return min(pages, key=lambda page: page.opened_at)
 

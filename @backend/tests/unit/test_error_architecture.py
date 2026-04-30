@@ -42,6 +42,19 @@ def test_provider_http_error_classifies_rate_limit() -> None:
     assert isinstance(error, ProviderRateLimitError)
     assert error.retryable is True
     assert error.to_envelope()["metadata"]["retry_after"] == "2"
+    assert error.safe_for_model is False
+
+
+def test_provider_http_error_redacts_sensitive_detail() -> None:
+    error = provider_http_error(
+        provider="NVIDIA NIM",
+        status_code=500,
+        detail="upstream echoed Authorization: Bearer nvapi-abcdefghijklmnopqrstuvwxyz123456",
+    )
+
+    assert "nvapi-" not in str(error)
+    assert "[redacted]" in str(error)
+    assert error.safe_for_model is False
 
 
 def test_retry_policy_blocks_stream_replay_after_output() -> None:

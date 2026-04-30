@@ -85,6 +85,108 @@ async def test_read_file_tool_enforces_allowed_roots_and_returns_lines(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_read_file_explicit_range_with_later_lines_is_not_truncated(tmp_path):
+    file_path = tmp_path / "large.py"
+    file_path.write_text("\n".join(f"line {number}" for number in range(1, 2201)), encoding="utf-8")
+    context = _tool_context(tmp_path)
+    tool = create_read_file_tool()
+    call = ToolCall(
+        id="call_read_range",
+        name="Read",
+        arguments={"path": "large.py", "offset": 1800, "limit": 100},
+    )
+
+    result = await tool.call(call.arguments, context, call)
+
+    assert result.status == ToolExecutionStatus.COMPLETED
+    assert result.data["start_line"] == 1800
+    assert result.data["end_line"] == 1899
+    assert result.data["returned_lines"] == 100
+    assert result.data["has_more"] is True
+    assert result.data["next_offset"] == 1900
+    assert result.data["truncated"] is False
+    assert "[Output truncated." not in result.data["content"]
+    assert "[More lines available." not in result.data["content"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_preserves_explicit_read_range_truncation_state(tmp_path):
+    file_path = tmp_path / "large.py"
+    file_path.write_text("\n".join(f"line {number}" for number in range(1, 2201)), encoding="utf-8")
+    orchestrator = ToolOrchestrator(
+        ToolRegistry([create_read_file_tool()]),
+        ToolRuntimeConfig.from_values(workspace_root=tmp_path),
+    )
+
+    events = [
+        event
+        async for event in orchestrator.execute(
+            [
+                ToolCall(
+                    id="call_read_range",
+                    name="Read",
+                    arguments={"path": "large.py", "offset": 1800, "limit": 100},
+                )
+            ],
+            _tool_context(tmp_path),
+        )
+    ]
+
+    result = events[-1].result
+    assert result is not None
+    assert result.data["start_line"] == 1800
+    assert result.data["end_line"] == 1899
+    assert result.data["has_more"] is True
+    assert result.data["truncated"] is False
+    assert json.loads(result.content)["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_read_file_marks_truncated_only_when_line_limit_caps_request(tmp_path):
+    file_path = tmp_path / "large.py"
+    file_path.write_text("\n".join(f"line {number}" for number in range(1, 11)), encoding="utf-8")
+    context = _tool_context(tmp_path)
+    context.limits["read_max_lines"] = 3
+    tool = create_read_file_tool()
+    call = ToolCall(
+        id="call_read_capped_range",
+        name="Read",
+        arguments={"path": "large.py", "offset": 1, "limit": 5},
+    )
+
+    result = await tool.call(call.arguments, context, call)
+
+    assert result.status == ToolExecutionStatus.COMPLETED
+    assert result.data["requested_limit"] == 5
+    assert result.data["effective_limit"] == 3
+    assert result.data["returned_lines"] == 3
+    assert result.data["limit_was_capped"] is True
+    assert result.data["has_more"] is True
+    assert result.data["truncated"] is True
+    assert "[Output truncated. Continue at offset 4.]" in result.data["content"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_default_window_reports_more_without_truncated_flag(tmp_path):
+    file_path = tmp_path / "large.py"
+    file_path.write_text("\n".join(f"line {number}" for number in range(1, 6)), encoding="utf-8")
+    context = _tool_context(tmp_path)
+    context.limits["read_default_limit"] = 2
+    tool = create_read_file_tool()
+    call = ToolCall(id="call_read_default_window", name="Read", arguments={"path": "large.py"})
+
+    result = await tool.call(call.arguments, context, call)
+
+    assert result.status == ToolExecutionStatus.COMPLETED
+    assert result.data["returned_lines"] == 2
+    assert result.data["has_more"] is True
+    assert result.data["next_offset"] == 3
+    assert result.data["truncated"] is False
+    assert "[More lines available. Continue at offset 3 if needed.]" in result.data["content"]
+    assert "[Output truncated." not in result.data["content"]
+
+
+@pytest.mark.asyncio
 async def test_shell_blocks_mutating_commands(tmp_path):
     tool = create_shell_tool()
     context = _tool_context(tmp_path)

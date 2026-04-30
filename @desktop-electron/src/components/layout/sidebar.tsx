@@ -109,6 +109,13 @@ function SidebarHeader() {
   const recent = useAppStore((state) => state.recentWorkspaces);
   const selectWorkspace = useAppStore((state) => state.selectWorkspace);
   const pickWorkspace = useAppStore((state) => state.pickWorkspace);
+  const handlePickWorkspace = () => {
+    window.setTimeout(() => {
+      void pickWorkspace().catch((error) => {
+        console.error("Failed to select workspace", error);
+      });
+    }, 0);
+  };
 
   return (
     <div className="flex items-center gap-2 border-b border-glass-border/25 px-2.5 py-2">
@@ -141,13 +148,13 @@ function SidebarHeader() {
             <DropdownMenuItem disabled className="text-[11px]">No recent workspaces</DropdownMenuItem>
           ) : null}
           {recent.map((path) => (
-            <DropdownMenuItem key={path} onClick={() => void selectWorkspace(path)} className="text-[12px]">
+            <DropdownMenuItem key={path} onSelect={() => void selectWorkspace(path)} className="text-[12px]">
               <FolderOpen className="mr-1.5 h-3 w-3 text-muted-foreground" />
               <span className="truncate">{workspaceName(path)}</span>
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => void pickWorkspace()} className="text-[12px]">
+          <DropdownMenuItem onSelect={handlePickWorkspace} className="text-[12px]">
             <FolderOpen className="mr-1.5 h-3 w-3 text-muted-foreground" />
             Select workspace…
           </DropdownMenuItem>

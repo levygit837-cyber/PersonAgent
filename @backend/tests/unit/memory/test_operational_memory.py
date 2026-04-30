@@ -116,7 +116,7 @@ def test_structured_formatter_applies_budget_and_never_outputs_raw_chunk() -> No
         budget=budget,
     )
 
-    assert "# Relevant Execution Memory" in formatted
+    assert "# Execution Memory Brief" in formatted
     assert "raw chunk full body should be truncated away" not in formatted
     assert used_tokens <= budget.total_tokens
     assert len(selected) == 1

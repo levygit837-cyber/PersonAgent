@@ -99,6 +99,8 @@ class BrowserOpenedPage:
             "source_search_id": self.source_search_id,
             "opener_tool_call_id": self.opener_tool_call_id,
             "extraction_count": self.extraction_count,
+            "already_read": self.extraction_count > 0,
+            "read_status": "read" if self.extraction_count > 0 else "unread",
         }
 
 

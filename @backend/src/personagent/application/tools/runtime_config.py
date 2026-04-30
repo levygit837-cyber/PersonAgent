@@ -25,7 +25,7 @@ class ToolRuntimeConfig:
     shell_timeout_ms: int = 10_000
     web_timeout_ms: int = 15_000
     web_max_bytes: int = 10_000_000
-    result_max_chars: int | None = 60_000
+    result_max_chars: int | None = None
     tool_result_storage_root: Path | None = DEFAULT_ARTIFACT_ROOT
     web_allowed_domains: tuple[str, ...] = ()
     web_blocked_domains: tuple[str, ...] = ("localhost", "127.0.0.1", "0.0.0.0")
@@ -48,7 +48,7 @@ class ToolRuntimeConfig:
         shell_timeout_ms: int = 10_000,
         web_timeout_ms: int = 15_000,
         web_max_bytes: int = 10_000_000,
-        result_max_chars: int | None = 60_000,
+        result_max_chars: int | None = None,
         tool_result_storage_root: str | Path | None = None,
         web_allowed_domains: list[str] | tuple[str, ...] | None = None,
         web_blocked_domains: list[str] | tuple[str, ...] | None = None,

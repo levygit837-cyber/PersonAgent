@@ -22,6 +22,7 @@ describe("TitleBar", () => {
     expect(header).toHaveClass("select-none");
     expect(screen.getByText("Compact Session").parentElement).not.toHaveClass("no-drag");
     expect(screen.getByLabelText("Maximize").parentElement).toHaveClass("no-drag");
+    expect(screen.getByLabelText("Maximize")).toHaveClass("no-drag");
   });
 
   it("routes window controls through the desktop bridge", () => {

@@ -6,6 +6,7 @@ import {
   ArrowRight,
   Check,
   ChevronDown,
+  Database,
   ExternalLink,
   FilePenLine,
   GitBranch,
@@ -52,6 +53,8 @@ import type {
   ChangedFile,
   ChatMessageUi,
   ProjectItem,
+  SessionMemorySummary,
+  SessionMemoryTopItem,
   SessionPanelSnapshot,
   SessionSource,
   SessionUsage,
@@ -797,8 +800,8 @@ export function SessionPanel({
         {
           width: viewportWidth,
           height: viewportHeight,
-          cache_mode: "prefer_cached",
-          wait_for_styles: false,
+          cache_mode: browserToolEvent.toolName === "BrowserOpen" ? "prefer_live" : "prefer_cached",
+          wait_for_styles: browserToolEvent.toolName === "BrowserOpen",
         },
         conversationId,
       )
@@ -1488,6 +1491,7 @@ function SummaryContent({
         ]}
       />
       <UsageSection usage={usage} />
+      <MemorySection memory={snapshot?.memory} onOpenDetail={onOpenDetail} />
       <FilesSection files={snapshot?.changed_files ?? []} onOpenDetail={onOpenDetail} />
       <SourcesSection sources={snapshot?.sources ?? []} onOpenDetail={onOpenDetail} />
       <ProjectSection
@@ -1524,6 +1528,95 @@ function UsageSection({ usage }: { usage: SessionUsage }) {
         ))}
       </div>
     </section>
+  );
+}
+
+function MemorySection({
+  memory,
+  onOpenDetail,
+}: {
+  memory?: SessionMemorySummary;
+  onOpenDetail: (detail: SessionDetailView) => void;
+}) {
+  const hasMemory = Boolean(memory && (memory.total_recalls > 0 || memory.rag_used > 0 || memory.classic_used > 0));
+  const metrics: Array<[string, string]> = [
+    ["Recalls", formatNumber(memory?.total_recalls ?? 0)],
+    ["RAG", formatNumber(memory?.rag_used ?? 0)],
+    ["Classic", formatNumber(memory?.classic_used ?? 0)],
+    ["Omitted", formatNumber(memory?.omitted ?? 0)],
+    ["Avg latency", memory?.avg_latency_ms ? `${Math.round(memory.avg_latency_ms)}ms` : "0ms"],
+    ["Budget", `${formatNumber(memory?.budget_used ?? 0)} / ${formatNumber(memory?.budget_tokens ?? 0)}`],
+  ];
+
+  return (
+    <section className="border-t border-glass-border/25 pt-3">
+      <SectionTitle icon={<Database className="h-3.5 w-3.5" />} title="Memory" />
+      {!hasMemory ? <EmptyList text="No memory recall in this session." /> : null}
+      {hasMemory ? (
+        <div className="mt-2 space-y-3">
+          <div className="grid grid-cols-2 gap-2 min-[780px]:grid-cols-3">
+            {metrics.map(([label, value]) => (
+              <div key={label} className="border-b border-glass-border/25 pb-1.5">
+                <div className="truncate font-mono text-xs text-foreground">{value}</div>
+                <div className="truncate text-[10px] text-muted-foreground">{label}</div>
+              </div>
+            ))}
+          </div>
+          <div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">Most used memories</div>
+            {memory?.most_used.length ? (
+              <div className="mt-1 divide-y divide-glass-border/25">
+                {memory.most_used.map((item) => (
+                  <MemoryTopItemRow key={item.id} item={item} onOpenDetail={onOpenDetail} />
+                ))}
+              </div>
+            ) : (
+              <EmptyList text="No repeated memories yet." />
+            )}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function MemoryTopItemRow({
+  item,
+  onOpenDetail,
+}: {
+  item: SessionMemoryTopItem;
+  onOpenDetail: (detail: SessionDetailView) => void;
+}) {
+  const evidence = item.evidence.filter(Boolean).join("\n\n");
+  return (
+    <button
+      type="button"
+      className="flex w-full min-w-0 items-start gap-2 py-2 text-left transition-colors hover:bg-accent/60"
+      onClick={() =>
+        onOpenDetail({
+          type: "memory",
+          id: item.id,
+          title: item.label,
+          subtitle: `${item.source} memory · ${formatNumber(item.count)} use${item.count === 1 ? "" : "s"}`,
+          metadata: {
+            source: item.source,
+            count: item.count,
+            paths: item.paths,
+            messages: item.messages,
+          },
+          patch: evidence || undefined,
+        })
+      }
+    >
+      <Database className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs text-foreground">{item.label}</span>
+        <span className="block truncate text-[11px] text-muted-foreground">{item.paths[0] || item.source}</span>
+      </span>
+      <span className="shrink-0 rounded-full border border-glass-border/30 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+        {formatNumber(item.count)}
+      </span>
+    </button>
   );
 }
 
@@ -2968,7 +3061,7 @@ function browserTabsFromToolBlock(block: ToolBlockUi, conversationId?: string | 
           ]
         : [];
   return sourceTabs
-    .map((item, index) => browserTabFromToolTab(item, { browserId, activeTabId, index }))
+    .map((item, index) => browserTabFromToolTab(item, { browserId, activeTabId, index, sourceToolName: block.name }))
     .filter((tab): tab is BrowserTab => Boolean(tab));
 }
 
@@ -2978,10 +3071,12 @@ function browserTabFromToolTab(
     browserId,
     activeTabId,
     index,
+    sourceToolName,
   }: {
     browserId: string;
     activeTabId: string;
     index: number;
+    sourceToolName: string;
   },
 ): BrowserTab | undefined {
   const pageId =
@@ -3000,7 +3095,8 @@ function browserTabFromToolTab(
     Boolean(item.is_current_page) ||
     Boolean(item.is_last_open) ||
     (activeTabId ? pageId === activeTabId : index === 0);
-  const view = browserViewFromTabRecord(item, resolvedBrowserId, pageId, url, title, isActive);
+  const candidateView = browserViewFromTabRecord(item, resolvedBrowserId, pageId, url, title, isActive);
+  const view = sourceToolName === "BrowserOpen" && browserViewIsPlaceholder(candidateView) ? undefined : candidateView;
   return {
     id: browserPagePanelTabId(resolvedBrowserId, pageId || url),
     title,
@@ -3013,7 +3109,7 @@ function browserTabFromToolTab(
       draftUrl: url,
       history: browserStringArray(item.history),
       historyIndex: browserStringArray(item.history).length ? browserStringArray(item.history).length - 1 : url ? 0 : -1,
-      loading: false,
+      loading: sourceToolName === "BrowserOpen" && Boolean(url) && !view,
       view,
     },
   };

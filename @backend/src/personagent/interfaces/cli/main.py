@@ -67,6 +67,7 @@ async def _chat(
             tool_registry=container.get_tool_registry(),
             tool_runtime_config=container.get_tool_runtime_config(),
             artifact_root=container.settings.personagent_artifact_root,
+            artifact_ttl_seconds=container.settings.personagent_artifact_ttl_seconds,
         )
 
         conv_id = UUID(conversation_id) if conversation_id else None
@@ -144,6 +145,24 @@ def serve(
         reload=reload,
         log_level="info",
     )
+
+
+@app.command()
+def memory_worker() -> None:
+    """Run the RabbitMQ operational-memory worker."""
+    asyncio.run(_memory_worker())
+
+
+async def _memory_worker() -> None:
+    await init_db()
+    container = get_container()
+    queue = container.get_operational_memory_queue()
+    service = container.get_operational_memory_service()
+    if queue is None or service is None:
+        console.print("[red]Memory queue is disabled. Set MEMORY_QUEUE_ENABLED=true.[/red]")
+        raise typer.Exit(1)
+    console.print("[green]Operational memory worker is consuming RabbitMQ jobs.[/green]")
+    await queue.consume(service.process_outbox_message)
 
 
 @app.command()

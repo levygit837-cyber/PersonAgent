@@ -8,27 +8,7 @@ export { isBrowserToolName } from "./tool-block/browser-output";
 export { todoItems, type TodoItem } from "./tool-block/todo";
 
 const TOOL_STATUS_DOT_SIZE = 6;
-const AUTO_COLLAPSED_TOOL_OUTPUT_NAMES = new Set([
-  "browserextractcontent",
-  "browsergethtml",
-  "browsergetelementmap",
-  "browserlisttabs",
-  "browseropen",
-  "browserreadcontentchunk",
-  "browserreadconsole",
-  "browsersearch",
-  "browserscript",
-  "browserscreenshot",
-  "find",
-  "glob",
-  "grep",
-  "rg",
-  "search",
-  "search_files",
-  "toolsearch",
-  "websearch",
-]);
-
+const AUTO_COLLAPSE_TOOL_OUTPUTS = true;
 
 type WriteOutputRow = {
   kind: "add" | "remove" | "context" | "meta" | "error";
@@ -63,7 +43,8 @@ export function ToolBlock({ block, nested = false, forceExpanded = false }: { bl
 }
 
 export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: ToolBlockUi[] }) {
-  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true, { autoCollapse: kind === "search" });
+  const autoCollapseChildren = shouldAutoCollapseToolGroup(kind);
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true, { autoCollapse: autoCollapseChildren });
   const hasError = blocks.some(isError);
   const hasRunning = blocks.some(isRunning);
   const status: ToolBlockStatus = hasError ? "error" : hasRunning ? "running" : "completed";
@@ -91,7 +72,7 @@ export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: 
       {showDetails ? (
         <div className="ml-4 mt-2">
           {blocks.map((block) => {
-            const forceChildExpanded = hasRunning || (expanded && kind !== "search");
+            const forceChildExpanded = !autoCollapseChildren && (hasRunning || expanded);
             if (kind === "read") return <ReadToolEvent key={block.id} block={block} nested />;
             if (kind === "shell") return <ShellToolEvent key={block.id} block={block} nested forceExpanded={forceChildExpanded} />;
             if (kind === "todo") return <TodoToolEvent key={block.id} block={block} nested />;
@@ -205,14 +186,14 @@ function TodoStatusDot({ status }: { status: TodoItem["status"] }) {
   );
 }
 
-function SearchToolEvent({ block, nested = false, forceExpanded = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
+function SearchToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
   const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true, { autoCollapse: true });
-  const outputCollapsed = forceExpanded || isRunning(block) ? false : collapsed;
+  const outputCollapsed = collapsed;
   const rows = useMemo(() => (outputCollapsed ? [] : searchOutputRows(block)), [block, outputCollapsed]);
   const hasOutput = searchHasOutput(block);
   const summary = searchSummary(block);
   const preview = searchOutputPreview(block);
-  const canToggle = hasOutput && !forceExpanded && !isRunning(block);
+  const canToggle = hasOutput;
   const eventText = searchEventText(block, summary);
 
   return (
@@ -239,22 +220,22 @@ function SearchToolEvent({ block, nested = false, forceExpanded = false }: { blo
   );
 }
 
-function WriteToolEvent({ block, nested = false, forceExpanded = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
-  const autoCollapse = block.name === "Edit";
-  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(autoCollapse ? true : block.isCollapsed, { autoCollapse });
-  const outputCollapsed = forceExpanded || isRunning(block) ? false : collapsed;
+function WriteToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true, { autoCollapse: true });
+  const outputCollapsed = collapsed;
   const rows = useMemo(() => (outputCollapsed ? [] : writeOutputRows(block)), [block, outputCollapsed]);
   const hasOutput = writeHasOutput(block);
   const stats = writeLineStats(block);
+  const canToggle = hasOutput;
   const showStats = !isRunning(block) && !isError(block) && (stats.added > 0 || stats.removed > 0);
 
   return (
     <div className={nested ? "mb-1" : "mb-1.5"}>
       <button
         type="button"
-        disabled={!hasOutput || forceExpanded || isRunning(block)}
+        disabled={!canToggle}
         className="flex w-full min-w-0 flex-wrap items-center gap-2 text-left font-mono text-xs disabled:cursor-default"
-        onClick={() => hasOutput && !forceExpanded && !isRunning(block) && toggleCollapsed()}
+        onClick={() => canToggle && toggleCollapsed()}
       >
         <StatusDot status={block.status} />
         <span className={isError(block) ? "text-destructive" : "text-muted-foreground"}>{writeEventText(block)}</span>
@@ -264,7 +245,7 @@ function WriteToolEvent({ block, nested = false, forceExpanded = false }: { bloc
             {stats.removed > 0 ? <span className="font-medium text-destructive">-{stats.removed}</span> : null}
           </span>
         ) : null}
-        {hasOutput && !forceExpanded && !isRunning(block) ? (
+        {canToggle ? (
           <>
             <span className="text-muted-foreground/70">-</span>
             <span className="text-primary">{outputCollapsed ? "Show" : "Hide"}</span>
@@ -276,12 +257,12 @@ function WriteToolEvent({ block, nested = false, forceExpanded = false }: { bloc
   );
 }
 
-function ShellToolEvent({ block, nested = false, forceExpanded = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
-  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true);
-  const outputCollapsed = forceExpanded || isRunning(block) ? false : collapsed;
+function ShellToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true, { autoCollapse: true });
+  const outputCollapsed = collapsed;
   const output = block.content.trimEnd();
   const hasOutput = output.trim().length > 0;
-  const canToggle = hasOutput && !forceExpanded && !isRunning(block);
+  const canToggle = hasOutput;
   return (
     <div className={nested ? "mb-1.5" : "mb-2"}>
       <div className="flex items-start gap-2">
@@ -361,26 +342,28 @@ function WriteOutputLine({ row }: { row: WriteOutputRow }) {
   );
 }
 
-function GenericToolEvent({ block, nested = false, forceExpanded = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
-  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(block.isCollapsed || shouldAutoCollapseToolOutput(block), { autoCollapse: shouldAutoCollapseToolOutput(block) });
+function GenericToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?: boolean; forceExpanded?: boolean }) {
+  const autoCollapse = shouldAutoCollapseToolOutput();
+  const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true, { autoCollapse });
   const output = normalizedToolOutput(block);
   const browserImage = browserImageDataUrl(block);
-  const outputCollapsed = forceExpanded || isRunning(block) ? false : collapsed;
+  const outputCollapsed = collapsed;
   const hasDetails = output.trim().length > 0 || Boolean(browserImage);
   const error = isError(block);
+  const canToggle = hasDetails;
 
   return (
     <div className={nested ? "mb-1" : "mb-1.5"}>
       <button
         type="button"
-        disabled={!hasDetails || forceExpanded || isRunning(block)}
-        onClick={() => !forceExpanded && !isRunning(block) && toggleCollapsed()}
+        disabled={!canToggle}
+        onClick={() => canToggle && toggleCollapsed()}
         className="flex w-full items-center gap-2 text-left font-mono text-xs disabled:cursor-default"
       >
         <StatusDot status={block.status} />
         <span className={error ? "min-w-0 flex-1 truncate text-destructive" : "min-w-0 flex-1 truncate text-muted-foreground"}>
           {inlineToolText(block)}
-          {hasDetails && !forceExpanded && !isRunning(block) ? ` - ${outputCollapsed ? "Show" : "Hide"}` : ""}
+          {canToggle ? ` - ${outputCollapsed ? "Show" : "Hide"}` : ""}
         </span>
       </button>
       {hasDetails && !outputCollapsed ? (
@@ -485,9 +468,12 @@ function toolBlockHasDetails(block: ToolBlockUi) {
   return normalizedToolOutput(block).trim().length > 0;
 }
 
-function shouldAutoCollapseToolOutput(block: ToolBlockUi) {
-  if (isSearchTool(block)) return true;
-  return AUTO_COLLAPSED_TOOL_OUTPUT_NAMES.has(block.name.trim().toLowerCase());
+function shouldAutoCollapseToolOutput() {
+  return AUTO_COLLAPSE_TOOL_OUTPUTS;
+}
+
+function shouldAutoCollapseToolGroup(kind: string) {
+  return kind !== "todo";
 }
 
 function StatusDot({ status, size = TOOL_STATUS_DOT_SIZE }: { status: ToolBlockStatus; size?: number }) {

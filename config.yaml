@@ -8,7 +8,7 @@ app:
   name: "PersonAgent"
   version: "0.1.0"
   env: "development"
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8000
   log_level: "INFO"
 
@@ -37,7 +37,8 @@ llama:
   bin_path: "./@llama/llama-cpp-turboquant/build/bin/llama-server"
 
 nvidia:
-  api_key: "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"
+  # Set NVIDIA_API_KEY in .env or your user secret store.
+  api_key: ""
   base_url: "https://integrate.api.nvidia.com/v1"
   # Modelos 500B+ params disponíveis:
   # - moonshotai/kimi-k2.5 (1T params - PADRÃO)

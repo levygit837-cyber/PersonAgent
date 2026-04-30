@@ -17,7 +17,13 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from personagent.infrastructure.config.settings import get_settings
+from personagent.interfaces.api.action_approvals import require_action_approval
 from personagent.interfaces.api.state_events import publish_state_change
+from personagent.interfaces.api.workspace_grants import (
+    is_path_inside,
+    register_workspace_grant,
+    resolve_workspace_root,
+)
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -47,6 +53,20 @@ class WorkspaceMentionSuggestion(BaseModel):
     display_path: str
     is_directory: bool
     score: float
+
+
+class WorkspaceGrantRequest(BaseModel):
+    root: str
+    source: str = "api"
+
+
+@router.post("/grants")
+async def create_workspace_grant(payload: WorkspaceGrantRequest) -> dict[str, Any]:
+    """Register a user-selected workspace root and return its stable grant id."""
+    try:
+        return register_workspace_grant(payload.root, source=payload.source)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _command_text(value: str | bytes | None) -> str:
@@ -151,37 +171,53 @@ def _cleanup_stale_git_index_lock(cwd: Path, stale_after_seconds: int = STALE_GI
     return str(lock_path)
 
 
-def _is_relative_to(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
-
-
-def _resolve_within_allowed_roots(raw_path: str, workspace_root: str | None = None) -> Path:
+def _resolve_within_allowed_roots(
+    raw_path: str,
+    workspace_root: str | None = None,
+    workspace_id: str | None = None,
+) -> Path:
     settings = get_settings()
     path = Path(raw_path).expanduser()
     resolved = path.resolve()
 
-    if workspace_root:
-        active_workspace = Path(workspace_root).expanduser().resolve()
-        if not _is_relative_to(resolved, active_workspace):
+    if workspace_id or workspace_root:
+        active_workspace = resolve_workspace_root(
+            workspace_id=workspace_id,
+            workspace_root=workspace_root,
+            settings=settings,
+        )
+        if not is_path_inside(resolved, active_workspace):
             raise ValueError(f"Path '{raw_path}' is outside active workspace: {active_workspace}")
         return resolved
 
     allowed_roots = list(settings.tool_allowed_root_paths)
-    if not any(_is_relative_to(resolved, root) for root in allowed_roots):
+    if not any(is_path_inside(resolved, root) for root in allowed_roots):
         roots = ", ".join(str(root) for root in allowed_roots)
         raise ValueError(f"Path '{raw_path}' is outside allowed roots: {roots}")
     return resolved
 
 
-def _resolve_workspace(workspace_root: str) -> Path:
+def _is_relative_to(path: Path, root: Path) -> bool:
+    return is_path_inside(path, root)
+
+
+def _resolve_workspace(
+    workspace_root: str | None = None,
+    workspace_id: str | None = None,
+) -> Path:
     try:
-        return _resolve_within_allowed_roots(workspace_root, workspace_root)
+        return resolve_workspace_root(
+            workspace_id=workspace_id,
+            workspace_root=workspace_root,
+            settings=get_settings(),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+def _approval_arguments(payload: BaseModel, *fields: str) -> dict[str, Any]:
+    data = payload.model_dump()
+    return {field: data.get(field) for field in fields if data.get(field) is not None}
 
 
 def _git_error(message: str, result: subprocess.CompletedProcess[str]) -> str:
@@ -953,11 +989,12 @@ def _recent_pushes(cwd: Path, repo_name: str | None, errors: list[str]) -> list[
 @router.get("/files")
 async def list_workspace_files(
     path: str = Query(..., description="Absolute path to the directory to list"),
-    workspace_root: str | None = Query(None, description="Optional workspace root to allow browsing outside default tool roots"),
+    workspace_root: str | None = Query(None, description="Legacy workspace root path"),
+    workspace_id: str | None = Query(None, description="Granted workspace id"),
 ) -> list[dict[str, str | bool]]:
     """List files and directories for a path inside allowed roots."""
     try:
-        resolved = _resolve_within_allowed_roots(path, workspace_root)
+        resolved = _resolve_within_allowed_roots(path, workspace_root, workspace_id)
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -989,22 +1026,24 @@ async def list_workspace_files(
 @router.get("/mentions", response_model=list[WorkspaceMentionSuggestion])
 async def list_workspace_mentions(
     q: str = Query(default="", description="Partial @ mention query"),
-    workspace_root: str = Query(..., description="Workspace root path"),
+    workspace_root: str | None = Query(None, description="Legacy workspace root path"),
+    workspace_id: str | None = Query(None, description="Granted workspace id"),
     limit: int = Query(default=40, ge=1, le=100),
 ) -> list[WorkspaceMentionSuggestion]:
     """Return file and directory suggestions for composer @ mentions."""
-    root = _resolve_workspace(workspace_root)
+    root = _resolve_workspace(workspace_root, workspace_id)
     return _workspace_mention_suggestions(root, q, limit)
 
 
 @router.get("/file")
 async def read_workspace_file(
     path: str = Query(..., description="Absolute path to the file to read"),
-    workspace_root: str | None = Query(None, description="Optional workspace root to allow browsing outside default tool roots"),
+    workspace_root: str | None = Query(None, description="Legacy workspace root path"),
+    workspace_id: str | None = Query(None, description="Granted workspace id"),
 ) -> dict[str, str]:
     """Read a text file inside the active workspace."""
     try:
-        resolved = _resolve_within_allowed_roots(path, workspace_root)
+        resolved = _resolve_within_allowed_roots(path, workspace_root, workspace_id)
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -1030,13 +1069,14 @@ async def read_workspace_file(
 @router.get("/git-status")
 async def get_git_status(
     workspace_root: str | None = Query(None, description="Workspace root path"),
+    workspace_id: str | None = Query(None, description="Granted workspace id"),
 ) -> dict[str, Any]:
     """Return current git status for the workspace."""
-    if workspace_root:
-        resolved = _resolve_workspace(workspace_root)
+    if workspace_root or workspace_id:
+        resolved = _resolve_workspace(workspace_root, workspace_id)
     else:
         try:
-            resolved = _resolve_within_allowed_roots(".", None)
+            resolved = _resolve_within_allowed_roots(".", None, None)
         except ValueError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -1096,31 +1136,38 @@ async def get_git_status(
 
 
 class GitCommitRequest(BaseModel):
-    workspace_root: str
+    workspace_root: str | None = None
+    workspace_id: str | None = None
     message: str | None = None
     auto_generate_message: bool = False
+    approval_id: str | None = None
+    args_hash: str | None = None
 
 
 class GitBranchCreateRequest(BaseModel):
-    workspace_root: str
+    workspace_root: str | None = None
+    workspace_id: str | None = None
     name: str
 
 
 class GitWorktreeCreateRequest(BaseModel):
-    workspace_root: str
+    workspace_root: str | None = None
+    workspace_id: str | None = None
     name: str | None = None
     branch: str | None = None
     source_message_id: str | None = None
 
 
 class GitCheckoutRequest(BaseModel):
-    workspace_root: str
+    workspace_root: str | None = None
+    workspace_id: str | None = None
     name: str
     kind: str = "local"
 
 
 class GitPullRequestCommentRequest(BaseModel):
-    workspace_root: str
+    workspace_root: str | None = None
+    workspace_id: str | None = None
     body: str
     kind: str = "human_review"
     status: str | None = None
@@ -1128,10 +1175,11 @@ class GitPullRequestCommentRequest(BaseModel):
 
 @router.get("/git-commit-message")
 async def generate_git_commit_message(
-    workspace_root: str = Query(..., description="Workspace root path"),
+    workspace_root: str | None = Query(None, description="Legacy workspace root path"),
+    workspace_id: str | None = Query(None, description="Granted workspace id"),
 ) -> dict[str, str]:
     """Generate a concise commit message from current workspace changes."""
-    cwd = _resolve_workspace(workspace_root)
+    cwd = _resolve_workspace(workspace_root, workspace_id)
     if not _is_git_repo(cwd):
         raise HTTPException(status_code=400, detail="No Git repository detected")
     return {"message": _generate_commit_message(cwd)}
@@ -1139,10 +1187,11 @@ async def generate_git_commit_message(
 
 @router.get("/git-recent-actions")
 async def get_git_recent_actions(
-    workspace_root: str = Query(..., description="Workspace root path"),
+    workspace_root: str | None = Query(None, description="Legacy workspace root path"),
+    workspace_id: str | None = Query(None, description="Granted workspace id"),
 ) -> dict[str, Any]:
     """Return recent commits, pushes, and pull requests for the workspace repository."""
-    cwd = _resolve_workspace(workspace_root)
+    cwd = _resolve_workspace(workspace_root, workspace_id)
     if not _is_git_repo(cwd):
         return {"is_repo": False, "actions": [], "errors": []}
 
@@ -1167,10 +1216,11 @@ async def get_workspace_projects() -> dict[str, Any]:
 
 @router.get("/git-pull-requests")
 async def get_git_pull_requests(
-    workspace_root: str = Query(..., description="Workspace root path"),
+    workspace_root: str | None = Query(None, description="Legacy workspace root path"),
+    workspace_id: str | None = Query(None, description="Granted workspace id"),
 ) -> dict[str, Any]:
     """Return pull requests for the workspace repository using GitHub CLI metadata."""
-    cwd = _resolve_workspace(workspace_root)
+    cwd = _resolve_workspace(workspace_root, workspace_id)
     if not _is_git_repo(cwd):
         return {"is_repo": False, "viewerLogin": None, "pullRequests": [], "errors": []}
 
@@ -1196,7 +1246,7 @@ async def get_git_pull_requests(
 @router.post("/git-pull-requests/{number}/comments")
 async def create_git_pull_request_comment(number: int, payload: GitPullRequestCommentRequest) -> dict[str, Any]:
     """Create a standardized pull request comment through GitHub CLI."""
-    cwd = _resolve_workspace(payload.workspace_root)
+    cwd = _resolve_workspace(payload.workspace_root, payload.workspace_id)
     if not _is_git_repo(cwd):
         raise HTTPException(status_code=400, detail="No Git repository detected")
 
@@ -1222,12 +1272,13 @@ async def create_git_pull_request_comment(number: int, payload: GitPullRequestCo
 @router.get("/git-branches")
 async def get_git_branches(
     workspace_root: str | None = Query(None, description="Workspace root path"),
+    workspace_id: str | None = Query(None, description="Granted workspace id"),
 ) -> dict[str, Any]:
     """Return local and remote branches for the workspace."""
-    if not workspace_root:
+    if not workspace_root and not workspace_id:
         return {"is_repo": False, "current": "", "branches": []}
 
-    cwd = _resolve_workspace(workspace_root)
+    cwd = _resolve_workspace(workspace_root, workspace_id)
     if not _is_git_repo(cwd):
         return {"is_repo": False, "current": "", "branches": []}
 
@@ -1281,7 +1332,7 @@ async def get_git_branches(
 @router.post("/git-branches")
 async def git_create_branch(payload: GitBranchCreateRequest) -> dict[str, Any]:
     """Create and switch to a new branch from the current HEAD."""
-    cwd = _resolve_workspace(payload.workspace_root)
+    cwd = _resolve_workspace(payload.workspace_root, payload.workspace_id)
     if not _is_git_repo(cwd):
         raise HTTPException(status_code=400, detail="No Git repository detected")
 
@@ -1304,7 +1355,7 @@ async def git_create_branch(payload: GitBranchCreateRequest) -> dict[str, Any]:
 @router.post("/git-worktrees")
 async def git_create_worktree(payload: GitWorktreeCreateRequest) -> dict[str, Any]:
     """Create an isolated worktree and branch from the workspace HEAD."""
-    cwd = _resolve_workspace(payload.workspace_root)
+    cwd = _resolve_workspace(payload.workspace_root, payload.workspace_id)
     if not _is_git_repo(cwd):
         raise HTTPException(status_code=400, detail="No Git repository detected")
 
@@ -1342,7 +1393,7 @@ async def git_create_worktree(payload: GitWorktreeCreateRequest) -> dict[str, An
 @router.post("/git-checkout")
 async def git_checkout_branch(payload: GitCheckoutRequest) -> dict[str, Any]:
     """Switch to an existing local branch or create a tracking branch from a remote."""
-    cwd = _resolve_workspace(payload.workspace_root)
+    cwd = _resolve_workspace(payload.workspace_root, payload.workspace_id)
     if not _is_git_repo(cwd):
         raise HTTPException(status_code=400, detail="No Git repository detected")
 
@@ -1377,7 +1428,20 @@ async def git_checkout_branch(payload: GitCheckoutRequest) -> dict[str, Any]:
 @router.post("/git-commit")
 async def git_commit(payload: GitCommitRequest) -> dict[str, Any]:
     """Stage all changes and create a git commit."""
-    cwd = _resolve_workspace(payload.workspace_root)
+    approval_arguments = _approval_arguments(
+        payload,
+        "workspace_root",
+        "workspace_id",
+        "message",
+        "auto_generate_message",
+    )
+    require_action_approval(
+        action_kind="workspace.git_commit",
+        approval_id=payload.approval_id,
+        args_hash=payload.args_hash,
+        arguments=approval_arguments,
+    )
+    cwd = _resolve_workspace(payload.workspace_root, payload.workspace_id)
     if not _is_git_repo(cwd):
         raise HTTPException(status_code=400, detail="No Git repository detected")
 
@@ -1415,13 +1479,23 @@ async def git_commit(payload: GitCommitRequest) -> dict[str, Any]:
 
 
 class GitPushRequest(BaseModel):
-    workspace_root: str
+    workspace_root: str | None = None
+    workspace_id: str | None = None
+    approval_id: str | None = None
+    args_hash: str | None = None
 
 
 @router.post("/git-push")
 async def git_push(payload: GitPushRequest) -> dict[str, Any]:
     """Push current branch to remote."""
-    cwd = _resolve_workspace(payload.workspace_root)
+    approval_arguments = _approval_arguments(payload, "workspace_root", "workspace_id")
+    require_action_approval(
+        action_kind="workspace.git_push",
+        approval_id=payload.approval_id,
+        args_hash=payload.args_hash,
+        arguments=approval_arguments,
+    )
+    cwd = _resolve_workspace(payload.workspace_root, payload.workspace_id)
     if not _is_git_repo(cwd):
         raise HTTPException(status_code=400, detail="No Git repository detected")
 
@@ -1452,16 +1526,23 @@ async def git_push(payload: GitPushRequest) -> dict[str, Any]:
 
 
 class GitPrRequest(BaseModel):
-    workspace_root: str
+    workspace_root: str | None = None
+    workspace_id: str | None = None
+    approval_id: str | None = None
+    args_hash: str | None = None
 
 
 @router.post("/git-pr")
 async def git_open_pr(payload: GitPrRequest) -> dict[str, Any]:
     """Try to open a PR using gh CLI, or return the remote URL."""
-    try:
-        cwd = _resolve_within_allowed_roots(payload.workspace_root, payload.workspace_root)
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    approval_arguments = _approval_arguments(payload, "workspace_root", "workspace_id")
+    require_action_approval(
+        action_kind="workspace.git_pr",
+        approval_id=payload.approval_id,
+        args_hash=payload.args_hash,
+        arguments=approval_arguments,
+    )
+    cwd = _resolve_workspace(payload.workspace_root, payload.workspace_id)
 
     # Try gh pr create
     pr_result = _run_git_command(cwd, ["gh", "pr", "create", "--fill"], timeout=30)

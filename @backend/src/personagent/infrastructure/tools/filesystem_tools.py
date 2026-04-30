@@ -58,13 +58,15 @@ def create_read_file_tool() -> Tool:
         path = str(arguments["path"])
         resolved = resolve_within_allowed_roots(path, context)
         offset = _positive_int(arguments.get("offset"), default=1)
-        limit = _positive_int(
+        explicit_limit = arguments.get("limit") is not None
+        requested_limit = _positive_int(
             arguments.get("limit"),
             default=int(context.limits.get("read_default_limit", 200)),
         )
         max_lines = int(context.limits.get("read_max_lines", 1_000))
         max_bytes = int(context.limits.get("read_max_bytes", 128_000))
-        limit = min(limit, max_lines)
+        limit = min(requested_limit, max_lines)
+        limit_was_capped = requested_limit > max_lines
 
         await context.emit_progress(
             ToolProgress(
@@ -97,10 +99,13 @@ def create_read_file_tool() -> Tool:
             f"{line_number}: {line}"
             for line_number, line in enumerate(selected, start=start_index + 1)
         ]
-        truncated = end_index < len(lines)
+        has_more = end_index < len(lines)
+        truncated = limit_was_capped and has_more
         content = "\n".join(numbered)
         if truncated:
             content += f"\n[Output truncated. Continue at offset {end_index + 1}.]"
+        elif has_more and not explicit_limit:
+            content += f"\n[More lines available. Continue at offset {end_index + 1} if needed.]"
 
         data = {
             "type": "file_read",
@@ -110,6 +115,13 @@ def create_read_file_tool() -> Tool:
             "start_line": start_index + 1 if selected else offset,
             "end_line": end_index,
             "total_lines": len(lines),
+            "returned_lines": len(selected),
+            "requested_offset": offset,
+            "requested_limit": requested_limit,
+            "effective_limit": limit,
+            "limit_was_capped": limit_was_capped,
+            "has_more": has_more,
+            "next_offset": end_index + 1 if has_more else None,
             "truncated": truncated,
         }
         return ToolResult(
@@ -751,6 +763,13 @@ def _file_output_schema() -> dict[str, Any]:
             "start_line": {"type": "integer"},
             "end_line": {"type": "integer"},
             "total_lines": {"type": "integer"},
+            "returned_lines": {"type": "integer"},
+            "requested_offset": {"type": "integer"},
+            "requested_limit": {"type": "integer"},
+            "effective_limit": {"type": "integer"},
+            "limit_was_capped": {"type": "boolean"},
+            "has_more": {"type": "boolean"},
+            "next_offset": {"type": ["integer", "null"]},
             "truncated": {"type": "boolean"},
         },
         "required": ["type", "path", "display_path", "content"],

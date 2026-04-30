@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from personagent.interfaces.api.action_approvals import create_action_approval
 from personagent.interfaces.api.routes import workspace
 
 
@@ -43,6 +44,15 @@ def _init_committed_repo(repo: Path) -> None:
     _run_git(repo, "add", "README.md")
     _run_git(repo, "commit", "-m", "initial")
     _run_git(repo, "branch", "-M", "main")
+
+
+def _approved_payload(action_kind: str, args: dict) -> dict:
+    approval = create_action_approval(action_kind, args)
+    return {
+        **args,
+        "approval_id": approval["approval_id"],
+        "args_hash": approval["args_hash"],
+    }
 
 
 @pytest.mark.asyncio
@@ -96,6 +106,31 @@ async def test_workspace_file_reads_text_inside_requested_workspace(monkeypatch,
         "name": "README.md",
         "content": "# Eval\n\ncontent",
     }
+
+
+@pytest.mark.asyncio
+async def test_workspace_root_must_be_allowed_or_granted(monkeypatch, tmp_path):
+    allowed_root = tmp_path / "Allowed"
+    outside_root = tmp_path / "Outside"
+    allowed_root.mkdir()
+    outside_root.mkdir()
+    target = outside_root / "secret.txt"
+    target.write_text("secret", encoding="utf-8")
+
+    monkeypatch.setattr(workspace, "get_settings", lambda: FakeSettings(allowed_root))
+
+    app = FastAPI()
+    app.include_router(workspace.router)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/workspace/file",
+            params={"path": str(target), "workspace_root": str(outside_root)},
+        )
+
+    assert response.status_code == 403
+    assert "not granted" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -325,7 +360,10 @@ async def test_git_commit_stages_changes_and_returns_commit_metadata(monkeypatch
     async with _workspace_client(monkeypatch, tmp_path) as client:
         response = await client.post(
             "/workspace/git-commit",
-            json={"workspace_root": str(repo), "message": "Update docs"},
+            json=_approved_payload(
+                "workspace.git_commit",
+                {"workspace_root": str(repo), "message": "Update docs", "auto_generate_message": False},
+            ),
         )
         status = await client.get("/workspace/git-status", params={"workspace_root": str(repo)})
 
@@ -352,7 +390,10 @@ async def test_git_commit_removes_stale_index_lock_before_staging(monkeypatch, t
     async with _workspace_client(monkeypatch, tmp_path) as client:
         response = await client.post(
             "/workspace/git-commit",
-            json={"workspace_root": str(repo), "message": "Update docs"},
+            json=_approved_payload(
+                "workspace.git_commit",
+                {"workspace_root": str(repo), "message": "Update docs", "auto_generate_message": False},
+            ),
         )
 
     assert response.status_code == 200
@@ -374,7 +415,10 @@ async def test_git_commit_can_auto_generate_message(monkeypatch, tmp_path):
         )
         commit_response = await client.post(
             "/workspace/git-commit",
-            json={"workspace_root": str(repo), "auto_generate_message": True},
+            json=_approved_payload(
+                "workspace.git_commit",
+                {"workspace_root": str(repo), "auto_generate_message": True},
+            ),
         )
 
     assert message_response.status_code == 200
@@ -399,7 +443,10 @@ async def test_git_push_pushes_current_branch_to_origin(monkeypatch, tmp_path):
     _run_git(repo, "commit", "-m", "feature push")
 
     async with _workspace_client(monkeypatch, tmp_path) as client:
-        response = await client.post("/workspace/git-push", json={"workspace_root": str(repo)})
+        response = await client.post(
+            "/workspace/git-push",
+            json=_approved_payload("workspace.git_push", {"workspace_root": str(repo)}),
+        )
 
     assert response.status_code == 200
     payload = response.json()

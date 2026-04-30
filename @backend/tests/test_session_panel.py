@@ -12,6 +12,7 @@ from personagent.domain.repositories.conversation_repository import Conversation
 from personagent.infrastructure.artifacts import store_bytes_artifact, store_text_artifact
 from personagent.infrastructure.config.settings import reset_settings
 from personagent.interfaces.api.routes import artifacts, sessions
+from personagent.interfaces.api.workspace_grants import register_workspace_grant
 
 
 class MemoryConversationRepository(ConversationRepository):
@@ -90,6 +91,12 @@ class FakeContainer:
 
     def get_lightpanda_browser_worker(self):
         return self.browser_worker
+
+
+def grant_test_workspace(monkeypatch: pytest.MonkeyPatch, workspace) -> None:
+    monkeypatch.setenv("PERSONAGENT_WORKSPACE_GRANTS_PATH", str(workspace / "workspace_grants.json"))
+    reset_settings()
+    register_workspace_grant(workspace, source="test")
 
 
 def _browser_view(browser_id: str, url: str = "about:blank") -> dict:
@@ -212,11 +219,64 @@ async def test_session_panel_aggregates_usage_files_sources_and_todos(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_session_panel_aggregates_memory_trace(tmp_path):
+    conversation = Conversation(title="Memory panel")
+    conversation.add_message(
+        Message(
+            role=Role.ASSISTANT,
+            content="answer",
+            metadata={
+                "memory_trace": {
+                    "classic": [
+                        {
+                            "path": "/tmp/default/memory/python_pref.md",
+                            "name": "python_pref.md",
+                            "snippet": "I prefer Python.",
+                        }
+                    ],
+                    "operational": [
+                        {
+                            "type": "decision",
+                            "summary": "Keep memory visible.",
+                            "evidence": ["Trace evidence"],
+                            "paths": ["@backend/src/personagent/application/use_cases/chat_completion.py"],
+                            "source_ids": ["mem-1"],
+                        }
+                    ],
+                    "summary": {
+                        "total_used": 2,
+                        "classic_count": 1,
+                        "rag_count": 1,
+                        "omitted_count": 3,
+                        "budget_used": 50,
+                        "budget_tokens": 1200,
+                        "latency_ms": 20,
+                    },
+                    "filters_applied": {"workspace_root": "/tmp/default"},
+                }
+            },
+        )
+    )
+
+    snapshot = await SessionPanelService(tmp_path).panel_snapshot(conversation)
+
+    memory = snapshot["memory"]
+    assert memory["total_recalls"] == 1
+    assert memory["classic_used"] == 1
+    assert memory["rag_used"] == 1
+    assert memory["omitted"] == 3
+    assert memory["avg_latency_ms"] == 20
+    assert memory["budget_used"] == 50
+    assert {item["source"] for item in memory["most_used"]} == {"classic", "rag"}
+
+
+@pytest.mark.asyncio
 async def test_session_panel_api_returns_snapshot(monkeypatch, tmp_path):
     repo = MemoryConversationRepository()
     conversation = Conversation(title="API panel")
     await repo.create(conversation)
     monkeypatch.setattr(sessions, "get_container", lambda: FakeContainer(repo))
+    grant_test_workspace(monkeypatch, tmp_path)
 
     async def fake_get_db():
         yield object()
@@ -372,6 +432,7 @@ async def test_session_project_detail_api_returns_detail(monkeypatch, tmp_path):
     conversation = Conversation(title="API detail")
     await repo.create(conversation)
     monkeypatch.setattr(sessions, "get_container", lambda: FakeContainer(repo))
+    grant_test_workspace(monkeypatch, tmp_path)
 
     def fake_project_detail(self, detail_type, detail_id):
         return {

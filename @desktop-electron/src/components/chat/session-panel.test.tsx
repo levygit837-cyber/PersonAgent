@@ -111,6 +111,26 @@ const snapshot: SessionPanelSnapshot = {
     agent_output_tokens: { value: 42, estimated: false },
     tool_calls: { value: 3, estimated: false },
   },
+  memory: {
+    total_recalls: 2,
+    rag_used: 3,
+    classic_used: 1,
+    omitted: 1,
+    avg_latency_ms: 48,
+    budget_used: 320,
+    budget_tokens: 1000,
+    most_used: [
+      {
+        id: "memory:classic:python_pref.md",
+        source: "classic",
+        label: "python_pref.md",
+        count: 2,
+        paths: ["/home/user/.codex/memories/python_pref.md"],
+        evidence: ["Uses pytest for backend validation."],
+        messages: ["agent-1", "agent-2"],
+      },
+    ],
+  },
   project: {
     repo: {
       name_with_owner: "levy/PersonAgent",
@@ -302,6 +322,23 @@ describe("SessionPanel", () => {
 
     await waitFor(() => expect(screen.queryByRole("tab", { name: "Summary" })).not.toBeInTheDocument());
     expect(screen.getByTestId("session-panel-shell")).toHaveClass("w-0");
+  });
+
+  it("shows session memory metrics and opens a memory detail tab", async () => {
+    renderWithProviders(<ChatWorkspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+
+    expect(await screen.findByText("Memory")).toBeInTheDocument();
+    expect(screen.getByText("Most used memories")).toBeInTheDocument();
+    expect(screen.getByText("python_pref.md")).toBeInTheDocument();
+    expect(screen.getByText("48ms")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("python_pref.md"));
+
+    expect(await screen.findByRole("tab", { name: "python_pref.md" })).toBeInTheDocument();
+    expect(screen.getByText(/Uses pytest for backend validation/)).toBeInTheDocument();
+    expect(screen.getByText(/agent-1/)).toBeInTheDocument();
   });
 
   it("resizes the session panel from the left border and shows the active drag state", async () => {
@@ -701,7 +738,7 @@ describe("SessionPanel", () => {
     expect(screen.queryByTestId("browser-ghost-cursor")).not.toBeInTheDocument();
   });
 
-  it("automatically opens the browser panel surface for active Browser tool usage", async () => {
+  it("keeps Browser tool tabs pending until the session panel is already open", async () => {
     const signInElement = {
       node_id: "pa_signin",
       text: "Sign in",
@@ -754,6 +791,13 @@ describe("SessionPanel", () => {
     });
 
     renderWithProviders(<ChatWorkspace />);
+
+    await waitFor(() => expect(screen.getByText("Debug Session")).toBeInTheDocument());
+    expect(screen.getByTestId("session-panel-shell")).toHaveClass("w-0");
+    expect(screen.queryByRole("tab", { name: "Browser" })).not.toBeInTheDocument();
+    expect(getSessionBrowserViewMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
 
     expect(await screen.findByRole("tab", { name: "Browser" })).toBeInTheDocument();
     expect(await screen.findByTitle("Browser https://github.com/")).toBeInTheDocument();
@@ -828,7 +872,12 @@ describe("SessionPanel", () => {
         expect(getSessionBrowserViewMock).toHaveBeenCalledWith(
           "http://localhost:8000",
           "conversation-1",
-          expect.objectContaining({ height: expect.any(Number), width: expect.any(Number) }),
+          expect.objectContaining({
+            cache_mode: "prefer_live",
+            height: expect.any(Number),
+            wait_for_styles: true,
+            width: expect.any(Number),
+          }),
           "conversation-1",
         ),
       { timeout: 2500 },
@@ -1091,6 +1140,10 @@ describe("SessionPanel", () => {
     });
 
     const shell = await screen.findByTestId("session-panel-shell");
+    expect(shell).toHaveClass("w-0");
+
+    fireEvent.click(screen.getByRole("button", { name: "Session Panel" }));
+
     await waitFor(() => expect(shell).not.toHaveClass("w-0"));
     expect(await screen.findByRole("tab", { name: "Docs Guide" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "API Reference" })).toBeInTheDocument();
