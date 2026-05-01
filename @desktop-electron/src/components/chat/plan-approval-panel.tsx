@@ -45,7 +45,7 @@ export function PlanApprovalPanel({ approval, active = true }: { approval: PlanA
 
       {active ? (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={() => void proceed(feedback)} disabled={disabled}>
+          <Button size="sm" onClick={() => void proceed(feedback)} disabled={disabled} tabIndex={-1}>
             <Check className="h-3.5 w-3.5" />
             Proceed
           </Button>
@@ -54,11 +54,12 @@ export function PlanApprovalPanel({ approval, active = true }: { approval: PlanA
             variant="outline"
             onClick={() => void continuePlanning(feedback)}
             disabled={disabled}
+            tabIndex={-1}
           >
             <PencilLine className="h-3.5 w-3.5" />
             Continue planning
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => void cancel(feedback)} disabled={disabled}>
+          <Button size="sm" variant="ghost" onClick={() => void cancel(feedback)} disabled={disabled} tabIndex={-1}>
             <X className="h-3.5 w-3.5" />
             Cancel
           </Button>
@@ -91,11 +92,11 @@ export function ToolApprovalPanel({ approval }: { approval: ToolApprovalUi }) {
         </pre>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={() => void approve()} disabled={disabled}>
+        <Button size="sm" onClick={() => void approve()} disabled={disabled} tabIndex={-1}>
           <Check className="h-3.5 w-3.5" />
           Approve
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => void reject()} disabled={disabled}>
+        <Button size="sm" variant="ghost" onClick={() => void reject()} disabled={disabled} tabIndex={-1}>
           <X className="h-3.5 w-3.5" />
           Reject
         </Button>

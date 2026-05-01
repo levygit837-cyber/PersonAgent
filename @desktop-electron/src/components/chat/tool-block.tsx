@@ -45,7 +45,7 @@ export function ToolBlock({ block, nested = false, forceExpanded = false }: { bl
 export function CompactToolGroupBlock({ kind, blocks }: { kind: string; blocks: ToolBlockUi[] }) {
   const autoCollapseChildren = shouldAutoCollapseToolGroup(kind);
   const [collapsed, toggleCollapsed] = useToolOutputCollapsed(true, { autoCollapse: autoCollapseChildren });
-  const hasError = blocks.some(isError);
+  const hasError = blocks.some((b) => b.status === "error");
   const hasRunning = blocks.some(isRunning);
   const status: ToolBlockStatus = hasError ? "error" : hasRunning ? "running" : "completed";
   const hasDetails = blocks.some(toolBlockHasDetails);
@@ -88,7 +88,7 @@ function ReadToolEvent({ block, nested = false }: { block: ToolBlockUi; nested?:
   return (
     <div className={nested ? "mb-1 flex items-center gap-2" : "mb-1.5 flex items-center gap-2"}>
       <StatusDot status={block.status} />
-      <span className={isError(block) ? "min-w-0 truncate font-mono text-xs text-destructive" : "min-w-0 truncate font-mono text-xs text-muted-foreground"}>
+      <span className={`min-w-0 truncate font-mono text-xs ${statusTextClass(block.status)}`}>
         {readEventText(block)}
       </span>
     </div>
@@ -209,7 +209,7 @@ function SearchToolEvent({ block, nested = false }: { block: ToolBlockUi; nested
           aria-label={canToggle ? `${outputCollapsed ? "Show" : "Hide"} search output` : undefined}
           onClick={() => canToggle && toggleCollapsed()}
         >
-          <div className={isError(block) ? "truncate font-mono text-xs text-destructive" : "truncate font-mono text-xs text-muted-foreground"}>
+          <div className={`truncate font-mono text-xs ${statusTextClass(block.status)}`}>
             {eventText}
           </div>
           {preview ? <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/70">{preview}</div> : null}
@@ -478,7 +478,7 @@ function shouldAutoCollapseToolGroup(kind: string) {
 
 function StatusDot({ status, size = TOOL_STATUS_DOT_SIZE }: { status: ToolBlockStatus; size?: number }) {
   const running = status === "running" || status === "queued";
-  const color = isErrorStatus(status) ? "bg-destructive" : "bg-success";
+  const color = statusDotClass(status);
   return running ? (
     <span
       className="personagent-spinner personagent-tool-status-dot inline-block shrink-0 text-muted-foreground"
@@ -880,7 +880,23 @@ function isError(block: ToolBlockUi) {
 }
 
 function isErrorStatus(status: ToolBlockStatus) {
-  return status === "error" || status === "permission_required";
+  return status === "error";
+}
+
+function isWarningStatus(status: ToolBlockStatus) {
+  return status === "permission_required";
+}
+
+function statusTextClass(status: ToolBlockStatus) {
+  if (isErrorStatus(status)) return "text-destructive";
+  if (isWarningStatus(status)) return "text-warning";
+  return "text-muted-foreground";
+}
+
+function statusDotClass(status: ToolBlockStatus) {
+  if (isErrorStatus(status)) return "bg-destructive";
+  if (isWarningStatus(status)) return "bg-warning";
+  return "bg-success";
 }
 
 function isRunning(block: ToolBlockUi) {

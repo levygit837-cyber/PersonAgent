@@ -122,6 +122,7 @@ interface ChatState {
   approvePendingTool: () => Promise<void>;
   rejectPendingTool: () => Promise<void>;
   setAgentFeedback: (messageId: string, feedback: "positive" | "negative") => void;
+  setReasoningBlockExpanded: (messageId: string, blockId: string, expanded: boolean) => void;
   regenerateAgentMessage: (messageId: string) => Promise<void>;
   rewindUserMessage: (messageId: string, content: string) => Promise<void>;
   branchAgentMessage: (messageId: string) => Promise<void>;
@@ -191,14 +192,37 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
 
       const detail = await getConversation(useAppStore.getState().baseUrl, id);
       if (get().loadingConversationId !== id) return;
+      const loadedMessages = detail.messages
+        .filter((message) => message.role !== "system")
+        .filter(isRenderablePersistedMessage)
+        .map(messageFromPersisted);
+
+      // Reconstruct pending plan approval from the most recent assistant message
+      // that carries an awaiting_approval artifact (e.g. after context compaction).
+      let pendingPlanApproval: PlanApprovalUi | undefined;
+      for (let i = loadedMessages.length - 1; i >= 0; i--) {
+        const msg = loadedMessages[i];
+        if (msg.role === "agent") {
+          const artifact = msg.metadata?.plan_approval;
+          if (isRecord(artifact) && artifact.planStatus === "awaiting_approval") {
+            pendingPlanApproval = {
+              conversationId: String(artifact.conversationId ?? detail.id),
+              approvalId: String(artifact.approvalId ?? ""),
+              planId: String(artifact.planId ?? ""),
+              planContent: String(artifact.planContent ?? ""),
+              planStatus: String(artifact.planStatus ?? "awaiting_approval"),
+              feedback: typeof artifact.feedback === "string" ? artifact.feedback : null,
+            };
+            break;
+          }
+        }
+      }
+
       set({
         conversationId: detail.id,
         conversationTitle: detail.title,
-        messages: detail.messages
-          .filter((message) => message.role !== "system")
-          .filter(isRenderablePersistedMessage)
-          .map(messageFromPersisted),
-        pendingPlanApproval: undefined,
+        messages: loadedMessages,
+        pendingPlanApproval,
         composerPlanMode: false,
         pendingToolApproval: undefined,
         nextStepSuggestion: undefined,
@@ -604,6 +628,20 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
   },
 
   clearError: () => set({ error: undefined }),
+
+  setReasoningBlockExpanded: (messageId, blockId, expanded) => {
+    set((state) => ({
+      messages: state.messages.map((message) => {
+        if (message.id !== messageId) return message;
+        return {
+          ...message,
+          reasoningBlocks: message.reasoningBlocks.map((block) =>
+            block.id === blockId ? { ...block, userExpanded: expanded } : block,
+          ),
+        };
+      }),
+    }));
+  },
 }));
 }
 
@@ -1251,7 +1289,7 @@ function handleChunk(
       activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
       nextStepSuggestion: state.activeAgentId ? state.nextStepSuggestion : suggestion,
       conversationTitle: chunk.title || state.conversationTitle,
-      liveSessionUsage: state.activeAgentId ? state.liveSessionUsage : emptySessionUsage(),
+      liveSessionUsage: emptySessionUsage(),
       liveSubAgentIds: state.activeAgentId ? state.liveSubAgentIds : [],
       messages: state.messages.map((item) => {
         if (item.id !== agentId) return item;
@@ -1432,10 +1470,6 @@ function flushTextBuffer(
   const isFinalFinish = Boolean(finishReason && finishReason !== "tool_calls");
 
   set((state) => ({
-    isStreaming: isFinalFinish && state.activeAgentId === agentId ? false : state.isStreaming,
-    isFinalizing: isFinalFinish && state.activeAgentId === agentId ? true : state.isFinalizing,
-    activeController: isFinalFinish && state.activeAgentId === agentId ? undefined : state.activeController,
-    activeAgentId: isFinalFinish && state.activeAgentId === agentId ? undefined : state.activeAgentId,
     messages: state.messages.map((item) => {
       if (item.id !== agentId) return item;
       let next = item;
@@ -2819,7 +2853,8 @@ function appendReasoningChunk(message: ChatMessageUi, chunk: string): ChatMessag
     };
   } else {
     const id = `${message.id}-reasoning-${blocks.length}`;
-    blocks.push({ id, content: chunk, isStreaming: true });
+    const previousUserExpanded = blocks[blocks.length - 1]?.userExpanded;
+    blocks.push({ id, content: chunk, isStreaming: true, userExpanded: previousUserExpanded });
     parts.push({ kind: "reasoning", id: `part-${id}`, reasoningBlockId: id });
   }
 

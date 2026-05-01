@@ -33,6 +33,7 @@ export const AgentMessage = memo(function AgentMessage({ message }: { message: C
   const memoryTrace = memoryTraceFromMetadata(message.metadata?.memory_trace);
   const [memoryInspectorOpen, setMemoryInspectorOpen] = useState(false);
   const [memoryTraceTab, setMemoryTraceTab] = useState<MemoryTraceTab>("used");
+  const setReasoningBlockExpanded = useChatStore((state) => state.setReasoningBlockExpanded);
 
   if (!message.isStreaming && !hasRenderableProgress(message)) {
     return null;
@@ -71,6 +72,8 @@ export const AgentMessage = memo(function AgentMessage({ message }: { message: C
           reasoning={block.content}
           isStreaming={block.isStreaming}
           autoCollapse={hasVisibleAnswerContent}
+          userExpanded={block.userExpanded}
+          onToggleExpanded={() => setReasoningBlockExpanded(message.id, block.id, !block.userExpanded)}
         />
       ))}
       {hasOrphanReasoningFallback ? (
@@ -121,6 +124,8 @@ export const AgentMessage = memo(function AgentMessage({ message }: { message: C
               reasoning={block.content}
               isStreaming={block.isStreaming}
               autoCollapse={hasVisibleAnswerContent}
+              userExpanded={block.userExpanded}
+              onToggleExpanded={() => setReasoningBlockExpanded(message.id, block.id, !block.userExpanded)}
             />,
           );
         }

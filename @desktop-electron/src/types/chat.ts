@@ -730,6 +730,7 @@ export interface ReasoningBlockUi {
   id: string;
   content: string;
   isStreaming: boolean;
+  userExpanded?: boolean;
 }
 
 export interface ToolBlockUi {

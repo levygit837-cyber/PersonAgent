@@ -451,12 +451,11 @@ class SessionPanelService:
                 "prompt_tokens_estimated",
             ),
         )
+        context_tokens_source = None
         if context_tokens is None and isinstance(raw_usage, dict):
-            context_tokens = _first_int(
+            context_tokens, context_tokens_source = _first_int_with_key(
                 raw_usage,
                 (
-                    "total_tokens",
-                    "totalTokenCount",
                     "prompt_tokens",
                     "input_tokens",
                     "promptTokenCount",
@@ -467,7 +466,11 @@ class SessionPanelService:
                 int(usage["context_tokens"].get("value") or 0),
                 context_tokens,
             )
-            usage["context_tokens"]["estimated"] = True
+            usage["context_tokens"]["estimated"] = context_tokens_source not in (
+                "prompt_tokens",
+                "input_tokens",
+                "promptTokenCount",
+            )
 
     def _changed_files(self, conversation: Conversation, workspace: Path) -> list[dict[str, Any]]:
         files: dict[str, dict[str, Any]] = {}
@@ -770,6 +773,17 @@ def _first_int(data: dict[str, Any], keys: tuple[str, ...]) -> int | None:
         if parsed is not None:
             return parsed
     return None
+
+
+def _first_int_with_key(
+    data: dict[str, Any], keys: tuple[str, ...]
+) -> tuple[int | None, str | None]:
+    for key in keys:
+        value = data.get(key)
+        parsed = _optional_int(value)
+        if parsed is not None:
+            return parsed, key
+    return None, None
 
 
 def _optional_int(value: Any) -> int | None:

@@ -21,6 +21,12 @@ Preserve errors, failed hypotheses, and corrections.
 ## Pending Tasks
 List unresolved work and blockers.
 
+## Plan Mode State
+If there is an active plan (draft, awaiting approval, or already approved), preserve:
+- The plan_id and plan_content
+- Whether the plan is awaiting user approval or already approved
+- Whether the plan is currently being implemented
+
 ## Current State
 Describe what is currently true at the end of the provided messages.
 

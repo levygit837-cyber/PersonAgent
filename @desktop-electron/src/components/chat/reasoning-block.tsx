@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -10,12 +10,15 @@ export function ReasoningBlock({
   reasoning,
   isStreaming,
   autoCollapse = true,
+  userExpanded,
+  onToggleExpanded,
 }: {
   reasoning: string;
   isStreaming: boolean;
   autoCollapse?: boolean;
+  userExpanded?: boolean;
+  onToggleExpanded?: () => void;
 }) {
-  const [expanded, setExpanded] = useState(isStreaming || !autoCollapse);
   const hasReasoning = reasoning.trim().length > 0;
   const displayReasoning = useMemo(() => {
     const displayReasoning =
@@ -31,21 +34,7 @@ export function ReasoningBlock({
     return visibleLines.join("\n").trimEnd();
   }, [isStreaming, reasoning]);
 
-  useEffect(() => {
-    if (!isStreaming) return;
-    setExpanded(true);
-  }, [isStreaming]);
-
-  useEffect(() => {
-    if (!autoCollapse) {
-      setExpanded(true);
-      return;
-    }
-    if (!isStreaming && hasReasoning) {
-      const timer = window.setTimeout(() => setExpanded(false), 500);
-      return () => window.clearTimeout(timer);
-    }
-  }, [autoCollapse, hasReasoning, isStreaming]);
+  const expanded = userExpanded ?? (isStreaming || !autoCollapse);
 
   if (!hasReasoning && !isStreaming) return null;
 
@@ -53,7 +42,7 @@ export function ReasoningBlock({
     <div className="mb-3">
       <button
         type="button"
-        onClick={() => hasReasoning && setExpanded((value) => !value)}
+        onClick={() => hasReasoning && onToggleExpanded?.()}
         className="flex w-fit items-center gap-2 rounded-lg px-1.5 py-[2px] -ml-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:bg-glass/70 hover:text-foreground disabled:pointer-events-none"
         disabled={!hasReasoning}
       >

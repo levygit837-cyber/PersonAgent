@@ -200,7 +200,7 @@ class ChatCompletionUseCase:
         context_result = await self._build_context_result(request, conversation)
         preparation = self._prepare_prompt_surfaces(request, context_result)
         request = preparation.request
-        tools = self._resolve_tool_schemas(request)
+        tools = self._resolve_tool_schemas(request, conversation)
 
         # Adiciona mensagem do usuário
         user_msg = Message(
@@ -366,7 +366,7 @@ class ChatCompletionUseCase:
         context_result = await self._build_context_result(request, conversation)
         preparation = self._prepare_prompt_surfaces(request, context_result)
         request = preparation.request
-        tools = self._resolve_tool_schemas(request)
+        tools = self._resolve_tool_schemas(request, conversation)
         prompt_package = await self._build_prompt_package(
             request,
             conversation,
@@ -437,7 +437,7 @@ class ChatCompletionUseCase:
         context_result = await self._build_context_result(request, conversation)
         preparation = self._prepare_prompt_surfaces(request, context_result)
         request = preparation.request
-        tools = self._resolve_tool_schemas(request)
+        tools = self._resolve_tool_schemas(request, conversation)
 
         if append_user_message:
             user_msg = Message(
@@ -1454,17 +1454,35 @@ class ChatCompletionUseCase:
             conversation_message_count=conversation_message_count,
         )
 
-    def _resolve_tool_schemas(self, request: ChatRequestDTO) -> list[dict[str, Any]]:
+    def _resolve_tool_schemas(
+        self,
+        request: ChatRequestDTO,
+        conversation: Conversation | None = None,
+    ) -> list[dict[str, Any]]:
         if not request.tools_enabled or self._tool_registry is None:
             return []
         allowed_tools = set(request.allowed_tools) if request.allowed_tools else None
-        return cast(
+        schemas = cast(
             list[dict[str, Any]],
             self._tool_registry.openai_schemas(
                 allowed_tools=allowed_tools,
                 cache_scope=f"{request.provider}:{request.model}",
             ),
         )
+        # Conditionally filter planning tools based on conversation plan mode state
+        if conversation is not None:
+            plan_active = is_plan_mode_active(conversation.metadata)
+            filtered: list[dict[str, Any]] = []
+            for schema in schemas:
+                function = schema.get("function") if isinstance(schema, dict) else None
+                name = function.get("name") if isinstance(function, dict) else None
+                if name == "ExitPlanMode" and not plan_active:
+                    continue
+                if name == "EnterPlanMode" and plan_active:
+                    continue
+                filtered.append(schema)
+            return filtered
+        return schemas
 
     def _prompt_tool_definitions(self, request: ChatRequestDTO) -> list[ToolDefinition]:
         if not request.tools_enabled or self._tool_registry is None:
@@ -2177,7 +2195,24 @@ class ChatCompletionUseCase:
         if not older:
             return False
 
-        summary = await self._summarize_messages(older, request)
+        # Preserve messages that carry a plan approval artifact so the frontend
+        # can always reconstruct the plan panel after compaction.
+        preserved: list[Message] = []
+        compactable: list[Message] = []
+        for msg in older:
+            if (
+                msg.role == Role.ASSISTANT
+                and isinstance(msg.metadata, dict)
+                and msg.metadata.get("plan_approval")
+            ):
+                preserved.append(msg)
+            else:
+                compactable.append(msg)
+
+        if not compactable and not preserved:
+            return False
+
+        summary = await self._summarize_messages(compactable or older, request)
         summary_message = Message(
             role=Role.SYSTEM,
             content=(
@@ -2192,7 +2227,7 @@ class ChatCompletionUseCase:
                 "compacted_message_count": len(older),
             },
         )
-        conversation.messages = [summary_message, *recent]
+        conversation.messages = [summary_message, *preserved, *recent]
         conversation.metadata["context_compaction"] = {
             "compacted": True,
             "compacted_message_count": len(older),

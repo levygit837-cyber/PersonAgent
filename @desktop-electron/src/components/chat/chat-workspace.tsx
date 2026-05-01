@@ -488,7 +488,7 @@ export function ChatPaneSurface({
                 data-testid="session-panel-resize-handle"
                 data-resizing={isSessionPanelResizing ? "true" : "false"}
                 role="separator"
-                tabIndex={0}
+                tabIndex={-1}
                 className={cn(
                   "absolute -left-3 top-0 z-30 h-full w-6 cursor-col-resize touch-none select-none",
                   isSessionPanelResizing ? "bg-primary/10" : "bg-transparent",

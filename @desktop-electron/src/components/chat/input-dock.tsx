@@ -615,17 +615,18 @@ function InputTodoDock() {
   const activeAgentId = useChatStore((state) => state.activeAgentId);
   const isExecuting = useChatStore((state) => state.isStreaming || state.isFinalizing);
   const liveSnapshot = useMemo(() => latestTodoSnapshot(messages, activeAgentId), [messages, activeAgentId]);
+  const liveKey = liveSnapshot?.key;
   const [displaySnapshot, setDisplaySnapshot] = useState<TodoDockSnapshot | undefined>();
   const [exiting, setExiting] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
   useEffect(() => {
-    if (isExecuting && liveSnapshot) {
+    if (isExecuting && liveSnapshot && liveKey !== displaySnapshot?.key) {
       setDisplaySnapshot(liveSnapshot);
       setExiting(false);
     }
-  }, [isExecuting, liveSnapshot]);
+  }, [isExecuting, liveKey]);
 
   useEffect(() => {
     if (isExecuting || !displaySnapshot || exiting) return;

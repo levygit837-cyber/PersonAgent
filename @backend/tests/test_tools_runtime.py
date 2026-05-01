@@ -908,6 +908,7 @@ async def test_stream_exit_plan_mode_requests_visual_approval(tmp_path):
                 message="Crie um plano",
                 tools_enabled=True,
                 max_tool_iterations=3,
+                plan_mode_requested=True,
             )
         )
     ]
@@ -1251,6 +1252,71 @@ async def test_chat_compacts_history_when_context_threshold_is_exceeded():
     assert saved.messages[0].role == Role.SYSTEM
     assert "Summary of old work" in saved.messages[0].content
     assert "<system-reminder>" not in saved.messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_chat_compaction_preserves_plan_approval_artifact():
+    repo = MemoryConversationRepository()
+    conversation = await repo.create(Conversation())
+    for index in range(10):
+        conversation.add_message(
+            Message(role=Role.USER, content=f"old message {index} " + ("x" * 2_000))
+        )
+    # Add an assistant message carrying a plan approval artifact
+    conversation.add_message(
+        Message(
+            role=Role.ASSISTANT,
+            content="Here is the plan.",
+            metadata={
+                "plan_approval": {
+                    "conversationId": str(conversation.id),
+                    "approvalId": "approval-123",
+                    "planId": "plan-456",
+                    "planContent": "## Plan\n\n1. Do thing",
+                    "planStatus": "awaiting_approval",
+                }
+            },
+        )
+    )
+    # Add a couple more recent messages
+    conversation.add_message(Message(role=Role.USER, content="recent user msg"))
+    conversation.add_message(Message(role=Role.ASSISTANT, content="recent assistant msg"))
+    await repo.update(conversation)
+
+    llm = CompactingLLM()
+    use_case = ChatCompletionUseCase(
+        conversation_repo=repo,
+        llm_backend=llm,
+        context_window_tokens=4_096,
+        default_output_tokens=512,
+    )
+
+    await use_case.execute(
+        ChatRequestDTO(
+            conversation_id=conversation.id,
+            message="Continue",
+            tools_enabled=False,
+            max_tokens=512,
+        )
+    )
+
+    saved = await repo.get_by_id(conversation.id)
+    assert saved is not None
+    assert saved.metadata["context_compaction"]["compacted"] is True
+    # The first message should be the compaction summary
+    assert saved.messages[0].role == Role.SYSTEM
+    # There should be a preserved assistant message with the plan approval artifact
+    preserved = [
+        msg for msg in saved.messages
+        if msg.role == Role.ASSISTANT and msg.metadata.get("plan_approval")
+    ]
+    assert len(preserved) == 1
+    artifact = preserved[0].metadata["plan_approval"]
+    assert artifact["approvalId"] == "approval-123"
+    assert artifact["planStatus"] == "awaiting_approval"
+    # Recent messages should still be present
+    assert any(msg.content == "recent user msg" for msg in saved.messages)
+    assert any(msg.content == "recent assistant msg" for msg in saved.messages)
 
 
 def test_llama_payload_and_stream_tool_call_parsing():
