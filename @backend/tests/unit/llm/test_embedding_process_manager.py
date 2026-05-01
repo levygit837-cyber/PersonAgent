@@ -2,7 +2,17 @@ from __future__ import annotations
 
 import pytest
 
-from personagent.infrastructure.llm.process_manager import EmbeddingServerProcessManager
+from personagent.infrastructure.llm.process_manager import (
+    EmbeddingServerProcessManager,
+    LlamaServerProcessManager,
+)
+
+
+def test_llama_process_manager_binds_loopback_by_default() -> None:
+    manager = LlamaServerProcessManager()
+    command = manager._build_llama_command("/tmp/llama-server", "/tmp/model.gguf")
+
+    assert command[command.index("--host") + 1] == "127.0.0.1"
 
 
 def test_embedding_process_manager_ctx_fallback_attempts() -> None:
@@ -10,6 +20,13 @@ def test_embedding_process_manager_ctx_fallback_attempts() -> None:
     manager._target_ctx_size = 32_768
 
     assert manager._ctx_size_attempts() == [32_768, 24_576, 16_384, 8_192]
+
+
+def test_embedding_process_manager_binds_loopback_by_default() -> None:
+    manager = EmbeddingServerProcessManager()
+    command = manager._build_embedding_command("/tmp/llama-server", "/tmp/model.gguf", 32_768)
+
+    assert command[command.index("--host") + 1] == "127.0.0.1"
 
 
 def test_embedding_process_manager_runtime_status_exposes_context() -> None:

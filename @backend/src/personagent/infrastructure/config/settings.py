@@ -58,6 +58,14 @@ class Settings(BaseSettings):
         default=300,
         alias="PERSONAGENT_ACTION_APPROVAL_TTL_SECONDS",
     )
+    personagent_action_approval_secret: str = Field(
+        default="",
+        alias="PERSONAGENT_ACTION_APPROVAL_SECRET",
+    )
+    personagent_action_approval_secret_path: str = Field(
+        default="~/.cache/personagent/action_approval_secret",
+        alias="PERSONAGENT_ACTION_APPROVAL_SECRET_PATH",
+    )
     personagent_artifact_ttl_seconds: int = Field(
         default=7 * 24 * 60 * 60,
         alias="PERSONAGENT_ARTIFACT_TTL_SECONDS",
@@ -67,7 +75,7 @@ class Settings(BaseSettings):
     postgres_host: str = Field(default="localhost", alias="POSTGRES_HOST")
     postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
     postgres_user: str = Field(default="personagent", alias="POSTGRES_USER")
-    postgres_password: str = Field(default="personagent", alias="POSTGRES_PASSWORD")
+    postgres_password: str = Field(default="", alias="POSTGRES_PASSWORD")
     postgres_db: str = Field(default="personagent", alias="POSTGRES_DB")
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     sqlalchemy_echo: bool = Field(default=False, alias="SQLALCHEMY_ECHO")
@@ -75,6 +83,7 @@ class Settings(BaseSettings):
     # --- LLM / llama.cpp ---
     llama_server_url: str = Field(default="http://localhost:8080/v1", alias="LLAMA_SERVER_URL")
     llama_server_api_key: str = Field(default="local", alias="LLAMA_SERVER_API_KEY")
+    llama_host: str = Field(default="127.0.0.1", alias="LLAMA_HOST")
     llama_model_path: str = Field(default="", alias="LLAMA_MODEL_PATH")
     llama_ctx_size: int = Field(default=131072, alias="LLAMA_CTX_SIZE")
     llama_n_gpu_layers: int = Field(default=999, alias="LLAMA_N_GPU_LAYERS")
@@ -449,6 +458,7 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=4096, alias="EMBEDDING_DIMENSIONS")
     embedding_timeout_seconds: float = Field(default=60.0, alias="EMBEDDING_TIMEOUT_SECONDS")
     embedding_auto_start: bool = Field(default=False, alias="EMBEDDING_AUTO_START")
+    embedding_host: str = Field(default="127.0.0.1", alias="EMBEDDING_HOST")
     embedding_port: int = Field(default=8081, alias="EMBEDDING_PORT")
     embedding_ctx_size: int = Field(default=32768, alias="EMBEDDING_CTX_SIZE")
     embedding_n_gpu_layers: int = Field(default=999, alias="EMBEDDING_N_GPU_LAYERS")

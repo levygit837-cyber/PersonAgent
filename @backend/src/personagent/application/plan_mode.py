@@ -66,6 +66,58 @@ def is_plan_mode_active(metadata: dict[str, Any] | None) -> bool:
     return bool(normalize_plan_state(metadata).get("active"))
 
 
+def activate_plan_mode_if_requested(
+    metadata: dict[str, Any], *, requested: bool
+) -> dict[str, Any] | None:
+    """Ativa o PlanMode estruturalmente quando o backend solicita.
+
+    Retorna o estado normalizado se uma ativação ocorreu, ou ``None`` se
+    já estava ativo ou não foi requisitado.
+    """
+    if not requested:
+        return None
+    state = normalize_plan_state(metadata)
+    if state["active"]:
+        return None
+    state.update(
+        {
+            "active": True,
+            "status": "draft",
+            "plan_id": new_plan_id(),
+            "plan_content": "",
+            "approval_id": None,
+            "feedback": None,
+            "cancelled": False,
+        }
+    )
+    write_plan_state(metadata, state)
+    return state
+
+
+def auto_finalize_plan_mode(
+    metadata: dict[str, Any], assistant_content: str
+) -> dict[str, Any] | None:
+    """Converte um plano draft em pedido de aprovação automaticamente.
+
+    Usado quando o modelo termina o turno em PlanMode sem chamar ExitPlanMode.
+    Retorna o estado normalizado se a finalização ocorreu, ou ``None``.
+    """
+    state = normalize_plan_state(metadata)
+    if not state["active"] or state.get("status") != "draft":
+        return None
+    state.update(
+        {
+            "status": "awaiting_approval",
+            "plan_content": str(assistant_content or "").strip(),
+            "approval_id": new_plan_approval_id(),
+            "feedback": None,
+            "cancelled": False,
+        }
+    )
+    write_plan_state(metadata, state)
+    return state
+
+
 def write_plan_state(metadata: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     metadata[PLAN_MODE_METADATA_KEY] = normalize_plan_state({PLAN_MODE_METADATA_KEY: state})
     return metadata[PLAN_MODE_METADATA_KEY]

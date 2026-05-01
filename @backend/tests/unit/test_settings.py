@@ -226,10 +226,17 @@ codex:
     assert settings.codex_client_version == "0.124.0"
 
 
-def test_lightpanda_settings_defaults():
-    settings = Settings()
+def test_lightpanda_settings_defaults(monkeypatch):
+    monkeypatch.delenv("APP_HOST", raising=False)
+    monkeypatch.delenv("LLAMA_HOST", raising=False)
+    monkeypatch.delenv("EMBEDDING_HOST", raising=False)
+    settings = Settings(_env_file=None)
 
     assert settings.app_host == "127.0.0.1"
+    assert settings.llama_host == "127.0.0.1"
+    assert settings.embedding_host == "127.0.0.1"
+    assert settings.personagent_action_approval_secret == ""
+    assert settings.personagent_action_approval_secret_path == "~/.cache/personagent/action_approval_secret"
     assert settings.lightpanda_enabled is True
     assert settings.lightpanda_cdp_url == "http://127.0.0.1:9222"
     assert settings.browser_cdp_url is None
@@ -254,7 +261,7 @@ def test_lightpanda_settings_defaults():
 
 
 def test_chat_post_turn_llm_services_default_off():
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.chat_next_step_suggestions_enabled is False
     assert settings.chat_session_memory_updates_enabled is False

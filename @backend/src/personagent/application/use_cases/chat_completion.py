@@ -19,6 +19,8 @@ from personagent.application.jobs.memory_job_scheduler import MemoryJobScheduler
 from personagent.application.plan_mode import (
     PENDING_TOOL_APPROVAL_KEY,
     PENDING_USER_QUESTION_KEY,
+    activate_plan_mode_if_requested,
+    auto_finalize_plan_mode,
     is_plan_mode_active,
     new_tool_approval_id,
     normalize_plan_state,
@@ -191,6 +193,10 @@ class ChatCompletionUseCase:
         conversation = await self._get_or_create_conversation(request)
         was_empty = len(conversation.messages) == 0
 
+        # Activate plan mode if requested by the frontend (/plan command)
+        if request.plan_mode_requested:
+            activate_plan_mode_if_requested(conversation.metadata, requested=True)
+
         context_result = await self._build_context_result(request, conversation)
         preparation = self._prepare_prompt_surfaces(request, context_result)
         request = preparation.request
@@ -319,6 +325,15 @@ class ChatCompletionUseCase:
         conversation = await self._get_or_create_conversation(request)
         _set_session_status(conversation, "running")
         was_empty = len(conversation.messages) == 0
+
+        # Activate plan mode if requested by the frontend (/plan command)
+        if request.plan_mode_requested:
+            state = activate_plan_mode_if_requested(conversation.metadata, requested=True)
+            if state:
+                yield StreamChunk(
+                    metadata=plan_mode_event(str(conversation.id), state)
+                )
+
         yield StreamChunk(
             metadata={
                 "event": "conversation",
@@ -431,6 +446,7 @@ class ChatCompletionUseCase:
                 metadata=self._user_message_metadata(preparation),
             )
             conversation.add_message(user_msg)
+            await self._conversation_repo.update(conversation)
 
         # Emite status para o frontend saber que está montando o prompt
         yield StreamChunk(metadata={"event": "status", "status": status})

@@ -130,7 +130,7 @@ async def _chat(
 
 @app.command()
 def serve(
-    host: str = typer.Option("0.0.0.0", "--host", help="Server host"),
+    host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
     port: int = typer.Option(8000, "--port", help="Server port"),
     reload: bool = typer.Option(False, "--reload", help="Hot reload (dev)"),
 ) -> None:

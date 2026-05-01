@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fetchBackendText } from "./client";
+import { createActionApproval, fetchBackendText, gitPush } from "./client";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -57,5 +57,70 @@ describe("fetchBackendText", () => {
         }),
       }),
     );
+  });
+});
+
+describe("action approvals", () => {
+  it("uses the Electron confirmation bridge instead of the backend minting route", async () => {
+    const createActionApprovalMock = vi.fn().mockResolvedValue({
+      approval_id: "act_1",
+      action_kind: "workspace.git_push",
+      args_hash: "hash",
+      expires_at: 123,
+      approval_signature: "signature",
+    });
+    window.personAgent = {
+      security: {
+        createActionApproval: createActionApprovalMock,
+      },
+    } as unknown as Window["personAgent"];
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const approval = await createActionApproval("http://localhost:8000", "workspace.git_push", {
+      workspace_root: "/tmp/repo",
+    });
+
+    expect(approval.approval_signature).toBe("signature");
+    expect(createActionApprovalMock).toHaveBeenCalledWith("workspace.git_push", {
+      workspace_root: "/tmp/repo",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends signed approval fields to protected git routes", async () => {
+    window.personAgent = {
+      auth: {
+        getHeaders: vi.fn().mockResolvedValue({
+          Authorization: "Bearer local-token",
+          "X-PersonAgent-Client": "desktop-electron",
+        }),
+      },
+      security: {
+        createActionApproval: vi.fn().mockResolvedValue({
+          approval_id: "act_1",
+          action_kind: "workspace.git_push",
+          args_hash: "hash",
+          expires_at: 123,
+          approval_signature: "signature",
+        }),
+      },
+    } as unknown as Window["personAgent"];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await gitPush("http://localhost:8000", "/tmp/repo");
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body ?? "{}"));
+    expect(body).toMatchObject({
+      workspace_root: "/tmp/repo",
+      approval_id: "act_1",
+      args_hash: "hash",
+      expires_at: 123,
+      approval_signature: "signature",
+    });
   });
 });

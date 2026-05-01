@@ -348,11 +348,25 @@ export async function createWorkspaceGrant(baseUrl: string, workspaceRoot: strin
   });
 }
 
-export async function createActionApproval(baseUrl: string, actionKind: string, args: Record<string, unknown>) {
-  return requestJson<{ approval_id: string; action_kind: string; args_hash: string; expires_at: number }>(baseUrl, "/security/action-approvals", {
-    method: "POST",
-    body: JSON.stringify({ action_kind: actionKind, arguments: args }),
-  });
+export interface ActionApprovalPayload {
+  approval_id: string;
+  action_kind: string;
+  args_hash: string;
+  expires_at: number;
+  approval_signature: string;
+}
+
+export async function createActionApproval(_baseUrl: string, actionKind: string, args: Record<string, unknown>) {
+  if (!window.personAgent?.security?.createActionApproval) {
+    throw new PersonAgentApiError({
+      message: "Desktop action approval is unavailable.",
+      code: "desktop.action_approval_unavailable",
+      category: "auth",
+      status: 403,
+      retryable: false,
+    });
+  }
+  return window.personAgent.security.createActionApproval(actionKind, args) as Promise<ActionApprovalPayload>;
 }
 
 export function getConversation(baseUrl: string, id: string) {
@@ -962,7 +976,13 @@ export async function gitCommit(baseUrl: string, workspaceRoot: string, message:
   const approval = await createActionApproval(baseUrl, "workspace.git_commit", args);
   return requestJson<{ success: boolean; output?: string; message?: string; sha?: string | null; short_sha?: string | null }>(baseUrl, "/workspace/git-commit", {
     method: "POST",
-    body: JSON.stringify({ ...args, approval_id: approval.approval_id, args_hash: approval.args_hash }),
+    body: JSON.stringify({
+      ...args,
+      approval_id: approval.approval_id,
+      args_hash: approval.args_hash,
+      approval_signature: approval.approval_signature,
+      expires_at: approval.expires_at,
+    }),
   });
 }
 
@@ -971,7 +991,13 @@ export async function gitPush(baseUrl: string, workspaceRoot: string) {
   const approval = await createActionApproval(baseUrl, "workspace.git_push", args);
   return requestJson<{ success: boolean; output?: string; branch?: string; upstream?: string }>(baseUrl, "/workspace/git-push", {
     method: "POST",
-    body: JSON.stringify({ ...args, approval_id: approval.approval_id, args_hash: approval.args_hash }),
+    body: JSON.stringify({
+      ...args,
+      approval_id: approval.approval_id,
+      args_hash: approval.args_hash,
+      approval_signature: approval.approval_signature,
+      expires_at: approval.expires_at,
+    }),
   });
 }
 
@@ -980,7 +1006,13 @@ export async function gitOpenPr(baseUrl: string, workspaceRoot: string) {
   const approval = await createActionApproval(baseUrl, "workspace.git_pr", args);
   return requestJson<{ url: string | null; output?: string }>(baseUrl, "/workspace/git-pr", {
     method: "POST",
-    body: JSON.stringify({ ...args, approval_id: approval.approval_id, args_hash: approval.args_hash }),
+    body: JSON.stringify({
+      ...args,
+      approval_id: approval.approval_id,
+      args_hash: approval.args_hash,
+      approval_signature: approval.approval_signature,
+      expires_at: approval.expires_at,
+    }),
   });
 }
 

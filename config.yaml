@@ -16,12 +16,13 @@ postgres:
   host: "localhost"
   port: 5433
   user: "personagent"
-  password: "personagent_secret"
+  password: ""
   db: "personagent"
 
 llama:
   server_url: "http://localhost:8080/v1"
   server_api_key: "local"
+  host: "127.0.0.1"
   model_path: "/home/levybonito/.lmstudio/models/Jackrong/Qwen3.5-4B-Reasoning-Distilled-v2-GGUF"
   ctx_size: 131072
   n_gpu_layers: 999
@@ -64,6 +65,7 @@ operational_memory:
 embedding:
   server_url: "http://localhost:8081/v1"
   server_api_key: "local"
+  host: "127.0.0.1"
   model: "Qwen3-Embedding-8B-Q4_K_M.gguf"
   model_path: "/home/levybonito/.lmstudio/models/Qwen/Qwen3-Embedding-8B-GGUF"
   dimensions: 4096

@@ -55,6 +55,11 @@ async def test_skills_api_lists_details_toggles_and_installs_marketplace(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("PERSONAGENT_SKILL_STATE_PATH", str(tmp_path / "state.json"))
     monkeypatch.setattr(skills, "get_container", lambda: FakeContainer(workspace))
+    monkeypatch.setattr(
+        skills,
+        "resolve_workspace_root",
+        lambda workspace_id=None, workspace_root=None: Path(workspace_root or workspace),
+    )
 
     app = FastAPI()
     app.include_router(skills.router)

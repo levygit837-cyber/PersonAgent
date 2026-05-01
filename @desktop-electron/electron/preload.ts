@@ -23,6 +23,16 @@ const api = {
     grant: (workspaceRoot: string) =>
       ipcRenderer.invoke("workspace:grant", workspaceRoot) as Promise<{ workspaceId: string; root: string }>,
   },
+  security: {
+    createActionApproval: (actionKind: string, args: Record<string, unknown>) =>
+      ipcRenderer.invoke("security:create-action-approval", { actionKind, arguments: args }) as Promise<{
+        approval_id: string;
+        action_kind: string;
+        args_hash: string;
+        expires_at: number;
+        approval_signature: string;
+      }>,
+  },
   fs: {
     readDir: (dirPath: string, workspaceRoot?: string, workspaceId?: string) =>
       ipcRenderer.invoke("fs:read-dir", dirPath, workspaceRoot, workspaceId) as Promise<Array<{ name: string; isDirectory: boolean; path: string }>>,

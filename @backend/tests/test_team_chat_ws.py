@@ -74,6 +74,32 @@ def test_team_websocket_stop_cancels_run(monkeypatch):
     assert not any(event["event"] == "team_run_completed" for event in events)
 
 
+def test_team_websocket_stop_persists_conversation(monkeypatch):
+    """Ao interromper, a conversa deve ser persistida com a mensagem do usuário."""
+    persisted = []
+    app = _app_with_fakes(monkeypatch, SlowWsLLM(), persisted)
+
+    with TestClient(app).websocket_connect("/chat/team/ws") as websocket:
+        websocket.send_json(_start_payload())
+        events = []
+        while True:
+            event = websocket.receive_json()
+            events.append(event)
+            if event["event"] == "agent_turn_started":
+                websocket.send_json({"type": "team.run.stop"})
+            if event["event"] == "team_run_cancelled":
+                break
+
+    # Recupera o repositório através do container para verificar persistência
+    container = chat.get_container()
+    repo = container.repo
+    assert len(repo.conversations) == 1
+    conversation = list(repo.conversations.values())[0]
+    assert len(conversation.messages) >= 1
+    assert conversation.messages[0].role.value == "user"
+    assert conversation.messages[0].content == "Use the team"
+
+
 def test_team_websocket_invalid_config_returns_error(monkeypatch):
     persisted = []
     app = _app_with_fakes(monkeypatch, ScriptedWsLLM(), persisted)

@@ -7,8 +7,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from personagent.interfaces.api.action_approvals import create_action_approval
-
 router = APIRouter(prefix="/security", tags=["security"])
 
 
@@ -22,4 +20,7 @@ async def create_approval(request: ActionApprovalRequest) -> dict[str, Any]:
     normalized_kind = request.action_kind.strip()
     if not normalized_kind:
         raise HTTPException(status_code=400, detail="action_kind is required.")
-    return create_action_approval(normalized_kind, dict(request.arguments))
+    raise HTTPException(
+        status_code=403,
+        detail="Action approvals must be created by the desktop confirmation boundary.",
+    )

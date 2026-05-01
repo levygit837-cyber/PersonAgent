@@ -28,6 +28,7 @@ class ChatRequestDTO:
     max_tool_iterations: int | None = None
     context_attachments: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    plan_mode_requested: bool = False
 
 
 @dataclass(frozen=True, slots=True)

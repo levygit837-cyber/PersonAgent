@@ -20,6 +20,7 @@ from personagent.application.dto.chat_dto import ChatRequestDTO
 from personagent.application.plan_mode import (
     PENDING_TOOL_APPROVAL_KEY,
     PENDING_USER_QUESTION_KEY,
+    activate_plan_mode_if_requested,
     normalize_plan_state,
     plan_mode_event,
     write_plan_state,
@@ -145,6 +146,10 @@ class ChatRequest(BaseModel):
     context_attachments: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Structured model-visible context attachments.",
+    )
+    plan_mode_requested: bool = Field(
+        default=False,
+        description="Activate planning mode for this turn.",
     )
 
 
@@ -842,9 +847,18 @@ async def prompt_preview(
         conversation_id = UUID(request.conversation_id) if request.conversation_id else None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid conversation_id.") from exc
+    message_text = request.message
+    plan_mode_requested = request.plan_mode_requested
+    if message_text.strip() == "/plan":
+        plan_mode_requested = True
+        message_text = "Enter plan mode"
+    elif message_text.strip().startswith("/plan "):
+        plan_mode_requested = True
+        message_text = message_text.strip()[6:]
+
     dto = ChatRequestDTO(
         conversation_id=conversation_id,
-        message=request.message,
+        message=message_text,
         system_prompt=request.system_prompt,
         stream=False,
         temperature=request.temperature,
@@ -859,6 +873,7 @@ async def prompt_preview(
         tool_context=resolve_tool_context(request),
         max_tool_iterations=request.max_tool_iterations,
         context_attachments=request.context_attachments,
+        plan_mode_requested=plan_mode_requested,
     )
 
     try:
@@ -917,9 +932,18 @@ async def chat_completion(
     if request.conversation_id:
         conversation_id = UUID(request.conversation_id)
 
+    message_text = request.message
+    plan_mode_requested = request.plan_mode_requested
+    if message_text.strip() == "/plan":
+        plan_mode_requested = True
+        message_text = "Enter plan mode"
+    elif message_text.strip().startswith("/plan "):
+        plan_mode_requested = True
+        message_text = message_text.strip()[6:]
+
     dto = ChatRequestDTO(
         conversation_id=conversation_id,
-        message=request.message,
+        message=message_text,
         system_prompt=request.system_prompt,
         stream=False,
         temperature=request.temperature,
@@ -934,6 +958,7 @@ async def chat_completion(
         tool_context=resolve_tool_context(request),
         max_tool_iterations=request.max_tool_iterations,
         context_attachments=request.context_attachments,
+        plan_mode_requested=plan_mode_requested,
     )
 
     try:
@@ -1008,9 +1033,18 @@ async def chat_completion_stream(
     if request.conversation_id:
         conversation_id = UUID(request.conversation_id)
 
+    message_text = request.message
+    plan_mode_requested = request.plan_mode_requested
+    if message_text.strip() == "/plan":
+        plan_mode_requested = True
+        message_text = "Enter plan mode"
+    elif message_text.strip().startswith("/plan "):
+        plan_mode_requested = True
+        message_text = message_text.strip()[6:]
+
     dto = ChatRequestDTO(
         conversation_id=conversation_id,
-        message=request.message,
+        message=message_text,
         system_prompt=request.system_prompt,
         stream=True,
         temperature=request.temperature,
@@ -1025,6 +1059,7 @@ async def chat_completion_stream(
         tool_context=resolve_tool_context(request),
         max_tool_iterations=request.max_tool_iterations,
         context_attachments=request.context_attachments,
+        plan_mode_requested=plan_mode_requested,
     )
 
     async def event_generator() -> AsyncIterator[str]:

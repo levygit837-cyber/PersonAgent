@@ -49,6 +49,8 @@ class MemoryCreateRequest(BaseModel):
     scope: MemoryScope = Field(default=MemoryScope.PRIVATE, description="Persistence scope")
     approval_id: str | None = None
     args_hash: str | None = None
+    approval_signature: str | None = None
+    expires_at: int | None = None
 
 
 class MemoryUpdateRequest(BaseModel):
@@ -58,6 +60,8 @@ class MemoryUpdateRequest(BaseModel):
     content: str | None = Field(default=None, description="New content")
     approval_id: str | None = None
     args_hash: str | None = None
+    approval_signature: str | None = None
+    expires_at: int | None = None
 
 
 class MemoryResponse(BaseModel):
@@ -138,6 +142,8 @@ def _memory_approval_arguments(
         payload = request.model_dump(mode="json")
         payload.pop("approval_id", None)
         payload.pop("args_hash", None)
+        payload.pop("approval_signature", None)
+        payload.pop("expires_at", None)
         data["request"] = payload
     return data
 
@@ -332,6 +338,8 @@ async def update_memory(
         action_kind="memory.update",
         approval_id=request.approval_id,
         args_hash=request.args_hash,
+        approval_signature=request.approval_signature,
+        expires_at=request.expires_at,
         arguments=_memory_approval_arguments(
             project_slug=project_slug,
             memory_name=memory_name,
@@ -379,6 +387,8 @@ async def delete_memory(
     scope: MemoryScope = PRIVATE_SCOPE_QUERY,
     approval_id: str | None = Query(default=None),
     args_hash: str | None = Query(default=None),
+    approval_signature: str | None = Query(default=None),
+    expires_at: int | None = Query(default=None),
     repo: MemoryRepository = MEMORY_REPO_DEPENDENCY,
 ) -> dict[str, str]:
     """Delete a memory."""
@@ -387,6 +397,8 @@ async def delete_memory(
         action_kind="memory.delete",
         approval_id=approval_id,
         args_hash=args_hash,
+        approval_signature=approval_signature,
+        expires_at=expires_at,
         arguments=_memory_approval_arguments(
             project_slug=project_slug,
             memory_name=memory_name,
@@ -430,6 +442,8 @@ async def create_memory(
         action_kind="memory.create",
         approval_id=request.approval_id,
         args_hash=request.args_hash,
+        approval_signature=request.approval_signature,
+        expires_at=request.expires_at,
         arguments=_memory_approval_arguments(project_slug=project_slug, request=request),
     )
     from personagent.domain.memory.models.memory_file import MemoryFile

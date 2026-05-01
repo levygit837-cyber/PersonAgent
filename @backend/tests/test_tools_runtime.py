@@ -1688,3 +1688,44 @@ class DeepSeekMisroutedOutputLLM(LLMBackendRepository):
 
     async def get_model_info(self) -> dict:
         return {}
+
+
+class InterruptibleStreamingLLM(LLMBackendRepository):
+    async def chat_completion(self, *args, **kwargs) -> InferenceResult:
+        return InferenceResult(content="unused")
+
+    async def chat_completion_stream(self, *args, **kwargs):
+        yield StreamChunk(content="First chunk. ")
+        yield StreamChunk(content="Second chunk. ")
+        yield StreamChunk(finish_reason="stop")
+
+    async def health_check(self) -> dict:
+        return {"status": "healthy"}
+
+    async def get_model_info(self) -> dict:
+        return {}
+
+
+@pytest.mark.asyncio
+async def test_stream_persists_conversation_on_interrupt():
+    """Se o cliente interrompe o stream, a conversa ainda deve ser persistida."""
+    repo = MemoryConversationRepository()
+    use_case = ChatCompletionUseCase(
+        conversation_repo=repo,
+        llm_backend=InterruptibleStreamingLLM(),
+    )
+
+    chunks = []
+    async for chunk in use_case.execute_stream(ChatRequestDTO(message="Hello")):
+        chunks.append(chunk)
+        if chunk.content == "First chunk. ":
+            break
+
+    # A conversa deve ter sido criada
+    conversation = await repo.get_by_id(UUID(chunks[0].metadata["conversation_id"]))
+    assert conversation is not None
+    # A mensagem do usuário deve ter sido persistida imediatamente,
+    # mesmo que o stream seja interrompido antes do final.
+    assert len(conversation.messages) >= 1
+    assert conversation.messages[0].role.value == "user"
+    assert conversation.messages[0].content == "Hello"

@@ -1,8 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions, type IpcMainInvokeEvent } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { createHash, createHmac, randomBytes } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import * as pty from "node-pty";
@@ -16,6 +16,10 @@ type CompactLaunchContext = {
   workspaceRoot?: string | null;
   title?: string | null;
 };
+type ActionApprovalRequest = {
+  actionKind: string;
+  arguments: Record<string, unknown>;
+};
 
 let mainWindow: BrowserWindow | null = null;
 const compactWindows = new Map<string, BrowserWindow>();
@@ -28,6 +32,12 @@ const ALLOWED_SETTINGS_KEYS = new Set([
   "personagent_selected_workspace",
   "personagent_recent_workspaces",
   "personagent_conv_workspace_map",
+]);
+const ACTION_APPROVAL_TTL_SECONDS = 300;
+const ALLOWED_ACTION_APPROVALS = new Map([
+  ["workspace.git_commit", "Create git commit"],
+  ["workspace.git_push", "Push git branch"],
+  ["workspace.git_pr", "Open pull request"],
 ]);
 
 // Terminal PTY manager
@@ -97,6 +107,40 @@ function localAuthHeaders() {
   };
 }
 
+function actionApprovalSecretPath() {
+  return localEnvValue("PERSONAGENT_ACTION_APPROVAL_SECRET_PATH") || join(homedir(), ".cache", "personagent", "action_approval_secret");
+}
+
+function actionApprovalSecret() {
+  const configuredSecret = localEnvValue("PERSONAGENT_ACTION_APPROVAL_SECRET");
+  if (configuredSecret) return configuredSecret;
+  return readOrCreateSecret(actionApprovalSecretPath());
+}
+
+function readOrCreateSecret(path: string) {
+  if (existsSync(path)) {
+    const existing = readFileSync(path, "utf8").trim();
+    if (existing) {
+      chmodPrivate(path, 0o600);
+      return existing;
+    }
+  }
+  mkdirSync(dirname(path), { recursive: true });
+  chmodPrivate(dirname(path), 0o700);
+  const secret = randomBytes(48).toString("base64url");
+  writeFileSync(path, `${secret}\n`, "utf8");
+  chmodPrivate(path, 0o600);
+  return secret;
+}
+
+function chmodPrivate(path: string, mode: number) {
+  try {
+    chmodSync(path, mode);
+  } catch {
+    return;
+  }
+}
+
 function localEnvValue(key: string) {
   const direct = process.env[key]?.trim();
   if (direct) return direct;
@@ -129,6 +173,54 @@ function parseEnvValue(raw: string, key: string) {
   const match = raw.match(pattern);
   if (!match) return "";
   return match[1].trim().replace(/^['"]|['"]$/g, "");
+}
+
+function createSignedActionApproval(actionKind: string, args: Record<string, unknown>) {
+  if (!ALLOWED_ACTION_APPROVALS.has(actionKind)) {
+    throw new Error(`Unsupported action approval kind: ${actionKind}`);
+  }
+  const approvalId = `act_${randomBytes(24).toString("base64url")}`;
+  const argsHash = canonicalArgsHash(actionKind, args);
+  const expiresAt = Math.floor(Date.now() / 1000) + ACTION_APPROVAL_TTL_SECONDS;
+  const payload = `${approvalId}\n${actionKind}\n${argsHash}\n${expiresAt}`;
+  const approvalSignature = createHmac("sha256", actionApprovalSecret()).update(payload).digest("hex");
+  return {
+    approval_id: approvalId,
+    action_kind: actionKind,
+    args_hash: argsHash,
+    expires_at: expiresAt,
+    approval_signature: approvalSignature,
+  };
+}
+
+function canonicalArgsHash(actionKind: string, args: Record<string, unknown>) {
+  const payload = stableStringify({ action_kind: actionKind, arguments: args });
+  return createHash("sha256").update(payload).digest("hex");
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(stableValue(value));
+}
+
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => stableValue(item));
+  if (!value || typeof value !== "object") return value;
+  const source = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(source).sort()) {
+    const item = source[key];
+    if (item !== undefined) sorted[key] = stableValue(item);
+  }
+  return sorted;
+}
+
+function actionApprovalDetail(actionKind: string, args: Record<string, unknown>) {
+  const workspace = typeof args.workspace_root === "string" ? args.workspace_root : "";
+  if (actionKind === "workspace.git_commit") {
+    const message = typeof args.message === "string" && args.message.trim() ? args.message.trim() : "Auto-generate commit message";
+    return `${message}${workspace ? `\n\nWorkspace: ${workspace}` : ""}`;
+  }
+  return workspace ? `Workspace: ${workspace}` : "Confirm this protected workspace action.";
 }
 
 function workspaceIdForRoot(root: string) {
@@ -466,6 +558,40 @@ ipcMain.handle("workspace:grant", async (_event, workspaceRoot: string) => {
 
 ipcMain.handle("auth:get-headers", async () => {
   return localAuthHeaders();
+});
+
+ipcMain.handle("security:create-action-approval", async (event, request: ActionApprovalRequest) => {
+  const actionKind = assertString(request?.actionKind, "action kind");
+  const args = request?.arguments && typeof request.arguments === "object" ? request.arguments : {};
+  const actionLabel = ALLOWED_ACTION_APPROVALS.get(actionKind);
+  if (!actionLabel) {
+    throw new Error(`Unsupported action approval kind: ${actionKind}`);
+  }
+  const targetWindow = getWindowForEvent(event);
+  const result = targetWindow
+    ? await dialog.showMessageBox(targetWindow, {
+        type: "warning",
+        buttons: ["Approve", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        title: "Confirm protected action",
+        message: actionLabel,
+        detail: actionApprovalDetail(actionKind, args),
+      })
+    : await dialog.showMessageBox({
+        type: "warning",
+        buttons: ["Approve", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        title: "Confirm protected action",
+        message: actionLabel,
+        detail: actionApprovalDetail(actionKind, args),
+      });
+  targetWindow?.focus();
+  if (result.response !== 0) {
+    throw new Error("Action approval cancelled.");
+  }
+  return createSignedActionApproval(actionKind, args);
 });
 
 ipcMain.handle("fs:read-dir", async (_event, dirPath: string, workspaceRoot?: string, workspaceId?: string) => {

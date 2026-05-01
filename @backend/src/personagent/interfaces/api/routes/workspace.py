@@ -1142,6 +1142,8 @@ class GitCommitRequest(BaseModel):
     auto_generate_message: bool = False
     approval_id: str | None = None
     args_hash: str | None = None
+    approval_signature: str | None = None
+    expires_at: int | None = None
 
 
 class GitBranchCreateRequest(BaseModel):
@@ -1439,6 +1441,8 @@ async def git_commit(payload: GitCommitRequest) -> dict[str, Any]:
         action_kind="workspace.git_commit",
         approval_id=payload.approval_id,
         args_hash=payload.args_hash,
+        approval_signature=payload.approval_signature,
+        expires_at=payload.expires_at,
         arguments=approval_arguments,
     )
     cwd = _resolve_workspace(payload.workspace_root, payload.workspace_id)
@@ -1483,6 +1487,8 @@ class GitPushRequest(BaseModel):
     workspace_id: str | None = None
     approval_id: str | None = None
     args_hash: str | None = None
+    approval_signature: str | None = None
+    expires_at: int | None = None
 
 
 @router.post("/git-push")
@@ -1493,6 +1499,8 @@ async def git_push(payload: GitPushRequest) -> dict[str, Any]:
         action_kind="workspace.git_push",
         approval_id=payload.approval_id,
         args_hash=payload.args_hash,
+        approval_signature=payload.approval_signature,
+        expires_at=payload.expires_at,
         arguments=approval_arguments,
     )
     cwd = _resolve_workspace(payload.workspace_root, payload.workspace_id)
@@ -1530,6 +1538,8 @@ class GitPrRequest(BaseModel):
     workspace_id: str | None = None
     approval_id: str | None = None
     args_hash: str | None = None
+    approval_signature: str | None = None
+    expires_at: int | None = None
 
 
 @router.post("/git-pr")
@@ -1540,6 +1550,8 @@ async def git_open_pr(payload: GitPrRequest) -> dict[str, Any]:
         action_kind="workspace.git_pr",
         approval_id=payload.approval_id,
         args_hash=payload.args_hash,
+        approval_signature=payload.approval_signature,
+        expires_at=payload.expires_at,
         arguments=approval_arguments,
     )
     cwd = _resolve_workspace(payload.workspace_root, payload.workspace_id)

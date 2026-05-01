@@ -9,10 +9,11 @@ import { MarkdownContent } from "./agent-message";
 export function PlanApprovalPanel({ approval, active = true }: { approval: PlanApprovalUi; active?: boolean }) {
   const [feedback, setFeedback] = useState("");
   const isStreaming = useChatStore((state) => state.isStreaming);
+  const isProcessingPlanDecision = useChatStore((state) => state.isProcessingPlanDecision);
   const proceed = useChatStore((state) => state.approvePendingPlan);
   const continuePlanning = useChatStore((state) => state.continuePendingPlan);
   const cancel = useChatStore((state) => state.cancelPendingPlan);
-  const disabled = !active || isStreaming || !approval.approvalId;
+  const disabled = !active || isStreaming || isProcessingPlanDecision || !approval.approvalId;
 
   return (
     <section className="mb-9 rounded-2xl border border-primary/25 bg-card/80 p-4 shadow-soft">

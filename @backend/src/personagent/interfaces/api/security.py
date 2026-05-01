@@ -6,6 +6,7 @@ import secrets
 from pathlib import Path
 from typing import Any
 
+import structlog
 from fastapi import FastAPI, Request
 from starlette.responses import JSONResponse
 
@@ -19,6 +20,8 @@ _PUBLIC_PATHS = {
 
 CLIENT_HEADER = "X-PersonAgent-Client"
 CLIENT_HEADER_VALUE = "desktop-electron"
+_WEAK_POSTGRES_PASSWORDS = {"", "personagent", "personagent_secret", "postgres", "password"}
+logger = structlog.get_logger(__name__)
 
 
 def validate_startup_security(settings: Any) -> None:
@@ -27,6 +30,12 @@ def validate_startup_security(settings: Any) -> None:
     env = str(settings.app_env or "").strip().lower()
     if env != "development" and str(settings.secret_key or "") == "change-me":
         raise RuntimeError("SECRET_KEY must be set outside development.")
+    postgres_password = str(getattr(settings, "postgres_password", "") or "")
+    if postgres_password in _WEAK_POSTGRES_PASSWORDS:
+        message = "POSTGRES_PASSWORD must be set to a unique local password."
+        if env != "development":
+            raise RuntimeError(message)
+        logger.warning("weak_postgres_password_configured", detail=message)
 
 
 def install_local_auth(app: FastAPI, settings: Any) -> None:

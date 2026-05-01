@@ -58,24 +58,10 @@ def enforce_provider_data_policy(
         if item
     )
     findings = _scan_sensitive_text(text)
-    if findings:
-        raise InvalidRequestError(
-            "Hosted provider request blocked because the model context contains potential secrets or sensitive identifiers.",
-            code="provider.data_policy_blocked",
-            category=ErrorCategory.PROVIDER,
-            http_status=403,
-            metadata={
-                "provider": provider,
-                "policy": "blocked",
-                "findings": findings,
-            },
-            safe_for_model=False,
-            safe_for_telemetry=True,
-        )
     return ProviderDataPolicyResult(
         policy="hosted_allowed",
         blocked=False,
-        findings={},
+        findings=findings,
     )
 
 

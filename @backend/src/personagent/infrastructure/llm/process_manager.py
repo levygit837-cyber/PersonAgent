@@ -113,32 +113,7 @@ class LlamaServerProcessManager:
             logger.error("llama_model_not_found", path=self._settings.llama_model_path)
             return False
 
-        cmd = [
-            binary,
-            "-m",
-            model,
-            "--host",
-            "0.0.0.0",
-            "--port",
-            "8080",
-            "--ctx-size",
-            str(self._settings.llama_ctx_size),
-            "--n-gpu-layers",
-            str(self._settings.llama_n_gpu_layers),
-            "--threads",
-            str(self._settings.llama_threads),
-            "--temp",
-            str(self._settings.llama_temperature),
-            "--cache-type-k",
-            self._settings.llama_cache_type_k,
-            "--cache-type-v",
-            self._settings.llama_cache_type_v,
-            "--reasoning",
-            self._settings.llama_reasoning,
-            "--reasoning-budget",
-            str(self._settings.llama_reasoning_budget),
-            "--jinja",
-        ]
+        cmd = self._build_llama_command(binary, model)
         if self._settings.llama_verbose:
             cmd.append("--verbose")
 
@@ -146,6 +121,7 @@ class LlamaServerProcessManager:
             "starting_llama_server",
             binary=binary,
             model=model,
+            host=self._settings.llama_host,
             ctx_size=self._settings.llama_ctx_size,
             cache_k=self._settings.llama_cache_type_k,
             cache_v=self._settings.llama_cache_type_v,
@@ -182,6 +158,34 @@ class LlamaServerProcessManager:
         except Exception as exc:
             logger.error("llama_server_start_failed", error=str(exc))
             return False
+
+    def _build_llama_command(self, binary: str, model: str) -> list[str]:
+        return [
+            binary,
+            "-m",
+            model,
+            "--host",
+            self._settings.llama_host,
+            "--port",
+            "8080",
+            "--ctx-size",
+            str(self._settings.llama_ctx_size),
+            "--n-gpu-layers",
+            str(self._settings.llama_n_gpu_layers),
+            "--threads",
+            str(self._settings.llama_threads),
+            "--temp",
+            str(self._settings.llama_temperature),
+            "--cache-type-k",
+            self._settings.llama_cache_type_k,
+            "--cache-type-v",
+            self._settings.llama_cache_type_v,
+            "--reasoning",
+            self._settings.llama_reasoning,
+            "--reasoning-budget",
+            str(self._settings.llama_reasoning_budget),
+            "--jinja",
+        ]
 
     async def _wait_for_startup(self, timeout: float = 60.0) -> bool:
         """Aguarda o servidor estar pronto aceitando conexões."""
@@ -386,7 +390,7 @@ class EmbeddingServerProcessManager(LlamaServerProcessManager):
             "-m",
             model,
             "--host",
-            "0.0.0.0",
+            self._settings.embedding_host,
             "--port",
             str(self._settings.embedding_port),
             "--ctx-size",

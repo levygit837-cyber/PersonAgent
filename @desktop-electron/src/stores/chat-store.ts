@@ -97,6 +97,7 @@ interface ChatState {
   error?: string;
   isStreaming: boolean;
   isFinalizing: boolean;
+  isProcessingPlanDecision: boolean;
   loadingConversationId?: string;
   conversationStatuses: Record<string, ConversationStatus>;
   activeController?: AbortController;
@@ -153,6 +154,7 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
   composerPlanMode: false,
   isStreaming: false,
   isFinalizing: false,
+  isProcessingPlanDecision: false,
   conversationStatuses: {},
   liveSessionUsage: emptySessionUsage(),
   liveSubAgentIds: [],
@@ -344,7 +346,8 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
 
   approvePendingPlan: async (feedback) => {
     const pending = get().pendingPlanApproval;
-    if (!pending || get().isStreaming) return;
+    if (!pending || get().isStreaming || get().isProcessingPlanDecision) return;
+    set({ isProcessingPlanDecision: true });
     try {
       const response = await approvePlan(useAppStore.getState().baseUrl, {
         conversationId: pending.conversationId,
@@ -362,12 +365,15 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
     } catch (error) {
       set({ error: errorMessage(error) });
       setConversationStatus(set, pending.conversationId, "error");
+    } finally {
+      set({ isProcessingPlanDecision: false });
     }
   },
 
   continuePendingPlan: async (feedback) => {
     const pending = get().pendingPlanApproval;
-    if (!pending || get().isStreaming) return;
+    if (!pending || get().isStreaming || get().isProcessingPlanDecision) return;
+    set({ isProcessingPlanDecision: true });
     try {
       const response = await continuePlan(useAppStore.getState().baseUrl, {
         conversationId: pending.conversationId,
@@ -385,12 +391,15 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
     } catch (error) {
       set({ error: errorMessage(error) });
       setConversationStatus(set, pending.conversationId, "error");
+    } finally {
+      set({ isProcessingPlanDecision: false });
     }
   },
 
   cancelPendingPlan: async (feedback) => {
     const pending = get().pendingPlanApproval;
-    if (!pending || get().isStreaming) return;
+    if (!pending || get().isStreaming || get().isProcessingPlanDecision) return;
+    set({ isProcessingPlanDecision: true });
     try {
       await cancelPlan(useAppStore.getState().baseUrl, {
         conversationId: pending.conversationId,
@@ -406,6 +415,8 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
     } catch (error) {
       set({ error: errorMessage(error) });
       setConversationStatus(set, pending.conversationId, "error");
+    } finally {
+      set({ isProcessingPlanDecision: false });
     }
   },
 

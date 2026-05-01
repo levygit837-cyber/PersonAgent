@@ -286,6 +286,7 @@ async def test_web_fetch_validates_hosts_and_extracts_html(monkeypatch, tmp_path
     denied = await tool.validate_input({"url": "http://127.0.0.1:8000"}, context)
     assert denied is not None
     assert denied.allowed is False
+    monkeypatch.setattr(web_tools, "_resolve_host_addresses", lambda _host: ["93.184.216.34"])
 
     class FakeResponse:
         headers = {"content-type": "text/html; charset=utf-8"}
@@ -318,6 +319,80 @@ async def test_web_fetch_validates_hosts_and_extracts_html(monkeypatch, tmp_path
     assert result.status == ToolExecutionStatus.COMPLETED
     assert "Hello" in result.data["content"]
     assert "bad()" not in result.data["content"]
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_pins_validated_dns_address(monkeypatch, tmp_path):
+    context = _tool_context(tmp_path)
+
+    class FakeDelegate:
+        connected_host = ""
+
+        async def connect_tcp(self, host, port, **kwargs):
+            self.connected_host = host
+            return object()
+
+        async def connect_unix_socket(self, path, **kwargs):
+            return object()
+
+        async def sleep(self, seconds):
+            return None
+
+    monkeypatch.setattr(web_tools, "_resolve_host_addresses", lambda _host: ["93.184.216.34"])
+    delegate = FakeDelegate()
+    backend = web_tools._PinnedDNSBackend(context, delegate)
+
+    await backend.connect_tcp("example.com", 443)
+
+    assert delegate.connected_host == "93.184.216.34"
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_rejects_dns_rebinding(monkeypatch, tmp_path):
+    context = _tool_context(tmp_path)
+
+    class FakeDelegate:
+        async def connect_tcp(self, host, port, **kwargs):
+            return object()
+
+        async def connect_unix_socket(self, path, **kwargs):
+            return object()
+
+        async def sleep(self, seconds):
+            return None
+
+    monkeypatch.setattr(
+        web_tools,
+        "_resolve_host_addresses",
+        lambda _host: ["93.184.216.34", "127.0.0.1"],
+    )
+    backend = web_tools._PinnedDNSBackend(context, FakeDelegate())
+
+    with pytest.raises(web_tools.WebDomainBlockedError):
+        await backend.connect_tcp("example.com", 443)
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_blocks_redirect_to_private_host(monkeypatch, tmp_path):
+    context = _tool_context(tmp_path)
+
+    class RedirectResponse:
+        is_redirect = True
+        headers = {"location": "http://127.0.0.1:8000/private"}
+        url = "https://example.com/start"
+
+    class FakeClient:
+        async def get(self, _url):
+            return RedirectResponse()
+
+    monkeypatch.setattr(
+        web_tools,
+        "_resolve_host_addresses",
+        lambda host: ["127.0.0.1"] if host == "127.0.0.1" else ["93.184.216.34"],
+    )
+
+    with pytest.raises(web_tools.WebDomainBlockedError):
+        await web_tools._request_with_redirects(FakeClient(), "https://example.com/start", context)
 
 
 @pytest.mark.asyncio

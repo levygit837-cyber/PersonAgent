@@ -7,8 +7,10 @@ import ipaddress
 import json
 import re
 import socket
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
+import httpcore
 import httpx
 
 from personagent.domain.exceptions import WebDomainBlockedError, WebError, WebFetchTimeoutError
@@ -66,10 +68,12 @@ def create_web_fetch_tool() -> Tool:
         )
 
         try:
+            transport = _SafeDNSAsyncHTTPTransport(context)
             async with httpx.AsyncClient(
                 follow_redirects=False,
                 timeout=httpx.Timeout(timeout_ms / 1000),
                 headers={"User-Agent": "PersonAgent-WebFetch/1.0"},
+                transport=transport,
             ) as client:
                 response, redirect_count = await _request_with_redirects(client, url, context)
         except httpx.TimeoutException as exc:
@@ -223,6 +227,62 @@ def validate_web_url(url: str, context: ToolUseContext) -> ToolPermissionResult 
     return _validate_url(url, context)
 
 
+class _PinnedDNSBackend(httpcore.AsyncNetworkBackend):
+    def __init__(
+        self,
+        context: ToolUseContext,
+        delegate: httpcore.AsyncNetworkBackend | None = None,
+    ) -> None:
+        self._context = context
+        self._delegate = delegate or httpcore.AnyIOBackend()
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        pinned_host = _resolve_pinned_host(host, self._context)
+        return await self._delegate.connect_tcp(
+            pinned_host,
+            port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+
+    async def connect_unix_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        return await self._delegate.connect_unix_socket(
+            path,
+            timeout=timeout,
+            socket_options=socket_options,
+        )
+
+    async def sleep(self, seconds: float) -> None:
+        await self._delegate.sleep(seconds)
+
+
+class _SafeDNSAsyncHTTPTransport(httpx.AsyncHTTPTransport):
+    def __init__(self, context: ToolUseContext) -> None:
+        super().__init__(trust_env=False, retries=0)
+        self._pool = httpcore.AsyncConnectionPool(
+            ssl_context=httpx.create_ssl_context(verify=True, trust_env=False),
+            max_connections=20,
+            max_keepalive_connections=0,
+            http1=True,
+            http2=False,
+            retries=0,
+            network_backend=_PinnedDNSBackend(context),
+        )
+
+
 async def _request_with_redirects(
     client: httpx.AsyncClient,
     url: str,
@@ -231,6 +291,12 @@ async def _request_with_redirects(
     current_url = url
     redirect_count = 0
     while True:
+        validation = _validate_url(current_url, context)
+        if validation is not None:
+            raise WebDomainBlockedError(
+                validation.message or "URL is blocked.",
+                metadata={"url": url, "blocked_url": current_url},
+            )
         response = await client.get(current_url)
         if not response.is_redirect:
             return response, redirect_count
@@ -279,10 +345,53 @@ def _host_matches(hostname: str, patterns: tuple[str, ...]) -> bool:
 def _is_private_host(hostname: str) -> bool:
     if hostname in {"localhost", "localhost.localdomain"}:
         return True
+    return any(_is_blocked_ip(address) for address in _resolve_host_addresses(hostname))
+
+
+def _resolve_pinned_host(hostname: str, context: ToolUseContext) -> str:
+    addresses = _resolve_host_addresses(hostname)
+    if not addresses:
+        raise WebDomainBlockedError(
+            f"URL host could not be resolved: {hostname}",
+            metadata={"host": hostname},
+        )
+    allow_private_hosts = bool(context.limits.get("web_allow_private_hosts", False))
+    blocked_address = next((address for address in addresses if _is_blocked_ip(address)), None)
+    if blocked_address and not allow_private_hosts:
+        raise WebDomainBlockedError(
+            f"URL host resolves to a blocked address: {hostname}",
+            metadata={"host": hostname, "address": blocked_address},
+        )
+    return addresses[0]
+
+
+def _resolve_host_addresses(hostname: str) -> list[str]:
     try:
         ip = ipaddress.ip_address(hostname)
     except ValueError:
-        return _hostname_resolves_private(hostname)
+        pass
+    else:
+        return [str(ip)]
+
+    try:
+        results = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except OSError:
+        return []
+    addresses: list[str] = []
+    for result in results:
+        address = result[4][0]
+        try:
+            ipaddress.ip_address(address)
+        except ValueError:
+            continue
+        normalized = str(ipaddress.ip_address(address))
+        if normalized not in addresses:
+            addresses.append(normalized)
+    return addresses
+
+
+def _is_blocked_ip(address: str) -> bool:
+    ip = ipaddress.ip_address(address)
     return (
         ip.is_private
         or ip.is_loopback
@@ -290,28 +399,6 @@ def _is_private_host(hostname: str) -> bool:
         or ip.is_multicast
         or ip.is_reserved
     )
-
-
-def _hostname_resolves_private(hostname: str) -> bool:
-    try:
-        results = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
-    except OSError:
-        return False
-    for result in results:
-        address = result[4][0]
-        try:
-            ip = ipaddress.ip_address(address)
-        except ValueError:
-            continue
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-        ):
-            return True
-    return False
 
 
 def _extract_text(value: str, content_type: str) -> str:

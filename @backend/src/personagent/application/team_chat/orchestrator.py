@@ -900,6 +900,39 @@ class TeamChatOrchestrator:
         was_empty = len(conversation.messages) == 0
         user_msg = Message(role=Role.USER, content=request.message)
         conversation.add_message(user_msg)
+
+        _conversation_persisted = False
+        try:
+            async for event in self._execute_generator(
+                request=request,
+                team=team,
+                cancel_event=cancel_event,
+                run_id=run_id,
+                conversation=conversation,
+                was_empty=was_empty,
+                user_msg=user_msg,
+            ):
+                if event.get("event") in {"team_run_completed", "team_consensus_failed"}:
+                    _conversation_persisted = True
+                yield event
+        finally:
+            if not _conversation_persisted:
+                try:
+                    await self._conversation_repo.update(conversation)
+                except Exception:
+                    logger.exception("failed_to_persist_team_conversation_on_interrupt")
+
+    async def _execute_generator(
+        self,
+        *,
+        request: TeamChatRequest,
+        team: TeamConfig,
+        cancel_event: asyncio.Event,
+        run_id: str,
+        conversation: Conversation,
+        was_empty: bool,
+        user_msg: Message,
+    ) -> AsyncIterator[dict[str, Any]]:
         agent_by_id = {agent.id: agent for agent in team.agents}
         turns: list[_TurnResult] = []
         last_votes: list[_Vote] = []

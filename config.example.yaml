@@ -11,6 +11,7 @@ app:
 
 personagent:
   local_auth_token: ""
+  action_approval_secret: ""
 
 postgres:
   host: "localhost"
@@ -22,6 +23,7 @@ postgres:
 llama:
   server_url: "http://localhost:8080/v1"
   server_api_key: "local"
+  host: "127.0.0.1"
   model_path: ""
   ctx_size: 131072
   max_tokens: 82000
@@ -52,3 +54,9 @@ zenmux:
   api_key: ""
   base_url: "https://zenmux.ai/api/v1"
   default_model: "deepseek/deepseek-v4-flash-free"
+
+embedding:
+  server_url: "http://localhost:8081/v1"
+  server_api_key: "local"
+  host: "127.0.0.1"
+  port: 8081

@@ -52,6 +52,8 @@ def _approved_payload(action_kind: str, args: dict) -> dict:
         **args,
         "approval_id": approval["approval_id"],
         "args_hash": approval["args_hash"],
+        "approval_signature": approval["approval_signature"],
+        "expires_at": approval["expires_at"],
     }
 
 
@@ -454,6 +456,19 @@ async def test_git_push_pushes_current_branch_to_origin(monkeypatch, tmp_path):
     assert payload["branch"] == "feature/push"
     assert payload["upstream"] == "origin/feature/push"
     assert _run_git(remote, "rev-parse", "--verify", "refs/heads/feature/push").stdout.strip()
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+@pytest.mark.asyncio
+async def test_git_push_rejects_token_only_without_signed_approval(monkeypatch, tmp_path):
+    repo = tmp_path / "Repo"
+    _init_committed_repo(repo)
+
+    async with _workspace_client(monkeypatch, tmp_path) as client:
+        response = await client.post("/workspace/git-push", json={"workspace_root": str(repo)})
+
+    assert response.status_code == 403
+    assert "Action approval is required" in response.json()["detail"]
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")

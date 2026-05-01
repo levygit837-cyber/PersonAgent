@@ -39,6 +39,8 @@ class TestMemoryAPI:
         return {
             "approval_id": approval["approval_id"],
             "args_hash": approval["args_hash"],
+            "approval_signature": approval["approval_signature"],
+            "expires_at": approval["expires_at"],
         }
 
     def _create(self, client: TestClient, project_slug: str, payload: dict):
@@ -46,6 +48,8 @@ class TestMemoryAPI:
         approval_payload = request.model_dump(mode="json")
         approval_payload.pop("approval_id", None)
         approval_payload.pop("args_hash", None)
+        approval_payload.pop("approval_signature", None)
+        approval_payload.pop("expires_at", None)
         approval = self._approval(
             "memory.create",
             {"project_slug": project_slug, "request": approval_payload},
@@ -60,6 +64,8 @@ class TestMemoryAPI:
         approval_payload = request.model_dump(mode="json")
         approval_payload.pop("approval_id", None)
         approval_payload.pop("args_hash", None)
+        approval_payload.pop("approval_signature", None)
+        approval_payload.pop("expires_at", None)
         approval = self._approval(
             "memory.update",
             {
