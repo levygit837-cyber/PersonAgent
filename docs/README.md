@@ -16,7 +16,7 @@ READMEs.
 - [Runtime documentation](runtime/README.md) covers local llama.cpp/TurboQuant,
   provider ownership, and configuration.
 - [ADR index](adr/README.md) stores architecture decisions and the template for
-  future records.
+  future records. **All 21 ADRs (0001–0021) are now complete.**
 - [Development guide](development/README.md) collects local setup, validation,
   and documentation maintenance practices.
 - [Testing documentation](testing/README.md) maps backend, desktop, and live
@@ -34,19 +34,42 @@ docs/
 ├── api/
 │   └── README.md             # FastAPI endpoint and transport contracts
 ├── app/
-│   └── README.md             # Product subsystems and desktop/backend flows
+│   ├── README.md             # Product subsystems and desktop/backend flows
+│   ├── architecture.md         # Electron + React + Vite
+│   ├── chat.md                 # Chat flow, SSE, plan mode
+│   ├── chat-store.md           # Frontend chat state
+│   ├── api-client.md           # API consumption
+│   ├── config.md               # Configuration hierarchy
+│   ├── error-handling.md       # Error hierarchy and SSE
+│   ├── memory.md               # Three-layer memory
+│   ├── prompt-system.md        # Dynamic prompt building
+│   ├── qa.md                   # QA tracing
+│   ├── session.md              # Session lifecycle
+│   ├── skills.md               # Skill discovery and injection
+│   ├── state-events.md         # SSE state invalidation
+│   └── team.md                 # Team mode multi-agent
 ├── architecture/
 │   └── overview.md           # Application architecture and data flow
 ├── adr/
-│   └── README.md             # ADR process, status values, and template
+│   ├── README.md             # ADR process, status values, and template
+│   └── 0001-0021.md          # Architecture Decision Records (complete)
 ├── backend/
-│   └── README.md             # Backend layers and contract ownership
+│   ├── README.md             # Backend layers and contract ownership
+│   ├── clean-arch.md           # Clean architecture guide
+│   ├── di.md                   # Dependency injection
+│   ├── llm-providers.md        # LLM provider adapters
+│   ├── persistence.md          # PostgreSQL + pgvector
+│   └── tools-runtime.md        # Tool registry and orchestration
 ├── development/
 │   └── README.md             # Setup, tests, and doc maintenance
 ├── operations/
-│   └── README.md             # Health checks, release review, diagnostics
+│   ├── README.md             # Health checks, release review, diagnostics
+│   ├── diagnostics.md          # Troubleshooting commands
+│   ├── mitigations.md          # Risk mitigations
+│   └── release-checklist.md    # Release steps
 ├── runtime/
-│   └── README.md             # Local/hosted model runtime and config
+│   ├── README.md             # Local/hosted model runtime and config
+│   └── llama.md                # llama.cpp TurboQuant guide
 ├── testing/
 │   └── README.md             # Validation layers and live test policy
 └── browser-workspace.md      # Existing browser workspace contract
