@@ -44,9 +44,7 @@ Primary configuration surfaces:
 - `@backend/src/personagent/infrastructure/config/settings.py`
 - Provider-specific adapter modules under `@backend/src/personagent/infrastructure/llm/`
 
-## Future Pages
+## Documentação Operacional
 
-- `llama-turboquant.md`
-- `config.md`
-- `models.md`
-- `process-manager.md`
+- [llama.cpp TurboQuant](llama.md) — build, process manager e troubleshooting.
+- [Config](config.md) — hierarquia de configuração (movido para app).

@@ -31,15 +31,18 @@ The active streaming contracts are:
 - State-change SSE.
 - Team Mode WebSocket.
 
-## Future Pages
+## Documentação Operacional
 
-Split this index into dedicated pages when a subsystem changes materially:
-
-- `desktop-electron.md`
-- `chat-experience.md`
-- `session-panel.md`
-- `team-mode.md`
-- `skills.md`
-- `memory.md`
-- `workspace-git.md`
-- `qa-system.md`
+- [Architecture](architecture.md) — Electron + React + Vite, IPC e segurança.
+- [Chat](chat.md) — fluxo de mensagem, SSE e plan mode.
+- [Chat Store](chat-store.md) — estado do chat no frontend.
+- [API Client](api-client.md) — consumo da API FastAPI.
+- [Config](config.md) — hierarquia de configuração.
+- [Error Handling](error-handling.md) — hierarquia de erros e streaming.
+- [Memory](memory.md) — três camadas de memória.
+- [Prompt System](prompt-system.md) — montagem dinâmica do system prompt.
+- [QA](qa.md) — tracing estático e runtime.
+- [Session](session.md) — ciclo de vida de conversas.
+- [Skills](skills.md) — discovery, ativação e injeção.
+- [State Events](state-events.md) — SSE de invalidação e git.
+- [Team Mode](team.md) — multi-agente com blackboard.

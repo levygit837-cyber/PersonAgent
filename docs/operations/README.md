@@ -34,11 +34,8 @@ npm run dev
 - Git/workspace changes are checked against dirty worktree and large artifact
   risks before staging or committing.
 
-## Diagnostics To Expand
+## Documentação Operacional
 
-Create focused pages when a recurring operational issue appears:
-
-- `release-checklist.md`
-- `diagnostics.md`
-- `provider-validation.md`
-- `browser-runtime.md`
+- [Diagnostics](diagnostics.md) — health checks, logs e métricas.
+- [Release Checklist](release-checklist.md) — passos de pré-release, build, testes e deploy.
+- [Mitigations](mitigations.md) — riscos identificados e mitigações atuais.

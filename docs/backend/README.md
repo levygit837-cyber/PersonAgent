@@ -29,14 +29,10 @@ infrastructure -> application/domain ports
 - Database migrations live in
   `@backend/src/personagent/infrastructure/persistence/migrations/`.
 
-## Future Pages
+## Documentação Operacional
 
-Create focused backend pages as the subsystem evolves:
-
-- `clean-architecture.md`
-- `dependency-injection.md`
-- `llm-providers.md`
-- `tools-runtime.md`
-- `persistence.md`
-- `state-events.md`
-- `error-handling.md`
+- [Clean Architecture](clean-arch.md) — camadas, regra de dependência e anti-padrões.
+- [Dependency Injection](di.md) — container manual, singletons e factories.
+- [LLM Providers](llm-providers.md) — adapters suportados e streaming.
+- [Tools Runtime](tools-runtime.md) — registro, orquestração, permissões e concorrência.
+- [Persistence](persistence.md) — PostgreSQL, pgvector, tabelas e migrations.
