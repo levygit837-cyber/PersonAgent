@@ -14,7 +14,7 @@ import {
   Plus,
   X,
 } from "lucide-react";
-import hljs from "highlight.js";
+import hljs from "../../lib/highlight";
 import {
   isCurrentWorkspaceRequest,
   isHidden,

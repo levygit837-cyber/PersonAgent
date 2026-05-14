@@ -6,10 +6,9 @@ import { getCodexAuthStatus, listBrowserTabMentions, listChatCommands, listModel
 import { useAppStore } from "../../stores/app-store";
 import { useChatStore, type ComposerAnnotation } from "../../stores/chat-store";
 import { useTerminalStore, type TerminalSnippet } from "../../stores/terminal-store";
-import { localModel, reasoningPresets, type ChatCommandInfo, type ChatMessageUi, type ContextAttachment, type LlmModel, type ModelProvider, type ReasoningPreset, type SkillSummary, type ToolBlockStatus, type ToolBlockUi } from "../../types/chat";
+import { localModel, reasoningPresets, type ChatCommandInfo, type ContextAttachment, type LlmModel, type ModelProvider, type ReasoningPreset, type SkillSummary, type TodoDockSnapshotUi, type ToolBlockStatus } from "../../types/chat";
 import { BranchSwitcherButton } from "../git/branch-switcher-button";
 import { Button } from "../ui/button";
-import { isTodoTool, todoItems, type TodoItem } from "./tool-block";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -324,13 +323,16 @@ export function InputDock({
     const value = text.trim();
     if (!value && selectedMentions.length === 0 && composerAnnotations.length === 0 && !pendingSnippet) return;
     const slashInvocation = parseComposerSlashInvocation(value);
-    if (slashInvocation?.name === "plan" && selectedMentions.length === 0 && composerAnnotations.length === 0 && !pendingSnippet) {
+
+    // /plan without content activates the local Plan Mode banner
+    if (slashInvocation?.name === "plan" && value.trim().length <= 5 && selectedMentions.length === 0 && composerAnnotations.length === 0 && !pendingSnippet) {
       setComposerPlanMode(true);
       setText("");
       setCursorPosition(0);
       requestAnimationFrame(() => textareaRef.current?.focus());
       return;
     }
+
     const mentionsForSubmit = autoResolveBrowserMentions(
       value,
       selectedMentions,
@@ -343,14 +345,20 @@ export function InputDock({
       mentionsForSubmit,
     );
     const visibleMessage = value || attachmentOnlyMessage(composerAnnotations, pendingSnippet, mentionsForSubmit);
-    const isSlashCommand = slashInvocation !== null;
-    const sendOptions = requestAttachments.length || isSlashCommand
+
+    // /plan with content is forwarded as a normal message (not a hidden slash command)
+    const isHiddenSlashCommand = slashInvocation !== null && slashInvocation.name !== "plan";
+    const messageToSend = slashInvocation?.name === "plan" ? value.trim().slice(5).trim() : visibleMessage;
+    const isPlanModeTurn = composerPlanMode || slashInvocation?.name === "plan";
+
+    const sendOptions = requestAttachments.length || isHiddenSlashCommand || isPlanModeTurn
       ? {
           ...(requestAttachments.length ? { contextAttachments: requestAttachments, displayAttachments } : {}),
-          ...(isSlashCommand ? { hideUserMessage: true } : {}),
+          ...(isHiddenSlashCommand ? { hideUserMessage: true } : {}),
+          ...(isPlanModeTurn ? { planModeRequested: true } : {}),
         }
       : undefined;
-    void sendMessage(visibleMessage, composerPlanMode ? PLAN_MODE_SYSTEM_PROMPT : undefined, sendOptions);
+    void sendMessage(messageToSend, isPlanModeTurn ? PLAN_MODE_SYSTEM_PROMPT : undefined, sendOptions);
     if (composerPlanMode) setComposerPlanMode(false);
     setText("");
     setCursorPosition(0);
@@ -602,21 +610,13 @@ function ComposerMentionTray({
   );
 }
 
-type TodoDockSnapshot = {
-  key: string;
-  toolName: string;
-  updateCount: number;
-  status: ToolBlockStatus;
-  todos: TodoItem[];
-};
-
 function InputTodoDock() {
-  const messages = useChatStore((state) => state.messages);
-  const activeAgentId = useChatStore((state) => state.activeAgentId);
-  const isExecuting = useChatStore((state) => state.isStreaming || state.isFinalizing);
-  const liveSnapshot = useMemo(() => latestTodoSnapshot(messages, activeAgentId), [messages, activeAgentId]);
+  const liveSnapshot = useChatStore((state) => state.latestTodoSnapshot);
+  const isExecuting = useChatStore(
+    (state) => state.isStreaming || state.isFinalizing || !!state.pendingToolApproval || !!state.pendingPlanApproval
+  );
   const liveKey = liveSnapshot?.key;
-  const [displaySnapshot, setDisplaySnapshot] = useState<TodoDockSnapshot | undefined>();
+  const [displaySnapshot, setDisplaySnapshot] = useState<TodoDockSnapshotUi | undefined>();
   const [exiting, setExiting] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [restoring, setRestoring] = useState(false);
@@ -679,7 +679,7 @@ function TodoDockPanel({
   onToggleMinimized,
   onExitComplete,
 }: {
-  snapshot: TodoDockSnapshot;
+  snapshot: TodoDockSnapshotUi;
   exiting: boolean;
   minimized: boolean;
   restoring: boolean;
@@ -767,33 +767,7 @@ function TodoDockStatusDot({ status }: { status: ToolBlockStatus }) {
   return <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${color}`} aria-hidden="true" />;
 }
 
-function latestTodoSnapshot(messages: ChatMessageUi[], activeAgentId?: string): TodoDockSnapshot | undefined {
-  const preferred = activeAgentId ? messages.find((message) => message.id === activeAgentId) : undefined;
-  const message = preferred ?? [...messages].reverse().find((item) => item.role === "agent" && item.toolBlocks.some(isTodoTool));
-  if (!message) return undefined;
-  const blocks = message.toolBlocks.filter(isTodoTool);
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    const block = blocks[index];
-    const todos = todoItems(block);
-    if (todos.length === 0) continue;
-    return {
-      key: `${block.id}:${todos.map((todo) => `${todo.id}:${todo.status}:${todo.content}`).join("|")}`,
-      toolName: block.name,
-      updateCount: blocks.length,
-      status: todoSnapshotStatus(blocks),
-      todos,
-    };
-  }
-  return undefined;
-}
-
-function todoSnapshotStatus(blocks: ToolBlockUi[]): ToolBlockStatus {
-  if (blocks.some((block) => block.status === "error" || block.status === "permission_required")) return "error";
-  if (blocks.some((block) => block.status === "running" || block.status === "queued")) return "running";
-  return "completed";
-}
-
-function todoStatusLabel(status: TodoItem["status"]) {
+function todoStatusLabel(status: TodoDockSnapshotUi["todos"][number]["status"]) {
   if (status === "completed") return "completed";
   if (status === "in_progress") return "in progress";
   return "pending";
@@ -1699,7 +1673,8 @@ function ContextWindowIndicator() {
   const baseUrl = useAppStore((state) => state.baseUrl);
   const provider = useAppStore((state) => state.provider);
   const selectedModelId = useAppStore((state) => state.selectedModelId);
-  const messages = useChatStore((state) => state.messages);
+  const contextTokenEstimate = useChatStore((state) => state.contextTokenEstimate);
+  const contextWindowEstimate = useChatStore((state) => state.contextWindowEstimate);
   const liveSessionUsage = useChatStore((state) => state.liveSessionUsage);
 
   const localModels = useQuery({
@@ -1765,18 +1740,17 @@ function ContextWindowIndicator() {
     modelOptions.find((item) => item.provider === provider && item.id === selectedModelId) ??
     modelOptions.find((item) => item.id === selectedModelId);
 
-  const contextLength = latestContextWindowEstimate(messages) ?? selectedOption?.contextLength ?? 131072; // 128K default
+  const contextLength = contextWindowEstimate ?? selectedOption?.contextLength ?? 131072; // 128K default
 
   const usedTokens = useMemo(() => {
-    const fromMessages = estimateConversationContextTokens(messages);
     const promptContext = Math.max(
-      latestContextTokenEstimate(messages),
+      contextTokenEstimate,
       liveSessionUsage.context_tokens.value,
     );
     const liveGenerated =
       liveSessionUsage.agent_output_tokens.value + liveSessionUsage.thinking_output_tokens.value;
-    return Math.max(fromMessages, promptContext + liveGenerated);
-  }, [messages, liveSessionUsage]);
+    return Math.max(contextTokenEstimate, promptContext + liveGenerated);
+  }, [contextTokenEstimate, liveSessionUsage]);
 
   const totalK = Math.round(contextLength / 1024);
   const usedK = Math.ceil(usedTokens / 1024);
@@ -1835,87 +1809,6 @@ function ContextWindowIndicator() {
       </Tooltip>
     </TooltipProvider>
   );
-}
-
-function latestContextTokenEstimate(messages: ChatMessageUi[]) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const metadata = messages[index].metadata;
-    const value =
-      numberFromUnknown(metadata?.context_tokens_after_turn_estimated) ??
-      numberFromUnknown(metadata?.context_tokens_estimated) ??
-      numberFromUnknown(metadata?.prompt_tokens_estimated);
-    if (value !== undefined) return value;
-  }
-  return 0;
-}
-
-function latestContextWindowEstimate(messages: ChatMessageUi[]) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const value = numberFromUnknown(messages[index].metadata?.context_window_tokens);
-    if (value !== undefined && value > 0) return value;
-  }
-  return undefined;
-}
-
-function estimateConversationContextTokens(messages: ChatMessageUi[]) {
-  return messages.reduce((total, message) => {
-    const roleTokens = estimateTextTokens(message.role) + 4;
-    const contentTokens = estimateTextTokens(message.content);
-    const reasoningTokens = estimateTextTokens(message.reasoning);
-    const toolTokens = message.toolBlocks.reduce(
-      (sum, block) =>
-        sum +
-        estimateTextTokens(block.name) +
-        estimateTextTokens(block.path) +
-        estimateTextTokens(block.content) +
-        estimateUnknownTokens(block.data),
-      0,
-    );
-    const attachmentTokens = Array.isArray(message.metadata?.context_attachments)
-      ? message.metadata.context_attachments.reduce(
-          (sum, item) => sum + estimateAttachmentTokens(item),
-          0,
-        )
-      : 0;
-    return total + roleTokens + contentTokens + reasoningTokens + toolTokens + attachmentTokens;
-  }, 0);
-}
-
-function estimateAttachmentTokens(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
-  const attachment = value as ContextAttachment;
-  const explicitText =
-    estimateTextTokens(attachment.text) +
-    estimateTextTokens(attachment.content) +
-    estimateTextTokens(attachment.content_preview) +
-    estimateTextTokens(attachment.quote);
-  const charCount = numberFromUnknown(attachment.content_char_count);
-  return explicitText || (charCount ? Math.max(1, Math.ceil(charCount / 4)) : estimateUnknownTokens(attachment));
-}
-
-function estimateUnknownTokens(value: unknown) {
-  if (value === undefined || value === null) return 0;
-  if (typeof value === "string") return estimateTextTokens(value);
-  if (typeof value === "number" || typeof value === "boolean") return estimateTextTokens(String(value));
-  try {
-    return estimateTextTokens(JSON.stringify(value));
-  } catch {
-    return 0;
-  }
-}
-
-function estimateTextTokens(value: unknown) {
-  if (typeof value !== "string" || value.length === 0) return 0;
-  return Math.max(1, Math.ceil(value.length / 4));
-}
-
-function numberFromUnknown(value: unknown) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return undefined;
 }
 
 function formatVendorLabel(value: string) {

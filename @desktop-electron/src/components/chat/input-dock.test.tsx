@@ -446,7 +446,7 @@ describe("InputDock", () => {
     expect(sendMessage).toHaveBeenCalledWith(
       "Investigate the login bug",
       expect.stringContaining("enabled Plan Mode"),
-      undefined,
+      { planModeRequested: true },
     );
     expect(screen.queryByTestId("composer-plan-mode")).not.toBeInTheDocument();
   });

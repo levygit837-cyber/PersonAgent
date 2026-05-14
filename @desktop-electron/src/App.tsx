@@ -1,12 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { ChatPaneSurface, ChatWorkspace } from "./components/chat/chat-workspace";
 import { Sidebar } from "./components/layout/sidebar";
 import { TitleBar } from "./components/layout/titlebar";
-import { OpenPrWorkspace } from "./components/open-pr/open-pr-workspace";
-import { SkillsWorkspace } from "./components/skills/skills-workspace";
 import { StateEventBridge } from "./components/system/state-event-bridge";
 import { useAppStore } from "./stores/app-store";
 import { ChatStoreProvider, createChatStore, type ChatStoreApi } from "./stores/chat-store";
+
+const OpenPrWorkspace = lazy(() =>
+  import("./components/open-pr/open-pr-workspace").then((mod) => ({ default: mod.OpenPrWorkspace })),
+);
+const SkillsWorkspace = lazy(() =>
+  import("./components/skills/skills-workspace").then((mod) => ({ default: mod.SkillsWorkspace })),
+);
 
 type CompactLaunchContext = {
   conversationId: string;
@@ -34,7 +39,17 @@ export function App() {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <Sidebar />
         <main className="min-w-0 flex-1 overflow-hidden">
-          {section === "skills" ? <SkillsWorkspace /> : section === "openPr" ? <OpenPrWorkspace /> : <ChatWorkspace />}
+          {section === "skills" ? (
+            <Suspense fallback={null}>
+              <SkillsWorkspace />
+            </Suspense>
+          ) : section === "openPr" ? (
+            <Suspense fallback={null}>
+              <OpenPrWorkspace />
+            </Suspense>
+          ) : (
+            <ChatWorkspace />
+          )}
         </main>
       </div>
     </div>

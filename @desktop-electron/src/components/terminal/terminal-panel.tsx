@@ -2,12 +2,11 @@ import { useEffect } from "react";
 import { TerminalManager } from "./terminal-manager";
 import { useAppStore } from "../../stores/app-store";
 import { useTerminalStore } from "../../stores/terminal-store";
+import { TERMINAL_HEIGHT } from "./constants";
 
 interface TerminalPanelProps {
   open: boolean;
 }
-
-const TERMINAL_HEIGHT = 280;
 
 export function TerminalPanel({ open }: TerminalPanelProps) {
   const leftInstanceCount = useTerminalStore((s) => s.leftPane.instances.length);

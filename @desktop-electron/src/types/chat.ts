@@ -121,6 +121,7 @@ export interface ChatRequestPayload {
     allowed_roots: string[];
   };
   context_attachments?: ContextAttachment[];
+  plan_mode_requested?: boolean;
 }
 
 export type ContextAttachmentType =
@@ -717,6 +718,20 @@ export type MessageRoleUi = "user" | "agent" | "tool";
 export type ToolBlockStatus = "queued" | "running" | "completed" | "error" | "permission_required";
 export type ChatMessagePartKind = "reasoning" | "content" | "tool" | "image";
 
+export interface ChatTodoItemUi {
+  id: string;
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+export interface TodoDockSnapshotUi {
+  key: string;
+  toolName: string;
+  updateCount: number;
+  status: ToolBlockStatus;
+  todos: ChatTodoItemUi[];
+}
+
 export interface ChatMessagePartUi {
   kind: ChatMessagePartKind;
   id: string;
@@ -785,6 +800,7 @@ export function buildChatRequest(input: {
   systemPrompt?: string;
   promptMode?: PromptMode;
   contextAttachments?: ContextAttachment[];
+  planModeRequested?: boolean;
 }): ChatRequestPayload {
   const trimmedWorkspace = input.workspaceRoot?.trim();
   const reasoningPreset =
@@ -807,6 +823,7 @@ export function buildChatRequest(input: {
   if (input.conversationId) payload.conversation_id = input.conversationId;
   if (input.systemPrompt) payload.system_prompt = input.systemPrompt;
   if (input.contextAttachments?.length) payload.context_attachments = input.contextAttachments;
+  if (input.planModeRequested) payload.plan_mode_requested = input.planModeRequested;
   if (trimmedWorkspace) {
     payload.workspace_root = trimmedWorkspace;
     payload.tool_context = {
@@ -828,6 +845,7 @@ export function buildTeamRunStart(input: {
   workspaceRoot?: string | null;
   systemPrompt?: string;
   contextAttachments?: ContextAttachment[];
+  planModeRequested?: boolean;
   teamId?: string;
   teamConfig?: TeamConfig;
 }) {

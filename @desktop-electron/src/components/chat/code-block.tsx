@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { Copy, Check, ChevronDown, ChevronRight, FileCode } from "lucide-react";
-import hljs from "highlight.js";
+import hljs from "../../lib/highlight";
 import { detectLanguage } from "../../lib/highlight-theme";
 
 interface CodeBlockProps {

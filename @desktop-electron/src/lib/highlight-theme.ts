@@ -1,4 +1,4 @@
-import hljs from "highlight.js";
+import hljs from "./highlight";
 import githubDark from "highlight.js/styles/github-dark.min.css?inline";
 import github from "highlight.js/styles/github.min.css?inline";
 

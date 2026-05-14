@@ -30,7 +30,7 @@ describe("PlanApprovalPanel", () => {
     expect(screen.getByText("Plan")).toBeInTheDocument();
     expect(screen.getByText("Update the backend.")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByPlaceholderText("Optional feedback"), {
+    fireEvent.change(screen.getByPlaceholderText("Optional feedback before deciding..."), {
       target: { value: "Include tests" },
     });
     fireEvent.click(screen.getByText("Proceed"));

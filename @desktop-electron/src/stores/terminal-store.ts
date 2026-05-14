@@ -6,7 +6,6 @@ export interface TerminalInstance {
   id: string;
   name: string;
   pane: TerminalPane;
-  content: string;
   cwd?: string;
   cols: number;
   rows: number;
@@ -39,7 +38,6 @@ interface TerminalState {
   removeInstance: (pane: TerminalPane, id: string) => void;
   setActiveInstance: (pane: TerminalPane, id: string) => void;
   toggleSplit: () => void;
-  appendContent: (id: string, data: string) => void;
   writeToTerminal: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => void;
   markDead: (id: string) => void;
@@ -89,17 +87,12 @@ function trackTerminalInput(id: string, data: string, workspaceRoot?: string) {
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => {
-  let dataCleanup: (() => void) | null = null;
   let exitCleanup: (() => void) | null = null;
 
   function ensureListeners() {
-    if (dataCleanup && exitCleanup) return;
+    if (exitCleanup) return;
     const api = window.personAgent?.terminal;
     if (!api) return;
-
-    dataCleanup = api.onData((id, data) => {
-      get().appendContent(id, data);
-    });
 
     exitCleanup = api.onExit((id) => {
       const state = get();
@@ -168,7 +161,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
       setPaneState(pane, (p) => ({
         instances: [
           ...p.instances,
-          { id, name: instanceName, pane, content: "", cwd, cols: 80, rows: 24, alive: true },
+          { id, name: instanceName, pane, cwd, cols: 80, rows: 24, alive: true },
         ],
         activeInstanceId: p.activeInstanceId ?? id,
         nextId: p.nextId + 1,
@@ -224,7 +217,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
           id: rightId,
           name: "Terminal 1",
           pane: "right",
-          content: "",
           cwd: state.leftPane.instances.find((inst) => inst.id === state.leftPane.activeInstanceId)?.cwd,
           cols: 80,
           rows: 24,
@@ -252,21 +244,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
       }
     },
 
-    appendContent: (id, data) => {
-      set((state) => {
-        const updatePane = (pane: TerminalPaneState): TerminalPaneState => ({
-          ...pane,
-          instances: pane.instances.map((inst) =>
-            inst.id === id ? { ...inst, content: inst.content + data } : inst
-          ),
-        });
-        return {
-          leftPane: updatePane(state.leftPane),
-          rightPane: state.rightPane ? updatePane(state.rightPane) : null,
-        };
-      });
-    },
-
     writeToTerminal: (id, data) => {
       const state = get();
       const instance =
@@ -276,7 +253,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
       try {
         ensureTerminalApi().write(id, data);
       } catch {
-        get().appendContent(id, data);
+        // In browser tests/dev without the Electron API, xterm handles local UI state itself.
       }
     },
 

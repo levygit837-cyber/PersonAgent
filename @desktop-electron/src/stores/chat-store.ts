@@ -16,6 +16,7 @@ import {
 } from "../api/client";
 import { errorMessage } from "../api/errors";
 import { createThinkingTagState, splitThinkingTags, type ThinkingTagState } from "../lib/reasoning";
+import { todoItems } from "../lib/todos";
 import { useAppStore } from "./app-store";
 import {
   buildChatRequest,
@@ -32,6 +33,7 @@ import {
   type ReasoningPreset,
   type SessionUsage,
   type StreamChunk,
+  type TodoDockSnapshotUi,
   type TeamAgentTraceUi,
   type TeamAgentLogUi,
   type TeamBlackboardTraceUi,
@@ -52,7 +54,7 @@ import {
 
 const thinkingStates = new Map<string, ThinkingTagState>();
 const textFlushBuffers = new Map<string, TextFlushBuffer>();
-const STREAM_TEXT_FLUSH_MS = 50;
+const STREAM_TEXT_FLUSH_MS = 150;
 const MAX_TEAM_AGENT_LOGS = 80;
 let teamAgentLogSequence = 0;
 const liveTokenTotals = {
@@ -108,6 +110,10 @@ interface ChatState {
   nextStepSuggestion?: string;
   liveSessionUsage: SessionUsage;
   liveSubAgentIds: string[];
+  latestTodoSnapshot?: TodoDockSnapshotUi;
+  contextTokenEstimate: number;
+  contextWindowEstimate?: number;
+  browserToolBlocks: ToolBlockUi[];
   setWorkspaceRoot: (workspaceRoot?: string | null) => void;
   addComposerAnnotation: (annotation: ComposerAnnotation) => void;
   removeComposerAnnotation: (id: number) => void;
@@ -134,6 +140,7 @@ interface SendMessageOptions {
   contextAttachments?: ContextAttachment[];
   displayAttachments?: ContextAttachment[];
   hideUserMessage?: boolean;
+  planModeRequested?: boolean;
 }
 
 export type ChatStoreApi = StoreApi<ChatState>;
@@ -159,6 +166,8 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
   conversationStatuses: {},
   liveSessionUsage: emptySessionUsage(),
   liveSubAgentIds: [],
+  contextTokenEstimate: 0,
+  browserToolBlocks: [],
 
   setWorkspaceRoot: (workspaceRoot) => set({ workspaceRoot: workspaceRoot?.trim() || undefined }),
 
@@ -229,6 +238,10 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
         composerAnnotations: [],
         liveSessionUsage: emptySessionUsage(),
         liveSubAgentIds: [],
+        latestTodoSnapshot: latestTodoSnapshotFromMessages(loadedMessages),
+        contextTokenEstimate: estimateConversationContextTokens(loadedMessages),
+        contextWindowEstimate: latestContextWindowEstimate(loadedMessages),
+        browserToolBlocks: browserToolBlocksFromMessages(loadedMessages),
         isFinalizing: false,
         loadingConversationId: undefined,
         error: undefined,
@@ -259,6 +272,10 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
       nextStepSuggestion: undefined,
       liveSessionUsage: emptySessionUsage(),
       liveSubAgentIds: [],
+      latestTodoSnapshot: undefined,
+      contextTokenEstimate: 0,
+      contextWindowEstimate: undefined,
+      browserToolBlocks: [],
       workspaceRoot: syncWorkspaceSelection ? get().workspaceRoot : get().workspaceRoot,
       isFinalizing: false,
       loadingConversationId: undefined,
@@ -311,18 +328,24 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
     };
     const controller = new AbortController();
     resetLiveTokenTotals();
-    set((state) => ({
-      messages: [...state.messages, ...(userMessage ? [userMessage] : []), agentMessage],
-      isStreaming: true,
-      isFinalizing: false,
-      activeController: controller,
-      activeAgentId: agentId,
-      pendingPlanApproval: undefined,
-      nextStepSuggestion: undefined,
-      liveSessionUsage: emptySessionUsage(),
-      liveSubAgentIds: [],
-      error: undefined,
-    }));
+    set((state) => {
+      const messages = [...state.messages, ...(userMessage ? [userMessage] : []), agentMessage];
+      return {
+        messages,
+        isStreaming: true,
+        isFinalizing: false,
+        activeController: controller,
+        activeAgentId: agentId,
+        pendingPlanApproval: undefined,
+        nextStepSuggestion: undefined,
+        liveSessionUsage: emptySessionUsage(),
+        liveSubAgentIds: [],
+        latestTodoSnapshot: undefined,
+        contextTokenEstimate: estimateConversationContextTokens(messages),
+        contextWindowEstimate: latestContextWindowEstimate(messages),
+        error: undefined,
+      };
+    });
     if (get().conversationId) setConversationStatus(set, get().conversationId, "running");
 
     const requestInput = {
@@ -334,6 +357,7 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
       workspaceRoot,
       systemPrompt,
       contextAttachments,
+      planModeRequested: options?.planModeRequested,
     };
     const payload = buildChatRequest(requestInput);
 
@@ -356,15 +380,22 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
     } finally {
       flushTextBuffer(agentId, set);
       thinkingStates.delete(agentId);
-      set((state) => ({
-        isStreaming: isActiveGenerationState(state, controller, agentId) ? false : state.isStreaming,
-        isFinalizing: state.activeAgentId === agentId || !state.activeAgentId ? false : state.isFinalizing,
-        activeController: state.activeController === controller ? undefined : state.activeController,
-        activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
-        messages: state.messages.map((item) =>
+      set((state) => {
+        const hasActiveTools = hasActiveToolBlocks(state, agentId);
+        const shouldClearStreaming = isActiveGenerationState(state, controller, agentId) && !hasActiveTools;
+        const messages = state.messages.map((item) =>
           item.id === agentId ? closeActiveReasoning(item, false) : item,
-        ),
-      }));
+        );
+        return {
+          isStreaming: shouldClearStreaming ? false : state.isStreaming,
+          isFinalizing: state.activeAgentId === agentId || !state.activeAgentId ? false : state.isFinalizing,
+          activeController: state.activeController === controller ? undefined : state.activeController,
+          activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
+          messages,
+          contextTokenEstimate: shouldClearStreaming ? estimateConversationContextTokens(messages) : state.contextTokenEstimate,
+          contextWindowEstimate: latestContextWindowEstimate(messages) ?? state.contextWindowEstimate,
+        };
+      });
     }
   },
 
@@ -466,10 +497,11 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
         isStreaming: true,
         isReasoningStreaming: false,
       };
+      const messages = hasAgentMessage
+        ? state.messages.map((message) => (message.id === agentId ? { ...message, isStreaming: true } : message))
+        : [...state.messages, agentMessage];
       return {
-        messages: hasAgentMessage
-          ? state.messages.map((message) => (message.id === agentId ? { ...message, isStreaming: true } : message))
-          : [...state.messages, agentMessage],
+        messages,
         isStreaming: true,
         isFinalizing: false,
         activeController: controller,
@@ -478,6 +510,9 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
         nextStepSuggestion: undefined,
         liveSessionUsage: emptySessionUsage(),
         liveSubAgentIds: [],
+        latestTodoSnapshot: latestTodoSnapshotFromMessages(messages, agentId),
+        contextTokenEstimate: estimateConversationContextTokens(messages),
+        contextWindowEstimate: latestContextWindowEstimate(messages),
         error: undefined,
       };
     });
@@ -502,15 +537,22 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
     } finally {
       flushTextBuffer(agentId, set);
       thinkingStates.delete(agentId);
-      set((state) => ({
-        isStreaming: isActiveGenerationState(state, controller, agentId) ? false : state.isStreaming,
-        isFinalizing: state.activeAgentId === agentId || !state.activeAgentId ? false : state.isFinalizing,
-        activeController: state.activeController === controller ? undefined : state.activeController,
-        activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
-        messages: state.messages.map((item) =>
+      set((state) => {
+        const hasActiveTools = hasActiveToolBlocks(state, agentId);
+        const shouldClearStreaming = isActiveGenerationState(state, controller, agentId) && !hasActiveTools;
+        const messages = state.messages.map((item) =>
           item.id === agentId ? closeActiveReasoning(item, false) : item,
-        ),
-      }));
+        );
+        return {
+          isStreaming: shouldClearStreaming ? false : state.isStreaming,
+          isFinalizing: state.activeAgentId === agentId || !state.activeAgentId ? false : state.isFinalizing,
+          activeController: state.activeController === controller ? undefined : state.activeController,
+          activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
+          messages,
+          contextTokenEstimate: shouldClearStreaming ? estimateConversationContextTokens(messages) : state.contextTokenEstimate,
+          contextWindowEstimate: latestContextWindowEstimate(messages) ?? state.contextWindowEstimate,
+        };
+      });
     }
   },
 
@@ -1080,6 +1122,135 @@ function isActiveGenerationState(state: ChatState, controller: AbortController, 
   return state.activeController === controller || state.activeAgentId === agentId;
 }
 
+function hasActiveToolBlocks(state: ChatState, agentId: string): boolean {
+  const agentMessage = state.messages.find((m) => m.id === agentId);
+  if (!agentMessage) return false;
+  return agentMessage.toolBlocks.some(
+    (block) => block.status === "running" || block.status === "queued"
+  );
+}
+
+function latestTodoSnapshotFromMessages(messages: ChatMessageUi[], activeAgentId?: string): TodoDockSnapshotUi | undefined {
+  const preferred = activeAgentId ? messages.find((message) => message.id === activeAgentId) : undefined;
+  const message = preferred ?? latestAgentMessageWithTodo(messages);
+  return message ? latestTodoSnapshotFromMessage(message) : undefined;
+}
+
+function latestAgentMessageWithTodo(messages: ChatMessageUi[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "agent" && message.toolBlocks.some(isTodoToolBlock)) return message;
+  }
+  return undefined;
+}
+
+function latestTodoSnapshotFromMessage(message: ChatMessageUi): TodoDockSnapshotUi | undefined {
+  const blocks = message.toolBlocks.filter(isTodoToolBlock);
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    const todos = todoItems(block);
+    if (todos.length === 0) continue;
+    return {
+      key: `${block.id}:${todos.map((todo) => `${todo.id}:${todo.status}:${todo.content}`).join("|")}`,
+      toolName: block.name,
+      updateCount: blocks.length,
+      status: todoSnapshotStatus(blocks),
+      todos,
+    };
+  }
+  return undefined;
+}
+
+function todoSnapshotStatus(blocks: ToolBlockUi[]): ToolBlockStatus {
+  if (blocks.some((block) => block.status === "error" || block.status === "permission_required")) return "error";
+  if (blocks.some((block) => block.status === "running" || block.status === "queued")) return "running";
+  return "completed";
+}
+
+function isTodoToolBlock(block: Pick<ToolBlockUi, "name">) {
+  return block.name.toLowerCase().startsWith("todo");
+}
+
+function browserToolBlocksFromMessages(messages: ChatMessageUi[]) {
+  const blocks: ToolBlockUi[] = [];
+  for (const message of messages) {
+    if (message.role !== "agent") continue;
+    for (const block of message.toolBlocks) {
+      if (isBrowserToolBlock(block)) blocks.push(block);
+    }
+  }
+  return blocks.slice(-80);
+}
+
+function upsertBrowserToolBlock(blocks: ToolBlockUi[], block: ToolBlockUi) {
+  const existingIndex = blocks.findIndex((item) => item.id === block.id);
+  const next = existingIndex >= 0 ? [...blocks] : [...blocks, block];
+  if (existingIndex >= 0) next[existingIndex] = block;
+  return next.slice(-80);
+}
+
+function isBrowserToolBlock(block: Pick<ToolBlockUi, "name">) {
+  return block.name.startsWith("Browser");
+}
+
+function latestContextWindowEstimate(messages: ChatMessageUi[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const value = numberValue(messages[index].metadata?.context_window_tokens);
+    if (value !== undefined && value > 0) return value;
+  }
+  return undefined;
+}
+
+function estimateConversationContextTokens(messages: ChatMessageUi[]) {
+  return messages.reduce((total, message) => total + estimateMessageContextTokens(message), 0);
+}
+
+function estimateMessageContextTokens(message: ChatMessageUi) {
+  const roleTokens = estimateTextTokens(message.role) + 4;
+  const contentTokens = estimateTextTokens(message.content);
+  const reasoningTokens = estimateTextTokens(message.reasoning);
+  const toolTokens = message.toolBlocks.reduce(
+    (sum, block) =>
+      sum +
+      estimateTextTokens(block.name) +
+      estimateTextTokens(block.path) +
+      estimateTextTokens(block.content) +
+      estimateUnknownTokens(block.data),
+    0,
+  );
+  const attachmentTokens = contextAttachmentsFromMessage(message).reduce(
+    (sum, item) => sum + estimateAttachmentTokens(item),
+    0,
+  );
+  return roleTokens + contentTokens + reasoningTokens + toolTokens + attachmentTokens;
+}
+
+function estimateAttachmentTokens(attachment: ContextAttachment) {
+  const explicitText =
+    estimateTextTokens(attachment.text) +
+    estimateTextTokens(attachment.content) +
+    estimateTextTokens(attachment.content_preview) +
+    estimateTextTokens(attachment.quote);
+  const charCount = numberValue(attachment.content_char_count);
+  return explicitText || (charCount ? Math.max(1, Math.ceil(charCount / 4)) : estimateUnknownTokens(attachment));
+}
+
+function estimateUnknownTokens(value: unknown) {
+  if (value === undefined || value === null) return 0;
+  if (typeof value === "string") return estimateTextTokens(value);
+  if (typeof value === "number" || typeof value === "boolean") return estimateTextTokens(String(value));
+  try {
+    return estimateTextTokens(JSON.stringify(value));
+  } catch {
+    return 0;
+  }
+}
+
+function estimateTextTokens(value: unknown) {
+  if (typeof value !== "string" || value.length === 0) return 0;
+  return Math.max(1, Math.ceil(value.length / 4));
+}
+
 function findAgentMessageIdForTool(messages: ChatMessageUi[], toolCallId: string) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -1282,16 +1453,10 @@ function handleChunk(
         : undefined;
     window.dispatchEvent(new CustomEvent("personagent:conversations-changed"));
     setConversationStatus(set, chunk.conversation_id ?? get().conversationId, "idle");
-    set((state) => ({
-      isStreaming: state.activeAgentId === agentId ? false : state.isStreaming,
-      isFinalizing: false,
-      activeController: state.activeAgentId === agentId ? undefined : state.activeController,
-      activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
-      nextStepSuggestion: state.activeAgentId ? state.nextStepSuggestion : suggestion,
-      conversationTitle: chunk.title || state.conversationTitle,
-      liveSessionUsage: emptySessionUsage(),
-      liveSubAgentIds: state.activeAgentId ? state.liveSubAgentIds : [],
-      messages: state.messages.map((item) => {
+    set((state) => {
+      const hasActiveTools = hasActiveToolBlocks(state, agentId);
+      const shouldClearStreaming = state.activeAgentId === agentId && !hasActiveTools;
+      const messages = state.messages.map((item) => {
         if (item.id !== agentId) return item;
         const withReasoning =
           chunk.reasoning_content && item.reasoning.trim().length === 0
@@ -1299,8 +1464,21 @@ function handleChunk(
             : item;
         const withContext = attachContextMetadata(withReasoning, chunk);
         return closeActiveReasoning(withContext, false);
-      }),
-    }));
+      });
+      return {
+        isStreaming: shouldClearStreaming ? false : state.isStreaming,
+        isFinalizing: false,
+        activeController: state.activeAgentId === agentId ? undefined : state.activeController,
+        activeAgentId: state.activeAgentId === agentId ? undefined : state.activeAgentId,
+        nextStepSuggestion: state.activeAgentId ? state.nextStepSuggestion : suggestion,
+        conversationTitle: chunk.title || state.conversationTitle,
+        liveSessionUsage: emptySessionUsage(),
+        liveSubAgentIds: state.activeAgentId ? state.liveSubAgentIds : [],
+        messages,
+        contextTokenEstimate: estimateConversationContextTokens(messages),
+        contextWindowEstimate: latestContextWindowEstimate(messages) ?? state.contextWindowEstimate,
+      };
+    });
     thinkingStates.delete(agentId);
     window.dispatchEvent(new CustomEvent("personagent:session-panel-changed"));
     return;
@@ -1373,6 +1551,8 @@ function applyPromptContextChunk(
               estimated: true,
             },
           },
+    contextTokenEstimate: contextTokens ?? state.contextTokenEstimate,
+    contextWindowEstimate: numberValue(metadata.context_window_tokens) ?? state.contextWindowEstimate,
     messages: state.messages.map((item) =>
       item.id === agentId ? attachContextMetadata(item, chunk) : item,
     ),
@@ -2741,8 +2921,10 @@ function applyToolChunk(
   set: (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
 ) {
   if (!chunk.tool_call_id) return;
-  set((state) => ({
-    messages: state.messages.map((item) => {
+  set((state) => {
+    let updatedAgentMessage: ChatMessageUi | undefined;
+    let updatedBlock: ToolBlockUi | undefined;
+    const messages = state.messages.map((item) => {
       if (item.id !== agentId) return item;
       const message = closeActiveReasoning(item, true);
       const blocks = [...message.toolBlocks];
@@ -2762,9 +2944,21 @@ function applyToolChunk(
           toolBlockId: next.id,
         });
       }
-      return { ...message, toolBlocks: blocks, parts };
-    }),
-  }));
+      updatedBlock = next;
+      updatedAgentMessage = { ...message, toolBlocks: blocks, parts };
+      return updatedAgentMessage;
+    });
+    return {
+      messages,
+      latestTodoSnapshot: updatedAgentMessage
+        ? latestTodoSnapshotFromMessage(updatedAgentMessage) ??
+          (updatedAgentMessage.toolBlocks.some(isTodoToolBlock) ? undefined : state.latestTodoSnapshot)
+        : state.latestTodoSnapshot,
+      browserToolBlocks: updatedBlock && isBrowserToolBlock(updatedBlock)
+        ? upsertBrowserToolBlock(state.browserToolBlocks, updatedBlock)
+        : state.browserToolBlocks,
+    };
+  });
 }
 
 function appendContentPart(parts: ChatMessagePartUi[], messageId: string, chunk: string) {

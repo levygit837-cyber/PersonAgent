@@ -52,7 +52,6 @@ import { useAppStore } from "../../stores/app-store";
 import { useChatStore, type ComposerAnnotation } from "../../stores/chat-store";
 import type {
   ChangedFile,
-  ChatMessageUi,
   ProjectItem,
   SessionMemorySummary,
   SessionMemoryTopItem,
@@ -439,7 +438,7 @@ export function SessionPanel({
   const conversationId = useChatStore((state) => state.conversationId);
   const isStreaming = useChatStore((state) => state.isStreaming);
   const liveUsage = useChatStore((state) => state.liveSessionUsage);
-  const chatMessages = useChatStore((state) => state.messages);
+  const browserToolBlocks = useChatStore((state) => state.browserToolBlocks);
   const addComposerAnnotation = useChatStore((state) => state.addComposerAnnotation);
   const approvePendingTool = useChatStore((state) => state.approvePendingTool);
   const rejectPendingTool = useChatStore((state) => state.rejectPendingTool);
@@ -489,9 +488,9 @@ export function SessionPanel({
 
   const usage = useMemo(() => mergeUsage(snapshot?.usage, liveUsage), [snapshot?.usage, liveUsage]);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? summaryTab;
-  const browserVisualEvents = useMemo(() => browserVisualEventsFromMessages(chatMessages), [chatMessages]);
+  const browserVisualEvents = useMemo(() => browserVisualEventsFromBlocks(browserToolBlocks), [browserToolBlocks]);
   const browserToolEvent = browserVisualEvents[0];
-  const browserToolTabs = useMemo(() => browserTabsFromMessages(chatMessages, conversationId), [chatMessages, conversationId]);
+  const browserToolTabs = useMemo(() => browserTabsFromBlocks(browserToolBlocks, conversationId), [browserToolBlocks, conversationId]);
   const appliedBrowserToolViewRef = useRef("");
 
   useEffect(() => {
@@ -2998,34 +2997,29 @@ function normalizeBrowserUrl(value: string) {
   return `https://${trimmed}`;
 }
 
-function browserVisualEventsFromMessages(messages: ChatMessageUi[]): BrowserVisualEvent[] {
+function browserVisualEventsFromBlocks(blocks: ToolBlockUi[]): BrowserVisualEvent[] {
   const events: BrowserVisualEvent[] = [];
-  for (const message of [...messages].reverse()) {
-    if (message.role !== "agent") continue;
-    for (const block of [...message.toolBlocks].reverse()) {
-      const visual = browserToolEventFromBlock(block);
-      if (visual) events.push(visual);
-      if (events.length >= 12) return events;
-    }
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const visual = browserToolEventFromBlock(blocks[index]);
+    if (visual) events.push(visual);
+    if (events.length >= 12) return events;
   }
   return events;
 }
 
-function browserTabsFromMessages(messages: ChatMessageUi[], conversationId?: string | null): BrowserTab[] {
+function browserTabsFromBlocks(blocks: ToolBlockUi[], conversationId?: string | null): BrowserTab[] {
   const tabs: BrowserTab[] = [];
   const seen = new Set<string>();
-  for (const message of [...messages].reverse()) {
-    if (message.role !== "agent") continue;
-    for (const block of [...message.toolBlocks].reverse()) {
-      if (!["BrowserOpen", "BrowserListTabs", "BrowserCloseTab", "BrowserSwitchTab"].includes(block.name)) continue;
-      const blockTabs = browserTabsFromToolBlock(block, conversationId);
-      for (const tab of blockTabs) {
-        if (seen.has(tab.id)) continue;
-        seen.add(tab.id);
-        tabs.push(tab);
-      }
-      if (tabs.length >= 50) return tabs;
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (!["BrowserOpen", "BrowserListTabs", "BrowserCloseTab", "BrowserSwitchTab"].includes(block.name)) continue;
+    const blockTabs = browserTabsFromToolBlock(block, conversationId);
+    for (const tab of blockTabs) {
+      if (seen.has(tab.id)) continue;
+      seen.add(tab.id);
+      tabs.push(tab);
     }
+    if (tabs.length >= 50) return tabs;
   }
   return tabs;
 }

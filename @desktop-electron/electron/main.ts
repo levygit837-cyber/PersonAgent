@@ -276,18 +276,7 @@ function desktopDebug(message: string, details?: Record<string, unknown>) {
   console.log(`[desktop] ${message}${suffix}`);
 }
 
-function configureChromiumRuntime() {
-  if (process.platform !== "linux") return;
 
-  app.disableHardwareAcceleration();
-  app.commandLine.appendSwitch("disable-gpu");
-  app.commandLine.appendSwitch("disable-gpu-compositing");
-  app.commandLine.appendSwitch("disable-features", "VaapiVideoDecoder,VaapiVideoEncoder,UseChromeOSDirectVideoDecoder");
-  app.commandLine.appendSwitch("log-level", "3");
-  app.commandLine.appendSwitch("disable-logging");
-}
-
-configureChromiumRuntime();
 
 function settingsPath() {
   return join(app.getPath("userData"), "personagent-settings.json");
