@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     """Configuração da aplicação com suporte a .env e YAML."""
 
     model_config = SettingsConfigDict(
-        env_file="/home/levybonito/Projetos/PersonAgent/.env",
+        env_file="/home/levybonito/PersonAgent/.env",
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,

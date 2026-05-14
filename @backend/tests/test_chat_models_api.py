@@ -643,8 +643,8 @@ async def test_plan_decision_endpoints_approve_continue_and_cancel(monkeypatch):
         body = response.json()
         assert body["plan_status"] == "approved"
         assert body["plan_active"] is False
-        assert body["injected_message"].startswith("Implement the plan")
-        assert "Patch backend." not in body["injected_message"]
+        assert body["injected_message"].startswith("The user has approved the following plan.")
+        assert "Patch backend." in body["injected_message"]
         assert "Include tests." in body["injected_message"]
 
         stored = await repo.get_by_id(conversation.id)

@@ -2,7 +2,11 @@
 
 import uuid
 
-from pgvector.sqlalchemy import Vector
+try:
+    from pgvector.sqlalchemy import Vector
+except ImportError:
+    Vector = None  # type: ignore
+
 from sqlalchemy import (
     Boolean,
     Column,
@@ -695,11 +699,12 @@ class OperationalMemoryChunkORM(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     event = relationship("OperationalMemoryEventORM", back_populates="chunks")
-    embeddings = relationship(
-        "MemoryEmbeddingORM",
-        back_populates="chunk",
-        cascade="all, delete-orphan",
-    )
+    if Vector is not None:
+        embeddings = relationship(
+            "MemoryEmbeddingORM",
+            back_populates="chunk",
+            cascade="all, delete-orphan",
+        )
 
     __table_args__ = (
         Index("idx_memory_chunks_project_created", "project_slug", "created_at"),
@@ -709,31 +714,34 @@ class OperationalMemoryChunkORM(Base):
     )
 
 
-class MemoryEmbeddingORM(Base):
-    """Embedding vectors for operational memory chunks."""
+if Vector is not None:
+    class MemoryEmbeddingORM(Base):
+        """Embedding vectors for operational memory chunks."""
 
-    __tablename__ = "memory_embeddings"
+        __tablename__ = "memory_embeddings"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    chunk_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("memory_chunks.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    project_slug = Column(Text, nullable=False)
-    embedding_model = Column(Text, nullable=False)
-    dimensions = Column(Integer, nullable=False)
-    embedding = Column(Vector(4096), nullable=False)
-    content_hash = Column(String(64), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+        id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+        chunk_id = Column(
+            UUID(as_uuid=True),
+            ForeignKey("memory_chunks.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+        project_slug = Column(Text, nullable=False)
+        embedding_model = Column(Text, nullable=False)
+        dimensions = Column(Integer, nullable=False)
+        embedding = Column(Vector(4096), nullable=False)
+        content_hash = Column(String(64), nullable=False)
+        created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    chunk = relationship("OperationalMemoryChunkORM", back_populates="embeddings")
+        chunk = relationship("OperationalMemoryChunkORM", back_populates="embeddings")
 
-    __table_args__ = (
-        Index("idx_memory_embeddings_project", "project_slug"),
-        Index("idx_memory_embeddings_chunk", "chunk_id"),
-        Index("idx_memory_embeddings_hash", "content_hash"),
-    )
+        __table_args__ = (
+            Index("idx_memory_embeddings_project", "project_slug"),
+            Index("idx_memory_embeddings_chunk", "chunk_id"),
+            Index("idx_memory_embeddings_hash", "content_hash"),
+        )
+else:
+    MemoryEmbeddingORM = None  # type: ignore
 
 
 class StructuredMemoryItemORM(Base):

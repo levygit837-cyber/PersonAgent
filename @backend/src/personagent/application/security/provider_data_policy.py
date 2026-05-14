@@ -58,6 +58,13 @@ def enforce_provider_data_policy(
         if item
     )
     findings = _scan_sensitive_text(text)
+    if findings:
+        raise InvalidRequestError(
+            code="provider.data_policy_blocked",
+            message="Request blocked by provider data policy due to sensitive content.",
+            safe_for_model=False,
+            category=ErrorCategory.REQUEST,
+        )
     return ProviderDataPolicyResult(
         policy="hosted_allowed",
         blocked=False,

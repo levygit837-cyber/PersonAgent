@@ -297,6 +297,9 @@ class ChatCompletionUseCase:
             conversation,
             result,
         )
+        finalized_state = auto_finalize_plan_mode(conversation.metadata, result.content)
+        if finalized_state:
+            _attach_plan_approval_artifact(conversation, finalized_state)
         await self._after_turn_services(
             conversation,
             request,
@@ -687,11 +690,6 @@ class ChatCompletionUseCase:
             await self._conversation_repo.update(conversation)
             raise
 
-        next_step_suggestion = await self._after_turn_services(
-            conversation,
-            request,
-            finish_reason=final_finish_reason,
-        )
         last_assistant = next(
             (message for message in reversed(conversation.messages) if message.role == Role.ASSISTANT),
             None,
@@ -707,6 +705,23 @@ class ChatCompletionUseCase:
                 provider=final_provider,
                 model=final_model,
             )
+            finalized_state = auto_finalize_plan_mode(conversation.metadata, last_assistant.content)
+            if finalized_state:
+                _attach_plan_approval_artifact(conversation, finalized_state)
+                yield StreamChunk(
+                    metadata=plan_mode_event(
+                        str(conversation.id),
+                        finalized_state,
+                        event="plan_approval_requested",
+                    )
+                )
+                final_finish_reason = "plan_approval_requested"
+
+        next_step_suggestion = await self._after_turn_services(
+            conversation,
+            request,
+            finish_reason=final_finish_reason,
+        )
         if next_step_suggestion:
             yield StreamChunk(
                 metadata={

@@ -63,6 +63,20 @@ OPTIONAL_OPERATIONAL_MEMORY_SCHEMA_STATEMENTS = (
     "CREATE EXTENSION IF NOT EXISTS vector",
 )
 
+OPERATIONAL_MEMORY_TABLES = frozenset({
+    "memory_events",
+    "memory_chunks",
+    "memory_embeddings",
+    "memory_structured_items",
+    "memory_decisions",
+    "memory_recall_logs",
+    "memory_outbox",
+    "memory_files",
+    "memory_jobs",
+    "memory_sessions",
+    "memory_consolidation_locks",
+})
+
 OPERATIONAL_MEMORY_SCHEMA_STATEMENTS = (
     "ALTER TABLE memory_events DROP CONSTRAINT IF EXISTS memory_events_conversation_id_fkey",
     "ALTER TABLE memory_decisions DROP CONSTRAINT IF EXISTS memory_decisions_conversation_id_fkey",
@@ -147,22 +161,36 @@ async def init_db() -> None:
     # Ensure ORM models are registered in Base.metadata before create_all runs.
     from personagent.infrastructure.persistence import models as _models  # noqa: F401
 
-    for statement in OPTIONAL_OPERATIONAL_MEMORY_SCHEMA_STATEMENTS:
-        try:
-            async with engine.begin() as conn:
-                await conn.execute(text(statement))
-        except Exception as exc:
-            logger.warning(
-                "optional_operational_memory_schema_failed",
-                statement=statement,
-                error=str(exc),
-            )
+    if _settings.operational_memory_enabled:
+        for statement in OPTIONAL_OPERATIONAL_MEMORY_SCHEMA_STATEMENTS:
+            try:
+                async with engine.begin() as conn:
+                    await conn.execute(text(statement))
+            except Exception as exc:
+                logger.warning(
+                    "optional_operational_memory_schema_failed",
+                    statement=statement,
+                    error=str(exc),
+                )
 
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        if _settings.operational_memory_enabled:
+            await conn.run_sync(Base.metadata.create_all)
+        else:
+            # Cria apenas tabelas não-operacionais quando o RAG está desabilitado
+            tables_to_create = [
+                tbl for name, tbl in Base.metadata.tables.items()
+                if name not in OPERATIONAL_MEMORY_TABLES
+            ]
+            await conn.run_sync(
+                lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables_to_create)
+            )
+
         for statement in TEAM_MODE_SCHEMA_STATEMENTS:
             await conn.execute(text(statement))
         for statement in BROWSER_COOPERATION_SCHEMA_STATEMENTS:
             await conn.execute(text(statement))
-        for statement in OPERATIONAL_MEMORY_SCHEMA_STATEMENTS:
-            await conn.execute(text(statement))
+
+        if _settings.operational_memory_enabled:
+            for statement in OPERATIONAL_MEMORY_SCHEMA_STATEMENTS:
+                await conn.execute(text(statement))

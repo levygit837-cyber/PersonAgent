@@ -128,14 +128,22 @@ def create_exit_plan_mode_tool() -> Tool:
             name="ExitPlanMode",
             description=(
                 "Request approval for the completed plan only after EnterPlanMode is active. "
-                "Do not use as a generic approval request for ordinary tool calls."
+                "Do not use as a generic approval request for ordinary tool calls. "
+                "The plan parameter MUST be a detailed markdown document with these sections: "
+                "1. Resumo Executivo, 2. Objetivo, 3. Estado Atual, 4. Abordagem Técnica, "
+                "5. Mudanças Planejadas (table), 6. Tasks (checkboxes), 7. Edge Cases, 8. Critérios de Aceitação."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "plan": {
                         "type": "string",
-                        "description": "Full markdown plan to show to the user for approval.",
+                        "description": (
+                            "Full markdown plan to show to the user for approval. "
+                            "Must include all 8 required sections: Resumo Executivo, Objetivo, Estado Atual, "
+                            "Abordagem Técnica, Mudanças Planejadas (table), Tasks (checkboxes), "
+                            "Edge Cases & Validação, and Critérios de Aceitação."
+                        ),
                     },
                     "summary": {
                         "type": "string",

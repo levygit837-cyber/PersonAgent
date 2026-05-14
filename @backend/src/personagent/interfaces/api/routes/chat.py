@@ -1127,10 +1127,15 @@ async def approve_plan(
         raise HTTPException(status_code=400, detail="Pending plan has no renderable content.")
 
     approval_id = str(state.get("approval_id") or "")
-    injected_message = "Implement the plan"
     feedback = (request.feedback or "").strip()
+    injected_message = (
+        "The user has approved the following plan. Implement it exactly as specified.\n\n"
+        "## Approved Plan\n\n"
+        f"{plan_content}\n\n"
+    )
     if feedback:
-        injected_message = f"{injected_message}\n\nUser feedback:\n\n{feedback}"
+        injected_message = f"{injected_message}## User Feedback\n\n{feedback}\n\n"
+    injected_message = f"{injected_message}Proceed with implementation."
 
     state.update(
         {

@@ -151,8 +151,19 @@ def planning_instructions(plan_id: str | None) -> str:
         "- You may inspect the workspace, search code, read files, and ask clarifying questions.\n"
         "- You must not mutate workspace files, persistent tasks, shell state, or project state.\n"
         "- The only writable artifact is the plan itself.\n"
-        "- When the plan is ready, call ExitPlanMode with the full markdown plan.\n"
-        "- Do not implement the plan until the user explicitly approves it."
+        "- Do not implement the plan until the user explicitly approves it.\n"
+        "- The plan MUST be detailed and structured. Vague or overly short plans will be rejected.\n\n"
+        "Required plan format (markdown):\n"
+        "# Plano: <título descritivo>\n"
+        "## 1. Resumo Executivo\n"
+        "## 2. Objetivo\n"
+        "## 3. Estado Atual (Descobertas)\n"
+        "## 4. Abordagem Técnica\n"
+        "## 5. Mudanças Planejadas (tabela: Arquivo | Ação | Descrição)\n"
+        "## 6. Tasks de Implementação (checkboxes)\n"
+        "## 7. Edge Cases & Validação\n"
+        "## 8. Critérios de Aceitação\n\n"
+        "When the plan is ready, call ExitPlanMode with the full markdown plan."
     )
 
 

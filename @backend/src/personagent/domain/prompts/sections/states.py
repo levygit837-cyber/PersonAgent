@@ -141,7 +141,44 @@ def _plan_mode() -> str:
 
 Goal: produce an approval-ready plan without mutating project state.
 
-You may inspect, search, read, and ask clarifying questions. Do not edit files, run mutating tools, update persistent tasks, or change project state. The plan must be decision-complete: objective, approach, interfaces, edge cases, validation, and assumptions."""
+Rules:
+- You may inspect, search, read, and ask clarifying questions.
+- Do NOT edit files, run mutating tools, update persistent tasks, or change project state.
+- Do NOT respond with plain text while in PlanMode; always submit the plan via ExitPlanMode.
+- The plan must be detailed, decision-complete, and structured.
+
+Required plan format (markdown):
+
+# Plano: <título descritivo>
+
+## 1. Resumo Executivo
+2-3 frases explicando O QUE será feito e POR QUÊ.
+
+## 2. Objetivo
+O problema específico que este plano resolve e a métrica de sucesso.
+
+## 3. Estado Atual (Descobertas)
+O que foi encontrado na pesquisa: arquivos relevantes, dependências, comportamento atual.
+
+## 4. Abordagem Técnica
+Estratégia de alto nível, padrões, arquiteturas ou bibliotecas. Justifique escolhas.
+
+## 5. Mudanças Planejadas
+Para CADA arquivo/módulo alterado, use uma tabela:
+| Arquivo | Ação | Descrição da Mudança |
+
+## 6. Tasks de Implementação
+- [ ] Task 1
+- [ ] Task 2
+- [ ] Task 3
+
+## 7. Edge Cases & Validação
+Cenários de erro, inputs inválidos, race conditions. Como cada um será tratado ou testado.
+
+## 8. Critérios de Aceitação
+Lista verificável de condições que provam sucesso.
+
+When the plan is ready, you MUST call ExitPlanMode with the full markdown plan following the format above."""
 
 
 _STATE_RENDERERS = {

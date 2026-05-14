@@ -227,9 +227,14 @@ codex:
 
 
 def test_lightpanda_settings_defaults(monkeypatch):
-    monkeypatch.delenv("APP_HOST", raising=False)
-    monkeypatch.delenv("LLAMA_HOST", raising=False)
-    monkeypatch.delenv("EMBEDDING_HOST", raising=False)
+    import os
+    for key in list(os.environ):
+        if key.startswith((
+            "APP_", "LLAMA_", "EMBEDDING_", "LIGHTPANDA_",
+            "PERSONAGENT_", "TOOLS_", "BROWSER_",
+            "PROMPT_CONTEXT_ANALYSIS_",
+        )):
+            monkeypatch.delenv(key, raising=False)
     settings = Settings(_env_file=None)
 
     assert settings.app_host == "127.0.0.1"
