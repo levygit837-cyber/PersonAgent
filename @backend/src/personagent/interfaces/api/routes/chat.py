@@ -20,7 +20,6 @@ from personagent.application.dto.chat_dto import ChatRequestDTO
 from personagent.application.plan_mode import (
     PENDING_TOOL_APPROVAL_KEY,
     PENDING_USER_QUESTION_KEY,
-    activate_plan_mode_if_requested,
     normalize_plan_state,
     plan_mode_event,
     write_plan_state,
