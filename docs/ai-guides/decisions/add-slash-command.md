@@ -1,5 +1,10 @@
 # Decision Tree: Adicionar um Novo Comando Slash
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Pergunta inicial
 > Preciso adicionar um novo comando `/comando` que o usuário pode invocar.
 

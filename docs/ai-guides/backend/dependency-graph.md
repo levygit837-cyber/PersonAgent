@@ -1,5 +1,10 @@
 # AI-Guide: Backend Dependency Graph
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Visão geral
 
 Este documento mapea as dependências entre subsistemas do backend. Use-o para entender o impacto de uma mudança antes de editar código.

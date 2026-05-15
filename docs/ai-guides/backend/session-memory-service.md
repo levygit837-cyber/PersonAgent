@@ -1,5 +1,10 @@
 # AI-Guide: Session Memory Service
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Propósito
 
 Mantém arquivos Markdown de memória por conversa no filesystem, atualizados periodicamente pelo LLM com resumo do histórico recente. É a camada 1 (Session Memory) da arquitetura de memória de 3 camadas.

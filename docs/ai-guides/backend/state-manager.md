@@ -1,5 +1,10 @@
 # AI-Guide: State Manager
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Propósito
 
 Singleton que mantém estado global da aplicação em memória: contexto da conversa atual, workspace, permissões, métricas, caches de prompt. Thread-safe por design (processo único).

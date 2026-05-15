@@ -1,5 +1,10 @@
 # Decision Tree: Modificar Segurança do Browser
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Pergunta inicial
 > Preciso ajustar como o agente interage com o browser ou o que é considerado seguro/perigoso.
 

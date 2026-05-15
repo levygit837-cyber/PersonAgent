@@ -150,6 +150,20 @@ def parse_file(path: Path) -> list[dict[str, Any]]:
                 "methods": methods,
                 "is_public": True,
             })
+            # Emit flat symbols for methods so the inventory can resolve them
+            for m in methods:
+                symbols.append({
+                    "name": f"{node.name}.{m['name']}",
+                    "type": m["type"],
+                    "line": m["line"],
+                    "end_line": m["end_line"],
+                    "file": str(path.relative_to(PROJECT_ROOT)),
+                    "decorators": m["decorators"],
+                    "signature": m["signature"],
+                    "docstring": m["docstring"],
+                    "is_public": m["is_public"],
+                    "parent_class": node.name,
+                })
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_public(node.name):
             symbols.append({
                 "name": node.name,

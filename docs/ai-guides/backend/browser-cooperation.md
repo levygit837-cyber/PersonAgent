@@ -1,5 +1,10 @@
 # AI-Guide: Browser Cooperation
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Propósito
 
 Sistema de cooperação entre usuário e agente no browser. Rastreia eventos do browser, normaliza-os em envelopes, aplica redação de dados sensíveis, e constrói contexto para o agente sobre o que o usuário está fazendo na web.

@@ -1,5 +1,10 @@
 # Decision Tree: Modificar o Comportamento do Prompt
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Pergunta inicial
 > Preciso mudar como o system prompt é montado ou como o agente se comporta.
 

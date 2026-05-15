@@ -1,5 +1,10 @@
 # AI-Guide: Session Title Service
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Propósito
 
 Gera, verifica e deduplica títulos de conversas usando LLM em batches. Mantém títulos curtos, únicos e cacheáveis por hash de histórico.

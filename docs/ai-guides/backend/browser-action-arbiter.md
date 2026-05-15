@@ -1,5 +1,10 @@
 # AI-Guide: Browser Action Arbiter
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Propósito
 
 O `BrowserActionArbiter` decide se uma ação do agente no browser requer aprovação do usuário antes de ser executada. Ele implementa uma máquina de estados de cooperação com três modos e regras de cooldown baseadas em atividade humana recente.

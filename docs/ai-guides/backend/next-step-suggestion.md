@@ -1,5 +1,10 @@
 # AI-Guide: Next-Step Suggestion Service
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Propósito
 
 Gera sugestões curtas de próximo passo para o compositor do desktop após cada turno de chat, baseado nas últimas 8 mensagens da conversa.

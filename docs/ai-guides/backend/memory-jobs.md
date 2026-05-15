@@ -1,5 +1,10 @@
 # AI-Guide: Memory Jobs and Scheduler
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Propósito
 
 Agenda e executa jobs de memória em background via APScheduler: extração de memórias após turnos de chat e consolidação periódica (auto-dream) via cron.

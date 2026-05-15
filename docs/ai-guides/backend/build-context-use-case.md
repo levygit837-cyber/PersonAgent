@@ -1,5 +1,10 @@
 # AI-Guide: Build Context Use Case
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Propósito
 
 Orquestra a montagem de contexto completo para uma conversa: workspace, git status, persona.md, regras do projeto, e memória de longo prazo. Atualiza o `StateManager` singleton com os resultados.

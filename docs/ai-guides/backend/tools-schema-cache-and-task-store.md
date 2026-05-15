@@ -1,5 +1,10 @@
 # AI-Guide: Tool Schema Cache and Task Store
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Propósito
 
 `ToolSchemaCache` evita reconstrução repetida de schemas OpenAI-compatible para tools. `TaskStore` (com implementação `InMemoryTaskStore`) persiste tarefas criadas por ferramentas do grupo `TASK`.

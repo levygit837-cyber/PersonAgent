@@ -1,5 +1,10 @@
 # AI-Guide: QA Indexer and Redaction
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Propósito
 
 `PythonCodeIndexer` constrói grafo estático do código Python/FastAPI (módulos, classes, funções, endpoints, imports, calls). `QARedactionPolicy` remove dados sensíveis de traces e artifacts antes de persistência.

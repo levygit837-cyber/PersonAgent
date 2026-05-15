@@ -1,5 +1,10 @@
 # AI-Guide: Command Registry and Slash Commands
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Propósito
 
 Sistema de comandos slash (`/command`) que permite ao usuário invocar comportamentos predefinidos via Markdown files ou built-ins hardcoded. Integra-se ao prompt como "reminders" de contexto adicional.

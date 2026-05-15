@@ -1,5 +1,10 @@
 # Decision Tree: Modificar Política de Retry
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Pergunta inicial
 > Preciso ajustar como o sistema reage a falhas temporárias (LLM, tools, etc.).
 

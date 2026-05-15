@@ -1,5 +1,10 @@
 # Decision Tree: Adicionar um Novo Provider LLM
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Pergunta inicial
 > Preciso adicionar suporte a um novo provedor de LLM (ex: Groq, Together, Fireworks).
 

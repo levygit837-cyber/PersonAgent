@@ -1,5 +1,10 @@
 # Decision Tree: Adicionar uma Nova Ferramenta
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Pergunta inicial
 > Preciso adicionar uma nova ferramenta para o agente usar.
 

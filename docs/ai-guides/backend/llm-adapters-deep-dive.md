@@ -1,5 +1,10 @@
 # AI-Guide: LLM Adapters Deep Dive
 
+
+## Safety Boundary
+
+Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
+
 ## Propósito
 
 Cada adapter traduz chamadas internas do domínio para o protocolo específico de um provedor de LLM, normalizando: streaming, tool calls, reasoning content, auth, e model listing.
