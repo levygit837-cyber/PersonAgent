@@ -56,10 +56,11 @@ suggest()
 
 ## Método Privado
 
-### `_render_recent` @ `application/services/next_step.py:63`
+### `_render_recent` (função privada do módulo)
 ```python
 def _render_recent(conversation: Conversation) -> str
 ```
+- Localizada em `application/services/next_step.py` (após o método `suggest`)
 - Itera `conversation.messages[-8:]` (últimas 8 mensagens)
 - Para cada mensagem: `"{role.value}: {content[:1200]}"`
 - Content com whitespace collapsed (`" ".join(content.split())`)

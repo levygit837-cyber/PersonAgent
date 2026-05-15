@@ -26,24 +26,25 @@ REF_RE = re.compile(
 )
 
 
-def load_symbols() -> dict[str, list[dict]]:
+def load_symbols() -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:
     raw = json.loads(BACKEND_SYMBOLS.read_text(encoding="utf-8"))
     # Indexar por (file, line) — incluir tanto caminho completo quanto basename
     by_file_line: dict[str, list[dict]] = {}
+    # Indexar por arquivo (todos os caminhos possíveis) para busca por range
+    by_file: dict[str, list[dict]] = {}
     for sym in raw:
-        key = f"{sym['file']}:{sym['line']}"
-        by_file_line.setdefault(key, []).append(sym)
-        # Também indexar por basename para referências curtas
+        paths: set[str] = {sym['file']}
         basename = Path(sym['file']).name
-        key_short = f"{basename}:{sym['line']}"
-        by_file_line.setdefault(key_short, []).append(sym)
-        # E por caminho relativo ao backend (application/services/...)
+        paths.add(basename)
         rel = sym['file']
         if rel.startswith('@backend/src/personagent/'):
-            rel_backend = rel[len('@backend/src/personagent/'):]
-            key_backend = f"{rel_backend}:{sym['line']}"
-            by_file_line.setdefault(key_backend, []).append(sym)
-    return by_file_line
+            paths.add(rel[len('@backend/src/personagent/'):])
+
+        for p in paths:
+            key = f"{p}:{sym['line']}"
+            by_file_line.setdefault(key, []).append(sym)
+            by_file.setdefault(p, []).append(sym)
+    return by_file_line, by_file
 
 
 def find_all_md_files() -> list[Path]:
@@ -64,29 +65,36 @@ def extract_refs(content: str) -> list[tuple[str, int, int | None, str]]:
 
 def check_stale(
     symbols_by_key: dict[str, list[dict]],
+    symbols_by_file: dict[str, list[dict]],
     file_ref: str,
     start_line: int,
     end_line: int | None,
 ) -> tuple[bool, str]:
+    # 1. Match exato no início de um símbolo
     key = f"{file_ref}:{start_line}"
     syms = symbols_by_key.get(key, [])
-    if not syms:
-        # Pode ser uma linha dentro de um método - verificar se há símbolo próximo
-        for offset in range(-3, 4):
-            alt_key = f"{file_ref}:{start_line + offset}"
-            if alt_key in symbols_by_key:
-                return True, f"símbolo real está na linha {start_line + offset} (delta={offset})"
-        return False, f"nenhum símbolo encontrado na linha {start_line}"
-    # Se há símbolo, verificar se end_line bate (se fornecido)
-    if end_line is not None and len(syms) == 1:
-        actual_end = syms[0].get("end_line")
-        if actual_end and actual_end != end_line:
-            return True, f"end_line mudou: docs dizem {end_line}, atual é {actual_end}"
-    return True, f"OK ({len(syms)} símbolo(s))"
+    if syms:
+        if end_line is not None and len(syms) == 1:
+            actual_end = syms[0].get("end_line")
+            if actual_end and actual_end != end_line:
+                return True, f"end_line mudou: docs dizem {end_line}, atual é {actual_end}"
+        return True, f"OK ({len(syms)} símbolo(s))"
+
+    # 2. Verificar se a linha cai dentro do range de algum símbolo no arquivo
+    file_syms = symbols_by_file.get(file_ref, [])
+    if file_syms:
+        for sym in file_syms:
+            sym_start = sym.get("line", 0)
+            sym_end = sym.get("end_line", sym_start)
+            if sym_start <= start_line <= sym_end:
+                return True, f"OK (dentro de {sym['name']}:{sym_start}-{sym_end})"
+        return False, f"nenhum símbolo cobre a linha {start_line}"
+
+    return False, f"arquivo não encontrado no inventário: {file_ref}"
 
 
 def main() -> int:
-    symbols_by_key = load_symbols()
+    symbols_by_key, symbols_by_file = load_symbols()
     md_files = find_all_md_files()
     stale: list[tuple[Path, str, int, str]] = []
     total = 0
@@ -96,8 +104,8 @@ def main() -> int:
         refs = extract_refs(content)
         for file_ref, start_line, end_line, context in refs:
             total += 1
-            ok, msg = check_stale(symbols_by_key, file_ref, start_line, end_line)
-            if not ok or "mudo" in msg:
+            ok, msg = check_stale(symbols_by_key, symbols_by_file, file_ref, start_line, end_line)
+            if not ok:
                 stale.append((md_file, f"{file_ref}:{start_line}", msg, context))
 
     print(f"Verificados {total} refs em {len(md_files)} arquivos.")
