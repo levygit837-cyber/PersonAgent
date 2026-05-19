@@ -1,9 +1,0 @@
-__pycache__/
-system_prompts/*
-!system_prompts/.gitkeep
-results/*
-!results/.gitkeep
-logs/*
-!logs/.gitkeep
-tracing/*
-!tracing/.gitkeep
