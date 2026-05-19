@@ -1,137 +1,141 @@
-# PersonAgent
+# 🤖 PersonAgent
 
-Local-first personal agent system with a Python/FastAPI backend, the official
-Electron desktop client, and llama.cpp + TurboQuant for local LLM inference.
+> **Agente pessoal local-first com LLMs multi-provedor, memória persistente e automação de workspace — tudo rodando no seu desktop.**
 
-## Documentation
+PersonAgent é um sistema completo de agente de IA que unifica chat inteligente, automação de navegador, controle de workspace Git e memória contextual de longo prazo em uma única aplicação desktop. Projetado para privacidade (local-first) com fallback para provedores em nuvem.
 
-The canonical documentation hub is [docs/README.md](docs/README.md).
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0%2B-3178C6?logo=typescript&logoColor=white)](https://typescriptlang.org)
+[![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron&logoColor=white)](https://electronjs.org)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15%2B-4169E1?logo=postgresql&logoColor=white)](https://postgresql.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-- [Application overview](docs/architecture/overview.md)
-- [API reference](docs/api/README.md)
-- [ADR index and template](docs/adr/README.md)
-- [Development guide](docs/development/README.md)
-- [Browser Workspace contract](docs/browser-workspace.md)
+---
 
-## Architecture
+## ✨ Funcionalidades Principais
+
+- **🧠 Chat Multi-Provedor** — Troca dinâmica entre LLMs locais (llama.cpp + TurboQuant), NVIDIA NIM, Vertex AI, Kimi Coding, DeepSeek e OpenAI-compatible, com streaming em tempo real via SSE.
+- **💾 Memória de Longo Prazo** — Sistema de memória estruturada (projetos) + operacional (runtime) com embeddings semânticos (pgvector) e recuperação contextual automática.
+- **🌐 Browser Workspace** — Automação de navegador via CDP/LightPanda com cooperação human-in-the-loop: o agente navega, você aprova ações sensíveis.
+- **🛠️ Sistema de Ferramentas (Tools)** — Runtime extensível com ferramentas para Git, filesystem, shell, browser e skills injetáveis dinamicamente.
+- **👥 Team Mode** — Orquestração multi-agente onde múltiplos especialistas colaboram em uma única conversa com aprovação de planos.
+- **📝 Plan Mode** — O agente propõe planos de ação passo-a-passo; cada ferramenta só executa com sua aprovação explícita.
+- **💻 Desktop Nativo** — Aplicativo Electron com React 19, TypeScript, Tailwind CSS e estado gerenciado via Zustand.
+- **🔌 CLI Profissional** — Interface de linha de comando completa com Typer e Rich para chat, servidor API e gerenciamento de conversas.
+- **🔒 Segurança Local-First** — Autenticação local apenas, escaneamento de secrets (gitleaks), testes de segurança automatizados e sandbox de paths.
+
+---
+
+## 🏗️ Arquitetura
+
+O projeto segue **Clean Architecture** com separação estrita de responsabilidades:
 
 ```
-PersonAgent/
-├── @backend/                    ← Python + FastAPI
-│   ├── src/personagent/
-│   │   ├── domain/              ← Pure business concepts
-│   │   ├── application/         ← Use cases and orchestration
-│   │   ├── infrastructure/      ← External adapters
-│   │   └── interfaces/          ← FastAPI + CLI
-│   └── pyproject.toml
-│
-├── @llama/                      ← Fork llama.cpp + TurboQuant
-│   ├── llama-cpp-turboquant/    ← Inference runtime
-│   ├── scripts/
-│   │   ├── build.sh
-│   │   ├── start-server.sh
-│   │   └── stop-server.sh
-│   └── models/                  ← GGUF symlinks
-│
-├── @desktop-electron/           ← Electron + React desktop client (official desktop app)
-│   ├── electron/                ← main/preload with isolated IPC
-│   └── src/                     ← React renderer, shadcn-style UI, Chat
-│
-├── docs/                        ← Central documentation hub
-├── docker-compose.yml           ← PostgreSQL
-├── config.yaml                  ← YAML configuration
-└── .env                         ← Environment variables
+┌─────────────────────────────────────────────────────────────┐
+│  Electron Desktop (React + TypeScript + Zustand)           │
+│  └── Chat │ Session Panel │ Browser │ Git Workspace │ Skills│
+└──────────────────────┬──────────────────────────────────────┘
+                       │ HTTP / SSE / WebSocket
+┌──────────────────────▼──────────────────────────────────────┐
+│  FastAPI Backend (Python 3.11+, async)                      │
+│  ┌─────────────┐ ┌──────────────┐ ┌──────────────────────┐  │
+│  │  Interfaces │ │ Application  │ │   Infrastructure     │  │
+│  │  (API/CLI)  │ │ (Use Cases)  │ │ (DB, LLM, Browser)   │  │
+│  └─────────────┘ └──────────────┘ └──────────────────────┘  │
+│         ▲                ▲                    ▲              │
+│         └────────────────┴────────────────────┘              │
+│                        Domain (Modelos Puros)                │
+└─────────────────────────────────────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────────────┐
+│  PostgreSQL + pgvector  │  llama.cpp/TurboQuant  │  Docker  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Quick Start
+**Princípios aplicados:**
+- **Dependency Rule:** `Domain` não conhece frameworks; `Application` orquestra; `Infrastructure` adapta externo; `Interfaces` expõe HTTP/CLI.
+- **Ports & Adapters:** Repositórios abstratos com implementações PostgreSQL; LLM providers intercambiáveis via adapter pattern.
+- **Event-Driven:** SSE para invalidação de cache desktop; WebSocket para chat em tempo real.
 
-### 1. Prerequisites
+---
 
-- Python 3.11+
-- Node.js 20+ and npm
-- PostgreSQL through Docker
-- CUDA Toolkit for NVIDIA GPU acceleration
-- **cmake**, **build-essential**
+## 🚀 Tecnologias
 
-### 2. Start PostgreSQL
+| Camada | Stack |
+|--------|-------|
+| **Backend** | Python 3.11+, FastAPI, Pydantic v2, SQLAlchemy 2.0 (async), Alembic, structlog, typer, rich |
+| **Desktop** | Electron 41, React 19, TypeScript 5, Vite, Tailwind CSS, Radix UI, Zustand, TanStack Query |
+| **LLM/IA** | llama.cpp (TurboQuant KV-cache), NVIDIA NIM, Vertex AI, Kimi Coding, DeepSeek, OpenAI-compatible |
+| **Dados** | PostgreSQL 15, pgvector, embeddings locais (GGUF), operational memory semântica |
+| **DevOps** | Docker Compose, GitHub Actions (CI/CD), gitleaks, pre-commit, ruff, mypy, pytest, vitest |
+| **Browser** | Playwright, LightPanda/CDP, automação com aprovação human-in-the-loop |
+
+---
+
+## ⚡ Quick Start
+
+> **Pré-requisitos:** Python 3.11+, Node.js 20+, Docker, cmake, build-essential
 
 ```bash
+# 1. Clone e entre no repo
+git clone https://github.com/levygit837-cyber/PersonAgent.git
+cd PersonAgent
+
+# 2. Inicie o PostgreSQL
 docker compose up -d postgres
-```
 
-### 3. Build llama.cpp with TurboQuant
-
-```bash
-cd @llama
-./scripts/build.sh
-```
-
-### 4. Install Python Dependencies
-
-```bash
+# 3. Backend
 cd @backend
 pip install -e ".[dev]"
-```
+personagent serve --port 8000 --reload
 
-### 5. Start The System
-
-```bash
-# CLI
-personagent chat -m "Hello, who are you?"
-
-# API server
-personagent serve --port 8000
-```
-
-### 6. Start The Desktop
-
-```bash
+# 4. Desktop (novo terminal)
 cd @desktop-electron
 npm install
 npm run dev
 ```
 
-## TurboQuant
+Veja o [guia completo](docs/development/README.md) para build do llama.cpp e configuração de provedores.
 
-TurboQuant is an extreme KV cache quantization mode used by the local llama.cpp
-runtime. Current defaults are configured for long-context local inference:
+---
 
-```yaml
-llm:
-  cache_type_k: "turbo4"
-  cache_type_v: "turbo4"
-  ctx_size: 262144
-```
+## 📊 Status do Projeto
 
-## API
+| Aspecto | Status |
+|---------|--------|
+| **Fase** | Alpha — funcional, em evolução rápida |
+| **Commits** | 45+ em 3 semanas |
+| **Testes** | 20+ suites (pytest + vitest), CI ativo |
+| **Documentação** | 21 ADRs, docs completos, API reference |
+| **Qualidade** | ruff, mypy, pre-commit, gitleaks no CI |
 
-The full active API map is maintained in [docs/api/README.md](docs/api/README.md).
-Major route groups:
+---
 
-- `/chat` for completions, prompt preview, approvals, providers, and Team Mode.
-- `/conversations` for conversation list/detail/fork/delete/search.
-- `/sessions` for session panel and Browser Workspace actions.
-- `/memory` for structured and operational memory.
-- `/workspace` for files, mentions, Git, worktrees, and PR operations.
-- `/skills` for installed and marketplace skills.
-- `/qa` for execution-to-code graph tracing.
-- `/events/state` for desktop cache invalidation events.
+## 🎓 Aprendizados Técnicos (Relevante para Júnior)
 
-## CLI Commands
+Este projeto foi construído do zero como exercício de consolidação de habilidades fullstack:
 
-```bash
-# Interactive chat
-personagent chat -m "Your message here"
+- **Arquitetura de Software:** Aplicação prática de Clean Architecture, Dependency Inversion e Ports & Adapters em código real (não teoria).
+- **Async Python:** Uso intensivo de `async/await`, SQLAlchemy async, SSE streaming e gerenciamento de estado concorrente.
+- **Integração LLM:** Abstração de múltiplos providers com parsing compatível OpenAI, retry com backoff, orquestração de tool-calling e streaming.
+- **Desktop Development:** IPC seguro no Electron (contextIsolation + preload scripts), state management com Zustand, bundling com Vite.
+- **DevOps & Qualidade:** Pipeline CI/CD completo, linting estrito, testes de segurança, documentação de decisões arquiteturais (ADRs).
+- **Product Thinking:** Design de um produto real com preocupações de UX (Plan Mode, aprovações, memória contextual) e não apenas CRUD.
 
-# Streaming without visible reasoning
-personagent chat -m "Explain quantum computing" --no-think
+---
 
-# Model status
-personagent model --status
+## 📚 Documentação Técnica
 
-# List conversations
-personagent conversations-list
+- [Visão Geral da Arquitetura](docs/architecture/overview.md)
+- [API Reference](docs/api/README.md)
+- [ADR Index — 21 Decisões Arquiteturais](docs/adr/README.md)
+- [Guia de Desenvolvimento](docs/development/README.md)
+- [Backend & LLM Providers](docs/backend/README.md)
 
-# Start API server
-personagent serve --port 8000 --reload
-```
+---
+
+## 📝 Licença
+
+[MIT](LICENSE) © 2026 levygit837-cyber
