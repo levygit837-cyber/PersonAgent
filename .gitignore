@@ -3,19 +3,14 @@
 
 # Benchmarks
 .benchmarks/
-
 # MCP Data
 .mcp_data/
-
 # Playwright MCP
 .playwright-mcp/
-
 # Pytest Cache
 .pytest_cache/
-
 # Print directory
 print/
-
 # Backend Python
 @backend/.mypy_cache/
 @backend/.pytest_cache/
@@ -31,7 +26,6 @@ print/
 @backend/.venv/
 @backend/venv/
 @backend/.env
-
 # Frontend Node
 frontend/node_modules/
 frontend/dist/
@@ -43,7 +37,6 @@ frontend/.npm/
 frontend/.eslintcache
 frontend/.env
 frontend/.env.local
-
 # Desktop Electron
 @desktop-electron/node_modules/
 @desktop-electron/dist/
@@ -52,13 +45,11 @@ frontend/.env.local
 @desktop-electron/.eslintcache
 @desktop-electron/.env
 @desktop-electron/.env.local
-
 # Llama (fork - ignore build artifacts)
 @llama/llama-cpp-turboquant/build/
 @llama/llama-cpp-turboquant/*.so
 @llama/llama-cpp-turboquant/*.dylib
 @llama/llama-cpp-turboquant/*.dll
-
 # General
 .env
 .env.local
@@ -68,18 +59,89 @@ frontend/.env.local
 *.temp
 .DS_Store
 Thumbs.db
-
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
 # OS
-.DS_Store
 .AppleDouble
 .LSOverride
-Thumbs.db
 ehthumbs.db
 Desktop.ini
+# ============================
+# Portfolio protection rules
+# Logs e arquivos temporários
+*.txt
+!requirements.txt
+logs/
+tmp/
+temp/
+# Arquivos de IA / Assistants
+.aider/
+.agents/
+.archive/
+.bg-shell/
+.claude/
+.clinerules/
+.codex/
+.factory/
+.kiro/
+.mcp.json
+.planning/
+.playwright-cli/
+.qwen/
+.windsurf/
+codedb.snapshot
+# Status / Temp docs
+ANALISE*.md
+ANALISE-*.md
+CORRECAO*.md
+CORRECAO-*.md
+DECISAO*.md
+IMPLEMENTACAO*.md
+IMPLEMENTATION_*.md
+RESUMO*.md
+RESUMO-*.md
+SOLUCAO*.md
+STREAMING_FIX*.md
+SUCESSO*.md
+TESTE*.md
+SELFCODE-REVIEW*.md
+CODE-REVIEW*.md
+LIGHTPANDA*.md
+PROJECT_STRUCTURE.md
+FRONTEND_CONECTADO.md
+PHASE-*-TEST-RESULTS.md
+blocked.txt
+pytest_output.txt
+pytest_fail_details.txt
+# Arquivos binários / Artefatos
+*.docx
+*.doc
+*.xlsx
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+output/
+# IDE / Local
+# Secrets / Configs locais
+config.yaml
+config.local.yaml
+!.env.example
+# Dependências
+node_modules/
+vendor/
+__pycache__/
+*.pyc
+*.pyo
+.gitkeep
+# Build / Dist
+dist/
+build/
+coverage/
+*.tsbuildinfo
