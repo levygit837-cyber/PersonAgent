@@ -145,3 +145,8 @@ dist/
 build/
 coverage/
 *.tsbuildinfo
+
+# Documentacoes tecnicas internas - nao commitar em repo publico
+docs/adr/
+AGENTS.md
+docker-compose.yml
