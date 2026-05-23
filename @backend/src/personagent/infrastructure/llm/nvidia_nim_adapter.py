@@ -47,33 +47,45 @@ KNOWN_REASONING_CHAT_MODELS = {
     # DeepSeek models
     "deepseek-ai/deepseek-v4-flash",
     "deepseek-ai/deepseek-v4-pro",
-    "deepseek-ai/deepseek-v3.2",
-    "deepseek-ai/deepseek-v3.1-terminus",
     # NVIDIA Nemotron models
     "nvidia/nemotron-3-nano-30b-a3b",
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-    "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-    "nvidia/nemotron-4-340b-instruct",
-    "nvidia/nemotron-4-340b-reward",
+    "nvidia/llama-3.1-nemotron-51b-instruct",
     "nvidia/llama-3.1-nemotron-70b-instruct",
     "nvidia/llama-3.1-nemotron-ultra-253b-v1",
-    # Moonshot AI Kimi K2 models (500B+ params alternatives)
-    "moonshotai/kimi-k2-instruct",
-    "moonshotai/kimi-k2-instruct-0905",
-    "moonshotai/kimi-k2-thinking",
-    "moonshotai/kimi-k2.5",
+    "nvidia/llama-3.3-nemotron-super-49b-v1",
+    "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    "nvidia/nemotron-3-super-120b-a12b",
+    "nvidia/nemotron-4-340b-instruct",
+    "nvidia/nemotron-4-340b-reward",
+    "nvidia/nemotron-nano-3-30b-a3b",
+    "nvidia/nvidia-nemotron-nano-9b-v2",
+    # Moonshot AI Kimi K2 models
+    "moonshotai/kimi-k2.6",
     # Mistral models
     "mistralai/mistral-large-3-675b-instruct-2512",
     "mistralai/mistral-large-2-instruct",
     "mistralai/mistral-large",
     "mistralai/mistral-medium-3.5-128b",
-    # Meta Llama 405B
+    "mistralai/mistral-small-4-119b-2603",
+    # Meta Llama
     "meta/llama-3.1-405b-instruct",
+    "meta/llama-4-maverick-17b-128e-instruct",
     # Qwen large models (480B+)
     "qwen/qwen3-coder-480b-a35b-instruct",
     "qwen/qwen3.5-397b-a17b",
     "qwen/qwen3.5-122b-a10b",
     "qwen/qwen3-next-80b-a3b-thinking",
+    # OpenAI OSS models
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    # ByteDance
+    "bytedance/seed-oss-36b-instruct",
+    # Zhipu AI (GLM)
+    "z-ai/glm-5.1",
+    "z-ai/glm5",
+    # Stepfun
+    "stepfun-ai/step-3.5-flash",
 }
 
 THINKING_TEMPLATE_KWARGS_MODELS = {
@@ -95,7 +107,7 @@ class NvidiaNimAdapter(LLMBackendRepository):  # type: ignore[misc]
         api_key: str = "",
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         stream_read_timeout: float | None = DEFAULT_STREAM_READ_TIMEOUT_SECONDS,
-        default_model: str = "deepseek-ai/deepseek-v4-flash",
+        default_model: str = "moonshotai/kimi-k2.6",
         default_max_tokens: int = DEFAULT_OUTPUT_TOKENS,
         models_cache_ttl_seconds: int = 300,
         provider_key: str = "nvidia",

@@ -116,7 +116,7 @@ class Settings(BaseSettings):
         alias="NVIDIA_BASE_URL",
     )
     nvidia_default_model: str = Field(
-        default="moonshotai/kimi-k2.5",
+        default="moonshotai/kimi-k2.6",
         alias="NVIDIA_DEFAULT_MODEL",
     )
     nvidia_timeout_seconds: float = Field(default=120.0, alias="NVIDIA_TIMEOUT_SECONDS")

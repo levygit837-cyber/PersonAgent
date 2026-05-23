@@ -90,6 +90,17 @@ from personagent.interfaces.api.action_approvals import canonical_args_hash
 
 logger = structlog.get_logger(__name__)
 
+_VALID_PERMISSION_MODES = frozenset({
+    "ask_for_risk",
+    "manual",
+    "read_only",
+    "readonly",
+    "accept_edits",
+    "full",
+    "bypass",
+    "dont_ask",
+})
+
 
 @dataclass(slots=True)
 class _PromptPackage:
@@ -209,6 +220,9 @@ class ChatCompletionUseCase:
             metadata=self._user_message_metadata(preparation),
         )
         conversation.add_message(user_msg)
+
+        if not request.tool_context.get("permission_mode"):
+            conversation.metadata.pop("permission_mode", None)
 
         # Recall memórias relevantes
         memory_recall = await self._recall_relevant_memories(
@@ -450,6 +464,8 @@ class ChatCompletionUseCase:
             )
             conversation.add_message(user_msg)
             await self._conversation_repo.update(conversation)
+            if not request.tool_context.get("permission_mode"):
+                conversation.metadata.pop("permission_mode", None)
 
         # Emite status para o frontend saber que está montando o prompt
         yield StreamChunk(metadata={"event": "status", "status": status})
@@ -2355,13 +2371,20 @@ class ChatCompletionUseCase:
 
         plan_state = normalize_plan_state(conversation.metadata)
         plan_active = is_plan_mode_active(conversation.metadata)
+        permission_mode = (
+            str(raw_context.get("permission_mode")).strip().lower()
+            if raw_context.get("permission_mode")
+            else str(conversation.metadata.get("permission_mode") or "ask_for_risk")
+        )
+        if permission_mode not in _VALID_PERMISSION_MODES:
+            permission_mode = "ask_for_risk"
         return ToolUseContext(
             conversation_id=str(conversation.id),
             workspace_root=workspace_root,
             cwd=cwd,
             allowed_roots=allowed_roots,
             permissions={
-                "mode": "ask_for_risk",
+                "mode": permission_mode,
                 "plan_mode": plan_active,
             },
             limits={

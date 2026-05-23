@@ -141,6 +141,7 @@ interface SendMessageOptions {
   displayAttachments?: ContextAttachment[];
   hideUserMessage?: boolean;
   planModeRequested?: boolean;
+  permissionMode?: string;
 }
 
 export type ChatStoreApi = StoreApi<ChatState>;
@@ -358,6 +359,7 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
       systemPrompt,
       contextAttachments,
       planModeRequested: options?.planModeRequested,
+      permissionMode: options?.permissionMode,
     };
     const payload = buildChatRequest(requestInput);
 

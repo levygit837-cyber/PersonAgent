@@ -32,7 +32,7 @@ llama:
 nvidia:
   api_key: ""
   base_url: "https://integrate.api.nvidia.com/v1"
-  default_model: "openai/gpt-oss-120b"
+  default_model: "moonshotai/kimi-k2.6"
 
 vertex:
   auth_mode: "auto"

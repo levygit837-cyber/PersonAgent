@@ -224,7 +224,7 @@ def test_nvidia_stream_parser_keeps_kimi_mixed_content_visible():
 
     chunk = adapter._parse_stream_chunk(
         {
-            "model": "moonshotai/kimi-k2.5",
+            "model": "moonshotai/kimi-k2.6",
             "choices": [
                 {
                     "delta": {
@@ -235,7 +235,7 @@ def test_nvidia_stream_parser_keeps_kimi_mixed_content_visible():
                 }
             ],
         },
-        "moonshotai/kimi-k2.5",
+        "moonshotai/kimi-k2.6",
     )
 
     assert chunk.content == " OK"
@@ -366,7 +366,7 @@ def test_nvidia_model_catalog_filters_reasoning_chat_models():
                 {"id": "nvidia/nemotron-3-nano-30b-a3b"},
                 {"id": "nvidia/llama-nemotron-embed-1b-v2"},
                 {"id": "nvidia/nemotron-3-content-safety"},
-                {"id": "moonshotai/kimi-k2-thinking"},
+                {"id": "moonshotai/kimi-k2.6"},
             ]
         }
     )
@@ -378,7 +378,7 @@ def test_nvidia_model_catalog_filters_reasoning_chat_models():
         "deepseek-ai/deepseek-v4-flash",
         "deepseek-ai/deepseek-v4-pro",
         "nvidia/nemotron-3-nano-30b-a3b",
-        "moonshotai/kimi-k2-thinking",
+        "moonshotai/kimi-k2.6",
     ]
     assert filtered["data"][0]["supports_streaming"] is True
     assert filtered["data"][0]["supports_reasoning"] is True

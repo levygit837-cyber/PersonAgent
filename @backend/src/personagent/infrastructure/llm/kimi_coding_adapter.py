@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
+import os
+import sys
+import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -24,6 +30,7 @@ from personagent.domain.repositories.llm_backend_repository import LLMBackendRep
 logger = structlog.get_logger(__name__)
 
 DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1"
+TOKEN_SYNC_SCRIPT = Path(__file__).resolve().parent.parent.parent.parent.parent.parent / "scripts" / "kimi_token_sync.py"
 DEFAULT_MODEL = "kimi-for-coding"
 DEFAULT_OUTPUT_TOKENS = 32768
 DEFAULT_CONTEXT_WINDOW = 262144
@@ -83,9 +90,64 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
         }
         self._client: httpx.AsyncClient | None = None
 
+    async def _try_auto_refresh_token(self) -> bool:
+        """Run the external sync script to refresh the Kimi CLI token."""
+        if not TOKEN_SYNC_SCRIPT.exists():
+            logger.debug("kimi_token_sync.py not found, skipping auto-refresh")
+            return False
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                str(TOKEN_SYNC_SCRIPT),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=35)
+            if proc.returncode != 0:
+                logger.warning("kimi_token_sync failed", stderr=stderr.decode()[:200])
+                return False
+            # Re-read token from credentials file
+            creds_path = Path.home() / ".kimi" / "credentials" / "kimi-code.json"
+            if creds_path.exists():
+                with open(creds_path) as f:
+                    creds = json.load(f)
+                new_token = creds.get("access_token", "").strip()
+                if new_token and new_token != self.api_key:
+                    self.api_key = new_token
+                    self.headers["Authorization"] = f"Bearer {self.api_key}"
+                    # Reset client so it picks up new headers
+                    if self._client is not None and not self._client.is_closed:
+                        await self._client.aclose()
+                    self._client = None
+                    logger.info("kimi_token_sync refreshed access token")
+                    return True
+            return False
+        except Exception as exc:
+            logger.warning("kimi_token_sync exception", exc=exc)
+            return False
+
+    def _is_token_expired(self) -> bool:
+        """Decode JWT exp claim without verification."""
+        if not self.api_key:
+            return True
+        try:
+            payload_b64 = self.api_key.split(".")[1]
+            padding = 4 - len(payload_b64) % 4
+            if padding != 4:
+                payload_b64 += "=" * padding
+            payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+            exp = payload.get("exp", 0)
+            return time.time() > (exp - 300)  # Refresh if expires in < 5 min
+        except Exception:
+            return True
+
     async def _get_client(self) -> httpx.AsyncClient:
         if not self.api_key:
             raise LLMBackendConnectionError("KIMI_API_KEY is not configured")
+        if self._is_token_expired():
+            await self._try_auto_refresh_token()
+        if not self.api_key:
+            raise LLMBackendConnectionError("KIMI_API_KEY is not configured and auto-refresh failed")
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
@@ -129,6 +191,13 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
         except httpx.TimeoutException as exc:
             raise LLMBackendTimeoutError(f"Timeout calling Kimi Code ({self.timeout}s)") from exc
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 401:
+                refreshed = await self._try_auto_refresh_token()
+                if refreshed:
+                    client = await self._get_client()
+                    response = await client.post("/messages", json=payload)
+                    response.raise_for_status()
+                    return self._parse_message_response(response.json(), payload["model"])
             raise self._http_error(exc, "Kimi Code") from exc
 
         return self._parse_message_response(response.json(), payload["model"])
@@ -191,6 +260,36 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
                 f"Timeout streaming from Kimi Code ({self._stream_timeout_label()}, model={payload['model']})"
             ) from exc
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 401:
+                refreshed = await self._try_auto_refresh_token()
+                if refreshed:
+                    client = await self._get_client()
+                    async with client.stream(
+                        "POST",
+                        "/messages",
+                        json=payload,
+                        timeout=self._stream_timeout_config(),
+                    ) as response:
+                        if response.status_code >= 400:
+                            await response.aread()
+                        response.raise_for_status()
+                        response.encoding = "utf-8"
+                        async for line in response.aiter_lines():
+                            if not line.startswith("data:"):
+                                continue
+                            data_str = line.removeprefix("data:").strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                continue
+                            chunk, done = self._parse_stream_event(data, state)
+                            if not chunk.is_empty:
+                                yield chunk
+                            if done:
+                                break
+                    return
             raise self._http_error(exc, "Kimi Code") from exc
 
     async def health_check(self) -> dict[str, Any]:

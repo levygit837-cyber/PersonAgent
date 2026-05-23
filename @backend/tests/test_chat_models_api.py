@@ -186,7 +186,7 @@ class FakeCodexBackend:
 class FakeContainer:
     def __init__(self) -> None:
         self.settings = SimpleNamespace(
-            nvidia_default_model="deepseek-ai/deepseek-v4-flash",
+            nvidia_default_model="moonshotai/kimi-k2.6",
             deepseek_default_model="deepseek-v4-flash",
             zenmux_default_model="deepseek/deepseek-v4-flash-free",
             vertex_default_model="gemini-3.1-flash-lite-preview",

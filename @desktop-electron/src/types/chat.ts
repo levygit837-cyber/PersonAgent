@@ -119,6 +119,7 @@ export interface ChatRequestPayload {
     workspace_root: string;
     cwd: string;
     allowed_roots: string[];
+    permission_mode?: string;
   };
   context_attachments?: ContextAttachment[];
   plan_mode_requested?: boolean;
@@ -801,6 +802,7 @@ export function buildChatRequest(input: {
   promptMode?: PromptMode;
   contextAttachments?: ContextAttachment[];
   planModeRequested?: boolean;
+  permissionMode?: string;
 }): ChatRequestPayload {
   const trimmedWorkspace = input.workspaceRoot?.trim();
   const reasoningPreset =
@@ -831,6 +833,9 @@ export function buildChatRequest(input: {
       cwd: trimmedWorkspace,
       allowed_roots: [trimmedWorkspace],
     };
+    if (input.permissionMode) {
+      payload.tool_context.permission_mode = input.permissionMode;
+    }
   }
 
   return payload;

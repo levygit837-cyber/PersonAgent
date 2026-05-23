@@ -644,6 +644,8 @@ async def _approve_pending_tool_call(
         "result_status": result.status.value,
     }
     conversation.metadata["session_status"] = "running"
+    if not resume_request.tool_context.get("permission_mode"):
+        conversation.metadata["permission_mode"] = "accept_edits"
     await conv_repo.update(conversation)
     return use_case, resume_request, pending, result
 
