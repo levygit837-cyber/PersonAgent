@@ -50,11 +50,14 @@ jobs:
           uv run mypy \
             src/personagent/application/state/request_context.py \
             src/personagent/application/state/app_state.py \
+            src/personagent/application/state/tenancy.py \
             src/personagent/application/state/__init__.py \
             src/personagent/application/use_cases/context \
             src/personagent/application/tools/runtime_config.py \
             src/personagent/infrastructure/persistence/migration_runner.py \
-            src/personagent/infrastructure/persistence/alembic/env.py
+            src/personagent/infrastructure/persistence/alembic/env.py \
+            src/personagent/domain/models/tenancy.py \
+            src/personagent/domain/models/conversation.py
 
       - name: Unit tests
         # tests/integration/ requires Postgres + pgvector and is not

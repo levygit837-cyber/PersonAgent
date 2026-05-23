@@ -205,7 +205,45 @@ async def init_db() -> None:
             for statement in OPERATIONAL_MEMORY_SCHEMA_STATEMENTS:
                 await conn.execute(text(statement))
 
+        await _seed_default_tenant(conn)
+
     await _ensure_alembic_baseline()
+
+
+# Hard-coded here (rather than imported from
+# ``personagent.domain.models.tenancy``) to keep this bootstrap module
+# free of cross-layer imports. The two definitions are guarded by a unit
+# test that asserts they stay in sync.
+_DEFAULT_TENANT_ID_STR = "00000000-0000-0000-0000-000000000001"
+_DEFAULT_TENANT_SLUG = "default"
+_DEFAULT_TENANT_NAME = "Default"
+
+
+async def _seed_default_tenant(conn) -> None:  # type: ignore[no-untyped-def]
+    """Ensure the always-on default tenant row exists.
+
+    Alembic revision ``0002`` performs the same insert; running it here
+    too means fresh installs (which currently take the
+    ``create_all + stamp_head`` path instead of ``upgrade_to_head``) also
+    get the row. ``ON CONFLICT DO NOTHING`` keeps it idempotent.
+    """
+
+    if "tenants" not in Base.metadata.tables:
+        return
+
+    await conn.execute(
+        text(
+            """
+            INSERT INTO tenants (id, slug, name, metadata)
+            VALUES (CAST(:tenant_id AS uuid), :slug, :name, '{}'::jsonb)
+            ON CONFLICT (id) DO NOTHING
+            """
+        ).bindparams(
+            tenant_id=_DEFAULT_TENANT_ID_STR,
+            slug=_DEFAULT_TENANT_SLUG,
+            name=_DEFAULT_TENANT_NAME,
+        )
+    )
 
 
 async def _ensure_alembic_baseline() -> None:
