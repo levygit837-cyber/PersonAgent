@@ -3,10 +3,8 @@
 import asyncio
 import base64
 import binascii
-import json
-import re
 from collections.abc import AsyncIterator, Awaitable
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -47,6 +45,54 @@ from personagent.application.tools import (
     ToolRuntimeConfig,
 )
 from personagent.application.tools.runtime_config import resolve_effective_tool_iterations
+from personagent.application.use_cases.chat.helpers import (
+    apply_workspace_metadata as _apply_workspace_metadata,
+)
+from personagent.application.use_cases.chat.helpers import (
+    attach_plan_approval_artifact as _attach_plan_approval_artifact,
+)
+from personagent.application.use_cases.chat.helpers import (
+    browser_target_from_context_attachments as _browser_target_from_context_attachments,
+)
+from personagent.application.use_cases.chat.helpers import (
+    browser_target_reminder as _browser_target_reminder,
+)
+from personagent.application.use_cases.chat.helpers import (
+    context_after_turn_metadata as _context_after_turn_metadata,
+)
+from personagent.application.use_cases.chat.helpers import (
+    context_usage_metadata as _context_usage_metadata,
+)
+from personagent.application.use_cases.chat.helpers import (
+    detect_memory_file_paths as _detect_memory_file_paths,
+)
+from personagent.application.use_cases.chat.helpers import (
+    detect_memory_source_types as _detect_memory_source_types,
+)
+from personagent.application.use_cases.chat.helpers import (
+    image_suffix as _image_suffix,
+)
+from personagent.application.use_cases.chat.helpers import (
+    is_relative_to as _is_relative_to,
+)
+from personagent.application.use_cases.chat.helpers import (
+    optional_int as _optional_int,
+)
+from personagent.application.use_cases.chat.helpers import (
+    set_session_status as _set_session_status,
+)
+from personagent.application.use_cases.chat.state import (
+    AssistantStreamState as _AssistantStreamState,
+)
+from personagent.application.use_cases.chat.state import (
+    MemoryRecallResult as _MemoryRecallResult,
+)
+from personagent.application.use_cases.chat.state import (
+    PromptPackage as _PromptPackage,
+)
+from personagent.application.use_cases.chat.state import (
+    PromptPreparation as _PromptPreparation,
+)
 from personagent.application.use_cases.context import BuildContextUseCase
 from personagent.application.use_cases.memory.recall_memory import RecallMemoryUseCase
 from personagent.domain.context.models import ContextBuildResult, SystemContext, UserContext
@@ -101,54 +147,6 @@ _VALID_PERMISSION_MODES = frozenset({
     "bypass",
     "dont_ask",
 })
-
-
-@dataclass(slots=True)
-class _PromptPackage:
-    system_prompt: str | None
-    user_context_message: str | None
-    metadata: dict[str, Any]
-
-
-@dataclass(slots=True)
-class _MemoryRecallResult:
-    prompt_memories: list[str] = field(default_factory=list)
-    trace: dict[str, Any] | None = None
-
-
-@dataclass(slots=True)
-class _PromptPreparation:
-    request: ChatRequestDTO
-    slash_reminder: str | None = None
-    slash_metadata: dict[str, Any] | None = None
-    context_reminders: list[str] = field(default_factory=list)
-    context_attachment_metadata: list[dict[str, Any]] = field(default_factory=list)
-    browser_target: dict[str, Any] | None = None
-
-
-@dataclass(slots=True)
-class _AssistantStreamState:
-    content_chunks: list[str] = field(default_factory=list)
-    reasoning_chunks: list[str] = field(default_factory=list)
-    images: list[GeneratedImage] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    tool_calls: list[dict[str, Any]] | None = None
-    finish_reason: str | None = None
-    usage: dict[str, int] | None = None
-    model: str = ""
-    provider: str = ""
-
-    @property
-    def content(self) -> str:
-        return "".join(self.content_chunks)
-
-    @property
-    def reasoning_content(self) -> str:
-        return "".join(self.reasoning_chunks)
-
-    @property
-    def has_visible_output(self) -> bool:
-        return bool(self.content or self.images)
 
 
 class ChatCompletionUseCase:
@@ -2522,218 +2520,3 @@ class ChatCompletionUseCase:
             raise ValueError(f"Tool path is outside configured roots: {raw_path}")
         return resolved
 
-
-def _browser_target_from_context_attachments(
-    attachments: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    for attachment in attachments:
-        if not isinstance(attachment, dict) or attachment.get("type") != "browser_tab":
-            continue
-        page_id = str(
-            attachment.get("page_id")
-            or attachment.get("window_id")
-            or attachment.get("tab_id")
-            or ""
-        ).strip()
-        browser_id = str(attachment.get("browser_id") or "").strip()
-        url = str(attachment.get("url") or "").strip()
-        if not page_id and not browser_id and not url:
-            continue
-        return {
-            "type": "browser_tab",
-            "browser_id": browser_id,
-            "page_id": page_id,
-            "window_id": page_id,
-            "tab_id": str(attachment.get("tab_id") or page_id).strip(),
-            "url": url,
-            "title": str(attachment.get("title") or "").strip(),
-            "label": str(attachment.get("label") or "@Browser").strip(),
-        }
-    return None
-
-
-def _browser_target_reminder(target: dict[str, Any] | None) -> str | None:
-    if not target:
-        return None
-    page_id = str(target.get("page_id") or target.get("window_id") or target.get("tab_id") or "").strip()
-    url = str(target.get("url") or "").strip()
-    if page_id:
-        return (
-            "# Browser Tab Target\n\n"
-            "The latest user message attached a specific shared Browser tab. For this turn, "
-            "Browser tools must default to this page_id/window_id, and actions must stay on "
-            "this referenced tab unless the user attaches another Browser tab.\n\n"
-            "```json\n"
-            + json.dumps(target, ensure_ascii=False, indent=2)
-            + "\n```"
-        )
-    if not url:
-        return (
-            "# Browser Window Target\n\n"
-            "The latest user message attached the shared Browser window. For this turn, "
-            "Browser tools should operate inside this conversation's shared Browser workspace. "
-            "Use BrowserListTabs or the current Browser workspace context when a concrete page "
-            "identifier is needed.\n\n"
-            "```json\n"
-            + json.dumps(target, ensure_ascii=False, indent=2)
-            + "\n```"
-        )
-    return (
-        "# Browser Window Target\n\n"
-        "The latest user message attached a shared Browser window or URL target. For this turn, "
-        "use BrowserOpen with the target URL in this conversation's shared Browser workspace "
-        "before browser work if the workspace is not already on that page.\n\n"
-        "```json\n"
-        + json.dumps(target, ensure_ascii=False, indent=2)
-        + "\n```"
-    )
-
-
-_MEMORY_FILE_PATH_RE = re.compile(
-    r"(?:[\w.@+-]+/)+[\w.@+-]+\.(?:py|ts|tsx|js|jsx|json|md|toml|ya?ml|css|html|sql|rs|go)"
-)
-
-
-def _detect_memory_file_paths(message: str) -> list[str]:
-    return list(dict.fromkeys(match.group(0) for match in _MEMORY_FILE_PATH_RE.finditer(message)))
-
-
-def _detect_memory_source_types(message: str) -> list[str]:
-    normalized = message.lower()
-    source_types: list[str] = []
-    if re.search(r"\b(decis[aã]o|decis[õo]es|decision|decisions)\b", normalized):
-        source_types.extend(["decision"])
-    if re.search(r"\b(arquivo|arquivos|file|path|diff)\b", normalized):
-        source_types.extend(["file_state", "file_read", "file_created", "file_edited", "diff_applied"])
-    if re.search(r"\b(comando|command|shell|terminal)\b", normalized):
-        source_types.extend(["command_result", "command_executed"])
-    if re.search(r"\b(erro|error|falha|failure|solution|solu[cç][aã]o)\b", normalized):
-        source_types.extend(["error_solution", "error_found", "solution_attempted"])
-    if re.search(r"\b(resumo|summary|sess[aã]o|session)\b", normalized):
-        source_types.extend(["session_summary", "operational_summary"])
-    return list(dict.fromkeys(source_types))
-
-
-def _is_relative_to(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
-
-
-_CONTEXT_USAGE_METADATA_KEYS = (
-    "context_tokens_estimated",
-    "context_window_tokens",
-    "context_compacted",
-    "prompt_tokens_estimated",
-    "memory_trace",
-    "memory_budget_tokens",
-    "memory_budget_used",
-    "memory_items_injected",
-    "memory_items_omitted",
-    "memory_latency_ms",
-    "memory_filters_applied",
-    "memory_recall_scope",
-    "memory_query_intent",
-    "memory_candidate_count",
-    "memory_discarded_candidates",
-    "memory_included_reasons",
-    "memory_ranking_breakdown",
-    "memory_token_usage",
-)
-
-
-def _context_usage_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: metadata[key]
-        for key in _CONTEXT_USAGE_METADATA_KEYS
-        if metadata.get(key) is not None
-    }
-
-
-def _context_after_turn_metadata(
-    context_metadata: dict[str, Any],
-    state: _AssistantStreamState,
-) -> dict[str, Any]:
-    total_tokens = _usage_int(
-        state.usage,
-        ("total_tokens", "totalTokenCount", "total_token_count"),
-    )
-    if total_tokens is not None:
-        return {"context_tokens_after_turn_estimated": total_tokens}
-
-    base_tokens = _optional_int(context_metadata.get("context_tokens_estimated"))
-    if base_tokens is None:
-        return {}
-
-    output_tokens = _usage_int(
-        state.usage,
-        ("completion_tokens", "output_tokens", "candidatesTokenCount", "candidates_token_count"),
-    )
-    if output_tokens is None:
-        output_text = state.content + state.reasoning_content
-        output_tokens = estimate_text_tokens(output_text)
-        if state.tool_calls:
-            output_tokens += estimate_text_tokens(json.dumps(state.tool_calls, ensure_ascii=False))
-    return {"context_tokens_after_turn_estimated": base_tokens + max(0, output_tokens)}
-
-
-def _image_suffix(mime_type: str) -> str:
-    normalized = mime_type.split(";", 1)[0].strip().lower()
-    if normalized == "image/jpeg":
-        return ".jpg"
-    if normalized == "image/webp":
-        return ".webp"
-    return ".png"
-
-
-def _usage_int(usage: dict[str, int] | None, keys: tuple[str, ...]) -> int | None:
-    if not isinstance(usage, dict):
-        return None
-    for key in keys:
-        parsed = _optional_int(usage.get(key))
-        if parsed is not None:
-            return parsed
-    return None
-
-
-def _optional_int(value: Any) -> int | None:
-    try:
-        if value is None or value == "-":
-            return None
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _apply_workspace_metadata(conversation: Conversation, tool_context: dict[str, Any] | None) -> None:
-    workspace_root = (tool_context or {}).get("workspace_root")
-    if isinstance(workspace_root, str) and workspace_root.strip():
-        conversation.metadata["workspace_root"] = workspace_root.strip()
-
-
-def _set_session_status(conversation: Conversation, status: str) -> None:
-    if status in {"idle", "error", "pending", "running"}:
-        conversation.metadata["session_status"] = status
-
-
-def _attach_plan_approval_artifact(conversation: Conversation, state: dict[str, Any]) -> None:
-    approval_id = str(state.get("approval_id") or "")
-    plan_content = str(state.get("plan_content") or "")
-    if not approval_id or not plan_content:
-        return
-    last_assistant = next(
-        (message for message in reversed(conversation.messages) if message.role == Role.ASSISTANT),
-        None,
-    )
-    if last_assistant is None:
-        return
-    last_assistant.metadata["plan_approval"] = {
-        "conversationId": str(conversation.id),
-        "approvalId": approval_id,
-        "planId": str(state.get("plan_id") or ""),
-        "planContent": plan_content,
-        "planStatus": str(state.get("status") or "awaiting_approval"),
-        "feedback": state.get("feedback"),
-    }
