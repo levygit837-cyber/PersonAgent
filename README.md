@@ -83,21 +83,36 @@ O projeto segue **Clean Architecture** com separação estrita de responsabilida
 git clone https://github.com/levygit837-cyber/PersonAgent.git
 cd PersonAgent
 
-# 2. Inicie o PostgreSQL
+# 2. Prepare a configuração local (cópias dos templates versionados)
+cp .env.example .env                        # ajuste POSTGRES_PASSWORD + chaves de LLM
+cp docker-compose.yml.example docker-compose.yml
+
+# 3. Inicie o PostgreSQL (pgvector)
 docker compose up -d postgres
 
-# 3. Backend
+# 4. Backend
 cd @backend
-pip install -e ".[dev]"
+pip install -e ".[dev]"                     # ou: uv sync --extra dev
+uv run alembic upgrade head                 # aplica as migrations versionadas
 personagent serve --port 8000 --reload
 
-# 4. Desktop (novo terminal)
+# 5. Pre-commit hooks (uma vez por clone)
+cd ..
+@backend/.venv/bin/pre-commit install       # ou: uv run pre-commit install
+
+# 6. Desktop (novo terminal)
 cd @desktop-electron
 npm install
 npm run dev
 ```
 
 Veja o [guia completo](docs/development/README.md) para build do llama.cpp e configuração de provedores.
+
+### CI e qualidade local
+
+- **CI** (`.github/workflows/ci.yml`): ruff + mypy (escopo das partes refatoradas) + pytest unitário + typecheck/vitest do desktop + gitleaks. Roda em todo PR contra `main`.
+- **Pre-commit** (`.pre-commit-config.yaml`): trailing whitespace, EOF, check-yaml/toml, large files, merge-conflict markers, private-key detection, `ruff --fix` no `@backend/`, gitleaks.
+- **Migrations**: `uv run alembic upgrade head` aplica `0001_baseline` + revisões futuras (ver `@backend/README.md`).
 
 ---
 

@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel older runs when a new commit lands on the same ref. Avoids burning
+# minutes on stacked pushes during rebases.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (lint + typecheck + unit tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: "@backend"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.7.9"
+          enable-cache: true
+          cache-dependency-glob: "@backend/uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install backend dependencies
+        run: uv sync --extra dev
+
+      - name: Ruff
+        run: uv run ruff check src/ tests/
+
+      - name: Mypy (non-blocking, scoped to the refactored surfaces)
+        # The wider tree still has pre-existing mypy errors that the
+        # Fase 1 god-file splits will clean up. Scoping to the modules
+        # that have been hardened keeps the gate honest and useful.
+        run: |
+          uv run mypy \
+            src/personagent/application/state \
+            src/personagent/application/use_cases/context \
+            src/personagent/application/tools/runtime_config.py \
+            src/personagent/application/team_chat/orchestrator.py \
+            src/personagent/infrastructure/persistence/migration_runner.py \
+            src/personagent/infrastructure/persistence/alembic/env.py
+
+      - name: Unit tests
+        # tests/integration/ requires Postgres + pgvector and lives in a
+        # separate job below.
+        run: uv run pytest tests/unit -q --no-header
+
+      - name: Alembic + tool-loop regression tests
+        # These two suites cover the Fase 0.1 and Fase 0.2 hardening
+        # and must stay green on every PR.
+        run: uv run pytest tests/test_alembic_setup.py tests/test_tool_loop_limit.py -q --no-header
+
+  desktop:
+    name: desktop-electron (typecheck + vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: "@desktop-electron"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "@desktop-electron/package-lock.json"
+
+      - name: Install desktop dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test -- --run
+
+  gitleaks:
+    name: gitleaks (secret scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks needs full history so it can scan diffs across the
+          # default branch.
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
