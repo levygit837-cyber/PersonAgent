@@ -548,4 +548,3 @@ def _error(call: ToolCall, tool_name: str, message: str) -> ToolResult:
 
 def _deny(message: str) -> ToolPermissionResult:
     return ToolPermissionResult(behavior=ToolPermissionBehavior.DENY, message=message)
-

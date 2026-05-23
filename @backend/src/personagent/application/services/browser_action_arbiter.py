@@ -232,4 +232,3 @@ class BrowserActionArbiter:
                 **(extra or {}),
             }
         }
-

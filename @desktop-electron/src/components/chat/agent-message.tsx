@@ -1315,14 +1315,14 @@ export const MarkdownContent = memo(function MarkdownContent({
             // Check if this is a code block (has code child with className)
             const codeElement = node?.children?.[0];
             const isCodeBlock = codeElement?.tagName === "code" && codeElement?.properties?.className;
-            
+
             if (isCodeBlock) {
               const rawClassName = codeElement.properties.className;
               const className = Array.isArray(rawClassName) ? rawClassName.join(" ") : String(rawClassName ?? "");
               return (
-                <CodeBlock 
-                  className={className} 
-                  node={node} 
+                <CodeBlock
+                  className={className}
+                  node={node}
                   isStreaming={isStreaming}
                   {...props}
                 >
@@ -1330,7 +1330,7 @@ export const MarkdownContent = memo(function MarkdownContent({
                 </CodeBlock>
               );
             }
-            
+
             // Fallback for pre elements that aren't code blocks
             return (
               <pre
@@ -1345,7 +1345,7 @@ export const MarkdownContent = memo(function MarkdownContent({
             // Inline code (not inside pre)
             const match = /language-(\w+)/.exec(className || "");
             const isInline = !match;
-            
+
             if (isInline) {
               return (
                 <code className={`${className ?? ""} break-words`} {...props}>
@@ -1353,7 +1353,7 @@ export const MarkdownContent = memo(function MarkdownContent({
                 </code>
               );
             }
-            
+
             // Code block content - let the pre component handle it
             return <>{children}</>;
           },
