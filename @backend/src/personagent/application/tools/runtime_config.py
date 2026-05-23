@@ -8,6 +8,41 @@ from pathlib import Path
 from personagent.infrastructure.artifacts import DEFAULT_ARTIFACT_ROOT
 
 DEFAULT_MAX_TOOL_ITERATIONS: int | None = None
+"""Default operator-imposed tool iteration limit.
+
+``None`` means the operator does not enforce a cap; the chat loop still applies
+``SAFETY_TOOL_ITERATION_CEILING`` to prevent runaway iterations when neither the
+operator nor the request supplies a value.
+"""
+
+SAFETY_TOOL_ITERATION_CEILING: int = 50
+"""Hard ceiling enforced by the chat completion loop when no other cap is set.
+
+This exists so that a model that keeps emitting tool calls cannot loop
+indefinitely. Explicit ``max_tool_iterations`` values on the request or runtime
+config take precedence over this fallback.
+"""
+
+
+def resolve_effective_tool_iterations(
+    *,
+    request_max: int | None,
+    config_max: int | None,
+    safety_ceiling: int = SAFETY_TOOL_ITERATION_CEILING,
+) -> int:
+    """Pick the effective tool iteration cap for a chat turn.
+
+    Priority: explicit request value > operator-imposed config value > safety
+    ceiling. The result is always a positive integer to guarantee the loop is
+    bounded.
+    """
+
+    for candidate in (request_max, config_max):
+        if candidate is None:
+            continue
+        bounded = max(1, int(candidate))
+        return bounded
+    return max(1, int(safety_ceiling))
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,4 +142,9 @@ def _optional_positive_int(value: int | None) -> int | None:
     return parsed
 
 
-__all__ = ["DEFAULT_MAX_TOOL_ITERATIONS", "ToolRuntimeConfig"]
+__all__ = [
+    "DEFAULT_MAX_TOOL_ITERATIONS",
+    "SAFETY_TOOL_ITERATION_CEILING",
+    "ToolRuntimeConfig",
+    "resolve_effective_tool_iterations",
+]

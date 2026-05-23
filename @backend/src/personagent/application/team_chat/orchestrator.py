@@ -35,6 +35,14 @@ from personagent.domain.tools import ToolCall, ToolExecutionStatus, ToolResult, 
 
 logger = structlog.get_logger(__name__)
 
+SAFETY_TEAM_ROUND_CEILING: int = 25
+"""Hard ceiling on team-mode rounds when ``team.max_rounds`` is ``None``.
+
+Mirrors ``SAFETY_TOOL_ITERATION_CEILING`` in the chat completion path: when the
+operator explicitly opts into "unbounded" rounds we still refuse to loop
+forever, otherwise a non-converging debate could burn budget indefinitely.
+"""
+
 INDEPENDENT_PHASE = "independent_round"
 BLACKBOARD_PHASE = "blackboard_publish"
 DEBATE_PHASE = "debate_round"
@@ -1027,7 +1035,10 @@ class TeamChatOrchestrator:
         yield _blackboard_snapshot_event(run_id, conversation.id, 0, blackboard)
 
         round_index = 1
-        while team.max_rounds is None or round_index <= team.max_rounds:
+        effective_round_cap = (
+            team.max_rounds if team.max_rounds is not None else SAFETY_TEAM_ROUND_CEILING
+        )
+        while round_index <= effective_round_cap:
             if cancel_event.is_set():
                 yield _cancelled_event(run_id, conversation.id)
                 return
