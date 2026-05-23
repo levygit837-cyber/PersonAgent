@@ -53,6 +53,7 @@ jobs:
             src/personagent/application/state/tenancy.py \
             src/personagent/application/state/__init__.py \
             src/personagent/application/use_cases/context \
+            src/personagent/application/use_cases/chat \
             src/personagent/application/tools/runtime_config.py \
             src/personagent/infrastructure/persistence/migration_runner.py \
             src/personagent/infrastructure/persistence/alembic/env.py \
