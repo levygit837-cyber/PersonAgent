@@ -12,7 +12,6 @@ from typing import Any, cast
 import structlog
 
 from personagent.application.dto.chat_dto import ChatRequestDTO, ChatResponseDTO
-from personagent.application.jobs.memory_job import JobType, MemoryJob
 from personagent.application.jobs.memory_job_scheduler import MemoryJobScheduler
 from personagent.application.plan_mode import (
     PENDING_TOOL_APPROVAL_KEY,
@@ -81,6 +80,9 @@ from personagent.application.use_cases.chat.helpers import (
 )
 from personagent.application.use_cases.chat.helpers import (
     set_session_status as _set_session_status,
+)
+from personagent.application.use_cases.chat.operational_memory import (
+    OperationalMemoryCapture,
 )
 from personagent.application.use_cases.chat.state import (
     AssistantStreamState as _AssistantStreamState,
@@ -199,6 +201,11 @@ class ChatCompletionUseCase:
             context_window_tokens=self._context_window_tokens,
             default_output_tokens=self._default_output_tokens,
         )
+        self._operational_memory = OperationalMemoryCapture(
+            memory_service=operational_memory_service,
+            job_scheduler=memory_job_scheduler,
+            tool_runtime_config=tool_runtime_config,
+        )
         self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
         self._artifact_ttl_seconds = artifact_ttl_seconds if artifact_ttl_seconds and artifact_ttl_seconds > 0 else None
 
@@ -242,7 +249,7 @@ class ChatCompletionUseCase:
             memory_trace=memory_recall.trace,
         )
         self._enforce_provider_data_policy(request, prompt_package)
-        await self._capture_operational_user_message(request, context_result, conversation)
+        await self._operational_memory.capture_user_message(request, context_result, conversation)
 
         tool_context = self._build_tool_context(request, conversation, preparation) if tools else None
         result = InferenceResult(content="")
@@ -327,7 +334,7 @@ class ChatCompletionUseCase:
         await self._conversation_repo.update(conversation)
 
         assistant_msg = conversation.messages[-1]
-        await self._capture_operational_assistant_message(
+        await self._operational_memory.capture_assistant_message(
             request,
             context_result,
             conversation,
@@ -343,7 +350,7 @@ class ChatCompletionUseCase:
         )
         await self._refresh_session_title(conversation, was_empty=was_empty)
         # Trigger extração de memória em background
-        await self._trigger_memory_extraction(conversation, request)
+        await self._operational_memory.trigger_memory_extraction(conversation, request)
 
         await self._conversation_repo.update(conversation)
         return ChatResponseDTO(
@@ -509,7 +516,7 @@ class ChatCompletionUseCase:
         self._enforce_provider_data_policy(request, prompt_package)
         if append_user_message:
             self._schedule_background(
-                self._capture_operational_user_message(request, context_result, conversation),
+                self._operational_memory.capture_user_message(request, context_result, conversation),
                 task_name="operational_user_capture",
             )
 
@@ -665,7 +672,7 @@ class ChatCompletionUseCase:
                 async for event in orchestrator.execute(tool_calls, tool_context):
                     if event.result is not None:
                         results_by_id[event.call.id] = event.result
-                        await self._capture_operational_tool_result(
+                        await self._operational_memory.capture_tool_result(
                             request,
                             conversation,
                             event.call,
@@ -765,7 +772,7 @@ class ChatCompletionUseCase:
             None,
         )
         if last_assistant is not None:
-            await self._capture_operational_assistant_text(
+            await self._operational_memory.capture_assistant_text(
                 request,
                 conversation,
                 context_result,
@@ -806,7 +813,7 @@ class ChatCompletionUseCase:
         await self._conversation_repo.update(conversation)
 
         # Trigger extração de memória em background
-        await self._trigger_memory_extraction(conversation, request)
+        await self._operational_memory.trigger_memory_extraction(conversation, request)
 
         await self._refresh_session_title(conversation, was_empty=was_empty)
 
@@ -948,7 +955,7 @@ class ChatCompletionUseCase:
         for result in results:
             call = calls_by_id.get(result.tool_call_id)
             if call is not None:
-                await self._capture_operational_tool_result(
+                await self._operational_memory.capture_tool_result(
                     None,
                     conversation,
                     call,
@@ -1660,7 +1667,7 @@ class ChatCompletionUseCase:
             except Exception:
                 logger.warning("context_build_failed", exc_info=True)
 
-        workspace_root = self._prompt_workspace_root(request)
+        workspace_root = self._operational_memory.resolve_workspace_root(request)
         return ContextBuildResult(
             system_context=SystemContext(
                 workspace_root=str(workspace_root),
@@ -1688,7 +1695,7 @@ class ChatCompletionUseCase:
             Prompt memories plus a UI trace of selected memory sources.
         """
         workspace_root = context_result.system_context.workspace_root
-        project_slug = self._sanitize_project_slug(workspace_root)
+        project_slug = project_slug_from_workspace(workspace_root)
         formatted_memories: list[str] = []
         classic_memories = []
         operational_package = None
@@ -1775,98 +1782,6 @@ class ChatCompletionUseCase:
                 prompt_blocks=formatted_memories,
             ),
         )
-
-    async def _capture_operational_user_message(
-        self,
-        request: ChatRequestDTO,
-        context_result: ContextBuildResult,
-        conversation: Conversation,
-    ) -> None:
-        if self._operational_memory_service is None:
-            return
-        workspace_root = context_result.system_context.workspace_root
-        await self._operational_memory_service.capture_user_message(
-            project_slug=self._sanitize_project_slug(workspace_root),
-            workspace_root=workspace_root,
-            conversation_id=str(conversation.id),
-            message=request.message,
-            metadata={
-                "provider": request.provider,
-                "model": request.model,
-                "prompt_mode": request.prompt_mode,
-            },
-        )
-
-    async def _capture_operational_assistant_message(
-        self,
-        request: ChatRequestDTO,
-        context_result: ContextBuildResult,
-        conversation: Conversation,
-        result: InferenceResult,
-    ) -> None:
-        await self._capture_operational_assistant_text(
-            request,
-            conversation,
-            context_result,
-            content=result.content,
-            reasoning_content=result.reasoning_content,
-            finish_reason=result.finish_reason,
-            provider=str(result.metadata.get("provider") or request.provider),
-            model=result.model or request.model,
-        )
-
-    async def _capture_operational_assistant_text(
-        self,
-        request: ChatRequestDTO,
-        conversation: Conversation,
-        context_result: ContextBuildResult,
-        *,
-        content: str,
-        reasoning_content: str | None,
-        finish_reason: str | None,
-        provider: str | None,
-        model: str | None,
-    ) -> None:
-        if self._operational_memory_service is None:
-            return
-        if not content and not reasoning_content:
-            return
-        workspace_root = context_result.system_context.workspace_root
-        await self._operational_memory_service.capture_assistant_message(
-            project_slug=self._sanitize_project_slug(workspace_root),
-            workspace_root=workspace_root,
-            conversation_id=str(conversation.id),
-            content=content,
-            reasoning_content=reasoning_content,
-            provider=provider or request.provider,
-            model=model or request.model,
-            finish_reason=finish_reason,
-        )
-
-    async def _capture_operational_tool_result(
-        self,
-        request: ChatRequestDTO | None,
-        conversation: Conversation,
-        call: ToolCall,
-        result: ToolResult,
-        tool_context: ToolUseContext,
-    ) -> None:
-        if self._operational_memory_service is None:
-            return
-        workspace_root = str(tool_context.workspace_root)
-        await self._operational_memory_service.capture_tool_result(
-            project_slug=self._sanitize_project_slug(workspace_root),
-            workspace_root=workspace_root,
-            conversation_id=str(conversation.id),
-            call=call,
-            result=result,
-            context=tool_context,
-            task=request.message if request is not None else None,
-        )
-
-    def _sanitize_project_slug(self, workspace_root: str | None) -> str:
-        """Sanitize the directory name for use as project_slug."""
-        return project_slug_from_workspace(workspace_root)
 
     def _extract_recent_tools(
         self,
@@ -2166,57 +2081,6 @@ class ChatCompletionUseCase:
             cleaned = cleaned[len(start_tag) : -len(end_tag)].strip()
         return cleaned
 
-    async def _trigger_memory_extraction(
-        self,
-        conversation: Conversation,
-        request: ChatRequestDTO,
-    ) -> None:
-        """Dispatch a background memory extraction job.
-
-        Args:
-            conversation: Current conversation.
-            request: Chat request.
-        """
-        if self._memory_job_scheduler is None:
-            return
-
-        # Debounce: só extrai se última extração foi há > 60 segundos
-        last_extract = conversation.metadata.get("_last_memory_extraction")
-        if last_extract:
-            from datetime import datetime as dt
-            try:
-                last_dt = dt.fromisoformat(last_extract)
-                elapsed = (dt.now(UTC) - last_dt).total_seconds()
-                if elapsed < 60:
-                    return
-            except (ValueError, TypeError):
-                pass
-
-        workspace_root = self._prompt_workspace_root(request)
-        project_slug = self._sanitize_project_slug(str(workspace_root))
-
-        import uuid
-        job = MemoryJob(
-            id=f"extract_{conversation.id}_{uuid.uuid4().hex}",
-            type=JobType.EXTRACT_MEMORIES,
-            conversation_id=str(conversation.id),
-            project_slug=project_slug,
-            payload={
-                "model": request.model,
-                "provider": request.provider,
-            },
-        )
-        try:
-            await self._memory_job_scheduler.submit_job(job)
-            conversation.metadata["_last_memory_extraction"] = datetime.now(UTC).isoformat()
-            logger.info(
-                "memory_extraction_triggered",
-                conversation_id=str(conversation.id),
-                project_slug=project_slug,
-            )
-        except Exception:
-            logger.warning("memory_extraction_trigger_failed", exc_info=True)
-
     async def _after_turn_services(
         self,
         conversation: Conversation,
@@ -2270,15 +2134,6 @@ class ChatCompletionUseCase:
             if isinstance(function, dict) and function.get("name"):
                 names.append(str(function["name"]))
         return names
-
-    def _prompt_workspace_root(self, request: ChatRequestDTO) -> Path:
-        raw_context = request.tool_context or {}
-        raw_workspace_root = raw_context.get("workspace_root")
-        if raw_workspace_root:
-            return Path(str(raw_workspace_root)).expanduser().resolve()
-        if self._tool_runtime_config is not None:
-            return self._tool_runtime_config.workspace_root.resolve()
-        return Path.cwd().resolve()
 
     def _build_tool_context(
         self,
