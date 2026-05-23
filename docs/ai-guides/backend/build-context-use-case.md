@@ -7,13 +7,15 @@ Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de tes
 
 ## Propósito
 
-Orquestra a montagem de contexto completo para uma conversa: workspace, git status, persona.md, regras do projeto, e memória de longo prazo. Atualiza o `StateManager` singleton com os resultados.
+Orquestra a montagem de contexto completo para uma conversa: workspace, git status, persona.md, regras do projeto, e memória de longo prazo. Retorna o `ContextBuildResult` puro ou, via `build_request_context`, um snapshot imutável `RequestContext` pronto para ser propagado pela cadeia de chamadas.
+
+> **Histórico**: até a Fase 0.3 deste roadmap o use case mutava um `StateManager` singleton com os resultados. Esse padrão foi removido — todo o estado por requisição agora vive em `RequestContext`.
 
 ---
 
 ## Entry Points
 
-### `BuildContextUseCase.execute` @ `application/use_cases/context/build_context.py:60`
+### `BuildContextUseCase.execute` @ `application/use_cases/context/build_context.py:59`
 ```python
 async def execute(
     self,
@@ -25,19 +27,36 @@ async def execute(
   - `conversation_id` — UUID da conversa
   - `use_cache` — se `True`, usa contexto cacheado do `ContextRepository`
 - **Retorna**: `ContextBuildResult` com `system_context` e `user_context`
-- **Side effects**: Atualiza `StateManager` com conversation_id, workspace_root, system_context, user_context
+- **Side effects**: Nenhum estado global. Toca apenas o `ContextRepository` injetado.
 
-### `BuildContextUseCase.clear_context` @ `:90`
+### `BuildContextUseCase.build_request_context` @ `:78`
+```python
+async def build_request_context(
+    self,
+    conversation_id: str,
+    *,
+    use_cache: bool = True,
+    permission_mode: PermissionMode = "manual",
+    tenant_id: str | None = None,
+    user_id: str | None = None,
+    request_id: str | None = None,
+) -> RequestContext
+```
+- Combina `execute()` com `RequestContext.from_build_result`
+- Use sempre que o consumidor precisar passar o contexto adiante na call chain
+
+### `BuildContextUseCase.clear_context` @ `:106`
 ```python
 async def clear_context(self, conversation_id: str) -> None
 ```
-- Limpa cache do `ContextBuilder` e invalida caches do `StateManager`
+- Limpa cache do `ContextBuilder` para a conversa
+- Não toca em nenhum estado global (não há mais singleton para invalidar)
 
 ---
 
 ## Construtor
 
-### `BuildContextUseCase.__init__` @ `:26`
+### `BuildContextUseCase.__init__` @ `:29`
 ```python
 def __init__(
     self,
@@ -49,7 +68,7 @@ def __init__(
 ) -> None
 ```
 - Inicializa `ContextBuilder` com os mesmos parâmetros
-- Obtém `StateManager.get_instance()` (singleton)
+- **Não** captura nenhum singleton
 
 ---
 
@@ -57,17 +76,29 @@ def __init__(
 
 ```
 execute(conversation_id, use_cache=True)
-├── StateManager.set_conversation_id(conversation_id)
-├── StateManager.set_workspace_root(str(workspace_root))
-├── ContextBuilder.build_context(conversation_id=..., use_cache=...)
-│   ├── Carrega persona.md (se enable_persona_md)
-│   ├── Carrega .personagent/rules
-│   ├── Carrega git context (branch, dirty, ahead/behind)
-│   ├── Carrega context attachments
-│   └── Consulta memory_repository (se disponível)
-├── ContextBuildResult retornado
-├── StateManager.set_system_context(asdict(result.system_context))
-└── StateManager.set_user_context(asdict(result.user_context))
+└── ContextBuilder.build_context(conversation_id=..., use_cache=...)
+    ├── Carrega persona.md (se enable_persona_md)
+    ├── Carrega .personagent/rules
+    ├── Carrega git context (branch, dirty, ahead/behind)
+    ├── Carrega context attachments
+    └── Consulta memory_repository (se disponível)
+└── retorna ContextBuildResult
+```
+
+## Fluxo de `build_request_context`
+
+```
+build_request_context(conversation_id, permission_mode="manual", ...)
+├── execute(conversation_id, use_cache=...)
+└── RequestContext.from_build_result(
+        conversation_id=...,
+        workspace_root=str(self._workspace_root),
+        result=...,
+        permission_mode=...,
+        tenant_id=...,
+        user_id=...,
+        request_id=...,
+    )
 ```
 
 ---
@@ -80,7 +111,7 @@ execute(conversation_id, use_cache=True)
 | `ContextBuildResult` | `domain/context/models.py` | Dataclass de resultado |
 | `ContextRepository` | `domain/context/repositories.py` | Port para cache de contexto |
 | `MemoryRepository` | `domain/memory/repositories/memory_repository.py` | Port para memória de longo prazo |
-| `StateManager` | `application/state/services/state_manager.py` | Estado global singleton |
+| `RequestContext` | `application/state/request_context.py` | Snapshot imutável por requisição |
 
 ---
 
@@ -92,19 +123,24 @@ execute(conversation_id, use_cache=True)
 3. Atualizar este AI-Guide
 
 ### Mudar prioridade de persona.md
-- Parâmetro `enable_persona_md` no construtor @ `:30`
+- Parâmetro `enable_persona_md` no construtor @ `:33`
 - Ou modificar `ContextBuilder` para suportar múltiplos arquivos de persona
 
 ### Adicionar cache de contexto
 - Implementar `ContextRepository` (porta abstrata)
 - Injetar no construtor via `context_repository`
 
+### Adicionar campo por requisição
+- Adicionar em `RequestContext` (não em `BuildContextUseCase`)
+- Atualizar `RequestContext.from_build_result` e `with_overrides`
+- Atualizar o passthrough em `build_request_context`
+
 ---
 
 ## Anti-patterns
 
 - **Nunca** ler arquivos do filesystem diretamente neste use case — delegar ao `ContextBuilder`
-- **Nunca** modificar `StateManager` fora dos métodos `execute`/`clear_context`
+- **Nunca** reintroduzir um singleton global para guardar `conversation_id`/`workspace_root` — use `RequestContext`
 - **Nunca** passar `use_cache=False` em hot path sem razão — gera I/O repetido
 
 ---
@@ -115,5 +151,5 @@ execute(conversation_id, use_cache=True)
 - `domain.context.repositories` — `ContextRepository`
 - `domain.context.services.context_builder` — `ContextBuilder`
 - `domain.memory.repositories.memory_repository` — `MemoryRepository`
-- `application.state.services.state_manager` — `StateManager`
+- `application.state` — `RequestContext`, `PermissionMode`
 - Consumido por: `ChatCompletionUseCase` (via DIContainer)

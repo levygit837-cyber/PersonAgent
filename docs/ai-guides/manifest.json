@@ -108,7 +108,7 @@
         "tests/integration/test_sse.py"
       ],
       "risk": "low",
-      "impact": ["StateManager", "FastAPI Routes", "Frontend SSE"]
+      "impact": ["state_events.py subscribers", "FastAPI Routes", "Frontend SSE"]
     },
     "modify_memory_chunking": {
       "decision_tree": "docs/ai-guides/decisions/modify-memory-chunking.md",
@@ -247,13 +247,15 @@
         "SessionTitleBatchResult"
       ]
     },
-    "state_manager": {
+    "request_context": {
       "guide": "docs/ai-guides/backend/state-manager.md",
       "files": [
-        "@backend/src/personagent/application/state/services/state_manager.py"
+        "@backend/src/personagent/application/state/request_context.py",
+        "@backend/src/personagent/application/state/app_state.py"
       ],
       "symbols": [
-        "StateManager",
+        "RequestContext",
+        "PermissionMode",
         "AppState"
       ]
     },

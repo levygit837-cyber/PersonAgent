@@ -82,14 +82,14 @@ Este documento mapea as dependências entre subsistemas do backend. Use-o para e
 | `PromptBuilder` | Chat, Team Mode | `tests/unit/prompts/test_prompt_builder.py` |
 | `PromptContextAnalyzer` | Chat (auto-mode) | `tests/unit/prompts/test_context_analyzer.py` |
 | `BuildContextUseCase` | Chat | `tests/unit/use_cases/test_context.py` |
-| `StateManager` | Chat, BuildContext, PromptBuilder | Difuso — testar tudo |
+| `RequestContext` | Chat, BuildContext | `tests/unit/test_request_context.py` |
 | `SessionTitleService` | Chat (background job) | `tests/unit/services/test_session_titles.py` |
 | `OperationalMemoryService` | Chat (recall), Memory jobs | `tests/integration/test_memory.py` |
 | `MemoryJobScheduler` | Background jobs | `tests/unit/jobs/test_scheduler.py` |
 | `CommandRegistry` | Chat (slash commands) | `tests/unit/domain/prompts/test_commands.py` |
 | `ToolRegistry` | ToolOrchestrator | `tests/unit/tools/test_registry.py` |
 | `DIContainer` | Tudo | `tests/integration/` (smoke tests) |
-| `AppState` | StateManager, BuildContext | Difuso |
+| `AppState` | (none — dataclass passiva) | n/a |
 | `QARuntimeTracer` | QA subsystem apenas | `tests/integration/test_qa.py` |
 | `PythonCodeIndexer` | QA subsystem apenas | `tests/unit/qa/test_indexer.py` |
 
@@ -116,7 +116,7 @@ Interfaces (FastAPI, DIContainer, lifespan)
 
 | Quebra | Onde | Por quê |
 |--------|------|---------|
-| `StateManager` singleton acessado de use cases | `BuildContextUseCase`, `ChatCompletionUseCase` | Estado global é necessário para invalidação de cache cross-use-case |
+| ~~`StateManager` singleton acessado de use cases~~ | Removido na Fase 0.3 | Substituído por `RequestContext` imutável por requisição |
 | `DIContainer` importa tudo | `interfaces/config/di_container.py` | É o wiring layer; aceitável |
 
 ---

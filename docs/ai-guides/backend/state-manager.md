@@ -1,213 +1,136 @@
-# AI-Guide: State Manager
-
+# AI-Guide: Request Context
 
 ## Safety Boundary
 
 Este arquivo orienta navegação e manutenção. Ele não autoriza bypass de testes, permissões, validações de segurança, secrets ou revisão humana.
 
+## Histórico
+
+Até a Fase 0.3 desta refatoração existia um `StateManager` singleton em
+`application/state/services/state_manager.py` que mantinha um único
+`AppState` mutável por processo. O padrão era inseguro para multi-tenant:
+duas requisições concorrentes sobrescreviam o mesmo `conversation_id`,
+`workspace_root`, `system_context`, `user_context` etc.
+
+O singleton foi **removido** nesta fase. Em seu lugar usamos um snapshot
+imutável por requisição: `RequestContext`.
+
 ## Propósito
 
-Singleton que mantém estado global da aplicação em memória: contexto da conversa atual, workspace, permissões, métricas, caches de prompt. Thread-safe por design (processo único).
+`RequestContext` é um `@dataclass(frozen=True, slots=True)` instanciado
+no edge da API (rota FastAPI / handler WebSocket) e propagado
+explicitamente pela cadeia de chamadas. Cada requisição obtém o seu
+próprio contexto, sem compartilhar estado com nenhuma outra requisição.
 
 ---
 
 ## Entry Points
 
-### `StateManager.get_instance` @ `application/state/services/state_manager.py:29`
-```python
-@classmethod
-def get_instance(cls) -> StateManager
-```
-- Cria instância se não existir
-- **Nunca** chamar `StateManager()` diretamente — sempre `get_instance()`
+### `RequestContext.__init__` @ `application/state/request_context.py`
+Construção direta para casos de teste e fluxos sem `BuildContextUseCase`.
 
-### `StateManager.reset` @ `:40`
 ```python
-@classmethod
-def reset(cls) -> None
+RequestContext(
+    request_id="…",            # default: uuid4
+    conversation_id="…",
+    workspace_root="…",
+    permission_mode="manual",  # "auto" | "manual" | "ask"
+    system_context=None,
+    user_context=None,
+    tenant_id=None,
+    user_id=None,
+    created_at=…,              # default: now(UTC)
+    extra={},
+)
 ```
-- Reseta singleton (útil apenas para testes)
+
+### `RequestContext.from_build_result`
+Caminho canônico depois de rodar `BuildContextUseCase`:
+
+```python
+ctx = RequestContext.from_build_result(
+    conversation_id="conv-1",
+    workspace_root="/path/ws",
+    result=context_build_result,
+    permission_mode="auto",
+    tenant_id=None,
+    user_id=None,
+    request_id=None,
+)
+```
+
+### `BuildContextUseCase.build_request_context`
+`application/use_cases/context/build_context.py:78` — atalho que combina
+`execute()` com `RequestContext.from_build_result`. Use sempre que
+precisar do contexto montado e do snapshot da requisição em um único
+passo.
+
+### `RequestContext.with_overrides`
+Devolve uma **cópia** com campos opcionais substituídos. O `request_id`
+e o `created_at` permanecem para preservar a identidade da requisição
+original.
 
 ---
 
-## Estado da Conversa
+## Campos
 
-### `set_conversation_id` @ `:68`
-```python
-def set_conversation_id(self, conversation_id: str) -> None
-```
-- Delega para `AppState.with_conversation()`
-
-### `get_conversation_id` @ `:76`
-```python
-def get_conversation_id(self) -> str
-```
-
-### `set_workspace_root` @ `:80`
-```python
-def set_workspace_root(self, workspace_root: str) -> None
-```
-
-### `get_workspace_root` @ `:88`
-```python
-def get_workspace_root(self) -> str
-```
-
----
-
-## Contexto
-
-### `set_system_context` @ `:121`
-```python
-def set_system_context(self, context: dict[str, Any]) -> None
-```
-- Armazena cópia do dict
-- Atualiza timestamp
-
-### `set_user_context` @ `:134`
-```python
-def set_user_context(self, context: dict[str, Any]) -> None
-```
-
-### `get_system_context` @ `:117`
-```python
-def get_system_context(self) -> dict[str, Any]
-```
-- Retorna **cópia** (não referência)
-
----
-
-## Permissões e Allowlist
-
-### `set_permission_mode` @ `:92`
-```python
-def set_permission_mode(self, mode: str) -> None
-```
-- Modos: `auto`, `manual`, `ask`
-
-### `add_allowed_tool` @ `:143`
-```python
-def add_allowed_tool(self, tool_name: str) -> None
-```
-
-### `remove_allowed_tool` @ `:151`
-```python
-def remove_allowed_tool(self, tool_name: str) -> None
-```
-
-### `get_allowed_tools` @ `:159`
-```python
-def get_allowed_tools(self) -> set[str]
-```
-
----
-
-## Métricas
-
-### `increment_request_count` @ `:163`
-```python
-def increment_request_count(self) -> int
-```
-
-### `add_cost` @ `:172`
-```python
-def add_cost(self, cost_usd: float) -> float
-```
-
-### `add_api_duration` @ `:184`
-```python
-def add_api_duration(self, duration_ms: int) -> int
-```
-
-### `add_tool_duration` @ `:196`
-```python
-def add_tool_duration(self, duration_ms: int) -> int
-```
-
-### `add_tokens_used` @ `:208`
-```python
-def add_tokens_used(self, tokens: int) -> int
-```
-
-### `get_metrics` @ `:220`
-```python
-def get_metrics(self) -> dict[str, Any]
-```
-- Retorna: `total_cost_usd`, `total_api_duration_ms`, `total_tool_duration_ms`, `total_tokens_used`, `request_count`
-
----
-
-## Cache
-
-### `cache_system_prompt` @ `:238`
-```python
-def cache_system_prompt(self, key: str, value: str) -> None
-```
-
-### `get_cached_system_prompt` @ `:247`
-```python
-def get_cached_system_prompt(self, key: str) -> str | None
-```
-
-### `cache_context` @ `:258`
-```python
-def cache_context(self, key: str, value: dict[str, Any]) -> None
-```
-
-### `get_cached_context` @ `:267`
-```python
-def get_cached_context(self, key: str) -> dict[str, Any] | None
-```
-
-### `clear_caches` @ `:234`
-```python
-def clear_caches(self) -> None
-```
-- Limpa todos os caches do `AppState`
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| `request_id` | `str` | UUID gerado por requisição |
+| `conversation_id` | `str` | ID da conversa ativa |
+| `workspace_root` | `str` | Diretório raiz absoluto |
+| `permission_mode` | `str` | `auto` / `manual` / `ask` |
+| `system_context` | `SystemContext \| None` | Snapshot do contexto de sistema |
+| `user_context` | `UserContext \| None` | Snapshot do contexto do usuário |
+| `tenant_id` | `str \| None` | Reservado para multi-tenant |
+| `user_id` | `str \| None` | Reservado para multi-tenant |
+| `created_at` | `datetime` | Timestamp UTC |
+| `extra` | `dict[str, Any]` | Metadados específicos da requisição |
 
 ---
 
 ## AppState
 
-`AppState` @ `application/state/app_state.py` — dataclass que realmente mantém os dados.
-- `conversation_id: str = ""`
-- `workspace_root: str = ""`
-- `permission_mode: str = "manual"`
-- `system_context: dict[str, Any] = {}`
-- `user_context: dict[str, Any] = {}`
-- `settings: dict[str, Any] = {}`
-- `allowed_tools: set[str] = set()`
-- `request_count: int = 0`
-- `total_cost_usd: float = 0.0`
-- `total_api_duration_ms: int = 0`
-- `total_tool_duration_ms: int = 0`
-- `total_tokens_used: int = 0`
-- `session_id: str = ""`
+`AppState` (`application/state/app_state.py`) continua existindo como
+**dataclass passiva** para casos em que código legado ainda precisa do
+shape antigo (testes, scripts). Não há mais singleton segurando-o, e
+nenhum caminho de produção lê/escreve no `AppState`.
+
+Não adicione novas dependências em `AppState`. Adicione campos novos a
+`RequestContext` em vez disso.
 
 ---
 
 ## Quando Modificar
 
-### Adicionar novo campo global
-1. Adicionar campo a `AppState` em `app_state.py`
-2. Adicionar getter/setter em `StateManager`
-3. Atualizar `reset_state()` se necessário
+### Adicionar novo campo de requisição
+1. Adicionar o campo a `RequestContext` em `application/state/request_context.py`
+2. Atualizar `from_build_result` e `with_overrides` se necessário
+3. Propagar pelo `BuildContextUseCase.build_request_context` quando aplicável
+4. Adicionar teste em `tests/unit/test_request_context.py`
 
-### Ajustar modo de permissão default
-- Modificar default em `AppState` ou `set_permission_mode()`
+### Adicionar suporte multi-tenant
+1. Popular `tenant_id` / `user_id` no edge (rota/handler) com base na auth
+2. Repassar o `RequestContext` para use cases que precisarem do tenant
+3. Os campos já existem em `RequestContext` — nenhuma mudança de schema necessária
 
 ---
 
 ## Anti-patterns
 
-- **Nunca** criar `StateManager()` diretamente — use `get_instance()`
-- **Nunca** modificar `_state` diretamente — use setters
-- **Nunca** confiar em `get_system_context()` para mutação — ele retorna cópia
-- **Nunca** manter referências a dicts retornados — sempre trabalhe com cópias
+- **Nunca** reintroduzir um singleton global de estado. Se precisar de
+  estado compartilhado, modele como repositório/serviço injetado via
+  DI container.
+- **Nunca** mutar `RequestContext` diretamente. Use `with_overrides`
+  para produzir uma cópia derivada.
+- **Nunca** passar `dict[str, Any]` no lugar de `RequestContext`. O
+  contrato explícito é o ponto da refatoração.
 
 ---
 
 ## Dependências
 
-- `application.state.app_state` — `AppState`
-- Consumido por: `BuildContextUseCase`, `ChatCompletionUseCase`, `PromptBuilder`, `ToolOrchestrator`
+- `domain.context.models` — `ContextBuildResult`, `SystemContext`, `UserContext`
+- Consumidores diretos: `BuildContextUseCase` (constrói o snapshot).
+  Em PRs subsequentes da Fase 0/1 outros use cases serão atualizados
+  para receber `RequestContext` como parâmetro.
