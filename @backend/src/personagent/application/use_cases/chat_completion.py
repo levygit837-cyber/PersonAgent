@@ -37,7 +37,6 @@ from personagent.application.services.browser_cooperation import (
     browser_agent_context_reminder,
     shared_browser_workspace_reminder,
 )
-from personagent.application.services.operational_memory import project_slug_from_workspace
 from personagent.application.tools import (
     ToolOrchestrator,
     ToolRegistry,
@@ -64,12 +63,6 @@ from personagent.application.use_cases.chat.helpers import (
     context_usage_metadata as _context_usage_metadata,
 )
 from personagent.application.use_cases.chat.helpers import (
-    detect_memory_file_paths as _detect_memory_file_paths,
-)
-from personagent.application.use_cases.chat.helpers import (
-    detect_memory_source_types as _detect_memory_source_types,
-)
-from personagent.application.use_cases.chat.helpers import (
     image_suffix as _image_suffix,
 )
 from personagent.application.use_cases.chat.helpers import (
@@ -81,14 +74,12 @@ from personagent.application.use_cases.chat.helpers import (
 from personagent.application.use_cases.chat.helpers import (
     set_session_status as _set_session_status,
 )
+from personagent.application.use_cases.chat.memory_recall import MemoryRecallCoordinator
 from personagent.application.use_cases.chat.operational_memory import (
     OperationalMemoryCapture,
 )
 from personagent.application.use_cases.chat.state import (
     AssistantStreamState as _AssistantStreamState,
-)
-from personagent.application.use_cases.chat.state import (
-    MemoryRecallResult as _MemoryRecallResult,
 )
 from personagent.application.use_cases.chat.state import (
     PromptPackage as _PromptPackage,
@@ -105,8 +96,6 @@ from personagent.domain.exceptions import (
     ToolLoopLimitExceededError,
 )
 from personagent.domain.memory.repositories.memory_repository import MemoryRepository
-from personagent.domain.memory.services.memory_formatter import MemoryFormatter
-from personagent.domain.memory.services.memory_trace import MemoryTraceBuilder
 from personagent.domain.models.conversation import Conversation, Message, Role
 from personagent.domain.models.inference_result import GeneratedImage, InferenceResult, StreamChunk
 from personagent.domain.prompts.commands import (
@@ -206,6 +195,12 @@ class ChatCompletionUseCase:
             job_scheduler=memory_job_scheduler,
             tool_runtime_config=tool_runtime_config,
         )
+        self._memory_recall = MemoryRecallCoordinator(
+            recall_memory_use_case=recall_memory_use_case,
+            memory_repository=memory_repository,
+            operational_memory_service=operational_memory_service,
+            context_window_tokens=self._context_window_tokens,
+        )
         self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
         self._artifact_ttl_seconds = artifact_ttl_seconds if artifact_ttl_seconds and artifact_ttl_seconds > 0 else None
 
@@ -235,7 +230,7 @@ class ChatCompletionUseCase:
             conversation.metadata.pop("permission_mode", None)
 
         # Recall memórias relevantes
-        memory_recall = await self._recall_relevant_memories(
+        memory_recall = await self._memory_recall.recall(
             request, context_result, conversation
         )
 
@@ -500,7 +495,7 @@ class ChatCompletionUseCase:
         yield StreamChunk(metadata={"event": "status", "status": status})
 
         # Recall memórias relevantes
-        memory_recall = await self._recall_relevant_memories(
+        memory_recall = await self._memory_recall.recall(
             request, context_result, conversation
         )
 
@@ -1677,119 +1672,6 @@ class ChatCompletionUseCase:
             build_duration_ms=0,
             metadata={"source": "fallback"},
         )
-
-    async def _recall_relevant_memories(
-        self,
-        request: ChatRequestDTO,
-        context_result: ContextBuildResult,
-        conversation: Conversation,
-    ) -> _MemoryRecallResult:
-        """Execute relevant-memory recall for the current query.
-
-        Args:
-            request: Chat request DTO.
-            context_result: Build context result.
-            conversation: Current conversation, used to track already_surfaced.
-
-        Returns:
-            Prompt memories plus a UI trace of selected memory sources.
-        """
-        workspace_root = context_result.system_context.workspace_root
-        project_slug = project_slug_from_workspace(workspace_root)
-        formatted_memories: list[str] = []
-        classic_memories = []
-        operational_package = None
-        conversation.metadata.pop("_operational_memory_prompt", None)
-
-        if self._recall_memory_use_case is not None and self._memory_repository is not None:
-            try:
-                memory_dir = await self._memory_repository.get_memory_dir(project_slug)
-
-                # Recupera memórias já surfacadas nesta conversa
-                already_surfaced = set(
-                    conversation.metadata.get("_surfaced_memory_paths", [])
-                )
-
-                recent_tools = self._extract_recent_tools(context_result)
-                memories = await self._recall_memory_use_case.execute(
-                    query=request.message,
-                    memory_dir=memory_dir,
-                    recent_tools=recent_tools,
-                    already_surfaced=already_surfaced,
-                )
-
-                # Atualiza already_surfaced na conversa
-                if memories:
-                    new_paths = [m.path for m in memories]
-                    existing = set(conversation.metadata.get("_surfaced_memory_paths", []))
-                    existing.update(new_paths)
-                    conversation.metadata["_surfaced_memory_paths"] = list(existing)
-
-                classic_memories.extend(memories)
-                formatted_memories.extend(MemoryFormatter.format_relevant_memories(memories))
-            except Exception:
-                logger.warning("memory_recall_failed", exc_info=True)
-
-        if self._operational_memory_service is not None:
-            try:
-                detected_file_paths = _detect_memory_file_paths(request.message)
-                detected_source_types = _detect_memory_source_types(request.message)
-                operational_package = (
-                    await self._operational_memory_service.recall_package_for_prompt(
-                        project_slug=project_slug,
-                        query=request.message,
-                        provider=request.provider,
-                        model=request.model,
-                        conversation_id=None,
-                        current_conversation_id=str(conversation.id),
-                        workspace_root=workspace_root,
-                        source_types=detected_source_types,
-                        file_paths=detected_file_paths,
-                        context_window_tokens=self._context_window_tokens,
-                    )
-                )
-                conversation.metadata["_operational_memory_prompt"] = operational_package.metadata()
-                operational_memory = operational_package.formatted
-                if not operational_memory:
-                    operational_package = (
-                        await self._operational_memory_service.recall_package_for_prompt(
-                            project_slug=project_slug,
-                            query=request.message,
-                            provider=request.provider,
-                            model=request.model,
-                            conversation_id=None,
-                            current_conversation_id=str(conversation.id),
-                            workspace_root=workspace_root,
-                            source_types=detected_source_types,
-                            file_paths=detected_file_paths,
-                            latest_only=True,
-                            context_window_tokens=self._context_window_tokens,
-                        )
-                    )
-                    conversation.metadata["_operational_memory_prompt"] = (
-                        operational_package.metadata()
-                    )
-                    operational_memory = operational_package.formatted
-                if operational_memory:
-                    formatted_memories.append(operational_memory)
-            except Exception:
-                logger.warning("operational_memory_recall_failed", exc_info=True)
-        return _MemoryRecallResult(
-            prompt_memories=formatted_memories,
-            trace=MemoryTraceBuilder.build(
-                classic_memories=classic_memories,
-                operational_package=operational_package,
-                prompt_blocks=formatted_memories,
-            ),
-        )
-
-    def _extract_recent_tools(
-        self,
-        context_result: ContextBuildResult,
-    ) -> list[str]:
-        """Extrai nomes de ferramentas usadas recentemente do contexto."""
-        # TODO: implementar rastreamento real de ferramentas recentes
-        return []
 
     def _conversation_recent_tool_names(self, conversation: Conversation) -> list[str]:
         """Return recent tool names visible in the conversation transcript."""
