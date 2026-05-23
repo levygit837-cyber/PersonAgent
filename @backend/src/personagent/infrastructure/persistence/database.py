@@ -156,7 +156,17 @@ async def get_db_session() -> AsyncSession:
 
 
 async def init_db() -> None:
-    """Inicializa o banco de dados criando todas as tabelas."""
+    """Inicializa o banco de dados criando todas as tabelas.
+
+    .. deprecated::
+        New schema changes should be introduced via Alembic revisions
+        (``alembic revision --autogenerate`` + ``alembic upgrade head``).
+        The hardcoded ``ALTER TABLE`` blocks below are kept for backwards
+        compatibility with existing deployments but will be folded into
+        Alembic revisions in a follow-up release. After this function runs
+        it now also stamps ``0001_baseline`` so the database picks up
+        Alembic-tracked migrations going forward.
+    """
 
     # Ensure ORM models are registered in Base.metadata before create_all runs.
     from personagent.infrastructure.persistence import models as _models  # noqa: F401
@@ -194,3 +204,34 @@ async def init_db() -> None:
         if _settings.operational_memory_enabled:
             for statement in OPERATIONAL_MEMORY_SCHEMA_STATEMENTS:
                 await conn.execute(text(statement))
+
+    await _ensure_alembic_baseline()
+
+
+async def _ensure_alembic_baseline() -> None:
+    """Stamp the baseline Alembic revision if the database is not yet tracked.
+
+    This makes the transition from ``create_all`` + hardcoded ALTERs to
+    Alembic-driven migrations safe for every existing deployment. The logic is
+    idempotent: stamping a database that already has an ``alembic_version``
+    row is a no-op.
+    """
+
+    from personagent.infrastructure.persistence.migration_runner import (
+        current_revision,
+        stamp_head,
+    )
+
+    try:
+        revision = await current_revision(_settings.db_url)
+    except Exception as exc:
+        logger.warning("alembic_current_revision_failed", error=str(exc))
+        return
+
+    if revision is not None:
+        return
+
+    try:
+        await stamp_head(_settings.db_url)
+    except Exception as exc:
+        logger.warning("alembic_stamp_baseline_failed", error=str(exc))
