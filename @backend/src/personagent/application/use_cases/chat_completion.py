@@ -45,6 +45,7 @@ from personagent.application.tools import (
     ToolRuntimeConfig,
 )
 from personagent.application.tools.runtime_config import resolve_effective_tool_iterations
+from personagent.application.use_cases.chat.compaction import ConversationCompactor
 from personagent.application.use_cases.chat.helpers import (
     apply_workspace_metadata as _apply_workspace_metadata,
 )
@@ -112,7 +113,6 @@ from personagent.domain.prompts.commands import (
     SlashCommandResolution,
     parse_slash_invocation,
 )
-from personagent.domain.prompts.compact import BASE_COMPACT_PROMPT
 from personagent.domain.prompts.context_attachments import resolve_context_attachments
 from personagent.domain.prompts.services import PromptBuilder, PromptContextAnalyzer
 from personagent.domain.prompts.services.agent_state_resolver import AgentStateResolver
@@ -194,6 +194,11 @@ class ChatCompletionUseCase:
         self._operational_memory_service = operational_memory_service
         self._context_window_tokens = max(4_096, int(context_window_tokens))
         self._default_output_tokens = max(1, int(default_output_tokens))
+        self._compactor = ConversationCompactor(
+            llm_backend,
+            context_window_tokens=self._context_window_tokens,
+            default_output_tokens=self._default_output_tokens,
+        )
         self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
         self._artifact_ttl_seconds = artifact_ttl_seconds if artifact_ttl_seconds and artifact_ttl_seconds > 0 else None
 
@@ -2089,7 +2094,7 @@ class ChatCompletionUseCase:
             include_reasoning_content=request.provider in {"deepseek", "zenmux"},
             include_reasoning_details=request.provider == "zenmux",
         )
-        estimated_tokens = self._estimate_request_tokens(messages, tools)
+        estimated_tokens = self._compactor.estimate_request_tokens(messages, tools)
         metadata = {
             **prompt_package.metadata,
             "context_tokens_estimated": estimated_tokens,
@@ -2097,10 +2102,10 @@ class ChatCompletionUseCase:
             "context_window_tokens": self._context_window_tokens,
         }
 
-        if not self._should_compact(estimated_tokens, request):
+        if not self._compactor.should_compact(estimated_tokens, request):
             return messages, metadata
 
-        compacted = await self._compact_conversation(conversation, request)
+        compacted = await self._compactor.compact_conversation(conversation, request)
         if not compacted:
             return messages, metadata
 
@@ -2110,7 +2115,7 @@ class ChatCompletionUseCase:
             include_reasoning_content=request.provider in {"deepseek", "zenmux"},
             include_reasoning_details=request.provider == "zenmux",
         )
-        estimated_tokens = self._estimate_request_tokens(messages, tools)
+        estimated_tokens = self._compactor.estimate_request_tokens(messages, tools)
         metadata.update(
             {
                 "context_tokens_estimated": estimated_tokens,
@@ -2160,39 +2165,6 @@ class ChatCompletionUseCase:
         if cleaned.startswith(start_tag) and cleaned.endswith(end_tag):
             cleaned = cleaned[len(start_tag) : -len(end_tag)].strip()
         return cleaned
-
-    def _estimate_request_tokens(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-    ) -> int:
-        message_chars = 0
-        for message in messages:
-            message_chars += len(str(message.get("role") or "")) + 4
-            message_chars += len(str(message.get("content") or ""))
-            if message.get("tool_calls"):
-                message_chars += len(str(message["tool_calls"]))
-            if message.get("tool_call_id"):
-                message_chars += len(str(message["tool_call_id"]))
-        tool_chars = sum(len(str(tool)) for tool in tools)
-        total_chars = message_chars + tool_chars
-        return 0 if total_chars <= 0 else max(1, (total_chars + 3) // 4)
-
-    def _should_compact(self, estimated_tokens: int, request: ChatRequestDTO) -> bool:
-        return estimated_tokens > self._context_compaction_threshold(request)
-
-    def _context_compaction_threshold(self, request: ChatRequestDTO) -> int:
-        output_reserve = (
-            int(request.max_tokens)
-            if request.max_tokens and request.max_tokens > 0
-            else min(self._default_output_tokens, self._context_window_tokens // 4)
-        )
-        reasoning_reserve = max(0, int(request.reasoning_budget_tokens or 0))
-        prompt_budget = max(
-            2_048,
-            self._context_window_tokens - output_reserve - reasoning_reserve,
-        )
-        return max(2_048, int(prompt_budget * 0.9))
 
     async def _trigger_memory_extraction(
         self,
@@ -2290,112 +2262,6 @@ class ChatCompletionUseCase:
         if was_empty:
             conversation.title = conversation.generate_title()
             await self._conversation_repo.update(conversation)
-
-    async def _compact_conversation(
-        self,
-        conversation: Conversation,
-        request: ChatRequestDTO,
-    ) -> bool:
-        recent_count = 8
-        if len(conversation.messages) <= recent_count + 2:
-            return False
-
-        older = conversation.messages[:-recent_count]
-        recent = conversation.messages[-recent_count:]
-        while recent and recent[0].role == Role.TOOL and older:
-            recent.insert(0, older.pop())
-        if not older:
-            return False
-
-        # Preserve messages that carry a plan approval artifact so the frontend
-        # can always reconstruct the plan panel after compaction.
-        preserved: list[Message] = []
-        compactable: list[Message] = []
-        for msg in older:
-            if (
-                msg.role == Role.ASSISTANT
-                and isinstance(msg.metadata, dict)
-                and msg.metadata.get("plan_approval")
-            ):
-                preserved.append(msg)
-            else:
-                compactable.append(msg)
-
-        if not compactable and not preserved:
-            return False
-
-        summary = await self._summarize_messages(compactable or older, request)
-        summary_message = Message(
-            role=Role.SYSTEM,
-            content=(
-                "Conversation Continuity Summary\n\n"
-                "Earlier conversation messages were compacted to stay within the context "
-                "window. Use this summary as continuity context, then rely on the recent "
-                "messages below for exact current state.\n\n"
-                f"{summary}"
-            ),
-            metadata={
-                "context_compaction": True,
-                "compacted_message_count": len(older),
-            },
-        )
-        conversation.messages = [summary_message, *preserved, *recent]
-        conversation.metadata["context_compaction"] = {
-            "compacted": True,
-            "compacted_message_count": len(older),
-            "updated_at": datetime.now(UTC).isoformat(),
-        }
-        return True
-
-    async def _summarize_messages(
-        self,
-        messages: list[Message],
-        request: ChatRequestDTO,
-    ) -> str:
-        rendered = self._render_messages_for_summary(messages)
-        prompt = BASE_COMPACT_PROMPT
-        try:
-            result = await self._llm_backend.chat_completion(
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": rendered[:120_000]},
-                ],
-                temperature=0.1,
-                max_tokens=2_048,
-                stream=False,
-                tools=None,
-                tool_choice=None,
-                model=request.model,
-                provider=request.provider,
-                reasoning_level="low",
-                reasoning_budget_tokens=0,
-            )
-            if result.content.strip():
-                return result.content.strip()
-        except Exception:
-            logger.warning("context_compaction_failed", exc_info=True)
-        return self._fallback_summary(messages)
-
-    def _render_messages_for_summary(self, messages: list[Message]) -> str:
-        rendered: list[str] = []
-        for index, message in enumerate(messages, start=1):
-            content = message.content
-            if len(content) > 4_000:
-                content = content[:4_000].rstrip() + "\n[truncated]"
-            rendered.append(f"## Message {index}: {message.role.value}\n\n{content}")
-            if message.tool_calls:
-                rendered.append(f"Tool calls: {message.tool_calls}")
-        return "\n\n".join(rendered)
-
-    def _fallback_summary(self, messages: list[Message]) -> str:
-        excerpts = []
-        for message in messages[:3] + messages[-3:]:
-            content = " ".join(message.content.split())
-            excerpts.append(f"- {message.role.value}: {content[:500]}")
-        return (
-            f"{len(messages)} earlier messages were compacted. Available excerpts:\n"
-            + "\n".join(excerpts)
-        )
 
     def _available_tool_names(self, tools: list[dict[str, Any]]) -> list[str]:
         names: list[str] = []
