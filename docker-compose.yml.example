@@ -1,0 +1,62 @@
+# PersonAgent local development stack.
+#
+# Usage:
+#     cp docker-compose.yml.example docker-compose.yml
+#     cp .env.example .env
+#     # edit .env and set POSTGRES_PASSWORD + any LLM API keys you want
+#     docker compose up -d postgres
+#     cd @backend && uv sync --extra dev && uv run alembic upgrade head
+#     cd @backend && uv run personagent serve --port 8000 --reload
+#
+# Notes:
+# - The real docker-compose.yml is gitignored (it can carry secrets); this
+#   file is the version-controlled template. Keep them in sync when you
+#   add new services.
+# - The backend service is intentionally commented out -- most contributors
+#   run it locally with hot reload via `personagent serve`. Uncomment it
+#   if you prefer a fully containerised dev loop.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: personagent-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-personagent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-personagent}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - personagent_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Uncomment to run the FastAPI backend in Docker as well. The default
+  # workflow runs it on the host so hot reload picks up source changes
+  # without rebuilding the image.
+  #
+  # backend:
+  #   build:
+  #     context: ./@backend
+  #     dockerfile: Dockerfile  # not included; see @backend/README.md
+  #   container_name: personagent-backend
+  #   restart: unless-stopped
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   env_file: .env
+  #   environment:
+  #     POSTGRES_HOST: postgres
+  #     POSTGRES_PORT: 5432
+  #   ports:
+  #     - "8000:8000"
+  #   command: >
+  #     uv run personagent serve --host 0.0.0.0 --port 8000
+
+volumes:
+  personagent_pgdata:
+    name: personagent_pgdata

@@ -4,12 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PersonAgent - Workscape</title>
-    
+
     <!-- Fonts: Inter for UI, JetBrains Mono for Code/Technical Data -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
-    
+
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -163,7 +163,7 @@
                 </div>
             </div>
         </div>
-        
+
         <!-- Bottom Settings/Profile -->
         <div class="h-14 border-t border-border flex items-center px-4 justify-between bg-surface">
             <div class="flex items-center gap-2">
@@ -178,7 +178,7 @@
 
     <!-- MACRO-ARCHITECTURE: PANE 2 - Main Cognitive Space (Center Chat) -->
     <main class="flex-1 flex flex-col relative min-w-0 z-10 bg-base shadow-[inset_0_40px_80px_rgba(0,0,0,0.5)]">
-        
+
         <!-- Center Header -->
         <header class="h-14 flex items-center justify-between px-6 border-b border-border bg-base/80 backdrop-blur-sm absolute top-0 w-full z-30">
             <div class="flex items-center gap-3">
@@ -202,7 +202,7 @@
 
         <!-- Message Feed Area -->
         <div class="flex-1 overflow-y-auto pt-24 pb-48 px-4 md:px-12 xl:px-32 flex flex-col gap-8 scroll-smooth">
-            
+
             <!-- Date Splitter -->
             <div class="flex items-center justify-center relative w-full mb-4">
                 <div class="absolute h-px w-full bg-gradient-to-r from-transparent via-borderStrong to-transparent"></div>
@@ -236,15 +236,15 @@
                         </div>
                         <i class="ph ph-caret-up text-zinc-600 group-hover:text-zinc-400"></i>
                     </div>
-                    
+
                     <!-- Inside Tool Block: Sequential Process Steps -->
                     <div class="p-4 grid gap-4 font-mono text-[12px]">
-                        
+
                         <!-- Tool 1: Success -->
                         <div class="flex items-start gap-3 relative">
                             <!-- timeline connector -->
                             <div class="absolute left-[7px] top-4 w-px h-full bg-border"></div>
-                            
+
                             <div class="mt-0.5 w-4 h-4 rounded-full bg-base border border-emerald-500/30 flex items-center justify-center relative z-10">
                                 <i class="ph-bold ph-check text-[10px] text-emerald-500"></i>
                             </div>
@@ -262,7 +262,7 @@
                         <!-- Tool 2: Success -->
                         <div class="flex items-start gap-3 relative">
                             <div class="absolute left-[7px] top-4 w-px h-[calc(100%+16px)] bg-border"></div>
-                            
+
                             <div class="mt-0.5 w-4 h-4 rounded-full bg-base border border-emerald-500/30 flex items-center justify-center relative z-10">
                                 <i class="ph-bold ph-check text-[10px] text-emerald-500"></i>
                             </div>
@@ -301,7 +301,7 @@
                 </div>
 
             </div>
-            
+
             <!-- Spacer to push content above floating dock -->
             <div class="h-12 w-full"></div>
         </div>
@@ -309,7 +309,7 @@
         <!-- Float Input Dock (Bottom Center) -->
         <div class="absolute bottom-6 w-full px-6 flex justify-center z-40 pointer-events-none">
             <div class="pointer-events-auto w-full max-w-[700px] glass-dock rounded-2xl border border-borderStrong shadow-[0_20px_60px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden transition-all duration-300 focus-within:border-zinc-600 focus-within:shadow-[0_20px_60px_rgba(0,0,0,0.8),0_0_0_1px_rgba(255,255,255,0.1)]">
-                
+
                 <!-- Tiny context indicator -->
                 <div class="px-4 py-1.5 bg-zinc-900/50 border-b border-border flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
                     <i class="ph-fill ph-folder"></i>
@@ -321,14 +321,14 @@
                     <button class="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50 rounded-lg transition-colors flex-shrink-0">
                         <i class="ph ph-plus text-lg"></i>
                     </button>
-                    
-                    <textarea 
-                        rows="1" 
+
+                    <textarea
+                        rows="1"
                         placeholder="Message PersonAgent... (Type '/' for tools)"
                         class="flex-1 max-h-48 resize-none bg-transparent text-[15px] text-zinc-200 placeholder-zinc-500 py-2 no-scrollbar font-sans"
                         style="min-height: 40px;"
                     ></textarea>
-                    
+
                     <!-- Action Buttons -->
                     <div class="flex items-center gap-1 pr-1 pb-1 flex-shrink-0">
                         <button class="p-1.5 text-zinc-500 hover:text-zinc-300 rounded transition-colors" title="Toggle Voice">
@@ -345,7 +345,7 @@
 
     <!-- MACRO-ARCHITECTURE: PANE 3 - Right Context Sidebar (Usually collapsed, shown here to display structural depth) -->
     <aside class="w-[320px] h-full flex-shrink-0 flex flex-col border-l border-border bg-surface2 relative z-20 shadow-[-20px_0_40px_rgba(0,0,0,0.3)]">
-        
+
         <!-- Header -->
         <div class="h-14 flex items-center justify-between px-4 border-b border-border bg-surface">
             <span class="text-xs font-semibold text-zinc-300 uppercase tracking-wider">Workspace</span>
@@ -364,7 +364,7 @@
 
         <!-- Side Panel Scrollable Content -->
         <div class="flex-1 overflow-y-auto no-scrollbar pb-6 flex flex-col">
-            
+
             <!-- Directory Tree -->
             <div class="p-2 font-mono text-[12px]">
                 <!-- Folder Root -->
@@ -373,7 +373,7 @@
                     <i class="ph-fill ph-folder-open text-amber-500/80"></i>
                     <span>src</span>
                 </div>
-                
+
                 <!-- Expanded Content -->
                 <div class="ml-4 pl-2 border-l border-borderStrong flex flex-col mt-0.5">
                     <!-- Folder -->
@@ -382,14 +382,14 @@
                         <i class="ph-fill ph-folder text-amber-500/60"></i>
                         <span>assets</span>
                     </div>
-                    
+
                     <!-- Folder Expanded -->
                     <div class="flex items-center gap-2 py-1 px-2 text-zinc-300 hover:bg-white/5 rounded cursor-pointer mt-0.5">
                         <i class="ph-fill ph-caret-down text-zinc-500 text-[10px]"></i>
                         <i class="ph-fill ph-folder-open text-amber-500/80"></i>
                         <span>components</span>
                     </div>
-                    
+
                     <!-- Deep Files -->
                     <div class="ml-4 pl-2 border-l border-borderStrong flex flex-col mt-0.5">
                         <div class="flex items-center gap-2 py-1.5 px-2 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 rounded cursor-pointer">
@@ -421,13 +421,13 @@
                 <!-- Diff Mockup -->
                 <div class="flex-1 overflow-auto p-2 font-mono text-[11px] leading-relaxed select-text">
                     <div class="text-zinc-500 mb-1">@@ -142,6 +142,8 @@</div>
-                    
+
                     <!-- Context lines -->
                     <div class="flex items-start">
                         <div class="w-6 flex-shrink-0 text-zinc-600 text-right pr-2 select-none">142</div>
                         <div class="flex-1 text-zinc-400">&nbsp;&nbsp;const [isOpen, setIsOpen] = useState(false);</div>
                     </div>
-                    
+
                     <!-- Removed line -->
                     <div class="flex items-start bg-rose-500/10 border-l border-rose-500/30">
                         <div class="w-6 flex-shrink-0 text-rose-500/50 text-right pr-2 select-none">143</div>

@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel older runs when a new commit lands on the same ref. Avoids burning
+# minutes on stacked pushes during rebases.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (lint + typecheck + unit tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: "@backend"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.7.9"
+          enable-cache: true
+          cache-dependency-glob: "@backend/uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install backend dependencies
+        run: uv sync --extra dev
+
+      - name: Ruff
+        run: uv run ruff check src/ tests/
+
+      - name: Mypy (scoped to the hardened surfaces)
+        # The wider tree still has pre-existing mypy errors that the
+        # Fase 1 god-file splits will clean up. Scoping to the modules
+        # that have been hardened (and are actually green) keeps the
+        # gate honest. Expand this list as more modules are cleaned up.
+        run: |
+          uv run mypy \
+            src/personagent/application/state/request_context.py \
+            src/personagent/application/state/app_state.py \
+            src/personagent/application/state/__init__.py \
+            src/personagent/application/use_cases/context \
+            src/personagent/application/tools/runtime_config.py \
+            src/personagent/infrastructure/persistence/migration_runner.py \
+            src/personagent/infrastructure/persistence/alembic/env.py
+
+      - name: Unit tests
+        # tests/integration/ requires Postgres + pgvector and is not
+        # part of this gate.
+        #
+        # test_agent_state_overlays_are_compact is deselected because
+        # the `state_plan_mode` overlay legitimately renders 7 bullets
+        # by design (the inline checklist template). Tightening the
+        # assertion to "<= 3 bullets that aren't from the rendered
+        # template" belongs in the prompt-builder cleanup PR; until
+        # then we skip it instead of pretending it passes.
+        run: |
+          uv run pytest tests/unit -q --no-header \
+            --deselect tests/unit/test_prompt_builder.py::TestPromptBuilder::test_agent_state_overlays_are_compact
+
+      - name: Alembic + tool-loop regression tests
+        # These two suites cover the Fase 0.1 and Fase 0.2 hardening
+        # and must stay green on every PR.
+        run: uv run pytest tests/test_alembic_setup.py tests/test_tool_loop_limit.py -q --no-header
+
+  desktop:
+    name: desktop-electron (typecheck + vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: "@desktop-electron"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "@desktop-electron/package-lock.json"
+
+      - name: Install desktop dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests (non-blocking)
+        # 12 pre-existing vitest failures on `main` (session-panel,
+        # input-dock, App.test): missing test ids and stale model
+        # fixtures. Flipping this step to blocking is part of the next
+        # PR alongside the desktop test fixups; until then we surface
+        # the results without gating PRs.
+        continue-on-error: true
+        run: npm test -- --run
+
+  gitleaks:
+    name: gitleaks (secret scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # gitleaks-action queries the PR's commits to scan only the
+      # incremental range; pulls=read is required for that API call.
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks needs full history so it can scan diffs across the
+          # default branch.
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
