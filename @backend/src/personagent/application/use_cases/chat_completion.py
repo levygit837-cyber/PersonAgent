@@ -41,7 +41,6 @@ from personagent.application.services.browser_cooperation import (
     shared_browser_workspace_reminder,
 )
 from personagent.application.services.operational_memory import project_slug_from_workspace
-from personagent.application.state.services import StateManager
 from personagent.application.tools import (
     ToolOrchestrator,
     ToolRegistry,
@@ -199,7 +198,6 @@ class ChatCompletionUseCase:
         self._default_output_tokens = max(1, int(default_output_tokens))
         self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
         self._artifact_ttl_seconds = artifact_ttl_seconds if artifact_ttl_seconds and artifact_ttl_seconds > 0 else None
-        self._state_manager = StateManager.get_instance()
 
     async def execute(self, request: ChatRequestDTO) -> ChatResponseDTO:
         """Execute a synchronous chat completion."""

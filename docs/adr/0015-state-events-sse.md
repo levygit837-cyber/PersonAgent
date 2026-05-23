@@ -20,7 +20,7 @@ Use **Server-Sent Events** as the primary one-way push channel from backend to d
 
 **Implementation**
 - `interfaces/api/state_events.py` exposes `GET /state/events`.
-- `StateManager` (`application/state/`) holds an in-memory registry of active SSE queues per client.
+- `interfaces/api/state_events.py` keeps an in-memory registry (`_subscribers`) of active SSE queues per client.
 - Clients reconnect automatically; the backend emits a `connected` event on each new stream.
 
 **Scope**

@@ -51,7 +51,7 @@ async def state_events(...) -> EventSourceResponse:
     ...
 ```
 
-Ou usar `StateManager` para emitir via fila existente.
+Ou chamar `publish_state_event(...)` em `interfaces/api/state_events.py` para emitir via fila existente.
 
 ---
 

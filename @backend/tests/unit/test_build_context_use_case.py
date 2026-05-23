@@ -6,13 +6,19 @@ from pathlib import Path
 
 import pytest
 
-from personagent.application.state.services import StateManager
+from personagent.application.state import RequestContext
 from personagent.application.use_cases.context import BuildContextUseCase
 from personagent.infrastructure.persistence.context import InMemoryContextRepository
 
 
 class TestBuildContextUseCase:
-    """Tests for BuildContextUseCase."""
+    """Tests for BuildContextUseCase.
+
+    These tests intentionally exercise the *returned* value of the use case
+    (``ContextBuildResult`` and ``RequestContext``). The previous version
+    asserted state on a process-wide singleton, which is exactly the
+    pattern we removed in this refactor.
+    """
 
     @pytest.fixture
     def temp_workspace(self):
@@ -36,13 +42,9 @@ class TestBuildContextUseCase:
             enable_persona_md=True,
         )
 
-    def setup_method(self):
-        """Reset StateManager before each test."""
-        StateManager.reset()
-
     @pytest.mark.asyncio
     async def test_execute_builds_context(self, use_case):
-        """Test that execute builds context."""
+        """``execute`` returns a populated ``ContextBuildResult``."""
         result = await use_case.execute("conv-1")
 
         assert result is not None
@@ -51,7 +53,7 @@ class TestBuildContextUseCase:
 
     @pytest.mark.asyncio
     async def test_execute_with_cache(self, use_case):
-        """Test execute with cache enabled."""
+        """Cache-enabled call still produces a build_duration metric."""
         result = await use_case.execute("conv-1", use_cache=True)
 
         assert result is not None
@@ -59,56 +61,67 @@ class TestBuildContextUseCase:
 
     @pytest.mark.asyncio
     async def test_execute_without_cache(self, use_case):
-        """Test execute without cache."""
+        """Cache-disabled call reports ``source=built``."""
         result = await use_case.execute("conv-1", use_cache=False)
 
         assert result is not None
         assert result.metadata["source"] == "built"
 
     @pytest.mark.asyncio
-    async def test_execute_updates_state_manager(self, use_case):
-        """Test that execute updates StateManager."""
-        await use_case.execute("conv-1")
+    async def test_build_request_context_returns_immutable_snapshot(
+        self, use_case, temp_workspace
+    ):
+        """``build_request_context`` returns a frozen RequestContext."""
+        ctx = await use_case.build_request_context(
+            "conv-1", permission_mode="auto"
+        )
 
-        state_manager = StateManager.get_instance()
+        assert isinstance(ctx, RequestContext)
+        assert ctx.conversation_id == "conv-1"
+        assert ctx.workspace_root == str(temp_workspace)
+        assert ctx.permission_mode == "auto"
+        assert ctx.system_context is not None
+        assert ctx.user_context is not None
+        assert ctx.request_id  # auto-generated
 
-        assert state_manager.get_conversation_id() == "conv-1"
-        assert state_manager.get_workspace_root() is not None
+        # Frozen dataclasses raise on attribute assignment.
+        import dataclasses
 
-    @pytest.mark.asyncio
-    async def test_execute_sets_workspace_root(self, use_case, temp_workspace):
-        """Test that execute sets workspace root in StateManager."""
-        await use_case.execute("conv-1")
-
-        state_manager = StateManager.get_instance()
-
-        assert state_manager.get_workspace_root() == str(temp_workspace)
-
-    @pytest.mark.asyncio
-    async def test_execute_sets_system_context(self, use_case):
-        """Test that execute sets system context in StateManager."""
-        await use_case.execute("conv-1")
-
-        state_manager = StateManager.get_instance()
-        system_context = state_manager.get_system_context()
-
-        assert isinstance(system_context, dict)
-        assert len(system_context) > 0
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            ctx.conversation_id = "tampered"  # type: ignore[misc]
 
     @pytest.mark.asyncio
-    async def test_execute_sets_user_context(self, use_case):
-        """Test that execute sets user context in StateManager."""
-        await use_case.execute("conv-1")
+    async def test_build_request_context_propagates_tenant_and_user(
+        self, use_case
+    ):
+        """Multi-tenant fields round-trip through the snapshot."""
+        ctx = await use_case.build_request_context(
+            "conv-1",
+            tenant_id="acme",
+            user_id="levy",
+            request_id="req-fixed",
+        )
 
-        state_manager = StateManager.get_instance()
-        user_context = state_manager.get_user_context()
+        assert ctx.tenant_id == "acme"
+        assert ctx.user_id == "levy"
+        assert ctx.request_id == "req-fixed"
 
-        assert isinstance(user_context, dict)
-        assert len(user_context) > 0
+    @pytest.mark.asyncio
+    async def test_request_context_with_overrides_preserves_request_id(
+        self, use_case
+    ):
+        """``with_overrides`` clones the context without losing identity."""
+        ctx = await use_case.build_request_context("conv-1")
+        refined = ctx.with_overrides(permission_mode="ask")
+
+        assert refined is not ctx
+        assert refined.request_id == ctx.request_id
+        assert refined.permission_mode == "ask"
+        assert refined.conversation_id == ctx.conversation_id
 
     @pytest.mark.asyncio
     async def test_execute_with_persona_md_disabled(self, temp_workspace, repository):
-        """Test execute with persona.md disabled."""
+        """persona.md skipped when the flag is off."""
         use_case = BuildContextUseCase(
             workspace_root=temp_workspace,
             context_repository=repository,
@@ -118,12 +131,14 @@ class TestBuildContextUseCase:
         result = await use_case.execute("conv-1")
 
         assert result is not None
-        assert result.user_context.persona_md is None or result.user_context.persona_md == ""
+        assert (
+            result.user_context.persona_md is None
+            or result.user_context.persona_md == ""
+        )
 
     @pytest.mark.asyncio
     async def test_execute_with_persona_md_enabled(self, temp_workspace, repository):
-        """Test execute with persona.md enabled."""
-        # Create persona.md
+        """persona.md picked up from the workspace root."""
         persona_md = temp_workspace / "persona.md"
         persona_md.write_text("# Instructions")
 
@@ -141,7 +156,7 @@ class TestBuildContextUseCase:
 
     @pytest.mark.asyncio
     async def test_execute_without_repository(self, temp_workspace):
-        """Test execute without repository."""
+        """Use case works without a context cache repository."""
         use_case = BuildContextUseCase(
             workspace_root=temp_workspace,
             context_repository=None,
@@ -154,38 +169,19 @@ class TestBuildContextUseCase:
 
     @pytest.mark.asyncio
     async def test_clear_context(self, use_case, repository):
-        """Test clear_context method."""
-        # Build context first
+        """``clear_context`` removes the cached entry from the repository."""
         await use_case.execute("conv-1")
-
-        # Clear context
         await use_case.clear_context("conv-1")
 
-        # Check repository is cleared
         assert await repository.get_system_context("conv-1") is None
         assert await repository.get_user_context("conv-1") is None
 
     @pytest.mark.asyncio
-    async def test_clear_context_clears_state_manager_caches(self, use_case):
-        """Test that clear_context clears StateManager caches."""
-        # Build context first
-        await use_case.execute("conv-1")
-
-        # Clear context
-        await use_case.clear_context("conv-1")
-
-        state_manager = StateManager.get_instance()
-        # Caches should be cleared
-        assert state_manager.get_cached_context("conv-1") is None
-
-    @pytest.mark.asyncio
     async def test_execute_with_additional_directories(self, temp_workspace, repository):
-        """Test execute with additional directories."""
+        """Additional directories contribute memory files."""
         additional_dir = temp_workspace / "additional"
         additional_dir.mkdir()
-
-        additional_persona = additional_dir / "persona.md"
-        additional_persona.write_text("Additional content")
+        (additional_dir / "persona.md").write_text("Additional content")
 
         use_case = BuildContextUseCase(
             workspace_root=temp_workspace,
@@ -200,41 +196,25 @@ class TestBuildContextUseCase:
         assert len(result.user_context.memory_files) > 0
 
     @pytest.mark.asyncio
-    async def test_execute_handles_build_failure_gracefully(self, use_case):
-        """Test that execute handles build failure gracefully."""
-        # This test ensures that even if context building fails partially,
-        # the use case doesn't crash
-        result = await use_case.execute("conv-1")
+    async def test_multiple_conversations_do_not_leak_into_each_other(
+        self, use_case
+    ):
+        """Two contexts built back-to-back stay independent.
 
-        # Should still return a result
-        assert result is not None
+        Under the old singleton implementation, the second call clobbered
+        the first one's ``conversation_id`` -- this assertion guards
+        against any regression of that behaviour.
+        """
+        first = await use_case.build_request_context("conv-1")
+        second = await use_case.build_request_context("conv-2")
 
-    @pytest.mark.asyncio
-    async def test_multiple_conversations(self, use_case):
-        """Test handling multiple conversations."""
-        result1 = await use_case.execute("conv-1")
-        result2 = await use_case.execute("conv-2")
-
-        assert result1 is not None
-        assert result2 is not None
-
-        state_manager = StateManager.get_instance()
-        # Last conversation should be set
-        assert state_manager.get_conversation_id() == "conv-2"
+        assert first.conversation_id == "conv-1"
+        assert second.conversation_id == "conv-2"
+        assert first.request_id != second.request_id
 
     @pytest.mark.asyncio
     async def test_execute_performance(self, use_case):
-        """Test that execute completes within reasonable time."""
+        """Sanity check that build_context completes quickly."""
         result = await use_case.execute("conv-1")
 
-        # Should complete within reasonable time (< 5 seconds)
         assert result.build_duration_ms < 5000
-
-    @pytest.mark.asyncio
-    async def test_execute_updates_timestamp(self, use_case):
-        """Test that execute updates timestamp in StateManager."""
-        await use_case.execute("conv-1")
-
-        state_manager = StateManager.get_instance()
-        # Timestamp should be updated
-        assert state_manager.state.updated_at is not None
