@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from personagent.domain.models.conversation import Conversation, Message, Role
+from personagent.domain.models.tenancy import DEFAULT_TENANT_ID
 from personagent.domain.repositories.conversation_repository import ConversationRepository
 from personagent.infrastructure.persistence.models import ConversationORM, MessageORM
 
@@ -21,6 +22,7 @@ class PostgresConversationRepository(ConversationRepository):
         """Cria uma nova conversa no banco de dados."""
         orm = ConversationORM(
             id=conversation.id,
+            tenant_id=conversation.tenant_id,
             title=conversation.title,
             created_at=conversation.created_at,
             updated_at=conversation.updated_at,
@@ -219,6 +221,7 @@ class PostgresConversationRepository(ConversationRepository):
             updated_at=orm.updated_at,
             model_config_id=orm.model_config_id,
             metadata=orm.metadata_ or {},
+            tenant_id=orm.tenant_id or DEFAULT_TENANT_ID,
         )
 
     def _message_orm(self, conversation_id: UUID, msg: Message) -> MessageORM:

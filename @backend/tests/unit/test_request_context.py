@@ -8,10 +8,11 @@ the replacement safe to use across the call chain.
 from __future__ import annotations
 
 import dataclasses
+from uuid import UUID, uuid4
 
 import pytest
 
-from personagent.application.state import RequestContext
+from personagent.application.state import DEFAULT_TENANT_ID, RequestContext
 from personagent.domain.context.models import (
     ContextBuildResult,
     SystemContext,
@@ -51,21 +52,23 @@ def test_request_context_is_frozen() -> None:
 def test_from_build_result_populates_all_fields() -> None:
     """``from_build_result`` is the canonical construction path."""
 
+    acme_tenant = UUID("12345678-1234-1234-1234-123456789012")
+    user_levy = uuid4()
     ctx = RequestContext.from_build_result(
         conversation_id="c-1",
         workspace_root="/tmp/work",
         result=_stub_build_result(),
         permission_mode="auto",
-        tenant_id="acme",
-        user_id="levy",
+        tenant_id=acme_tenant,
+        user_id=user_levy,
         request_id="req-42",
     )
 
     assert ctx.conversation_id == "c-1"
     assert ctx.workspace_root == "/tmp/work"
     assert ctx.permission_mode == "auto"
-    assert ctx.tenant_id == "acme"
-    assert ctx.user_id == "levy"
+    assert ctx.tenant_id == acme_tenant
+    assert ctx.user_id == user_levy
     assert ctx.request_id == "req-42"
     assert ctx.system_context is not None
     assert ctx.user_context is not None
@@ -74,13 +77,15 @@ def test_from_build_result_populates_all_fields() -> None:
 def test_with_overrides_swaps_only_the_named_fields() -> None:
     """All other fields must survive the copy verbatim."""
 
+    acme_tenant = UUID("12345678-1234-1234-1234-123456789012")
+    user_levy = uuid4()
     base = RequestContext.from_build_result(
         conversation_id="c-1",
         workspace_root="/tmp/work",
         result=_stub_build_result(),
         permission_mode="manual",
-        tenant_id="acme",
-        user_id="levy",
+        tenant_id=acme_tenant,
+        user_id=user_levy,
         request_id="req-1",
     )
 
@@ -114,10 +119,27 @@ def test_default_permission_mode_is_manual() -> None:
     assert ctx.permission_mode == "manual"
 
 
-def test_default_tenant_and_user_are_none() -> None:
-    """Multi-tenant fields stay opt-in until later phases populate them."""
+def test_default_tenant_is_the_default_tenant_and_user_is_none() -> None:
+    """Single-tenant installs always see :data:`DEFAULT_TENANT_ID`.
+
+    ``user_id`` stays ``None`` until the auth layer lands -- there is no
+    "default user" yet because a single-tenant install can have zero
+    accounts.
+    """
 
     ctx = RequestContext()
 
-    assert ctx.tenant_id is None
+    assert ctx.tenant_id == DEFAULT_TENANT_ID
     assert ctx.user_id is None
+
+
+def test_from_build_result_defaults_to_the_default_tenant() -> None:
+    """Omitting ``tenant_id`` is shorthand for the default tenant."""
+
+    ctx = RequestContext.from_build_result(
+        conversation_id="c-1",
+        workspace_root="/tmp/work",
+        result=_stub_build_result(),
+    )
+
+    assert ctx.tenant_id == DEFAULT_TENANT_ID

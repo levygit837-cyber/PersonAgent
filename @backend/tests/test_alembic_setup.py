@@ -22,6 +22,7 @@ from personagent.infrastructure.persistence.migration_runner import (
 )
 
 BASELINE_REVISION = "0001_baseline"
+MULTI_TENANT_REVISION = "0002_multi_tenant_primitives"
 
 
 def test_alembic_ini_exists_at_backend_root() -> None:
@@ -42,8 +43,8 @@ def test_alembic_script_directory_resolves() -> None:
     assert versions.is_dir()
 
 
-def test_baseline_revision_is_present_and_is_the_head() -> None:
-    """The baseline revision must exist and be the current head of history."""
+def test_baseline_revision_is_present_in_history() -> None:
+    """The baseline revision must always remain in the migration chain."""
 
     config = build_config()
     script_dir = ScriptDirectory.from_config(config)
@@ -52,16 +53,41 @@ def test_baseline_revision_is_present_and_is_the_head() -> None:
     assert any(rev.revision == BASELINE_REVISION for rev in revisions), (
         f"baseline revision {BASELINE_REVISION!r} missing from versions/"
     )
-    assert script_dir.get_current_head() == BASELINE_REVISION
+
+
+def test_multi_tenant_revision_descends_from_baseline() -> None:
+    """0002 must point back to 0001 so the chain is linear and well-formed."""
+
+    config = build_config()
+    script_dir = ScriptDirectory.from_config(config)
+    multi_tenant = script_dir.get_revision(MULTI_TENANT_REVISION)
+
+    assert multi_tenant is not None, (
+        f"revision {MULTI_TENANT_REVISION!r} missing from versions/"
+    )
+    assert multi_tenant.down_revision == BASELINE_REVISION
+
+
+def test_head_is_the_latest_revision() -> None:
+    """Whatever the latest revision is, it must be the head of history.
+
+    Pinned to ``MULTI_TENANT_REVISION`` today; when later phases add new
+    revisions this test gets updated together with the new constant.
+    """
+
+    config = build_config()
+    script_dir = ScriptDirectory.from_config(config)
+
+    assert script_dir.get_current_head() == MULTI_TENANT_REVISION
 
 
 def test_offline_upgrade_emits_alembic_version_table(capsys: pytest.CaptureFixture[str]) -> None:
     """``alembic upgrade --sql`` against the baseline must create the bookkeeping table.
 
-    This is the smoke test that the env.py module imports without side effects
-    and that offline mode (no database connection) is wired correctly. Alembic
-    writes the generated SQL to ``sys.stdout`` in ``--sql`` mode, so we read
-    it back via ``capsys`` rather than poking at internals.
+    Offline mode emits SQL to stdout without touching a real database, so
+    every guarded migration must be safe to run with no inspector available.
+    The 0002 migration is a regression target for that: its
+    ``_has_table`` / ``_has_column`` helpers short-circuit in offline mode.
     """
 
     config = build_config(database_url="postgresql+psycopg://stub:stub@localhost/stub")
@@ -70,10 +96,12 @@ def test_offline_upgrade_emits_alembic_version_table(capsys: pytest.CaptureFixtu
 
     output = capsys.readouterr().out
     assert "CREATE TABLE alembic_version" in output
-    # Baseline migration itself is a no-op; the only artifact should be the
-    # version bookkeeping row.
     assert re.search(r"INSERT INTO alembic_version", output) is not None
     assert BASELINE_REVISION in output
+    # 0002 must produce its DDL too (the multi-tenant table and the
+    # FK/index on conversations).
+    assert "CREATE TABLE tenants" in output
+    assert "ix_conversations_tenant_id" in output
 
 
 def test_migration_runner_safe_url_strips_credentials() -> None:

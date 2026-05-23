@@ -27,13 +27,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from personagent.domain.context.models import (
     ContextBuildResult,
     SystemContext,
     UserContext,
 )
+from personagent.domain.models.tenancy import DEFAULT_TENANT_ID
 
 PermissionMode = str
 """Symbolic alias for the allowed permission strings (``auto`` / ``manual`` /
@@ -57,8 +58,8 @@ class RequestContext:
     permission_mode: PermissionMode = "manual"
     system_context: SystemContext | None = None
     user_context: UserContext | None = None
-    tenant_id: str | None = None
-    user_id: str | None = None
+    tenant_id: UUID = DEFAULT_TENANT_ID
+    user_id: UUID | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -70,14 +71,18 @@ class RequestContext:
         workspace_root: str,
         result: ContextBuildResult,
         permission_mode: PermissionMode = "manual",
-        tenant_id: str | None = None,
-        user_id: str | None = None,
+        tenant_id: UUID | None = None,
+        user_id: UUID | None = None,
         request_id: str | None = None,
     ) -> RequestContext:
         """Build a context from the output of :class:`BuildContextUseCase`.
 
         Kept as a classmethod (rather than a free function) so the most
         common construction path is discoverable from the type itself.
+
+        ``tenant_id=None`` falls back to :data:`DEFAULT_TENANT_ID` so
+        single-tenant installs never need to think about tenancy. Pass an
+        explicit value once multi-tenant onboarding lands.
         """
 
         return cls(
@@ -87,7 +92,7 @@ class RequestContext:
             permission_mode=permission_mode,
             system_context=result.system_context,
             user_context=result.user_context,
-            tenant_id=tenant_id,
+            tenant_id=tenant_id if tenant_id is not None else DEFAULT_TENANT_ID,
             user_id=user_id,
         )
 
@@ -99,8 +104,8 @@ class RequestContext:
         permission_mode: PermissionMode | None = None,
         system_context: SystemContext | None = None,
         user_context: UserContext | None = None,
-        tenant_id: str | None = None,
-        user_id: str | None = None,
+        tenant_id: UUID | None = None,
+        user_id: UUID | None = None,
         extra: dict[str, Any] | None = None,
     ) -> RequestContext:
         """Return a copy with the supplied fields replaced.

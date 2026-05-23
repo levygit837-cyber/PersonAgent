@@ -6,6 +6,8 @@ from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 
+from personagent.domain.models.tenancy import DEFAULT_TENANT_ID
+
 
 class Role(Enum):
     """Role of a message in the conversation."""
@@ -62,6 +64,7 @@ class Conversation:
     updated_at: datetime = field(default_factory=datetime.utcnow)
     model_config_id: str = "default"
     metadata: dict[str, Any] = field(default_factory=dict)
+    tenant_id: UUID = DEFAULT_TENANT_ID
 
     def add_message(self, message: Message) -> None:
         """Add a message to the conversation."""
