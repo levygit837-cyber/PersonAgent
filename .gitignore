@@ -146,7 +146,6 @@ build/
 coverage/
 *.tsbuildinfo
 
-# Documentacoes tecnicas internas - nao commitar em repo publico
-docs/adr/
-AGENTS.md
+# docker-compose.yml is environment-specific and may contain secrets
 docker-compose.yml
+docs/ai-guides/_inventory/*.json

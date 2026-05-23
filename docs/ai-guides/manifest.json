@@ -1,0 +1,283 @@
+{
+  "version": "1.0.0",
+  "description": "Índice machine-readable de tarefas e subsistemas do PersonAgent",
+  "last_updated": "2026-05-14",
+  "generated_by": "docs/ai-guides/scripts/extract_backend_symbols.py",
+  "tasks": {
+    "add_llm_provider": {
+      "decision_tree": "docs/ai-guides/decisions/add-llm-provider.md",
+      "primary_guides": [
+        "docs/ai-guides/backend/llm-adapters-deep-dive.md"
+      ],
+      "refs": [
+        "docs/ai-guides/_inventory/backend_symbols.json"
+      ],
+      "tests": [
+        "tests/unit/llm/",
+        "tests/integration/providers/",
+        "tests/integration/test_chat.py"
+      ],
+      "risk": "high",
+      "impact": ["ChatCompletionUseCase", "Team Mode", "SessionTitle", "NextStep"]
+    },
+    "add_tool": {
+      "decision_tree": "docs/ai-guides/decisions/add-tool.md",
+      "primary_guides": [
+        "docs/ai-guides/backend/tools-schema-cache-and-task-store.md"
+      ],
+      "refs": [
+        "docs/ai-guides/_inventory/backend_symbols.json"
+      ],
+      "tests": [
+        "tests/unit/tools/",
+        "tests/integration/test_tools.py",
+        "tests/test_browser_tools.py"
+      ],
+      "risk": "medium",
+      "impact": ["ToolOrchestrator", "ToolRegistry", "Chat", "Team Mode"]
+    },
+    "modify_prompt": {
+      "decision_tree": "docs/ai-guides/decisions/modify-prompt.md",
+      "primary_guides": [
+        "docs/ai-guides/backend/llm-adapters-deep-dive.md"
+      ],
+      "refs": [
+        "docs/ai-guides/_inventory/backend_symbols.json"
+      ],
+      "tests": [
+        "tests/unit/prompts/test_prompt_builder.py",
+        "tests/unit/prompts/test_context_analyzer.py"
+      ],
+      "risk": "medium",
+      "impact": ["PromptBuilder", "Chat", "Team Mode"]
+    },
+    "modify_browser_security": {
+      "decision_tree": "docs/ai-guides/decisions/modify-browser-security.md",
+      "primary_guides": [
+        "docs/ai-guides/backend/browser-action-arbiter.md",
+        "docs/ai-guides/backend/browser-cooperation.md"
+      ],
+      "refs": [
+        "docs/ai-guides/_inventory/backend_symbols.json"
+      ],
+      "tests": [
+        "tests/test_browser_cooperation.py",
+        "tests/integration/test_browser_tools.py"
+      ],
+      "risk": "high",
+      "impact": ["BrowserActionArbiter", "BrowserCooperation", "BrowserWorkspace"]
+    },
+    "add_slash_command": {
+      "decision_tree": "docs/ai-guides/decisions/add-slash-command.md",
+      "primary_guides": [
+        "docs/ai-guides/backend/command-registry.md"
+      ],
+      "refs": [
+        "docs/ai-guides/_inventory/backend_symbols.json"
+      ],
+      "tests": [
+        "tests/unit/domain/prompts/test_commands.py"
+      ],
+      "risk": "low",
+      "impact": ["CommandRegistry", "CommandService", "Chat"]
+    },
+    "modify_retry": {
+      "decision_tree": "docs/ai-guides/decisions/modify-retry.md",
+      "primary_guides": [
+        "docs/ai-guides/backend/llm-adapters-deep-dive.md"
+      ],
+      "refs": [
+        "docs/ai-guides/_inventory/backend_symbols.json"
+      ],
+      "tests": [
+        "tests/unit/test_retry.py"
+      ],
+      "risk": "medium",
+      "impact": ["RetryPolicy", "LLM Adapters", "ToolOrchestrator"]
+    },
+    "add_sse_event": {
+      "decision_tree": "docs/ai-guides/decisions/add-sse-event.md",
+      "primary_guides": [
+        "docs/ai-guides/backend/state-manager.md"
+      ],
+      "refs": [
+        "docs/ai-guides/_inventory/backend_symbols.json",
+        "docs/ai-guides/_inventory/frontend_symbols.json"
+      ],
+      "tests": [
+        "tests/integration/test_sse.py"
+      ],
+      "risk": "low",
+      "impact": ["StateManager", "FastAPI Routes", "Frontend SSE"]
+    },
+    "modify_memory_chunking": {
+      "decision_tree": "docs/ai-guides/decisions/modify-memory-chunking.md",
+      "primary_guides": [
+        "docs/ai-guides/backend/memory-jobs.md"
+      ],
+      "refs": [
+        "docs/ai-guides/_inventory/backend_symbols.json"
+      ],
+      "tests": [
+        "tests/integration/test_memory.py"
+      ],
+      "risk": "medium",
+      "impact": ["MemoryChunker", "MemoryRecall", "Chat"]
+    }
+  },
+  "subsystems": {
+    "browser_action_arbiter": {
+      "guide": "docs/ai-guides/backend/browser-action-arbiter.md",
+      "files": [
+        "@backend/src/personagent/application/services/browser_action_arbiter.py"
+      ],
+      "symbols": [
+        "BrowserActionArbiter",
+        "BrowserArbiterDecision"
+      ]
+    },
+    "browser_cooperation": {
+      "guide": "docs/ai-guides/backend/browser-cooperation.md",
+      "files": [
+        "@backend/src/personagent/application/services/browser_cooperation.py"
+      ],
+      "symbols": [
+        "BrowserEventEnvelope",
+        "BrowserCooperationService"
+      ]
+    },
+    "build_context": {
+      "guide": "docs/ai-guides/backend/build-context-use-case.md",
+      "files": [
+        "@backend/src/personagent/application/use_cases/context/build_context.py"
+      ],
+      "symbols": [
+        "BuildContextUseCase",
+        "ContextBuildResult"
+      ]
+    },
+    "command_registry": {
+      "guide": "docs/ai-guides/backend/command-registry.md",
+      "files": [
+        "@backend/src/personagent/domain/prompts/commands.py"
+      ],
+      "symbols": [
+        "CommandRegistry",
+        "CommandService",
+        "PromptCommand",
+        "BuiltinCommand"
+      ]
+    },
+    "llm_adapters": {
+      "guide": "docs/ai-guides/backend/llm-adapters-deep-dive.md",
+      "files": [
+        "@backend/src/personagent/infrastructure/llm/llama_cpp_adapter.py",
+        "@backend/src/personagent/infrastructure/llm/nvidia_nim_adapter.py",
+        "@backend/src/personagent/infrastructure/llm/deepseek_adapter.py",
+        "@backend/src/personagent/infrastructure/llm/zenmux_adapter.py",
+        "@backend/src/personagent/infrastructure/llm/vertex_ai_adapter.py",
+        "@backend/src/personagent/infrastructure/llm/kimi_coding_adapter.py",
+        "@backend/src/personagent/infrastructure/llm/codex_subscription_adapter.py"
+      ],
+      "symbols": [
+        "LLMBackendRepository",
+        "LlamaCppAdapter",
+        "DeepSeekAdapter",
+        "VertexAiAdapter"
+      ]
+    },
+    "memory_jobs": {
+      "guide": "docs/ai-guides/backend/memory-jobs.md",
+      "files": [
+        "@backend/src/personagent/application/jobs/memory_job_scheduler.py"
+      ],
+      "symbols": [
+        "MemoryJobScheduler",
+        "MemoryJob",
+        "JobType"
+      ]
+    },
+    "next_step_suggestion": {
+      "guide": "docs/ai-guides/backend/next-step-suggestion.md",
+      "files": [
+        "@backend/src/personagent/application/services/next_step.py"
+      ],
+      "symbols": [
+        "NextStepSuggestionService"
+      ]
+    },
+    "operational_memory_queue": {
+      "guide": "docs/ai-guides/backend/operational-memory-queue.md",
+      "files": [
+        "@backend/src/personagent/application/services/operational_memory_queue.py"
+      ],
+      "symbols": [
+        "OperationalMemoryQueue"
+      ]
+    },
+    "qa_indexer": {
+      "guide": "docs/ai-guides/backend/qa-indexer-and-redaction.md",
+      "files": [
+        "@backend/src/personagent/application/qa/indexer.py",
+        "@backend/src/personagent/application/qa/redaction.py"
+      ],
+      "symbols": [
+        "PythonCodeIndexer",
+        "redact_mapping",
+        "redact_value"
+      ]
+    },
+    "session_memory": {
+      "guide": "docs/ai-guides/backend/session-memory-service.md",
+      "files": [
+        "@backend/src/personagent/application/services/session_memory.py"
+      ],
+      "symbols": [
+        "SessionMemoryService"
+      ]
+    },
+    "session_title": {
+      "guide": "docs/ai-guides/backend/session-title-service.md",
+      "files": [
+        "@backend/src/personagent/application/services/session_titles.py"
+      ],
+      "symbols": [
+        "SessionTitleService",
+        "SessionTitleResult",
+        "SessionTitleBatchResult"
+      ]
+    },
+    "state_manager": {
+      "guide": "docs/ai-guides/backend/state-manager.md",
+      "files": [
+        "@backend/src/personagent/application/state/services/state_manager.py"
+      ],
+      "symbols": [
+        "StateManager",
+        "AppState"
+      ]
+    },
+    "tools_schema_cache": {
+      "guide": "docs/ai-guides/backend/tools-schema-cache-and-task-store.md",
+      "files": [
+        "@backend/src/personagent/application/tools/schema_cache.py",
+        "@backend/src/personagent/application/tools/task_store.py"
+      ],
+      "symbols": [
+        "ToolSchemaCache",
+        "TaskStore",
+        "InMemoryTaskStore",
+        "TaskRecord"
+      ]
+    }
+  },
+  "inventory_files": {
+    "backend_symbols": "docs/ai-guides/_inventory/backend_symbols.json",
+    "frontend_symbols": "docs/ai-guides/_inventory/frontend_symbols.json"
+  },
+  "validation_scripts": {
+    "validate_refs": "docs/ai-guides/scripts/validate_ai_docs.py",
+    "check_coverage": "docs/ai-guides/scripts/check_ai_docs_coverage.py",
+    "check_staleness": "docs/ai-guides/scripts/check_ai_docs_staleness.py"
+  }
+}
