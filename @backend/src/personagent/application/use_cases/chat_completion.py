@@ -47,12 +47,14 @@ from personagent.application.tools import (
     ToolRegistry,
     ToolRuntimeConfig,
 )
+from personagent.application.tools.runtime_config import resolve_effective_tool_iterations
 from personagent.application.use_cases.context import BuildContextUseCase
 from personagent.application.use_cases.memory.recall_memory import RecallMemoryUseCase
 from personagent.domain.context.models import ContextBuildResult, SystemContext, UserContext
 from personagent.domain.exceptions import (
     ConversationNotFoundError,
     LLMBackendError,
+    ToolLoopLimitExceededError,
 )
 from personagent.domain.memory.repositories.memory_repository import MemoryRepository
 from personagent.domain.memory.services.memory_formatter import MemoryFormatter
@@ -244,10 +246,20 @@ class ChatCompletionUseCase:
         tool_context = self._build_tool_context(request, conversation, preparation) if tools else None
         result = InferenceResult(content="")
         seen_tool_call_ids: set[str] = set()
+        effective_max_iterations = self._effective_max_tool_iterations(request)
 
         try:
             iteration = 0
             while True:
+                if iteration >= effective_max_iterations:
+                    raise ToolLoopLimitExceededError(
+                        f"Tool loop exceeded {effective_max_iterations} iterations",
+                        metadata={
+                            "limit": effective_max_iterations,
+                            "conversation_id": str(conversation.id),
+                            "source": self._tool_iteration_limit_source(request),
+                        },
+                    )
                 messages, context_metadata = await self._prepare_messages_for_llm(
                     conversation,
                     request,
@@ -299,6 +311,15 @@ class ChatCompletionUseCase:
                 iteration += 1
         except LLMBackendError as exc:
             logger.error("llm_backend_error", error=str(exc))
+            raise
+        except ToolLoopLimitExceededError as exc:
+            logger.warning(
+                "tool_loop_limit_exceeded",
+                conversation_id=str(conversation.id),
+                limit=effective_max_iterations,
+            )
+            conversation.metadata["last_request_error"] = str(exc)
+            await self._conversation_repo.update(conversation)
             raise
 
         # Persiste conversa atualizada
@@ -497,12 +518,22 @@ class ChatCompletionUseCase:
         final_model = request.model
         final_provider = request.provider
         seen_tool_call_ids: set[str] = set()
+        effective_max_iterations = self._effective_max_tool_iterations(request)
 
         try:
             iteration = 0
             executed_tools = False
             last_prompt_context_metadata: dict[str, Any] = {}
             while True:
+                if iteration >= effective_max_iterations:
+                    raise ToolLoopLimitExceededError(
+                        f"Tool loop exceeded {effective_max_iterations} iterations",
+                        metadata={
+                            "limit": effective_max_iterations,
+                            "conversation_id": str(conversation.id),
+                            "source": self._tool_iteration_limit_source(request),
+                        },
+                    )
                 messages, context_metadata = await self._prepare_messages_for_llm(
                     conversation,
                     request,
@@ -705,6 +736,28 @@ class ChatCompletionUseCase:
             conversation.metadata["last_request_error"] = str(exc)
             await self._conversation_repo.update(conversation)
             raise
+        except ToolLoopLimitExceededError as exc:
+            logger.warning(
+                "tool_loop_limit_exceeded_stream",
+                conversation_id=str(conversation.id),
+                limit=effective_max_iterations,
+            )
+            _set_session_status(conversation, "error")
+            conversation.metadata["last_request_error"] = str(exc)
+            await self._conversation_repo.update(conversation)
+            yield StreamChunk(
+                metadata={
+                    "event": "tool_loop_limit_exceeded",
+                    "conversation_id": str(conversation.id),
+                    "limit": effective_max_iterations,
+                    "source": self._tool_iteration_limit_source(request),
+                    "finish_reason": "tool_loop_limit_exceeded",
+                }
+            )
+            final_finish_reason = "tool_loop_limit_exceeded"
+            # Fall through to the post-loop cleanup so the UI receives
+            # conversation_saved with the final state, instead of leaving the
+            # stream half-closed.
 
         last_assistant = next(
             (message for message in reversed(conversation.messages) if message.role == Role.ASSISTANT),
@@ -1546,6 +1599,38 @@ class ChatCompletionUseCase:
         if self._tool_registry is None or self._tool_runtime_config is None:
             raise RuntimeError("Tool runtime is not configured")
         return ToolOrchestrator(self._tool_registry, self._tool_runtime_config)
+
+    def _effective_max_tool_iterations(self, request: ChatRequestDTO) -> int:
+        """Return the bounded tool-iteration cap for the current chat turn.
+
+        See ``resolve_effective_tool_iterations`` for the precedence rules.
+        """
+
+        config_max = (
+            self._tool_runtime_config.max_tool_iterations
+            if self._tool_runtime_config is not None
+            else None
+        )
+        return int(
+            resolve_effective_tool_iterations(
+                request_max=request.max_tool_iterations,
+                config_max=config_max,
+            )
+        )
+
+    def _tool_iteration_limit_source(self, request: ChatRequestDTO) -> str:
+        """Describe which input determined the active tool-iteration cap."""
+
+        if request.max_tool_iterations is not None:
+            return "request"
+        config_max = (
+            self._tool_runtime_config.max_tool_iterations
+            if self._tool_runtime_config is not None
+            else None
+        )
+        if config_max is not None:
+            return "runtime_config"
+        return "safety_ceiling"
 
     def _schedule_background(self, coro: Awaitable[Any], *, task_name: str) -> None:
         task = asyncio.create_task(coro, name=task_name)
