@@ -24,9 +24,10 @@ directory.
 | Prompt package         | #13 | ~290          | 1,648      |
 | Tool result handler    | #14 | ~252          | 1,396      |
 | Message preparation    | #16 | ~88           | 1,308      |
-| **Current**            |     |               | **1,308**  |
+| Tool context builder   | #17 | ~118          | 1,190      |
+| **Current**            |     |               | **1,190**  |
 
-Cumulative reduction: **2,742 → 1,308 lines (–52%)**.
+Cumulative reduction: **2,742 → 1,190 lines (–57%)**.
 
 ## Public contract that must be preserved
 
@@ -179,7 +180,7 @@ iteration. Tests must cover all six "result kind" branches.
 **Risk:** Low (pure transformation) but verify it isn't called by
 team-chat.
 
-### Slice 9 — `ToolContextBuilder` (~90 lines)
+### Slice 9 — `ToolContextBuilder` (✅ landed in #17; ~118 lines)
 
 **What moves out:**
 
