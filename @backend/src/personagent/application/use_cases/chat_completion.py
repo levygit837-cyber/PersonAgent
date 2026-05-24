@@ -31,8 +31,8 @@ from personagent.application.tools import (
 from personagent.application.tools.runtime_config import resolve_effective_tool_iterations
 from personagent.application.use_cases.chat.after_turn import AfterTurnCoordinator
 from personagent.application.use_cases.chat.compaction import ConversationCompactor
-from personagent.application.use_cases.chat.helpers import (
-    apply_workspace_metadata as _apply_workspace_metadata,
+from personagent.application.use_cases.chat.conversation_lifecycle import (
+    ConversationLifecycleHandler,
 )
 from personagent.application.use_cases.chat.helpers import (
     attach_plan_approval_artifact as _attach_plan_approval_artifact,
@@ -191,10 +191,13 @@ class ChatCompletionUseCase:
             artifact_root=self._artifact_root,
             artifact_ttl_seconds=self._artifact_ttl_seconds,
         )
+        self._conversation_lifecycle = ConversationLifecycleHandler(
+            conversation_repo=self._conversation_repo,
+        )
 
     async def execute(self, request: ChatRequestDTO) -> ChatResponseDTO:
         """Execute a synchronous chat completion."""
-        conversation = await self._get_or_create_conversation(request)
+        conversation = await self._conversation_lifecycle.get_or_create_conversation(request)
         was_empty = len(conversation.messages) == 0
 
         # Activate plan mode if requested by the frontend (/plan command)
@@ -274,7 +277,7 @@ class ChatCompletionUseCase:
                     images=self._media_policy.store_generated_images(str(conversation.id), result.images),
                 )
 
-                assistant_msg = self._assistant_message_from_result(result, context_metadata)
+                assistant_msg = self._conversation_lifecycle.assistant_message_from_result(result, context_metadata)
                 if assistant_msg.tool_calls:
                     assistant_msg = Message(
                         role=assistant_msg.role,
@@ -351,7 +354,7 @@ class ChatCompletionUseCase:
 
     async def execute_stream(self, request: ChatRequestDTO) -> AsyncIterator[StreamChunk]:
         """Execute a streaming chat completion."""
-        conversation = await self._get_or_create_conversation(request)
+        conversation = await self._conversation_lifecycle.get_or_create_conversation(request)
         _set_session_status(conversation, "running")
         was_empty = len(conversation.messages) == 0
 
@@ -434,7 +437,7 @@ class ChatCompletionUseCase:
         """Retoma o loop do modelo depois que um tool_result foi persistido."""
         if request.conversation_id is None:
             raise ConversationNotFoundError("conversation_id is required to resume a tool")
-        conversation = await self._get_or_create_conversation(request)
+        conversation = await self._conversation_lifecycle.get_or_create_conversation(request)
         _set_session_status(conversation, "running")
         yield StreamChunk(
             metadata={
@@ -825,42 +828,6 @@ class ChatCompletionUseCase:
             }
         )
 
-    async def _get_or_create_conversation(self, request: ChatRequestDTO) -> Conversation:
-        """Retrieve or create a conversation from the request."""
-        if request.conversation_id:
-            conversation = await self._conversation_repo.get_by_id(request.conversation_id)
-            if not conversation:
-                raise ConversationNotFoundError(
-                    f"Conversation {request.conversation_id} not found"
-                )
-            _apply_workspace_metadata(conversation, request.tool_context)
-            return conversation
-
-        # Create a new conversation
-        conversation = Conversation()
-        _apply_workspace_metadata(conversation, request.tool_context)
-        await self._conversation_repo.create(conversation)
-        return conversation
-
-    def _assistant_message_from_result(
-        self,
-        result: InferenceResult,
-        context_metadata: dict[str, Any] | None = None,
-    ) -> Message:
-        return Message(
-            role=Role.ASSISTANT,
-            content=result.content,
-            tool_calls=result.tool_calls,
-            metadata={
-                "usage": result.usage,
-                "model": result.model,
-                "reasoning_content": result.reasoning_content or None,
-                "finish_reason": result.finish_reason,
-                "images": [image.to_dict() for image in result.images],
-                **_context_usage_metadata(context_metadata or {}),
-                **result.metadata,
-            },
-        )
 
 
     async def _stream_assistant_pass(

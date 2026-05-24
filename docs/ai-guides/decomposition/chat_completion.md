@@ -27,9 +27,10 @@ directory.
 | Tool context builder   | #17 | ~118          | 1,190      |
 | After-turn coordinator | #19 | ~38           | 1,152      |
 | Media policy handler   | #20 | ~54           | 1,098      |
-| **Current**            |     |               | **1,098**  |
+| Conversation lifecycle | #21 | ~33           | 1,065      |
+| **Current**            |     |               | **1,065**  |
 
-Cumulative reduction: **2,742 → 1,098 lines (–60%)**.
+Cumulative reduction: **2,742 → 1,065 lines (–61%)**.
 
 ## Public contract that must be preserved
 
@@ -221,8 +222,8 @@ order of calls.
 - `_stream_assistant_pass`
 - `_normalize_provider_stream_chunk`
 - `_empty_model_response_notice`
-- `_get_or_create_conversation`
-- `_assistant_message_from_result`
+- ~~`_get_or_create_conversation`~~ — landed in #21 (`ConversationLifecycleHandler`)
+- ~~`_assistant_message_from_result`~~ — landed in #21 (`ConversationLifecycleHandler`)
 - ~~`_enforce_provider_data_policy`~~ — landed in #20 (`MediaPolicyHandler`)
 - ~~`_store_generated_images`~~ — landed in #20 (`MediaPolicyHandler`)
 
