@@ -39,6 +39,18 @@ SessionPanelProps)` must keep its props shape. The component's
 exported subcomponents (`BrowserTabStrip`, etc.) are also imported
 by their tests — keep the exports.
 
+## Status
+
+| Slice | Status | PR | Notes |
+|-------|--------|----|-------|
+| 1 — Extract helpers to `helpers.ts` | ✅ Merged | — | 19 functions + 7 types + 8 constants; `helpers.ts`; 40 new tests |
+| 2 — Extract `useSessionPanelState` hook | ⏳ Pending | — | |
+| 3 — Extract `useBrowserTabs` hook | ⏳ Pending | — | |
+| 4 — Extract leaf components | ⏳ Pending | — | |
+| 5 — Extract `BrowserTabContent` | ⏳ Pending | — | |
+| 6 — Extract right-rail detail sections | ⏳ Pending | — | |
+| 7 — Inline what remains | ⏳ Pending | — | |
+
 ## Proposed slices (in order)
 
 The frontend uses different decomposition primitives than the
