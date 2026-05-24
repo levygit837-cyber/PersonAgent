@@ -32,7 +32,6 @@ from personagent.application.use_cases.chat.tool_context_builder import (
 )
 from personagent.domain.models.conversation import Conversation
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -96,7 +95,7 @@ def test_valid_permission_modes_set_is_frozen() -> None:
         "bypass",
         "dont_ask",
     }
-    assert VALID_PERMISSION_MODES == expected
+    assert expected == VALID_PERMISSION_MODES
 
 
 # ---------------------------------------------------------------------------
