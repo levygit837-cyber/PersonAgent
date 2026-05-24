@@ -48,8 +48,8 @@ import {
   findAgentMessageIdForTool,
   latestContextWindowEstimate,
   isTodoToolName,
-  type ChatMessageUi,
 } from "./internal";
+import type { ChatMessageUi } from "../../types/chat";
 import type { PersistedMessage } from "../../types/chat";
 
 function makeMessage(overrides: Partial<ChatMessageUi> = {}): ChatMessageUi {
