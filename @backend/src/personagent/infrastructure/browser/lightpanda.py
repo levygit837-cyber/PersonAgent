@@ -36,10 +36,8 @@ from personagent.infrastructure.browser.models import (
 )
 from personagent.infrastructure.browser.opened_pages import OpenedPageTracker
 from personagent.infrastructure.browser.page_cache import get_browser_page_cache
+from personagent.infrastructure.browser.page_helpers import PageHelpers
 from personagent.infrastructure.browser.page_lifecycle import BrowserPageLifecycle
-from personagent.infrastructure.browser.scripts import (
-    _STYLE_READY_SNAPSHOT_SCRIPT,
-)
 from personagent.infrastructure.browser.search import BrowserSearch
 from personagent.infrastructure.browser.search_cache import SearchResultCache
 from personagent.infrastructure.browser.snapshot import BrowserSnapshot
@@ -151,6 +149,7 @@ class LightPandaBrowserWorker:
         self.search_result_cache = SearchResultCache(self)
         self.element_helpers = ElementHelpers(self)
         self.block_detector = BlockDetector(self)
+        self.page_helpers = PageHelpers(self)
         self._lock = asyncio.Lock()
         self._sessions_lock = asyncio.Lock()
         self._container_start_lock = asyncio.Lock()
@@ -391,37 +390,10 @@ class LightPandaBrowserWorker:
         return self.search_module.search_url(query, max_results=max_results)
 
     async def _wait_for_page_visual_ready(self, page: Any) -> dict[str, Any]:
-        await self._wait_for_page_load_complete(page)
-        metrics: dict[str, Any] = {
-            "style_ready": True,
-            "stylesheet_count": 0,
-            "stylesheet_loaded_count": 0,
-            "fonts_ready": True,
-        }
-        with suppress(Exception):
-            value = await asyncio.wait_for(
-                self._evaluate_page(page, _STYLE_READY_SNAPSHOT_SCRIPT),
-                timeout=min(max(self.timeout_ms / 1000, 1.0), 5.0),
-            )
-            if isinstance(value, Mapping):
-                metrics.update(
-                    {
-                        "style_ready": bool(value.get("style_ready", metrics["style_ready"])),
-                        "stylesheet_count": int(value.get("stylesheet_count") or 0),
-                        "stylesheet_loaded_count": int(value.get("stylesheet_loaded_count") or 0),
-                        "fonts_ready": bool(value.get("fonts_ready", metrics["fonts_ready"])),
-                    }
-                )
-        with suppress(Exception):
-            await page.wait_for_timeout(120)
-        return metrics
+        return await self.page_helpers.wait_for_page_visual_ready(page)
 
     async def _wait_for_page_load_complete(self, page: Any, *, timeout_ms: int | None = None) -> None:
-        wait_for_load_state = getattr(page, "wait_for_load_state", None)
-        if not callable(wait_for_load_state):
-            return
-        with suppress(Exception):
-            await wait_for_load_state("load", timeout=min(timeout_ms or self.timeout_ms, 5_000))
+        await self.page_helpers.wait_for_page_load_complete(page, timeout_ms=timeout_ms)
 
     def _element_selector(self, browser_id: str, node_id: str) -> str:
         return self.element_helpers.element_selector(browser_id, node_id)
@@ -1201,26 +1173,10 @@ class LightPandaBrowserWorker:
         raise BrowserUnavailableError("LightPanda raw CDP command failed.")
 
     async def _safe_title(self, page: Any) -> str:
-        try:
-            title = await asyncio.wait_for(
-                page.title(),
-                timeout=min(self.timeout_ms / 1000, 3),
-            )
-            return str(title or "").strip()
-        except TimeoutError as exc:
-            logger.debug("lightpanda_title_timeout", error=str(exc))
-            return ""
-        except Exception:
-            return ""
+        return await self.page_helpers.safe_title(page)
 
     async def _safe_title_for_url(self, url: str) -> str:
-        value = await self._raw_runtime_evaluate_value(
-            url,
-            "document.title || ''",
-            label="title",
-            timeout=min(self.timeout_ms / 1000, 5),
-        )
-        return str(value or "").strip() if isinstance(value, str) else ""
+        return await self.page_helpers.safe_title_for_url(url)
 
     async def _raise_if_google_blocked(self, page: Any) -> None:
         await self.block_detector.raise_if_google_blocked(page)
