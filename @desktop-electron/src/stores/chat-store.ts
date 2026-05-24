@@ -5,9 +5,6 @@ import {
   approvePlan,
   cancelPlan,
   continuePlan,
-  forkConversation,
-  getConversation,
-  gitCreateWorktree,
   rejectTool,
   streamApproveTool,
   streamTeamChat,
@@ -62,13 +59,9 @@ import {
   liveTokenTotals,
   getEffectiveWorkspaceRoot,
   setConversationStatus,
-  inferConversationStatus,
-  conversationForkMessages,
-  previousUserMessageIndex,
+
   contextAttachmentsFromMessage,
   isContextAttachment,
-  setAgentMessageActionState,
-  worktreeSlug,
   localSlashCommands,
   modelProviders,
   reasoningPresetValues,
@@ -89,7 +82,6 @@ import {
   latestTodoSnapshotFromMessages,
   latestTodoSnapshotFromMessage,
   isTodoToolBlock,
-  browserToolBlocksFromMessages,
   upsertBrowserToolBlock,
   isBrowserToolBlock,
   latestContextWindowEstimate,
@@ -105,6 +97,7 @@ import {
   normalizeUsageTokens,
 } from "./chat-store/internal";
 import { createComposerSlice } from "./chat-store/composer-slice";
+import { createConversationSlice } from "./chat-store/conversation-slice";
 
 export type { ComposerAnnotation } from "./chat-store/internal";
 type ComposerAnnotation = ComposerAnnotationInternal;
@@ -127,116 +120,20 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
   isStreaming: false,
   isFinalizing: false,
   isProcessingPlanDecision: false,
-  conversationStatuses: {},
   liveSessionUsage: emptySessionUsage(),
   liveSubAgentIds: [],
   contextTokenEstimate: 0,
   browserToolBlocks: [],
 
   ...createComposerSlice(set, get),
+  ...createConversationSlice(set, get, {
+    syncWorkspaceSelection,
+    messageFromPersisted,
+    isRenderablePersistedMessage,
+    isRecord,
+  }),
 
   setWorkspaceRoot: (workspaceRoot) => set({ workspaceRoot: workspaceRoot?.trim() || undefined }),
-
-  loadConversation: async (id, workspaceRoot) => {
-    if (get().loadingConversationId === id) return;
-    if (get().isStreaming || get().activeAgentId || get().activeController) {
-      get().stopStreaming();
-    }
-    set({ loadingConversationId: id, error: undefined });
-    try {
-      const appStore = useAppStore.getState();
-      const mappedWorkspace = workspaceRoot?.trim() || appStore.convWorkspaceMap[id]?.trim() || get().workspaceRoot?.trim();
-      if (mappedWorkspace) {
-        set({ workspaceRoot: mappedWorkspace });
-      }
-      if (syncWorkspaceSelection && mappedWorkspace && mappedWorkspace !== appStore.selectedWorkspace) {
-        await appStore.selectWorkspace(mappedWorkspace);
-      }
-
-      const detail = await getConversation(useAppStore.getState().baseUrl, id);
-      if (get().loadingConversationId !== id) return;
-      const loadedMessages = detail.messages
-        .filter((message) => message.role !== "system")
-        .filter(isRenderablePersistedMessage)
-        .map(messageFromPersisted);
-
-      // Reconstruct pending plan approval from the most recent assistant message
-      // that carries an awaiting_approval artifact (e.g. after context compaction).
-      let pendingPlanApproval: PlanApprovalUi | undefined;
-      for (let i = loadedMessages.length - 1; i >= 0; i--) {
-        const msg = loadedMessages[i];
-        if (msg.role === "agent") {
-          const artifact = msg.metadata?.plan_approval;
-          if (isRecord(artifact) && artifact.planStatus === "awaiting_approval") {
-            pendingPlanApproval = {
-              conversationId: String(artifact.conversationId ?? detail.id),
-              approvalId: String(artifact.approvalId ?? ""),
-              planId: String(artifact.planId ?? ""),
-              planContent: String(artifact.planContent ?? ""),
-              planStatus: String(artifact.planStatus ?? "awaiting_approval"),
-              feedback: typeof artifact.feedback === "string" ? artifact.feedback : null,
-            };
-            break;
-          }
-        }
-      }
-
-      set({
-        conversationId: detail.id,
-        conversationTitle: detail.title,
-        messages: loadedMessages,
-        pendingPlanApproval,
-        composerPlanMode: false,
-        pendingToolApproval: undefined,
-        nextStepSuggestion: undefined,
-        composerAnnotations: [],
-        liveSessionUsage: emptySessionUsage(),
-        liveSubAgentIds: [],
-        latestTodoSnapshot: latestTodoSnapshotFromMessages(loadedMessages),
-        contextTokenEstimate: estimateConversationContextTokens(loadedMessages),
-        contextWindowEstimate: latestContextWindowEstimate(loadedMessages),
-        browserToolBlocks: browserToolBlocksFromMessages(loadedMessages),
-        isFinalizing: false,
-        loadingConversationId: undefined,
-        error: undefined,
-      });
-      setConversationStatus(set, detail.id, inferConversationStatus(detail.messages));
-      resetLiveTokenTotals();
-    } catch (error) {
-      if (get().loadingConversationId === id) {
-        set({ error: errorMessage(error) });
-      }
-    } finally {
-      set((state) => ({
-        loadingConversationId: state.loadingConversationId === id ? undefined : state.loadingConversationId,
-      }));
-    }
-  },
-
-  startNewConversation: () => {
-    get().stopStreaming();
-    set({
-      messages: [],
-      composerAnnotations: [],
-      conversationId: undefined,
-      conversationTitle: undefined,
-      pendingPlanApproval: undefined,
-      composerPlanMode: false,
-      pendingToolApproval: undefined,
-      nextStepSuggestion: undefined,
-      liveSessionUsage: emptySessionUsage(),
-      liveSubAgentIds: [],
-      latestTodoSnapshot: undefined,
-      contextTokenEstimate: 0,
-      contextWindowEstimate: undefined,
-      browserToolBlocks: [],
-      workspaceRoot: syncWorkspaceSelection ? get().workspaceRoot : get().workspaceRoot,
-      isFinalizing: false,
-      loadingConversationId: undefined,
-      error: undefined,
-    });
-    resetLiveTokenTotals();
-  },
 
   sendMessage: async (text, systemPrompt, options) => {
     const message = text.trim();
@@ -545,66 +442,6 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
     }));
   },
 
-  regenerateAgentMessage: async (messageId) => {
-    if (get().isStreaming) return;
-    const state = get();
-    const agentIndex = state.messages.findIndex((message) => message.id === messageId && message.role === "agent");
-    if (agentIndex < 0) return;
-    const userIndex = previousUserMessageIndex(state.messages, agentIndex);
-    if (userIndex < 0) return;
-    const userMessage = state.messages[userIndex];
-    await replayUserMessageFromIndex(userIndex, userMessage, userMessage.content, set, get);
-  },
-
-  rewindUserMessage: async (messageId, content) => {
-    if (get().isStreaming) return;
-    const state = get();
-    const userIndex = state.messages.findIndex((message) => message.id === messageId && message.role === "user");
-    if (userIndex < 0) return;
-    const userMessage = state.messages[userIndex];
-    await replayUserMessageFromIndex(userIndex, userMessage, content, set, get);
-  },
-
-  branchAgentMessage: async (messageId) => {
-    if (get().isStreaming) return;
-    const app = useAppStore.getState();
-    const workspaceRoot = getEffectiveWorkspaceRoot(get());
-    if (!workspaceRoot) {
-      setAgentMessageActionState(set, messageId, {
-        worktree_status: "error",
-        worktree_error: "No workspace selected.",
-      });
-      return;
-    }
-
-    setAgentMessageActionState(set, messageId, {
-      worktree_status: "running",
-      worktree_error: undefined,
-    });
-    try {
-      const result = await gitCreateWorktree(app.baseUrl, workspaceRoot, {
-        name: worktreeSlug(get().conversationId, messageId),
-        sourceMessageId: messageId,
-      });
-      set({ workspaceRoot: result.path });
-      if (syncWorkspaceSelection) {
-        await useAppStore.getState().selectWorkspace(result.path);
-      }
-      setAgentMessageActionState(set, messageId, {
-        worktree_status: "ready",
-        worktree_branch: result.branch,
-        worktree_path: result.path,
-        worktree_error: undefined,
-      });
-      window.dispatchEvent(new CustomEvent("personagent:workspace-changed"));
-    } catch (error) {
-      setAgentMessageActionState(set, messageId, {
-        worktree_status: "error",
-        worktree_error: errorMessage(error),
-      });
-    }
-  },
-
   stopStreaming: () => {
     const controller = get().activeController;
     controller?.abort();
@@ -623,8 +460,6 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
       ),
     }));
   },
-
-  clearError: () => set({ error: undefined }),
 
   setReasoningBlockExpanded: (messageId, blockId, expanded) => {
     set((state) => ({
@@ -679,71 +514,6 @@ export const useChatStore = Object.assign(
 
 export function getDefaultChatStore() {
   return defaultChatStore;
-}
-
-
-
-async function replayUserMessageFromIndex(
-  userIndex: number,
-  userMessage: ChatMessageUi,
-  content: string,
-  set: ChatSet,
-  get: ChatGet,
-) {
-  const state = get();
-  const prefixMessages = state.messages.slice(0, userIndex);
-  const attachments = contextAttachmentsFromMessage(userMessage);
-  const replayContent = content.trim() || userMessage.content.trim() || "Attached context.";
-  set((state) => ({
-    messages: prefixMessages,
-    error: undefined,
-    pendingPlanApproval: undefined,
-    pendingToolApproval: undefined,
-    nextStepSuggestion: undefined,
-  }));
-
-  try {
-    await prepareConversationReplay(prefixMessages, set, get);
-  } catch (error) {
-    set({ error: errorMessage(error) });
-    return;
-  }
-
-  await get().sendMessage(
-    replayContent,
-    undefined,
-    attachments.length
-      ? { contextAttachments: attachments, displayAttachments: attachments }
-      : undefined,
-  );
-}
-
-async function prepareConversationReplay(
-  prefixMessages: ChatMessageUi[],
-  set: ChatSet,
-  get: ChatGet,
-) {
-  const conversationId = get().conversationId;
-  if (!conversationId) return;
-
-  if (prefixMessages.length === 0) {
-    set({ conversationId: undefined, conversationTitle: undefined });
-    return;
-  }
-
-  const app = useAppStore.getState();
-  const workspaceRoot = getEffectiveWorkspaceRoot(get());
-  const fork = await forkConversation(app.baseUrl, conversationId, {
-    title: get().conversationTitle,
-    workspaceRoot,
-    messages: conversationForkMessages(prefixMessages),
-  });
-  set({
-    conversationId: fork.id,
-    conversationTitle: fork.title,
-  });
-  void useAppStore.getState().associateConversation(fork.id, workspaceRoot);
-  window.dispatchEvent(new CustomEvent("personagent:conversations-changed"));
 }
 
 
