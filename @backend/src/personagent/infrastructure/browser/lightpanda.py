@@ -19,6 +19,7 @@ import structlog
 
 from personagent.infrastructure.browser.actions import BrowserActions
 from personagent.infrastructure.browser.cache import SnapshotCache, StylesheetDiskCache
+from personagent.infrastructure.browser.console import BrowserConsole
 from personagent.infrastructure.browser.content import BrowserContent
 from personagent.infrastructure.browser.models import (
     BrowserBlockedError,
@@ -35,10 +36,6 @@ from personagent.infrastructure.browser.models import (
 from personagent.infrastructure.browser.page_cache import get_browser_page_cache
 from personagent.infrastructure.browser.page_lifecycle import BrowserPageLifecycle
 from personagent.infrastructure.browser.scripts import (
-    _CONSOLE_CAPTURE_SCRIPT,
-    _CONSOLE_DRAIN_SCRIPT,
-    _COOPERATION_CAPTURE_SCRIPT,
-    _COOPERATION_DRAIN_SCRIPT,
     _STYLE_READY_SNAPSHOT_SCRIPT,
 )
 from personagent.infrastructure.browser.search import BrowserSearch
@@ -86,7 +83,6 @@ _STYLESHEET_CACHE_DIR = Path(
 _RENDER_SNAPSHOT_CACHE_TTL_SECONDS = float(os.getenv("PERSONAGENT_BROWSER_RENDER_CACHE_TTL_SECONDS", "180"))
 _MAX_RENDER_SNAPSHOT_CACHE_ENTRIES = int(os.getenv("PERSONAGENT_BROWSER_RENDER_CACHE_ENTRIES", "16"))
 _RAW_CDP_RETRY_DELAYS = (0.0, 0.5, 1.5, 3.0, 5.0)
-_MAX_CONSOLE_ENTRIES_PER_PAGE = 200
 _MAX_BROWSER_SCRIPT_CHARS = 10_000
 _MAX_BROWSER_SCRIPT_RESULT_CHARS = 12_000
 _BROWSER_SCRIPT_CDP_ALLOWLIST = {
@@ -147,6 +143,7 @@ class LightPandaBrowserWorker:
         self.search_module = BrowserSearch(self)
         self.view_actions = BrowserViewActions(self)
         self.content_module = BrowserContent(self)
+        self.console = BrowserConsole(self)
         self._lock = asyncio.Lock()
         self._sessions_lock = asyncio.Lock()
         self._container_start_lock = asyncio.Lock()
@@ -933,51 +930,10 @@ class LightPandaBrowserWorker:
         return True
 
     def _attach_page_console_listeners(self, conversation_id: str, page_id: str, page: Any) -> None:
-        on_event = getattr(page, "on", None)
-        if not callable(on_event):
-            return
-        key = (conversation_id, page_id, id(page))
-        if key in self._console_listener_keys:
-            return
-        self._console_listener_keys.add(key)
-
-        def handle_console(message: Any) -> None:
-            level = self._console_message_attr(message, "type") or "log"
-            text = self._console_message_attr(message, "text") or str(message)
-            location = self._console_message_attr(message, "location")
-            url = ""
-            if isinstance(location, Mapping):
-                url = str(location.get("url") or "")
-            self._record_console_entry(
-                conversation_id,
-                page_id,
-                level=str(level),
-                text=str(text),
-                source="console",
-                url=url,
-            )
-
-        def handle_page_error(error: Any) -> None:
-            self._record_console_entry(
-                conversation_id,
-                page_id,
-                level="error",
-                text=str(error),
-                source="pageerror",
-                url=_clean_browser_url(str(getattr(page, "url", "") or "")),
-            )
-
-        with suppress(Exception):
-            on_event("console", handle_console)
-        with suppress(Exception):
-            on_event("pageerror", handle_page_error)
+        return self.console.attach_page_console_listeners(conversation_id, page_id, page)
 
     def _console_message_attr(self, message: Any, name: str) -> Any:
-        value = getattr(message, name, None)
-        if callable(value):
-            with suppress(Exception):
-                return value()
-        return value
+        return BrowserConsole.console_message_attr(message, name)
 
     def _record_console_entry(
         self,
@@ -989,19 +945,9 @@ class LightPandaBrowserWorker:
         source: str,
         url: str = "",
     ) -> None:
-        self._console_sequence += 1
-        page_cache = self._console_cache.setdefault(conversation_id, {}).setdefault(page_id, [])
-        page_cache.append(
-            BrowserConsoleEntry(
-                entry_id=self._console_sequence,
-                page_id=page_id,
-                level=(level or "log").lower(),
-                text=str(text or "")[:8_000],
-                source=source,
-                url=url,
-            )
+        return self.console.record_console_entry(
+            conversation_id, page_id, level=level, text=text, source=source, url=url,
         )
-        del page_cache[:-_MAX_CONSOLE_ENTRIES_PER_PAGE]
 
     async def _page_runtime(self, page: Any) -> str:
         return "lightpanda" if await self._is_lightpanda_page(page) else "chrome_cdp"
@@ -1279,26 +1225,10 @@ class LightPandaBrowserWorker:
         return None
 
     async def _install_console_capture(self, page: Any) -> None:
-        with suppress(Exception):
-            await self._evaluate_page(page, _CONSOLE_CAPTURE_SCRIPT)
+        await self.console.install_console_capture(page)
 
     async def _install_cooperation_capture(self, page: Any, browser_id: str, page_id: str) -> None:
-        key = (browser_id, page_id, id(page))
-        if key not in self._cooperation_listener_keys:
-            expose_function = getattr(page, "expose_function", None)
-            if callable(expose_function):
-                with suppress(Exception):
-                    await expose_function(
-                        "__personagentBrowserEvent",
-                        lambda event: self._record_cooperation_event(browser_id, page_id, event),
-                    )
-            self._cooperation_listener_keys.add(key)
-        with suppress(Exception):
-            await self._evaluate_page(
-                page,
-                _COOPERATION_CAPTURE_SCRIPT,
-                {"browserId": browser_id, "pageId": page_id},
-            )
+        await self.console.install_cooperation_capture(page, browser_id, page_id)
 
     async def _drain_page_console_entries(
         self,
@@ -1306,21 +1236,7 @@ class LightPandaBrowserWorker:
         conversation_id: str,
         page_id: str,
     ) -> None:
-        await self._install_console_capture(page)
-        entries = await self._evaluate_page(page, _CONSOLE_DRAIN_SCRIPT)
-        if not isinstance(entries, list):
-            return
-        for entry in entries:
-            if not isinstance(entry, Mapping):
-                continue
-            self._record_console_entry(
-                conversation_id,
-                page_id,
-                level=str(entry.get("level") or "log"),
-                text=str(entry.get("text") or ""),
-                source=str(entry.get("source") or "console"),
-                url=str(entry.get("url") or ""),
-            )
+        await self.console.drain_page_console_entries(page, conversation_id, page_id)
 
     async def _drain_cooperation_events(
         self,
@@ -1328,31 +1244,10 @@ class LightPandaBrowserWorker:
         browser_id: str,
         page_id: str,
     ) -> list[dict[str, Any]]:
-        await self._install_cooperation_capture(page, browser_id, page_id)
-        entries: list[dict[str, Any]] = []
-        cached = self._cooperation_event_cache.setdefault(browser_id, {}).setdefault(page_id, [])
-        if cached:
-            entries.extend(cached[:200])
-            del cached[:200]
-        with suppress(Exception):
-            drained = await self._evaluate_page(page, _COOPERATION_DRAIN_SCRIPT)
-            if isinstance(drained, list):
-                entries.extend(item for item in drained if isinstance(item, dict))
-        return entries[-200:]
+        return await self.console.drain_cooperation_events(page, browser_id, page_id)
 
     def _record_cooperation_event(self, browser_id: str, page_id: str, event: Any) -> None:
-        if not isinstance(event, Mapping):
-            return
-        payload = dict(event)
-        payload.setdefault("source", "user")
-        payload.setdefault("channel", "event")
-        payload.setdefault("trace_role", "user")
-        payload.setdefault("page_id", page_id)
-        payload.setdefault("tab_id", page_id)
-        page_cache = self._cooperation_event_cache.setdefault(browser_id, {}).setdefault(page_id, [])
-        page_cache.append(payload)
-        if len(page_cache) > 500:
-            del page_cache[: len(page_cache) - 500]
+        self.console.record_cooperation_event(browser_id, page_id, event)
 
     async def _raw_runtime_evaluate_value(
         self,
