@@ -25,9 +25,10 @@ directory.
 | Tool result handler    | #14 | ~252          | 1,396      |
 | Message preparation    | #16 | ~88           | 1,308      |
 | Tool context builder   | #17 | ~118          | 1,190      |
-| **Current**            |     |               | **1,190**  |
+| After-turn coordinator | #19 | ~38           | 1,152      |
+| **Current**            |     |               | **1,152**  |
 
-Cumulative reduction: **2,742 → 1,190 lines (–57%)**.
+Cumulative reduction: **2,742 → 1,152 lines (–58%)**.
 
 ## Public contract that must be preserved
 
@@ -195,7 +196,7 @@ team-chat.
 
 **Risk:** Low. Mostly pure path-resolution logic.
 
-### Slice 10 — `AfterTurnCoordinator` (~80 lines)
+### Slice 10 — `AfterTurnCoordinator` (✅ landed in #19; ~38 lines)
 
 **What moves out:**
 

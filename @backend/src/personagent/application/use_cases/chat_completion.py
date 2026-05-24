@@ -32,6 +32,7 @@ from personagent.application.tools import (
     ToolRuntimeConfig,
 )
 from personagent.application.tools.runtime_config import resolve_effective_tool_iterations
+from personagent.application.use_cases.chat.after_turn import AfterTurnCoordinator
 from personagent.application.use_cases.chat.compaction import ConversationCompactor
 from personagent.application.use_cases.chat.helpers import (
     apply_workspace_metadata as _apply_workspace_metadata,
@@ -187,6 +188,12 @@ class ChatCompletionUseCase:
         self._tool_context_builder = ToolContextBuilder(
             tool_runtime_config=self._tool_runtime_config,
         )
+        self._after_turn = AfterTurnCoordinator(
+            conversation_repo=self._conversation_repo,
+            next_step_suggestion_service=self._next_step_suggestion_service,
+            session_memory_service=self._session_memory_service,
+            session_title_service=self._session_title_service,
+        )
         self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
         self._artifact_ttl_seconds = artifact_ttl_seconds if artifact_ttl_seconds and artifact_ttl_seconds > 0 else None
 
@@ -324,12 +331,12 @@ class ChatCompletionUseCase:
         finalized_state = auto_finalize_plan_mode(conversation.metadata, result.content)
         if finalized_state:
             _attach_plan_approval_artifact(conversation, finalized_state)
-        await self._after_turn_services(
+        await self._after_turn.run_services(
             conversation,
             request,
             finish_reason=result.finish_reason,
         )
-        await self._refresh_session_title(conversation, was_empty=was_empty)
+        await self._after_turn.refresh_session_title(conversation, was_empty=was_empty)
         # Trigger extração de memória em background
         await self._operational_memory.trigger_memory_extraction(conversation, request)
 
@@ -775,7 +782,7 @@ class ChatCompletionUseCase:
                 )
                 final_finish_reason = "plan_approval_requested"
 
-        next_step_suggestion = await self._after_turn_services(
+        next_step_suggestion = await self._after_turn.run_services(
             conversation,
             request,
             finish_reason=final_finish_reason,
@@ -796,7 +803,7 @@ class ChatCompletionUseCase:
         # Trigger extração de memória em background
         await self._operational_memory.trigger_memory_extraction(conversation, request)
 
-        await self._refresh_session_title(conversation, was_empty=was_empty)
+        await self._after_turn.refresh_session_title(conversation, was_empty=was_empty)
 
         saved_context_metadata = _context_usage_metadata(last_prompt_context_metadata)
         if last_assistant is not None:
@@ -1140,51 +1147,6 @@ class ChatCompletionUseCase:
             metadata={"source": "fallback"},
         )
 
-    async def _after_turn_services(
-        self,
-        conversation: Conversation,
-        request: ChatRequestDTO,
-        *,
-        finish_reason: str | None,
-    ) -> str | None:
-        next_step = None
-        if self._next_step_suggestion_service is not None:
-            next_step = await self._next_step_suggestion_service.suggest(
-                conversation,
-                model=request.model,
-                provider=request.provider,
-                finish_reason=finish_reason,
-                suppressed=is_plan_mode_active(conversation.metadata),
-            )
-            if next_step:
-                conversation.metadata["next_step_suggestion"] = next_step
-
-        if self._session_memory_service is not None:
-            updated = await self._session_memory_service.update(
-                conversation,
-                model=request.model,
-                provider=request.provider,
-            )
-            if updated:
-                conversation.metadata["session_memory_updated_at"] = datetime.now(UTC).isoformat()
-
-        return next_step
-
-    async def _refresh_session_title(
-        self,
-        conversation: Conversation,
-        *,
-        was_empty: bool,
-    ) -> None:
-        if self._session_title_service is not None:
-            await self._session_title_service.refresh_title(
-                self._conversation_repo,
-                conversation,
-            )
-            return
-        if was_empty:
-            conversation.title = conversation.generate_title()
-            await self._conversation_repo.update(conversation)
 
 
 
