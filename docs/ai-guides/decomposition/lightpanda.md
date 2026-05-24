@@ -73,7 +73,7 @@ appropriate.
 | 5 — Extract `BrowserSnapshot` | ✅ Merged | — | 577 lines removed; 14 methods in `snapshot.py` + backward-compat delegations; 37 new tests |
 | 6 — Extract `BrowserSearch` | ✅ Merged | — | 253 lines removed; search + search_url + 4 scripts in `search.py` + backward-compat delegations; 27 new tests |
 | 7 — Extract `BrowserViewActions` | ✅ Merged | — | 317 lines removed; 7 view_* methods in `view_actions.py` + backward-compat delegations; 23 new tests |
-| 8 — Inline what remains | ⏳ Pending | — | |
+| 8 — Inline what remains | ✅ Merged | — | JS scripts → `scripts.py` (942 lines); content extraction → `content.py` (20 methods); 20 new tests; lightpanda.py: 3,520 → 2,015 (−43%) |
 
 ## Proposed slices (in order; expect 8+ PRs)
 
