@@ -33,13 +33,34 @@ Do **not** use them when:
 | File                        | Purpose                                  |
 | --------------------------- | ---------------------------------------- |
 | `README.md`                 | This file. Index + when to use what.     |
-| `_protocol.md`              | **Shared rules.** Read first. Every     |
-|                             | playbook below extends it.               |
-| `chat_completion.md`        | Backend: `chat_completion.py` (483 L)  |
-| `team_chat_orchestrator.md` | Backend: `team_chat/orchestrator.py` (3,097 L) |
-| `lightpanda.md`             | Backend: `infrastructure/browser/lightpanda.py` (5,735 L) |
-| `session_panel.md`          | Frontend: `chat/session-panel.tsx` (3,960 L) |
-| `chat_store.md`             | Frontend: `stores/chat-store.ts` (3,307 L) |
+| `_protocol.md`              | **Shared rules.** Read first. Every playbook below extends it. |
+| `god-files-master-plan.md`  | **Master plan.** Full inventory, ASCII tree, priority, rules. |
+| **Backend — already decomposed** | |
+| `chat_completion.md`        | ✅ `chat_completion.py` (2,742 → 483 L, −82%) |
+| `team_chat_orchestrator.md` | ✅ `team_chat/orchestrator.py` (3,097 → 127 L, −96%) |
+| **Backend — in progress** | |
+| `lightpanda.md`             | 🔄 `browser/lightpanda.py` (5,735 → 4,710 L, slices 1–4 done) |
+| **Backend — planned** | |
+| `browser_tools.md`          | ⏳ `tools/browser_tools.py` (2,786 L) |
+| `operational_memory_repository.md` | ⏳ `persistence/operational_memory_repository.py` (1,938 L) |
+| `routes_chat.md`            | ⏳ `api/routes/chat.py` (1,905 L) |
+| `routes_workspace.md`       | ⏳ `api/routes/workspace.py` (1,576 L) |
+| `routes_sessions.md`        | ⏳ `api/routes/sessions.py` (1,471 L) |
+| `browser_cooperation.md`    | ⏳ `services/browser_cooperation.py` (1,292 L) |
+| `operational_memory_service.md` | ⏳ `services/operational_memory.py` (1,075 L) |
+| `llm_adapters.md`           | ⏳ `llm/vertex_ai + codex + kimi` (1,064 + 944 + 892 L) |
+| `session_panel_service.md`  | ⏳ `services/session_panel.py` (976 L) |
+| `session_titles.md`         | ⏳ `services/session_titles.py` (848 L) |
+| `filesystem_tools.md`       | ⏳ `tools/filesystem_tools.py` (810 L) |
+| **Frontend — planned** | |
+| `session_panel.md`          | ⏳ `chat/session-panel.tsx` (3,960 L) |
+| `chat_store.md`             | ⏳ `stores/chat-store.ts` (3,307 L) |
+| `input_dock.md`             | ⏳ `chat/input-dock.tsx` (1,976 L) |
+| `agent_message.md`          | ⏳ `chat/agent-message.tsx` (1,419 L) |
+| `open_pr_workspace.md`      | ⏳ `open-pr/open-pr-workspace.tsx` (1,350 L) |
+| `browser_mirror.md`         | ⏳ `session-panel/browser-mirror.ts` (1,261 L) |
+| `api_client.md`             | ⏳ `api/client.ts` (1,231 L) |
+| `file_viewer_panel.md`      | ⏳ `chat/file-viewer-panel.tsx` (1,079 L) |
 
 ## How a playbook works
 
