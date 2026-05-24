@@ -64,6 +64,9 @@ from personagent.application.use_cases.chat.prompt_surfaces import (
 from personagent.application.use_cases.chat.state import (
     AssistantStreamState as _AssistantStreamState,
 )
+from personagent.application.use_cases.chat.state import (
+    StreamingTurnState as _StreamingTurnState,
+)
 from personagent.application.use_cases.chat.stream_normalization import (
     StreamChunkNormalizer,
 )
@@ -511,19 +514,15 @@ class ChatCompletionUseCase:
             )
 
         tool_context = self._tool_context_builder.build(request, conversation, preparation) if tools else None
-        final_finish_reason = None
-        final_usage = None
-        final_model = request.model
-        final_provider = request.provider
-        seen_tool_call_ids: set[str] = set()
+        turn_state = _StreamingTurnState(
+            final_model=request.model,
+            final_provider=request.provider,
+        )
         effective_max_iterations = self._effective_max_tool_iterations(request)
 
         try:
-            iteration = 0
-            executed_tools = False
-            last_prompt_context_metadata: dict[str, Any] = {}
             while True:
-                if iteration >= effective_max_iterations:
+                if turn_state.iteration >= effective_max_iterations:
                     raise ToolLoopLimitExceededError(
                         f"Tool loop exceeded {effective_max_iterations} iterations",
                         metadata={
@@ -538,7 +537,7 @@ class ChatCompletionUseCase:
                     prompt_package,
                     tools,
                 )
-                last_prompt_context_metadata = context_metadata
+                turn_state.last_prompt_context_metadata = context_metadata
                 yield StreamChunk(
                     metadata={
                         "event": "prompt_context",
@@ -556,14 +555,14 @@ class ChatCompletionUseCase:
                     conversation_id=str(conversation.id),
                     messages=messages,
                     tools=tools,
-                    seen_tool_call_ids=seen_tool_call_ids,
-                    iteration=iteration,
+                    seen_tool_call_ids=turn_state.seen_tool_call_ids,
+                    iteration=turn_state.iteration,
                     state=assistant_state,
                 ):
                     yield forwarded_chunk
 
                 if (
-                    executed_tools
+                    turn_state.executed_tools
                     and not assistant_state.has_visible_output
                     and assistant_state.tool_calls is None
                     and assistant_state.finish_reason in {None, "stop"}
@@ -586,8 +585,8 @@ class ChatCompletionUseCase:
                         conversation_id=str(conversation.id),
                         messages=self._message_preparer.with_final_answer_reminder(messages),
                         tools=[],
-                        seen_tool_call_ids=seen_tool_call_ids,
-                        iteration=iteration,
+                        seen_tool_call_ids=turn_state.seen_tool_call_ids,
+                        iteration=turn_state.iteration,
                         state=retry_state,
                     ):
                         yield forwarded_chunk
@@ -624,14 +623,14 @@ class ChatCompletionUseCase:
                             },
                         )
 
-                final_finish_reason = (
+                turn_state.final_finish_reason = (
                     assistant_state.finish_reason
                     if assistant_state.finish_reason != "tool_calls"
-                    else final_finish_reason
+                    else turn_state.final_finish_reason
                 )
-                final_usage = assistant_state.usage or final_usage
-                final_model = assistant_state.model or final_model
-                final_provider = assistant_state.provider or final_provider
+                turn_state.final_usage = assistant_state.usage or turn_state.final_usage
+                turn_state.final_model = assistant_state.model or turn_state.final_model
+                turn_state.final_provider = assistant_state.provider or turn_state.final_provider
                 conversation.add_message(
                     Message(
                         role=Role.ASSISTANT,
@@ -683,7 +682,7 @@ class ChatCompletionUseCase:
                             )
                             metadata["event"] = "ask_user_question"
                             waiting_for_tool_approval = True
-                            final_finish_reason = "user_input_required"
+                            turn_state.final_finish_reason = "user_input_required"
                         else:
                             _set_session_status(conversation, "pending")
                             metadata.update(
@@ -695,7 +694,7 @@ class ChatCompletionUseCase:
                                 )
                             )
                             waiting_for_tool_approval = True
-                            final_finish_reason = "permission_required"
+                            turn_state.final_finish_reason = "permission_required"
                     yield StreamChunk(metadata=metadata)
                     if event.result is not None and self._tool_results.is_plan_approval(event.result):
                         self._tool_results.apply_state(event.result, conversation)
@@ -709,7 +708,7 @@ class ChatCompletionUseCase:
                             )
                         )
                         waiting_for_plan_approval = True
-                        final_finish_reason = "plan_approval_requested"
+                        turn_state.final_finish_reason = "plan_approval_requested"
                     elif event.result is not None and self._tool_results.is_plan_mode(event.result):
                         self._tool_results.apply_state(event.result, conversation)
                         state = self._tool_results.plan_state_from(event.result, conversation)
@@ -723,8 +722,8 @@ class ChatCompletionUseCase:
                         self._tool_results.apply_state(result, conversation)
                         if result.status != ToolExecutionStatus.PERMISSION_REQUIRED:
                             conversation.add_message(self._tool_results.tool_message_from(result))
-                            executed_tools = True
-                iteration += 1
+                            turn_state.executed_tools = True
+                turn_state.iteration += 1
                 if waiting_for_plan_approval or waiting_for_tool_approval:
                     break
 
@@ -752,7 +751,7 @@ class ChatCompletionUseCase:
                     "finish_reason": "tool_loop_limit_exceeded",
                 }
             )
-            final_finish_reason = "tool_loop_limit_exceeded"
+            turn_state.final_finish_reason = "tool_loop_limit_exceeded"
             # Fall through to the post-loop cleanup so the UI receives
             # conversation_saved with the final state, instead of leaving the
             # stream half-closed.
@@ -768,9 +767,9 @@ class ChatCompletionUseCase:
                 context_result,
                 content=last_assistant.content,
                 reasoning_content=last_assistant.metadata.get("reasoning_content"),
-                finish_reason=final_finish_reason,
-                provider=final_provider,
-                model=final_model,
+                finish_reason=turn_state.final_finish_reason,
+                provider=turn_state.final_provider,
+                model=turn_state.final_model,
             )
             finalized_state = auto_finalize_plan_mode(conversation.metadata, last_assistant.content)
             if finalized_state:
@@ -782,12 +781,12 @@ class ChatCompletionUseCase:
                         event="plan_approval_requested",
                     )
                 )
-                final_finish_reason = "plan_approval_requested"
+                turn_state.final_finish_reason = "plan_approval_requested"
 
         next_step_suggestion = await self._after_turn.run_services(
             conversation,
             request,
-            finish_reason=final_finish_reason,
+            finish_reason=turn_state.final_finish_reason,
         )
         if next_step_suggestion:
             yield StreamChunk(
@@ -807,7 +806,7 @@ class ChatCompletionUseCase:
 
         await self._after_turn.refresh_session_title(conversation, was_empty=was_empty)
 
-        saved_context_metadata = _context_usage_metadata(last_prompt_context_metadata)
+        saved_context_metadata = _context_usage_metadata(turn_state.last_prompt_context_metadata)
         if last_assistant is not None:
             saved_context_metadata.update(
                 _context_usage_metadata(last_assistant.metadata or {})
@@ -823,10 +822,10 @@ class ChatCompletionUseCase:
                 "event": "conversation_saved",
                 "conversation_id": str(conversation.id),
                 "title": conversation.title,
-                "finish_reason": final_finish_reason,
-                "usage": final_usage,
-                "model": final_model,
-                "provider": final_provider,
+                "finish_reason": turn_state.final_finish_reason,
+                "usage": turn_state.final_usage,
+                "model": turn_state.final_model,
+                "provider": turn_state.final_provider,
                 "next_step_suggestion": next_step_suggestion,
                 **saved_context_metadata,
             }
