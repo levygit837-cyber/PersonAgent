@@ -17,7 +17,6 @@ from personagent.application.plan_mode import (
     activate_plan_mode_if_requested,
     auto_finalize_plan_mode,
     is_plan_mode_active,
-    normalize_plan_state,
     plan_mode_event,
 )
 from personagent.application.security.provider_data_policy import enforce_provider_data_policy
@@ -50,9 +49,6 @@ from personagent.application.use_cases.chat.helpers import (
     image_suffix as _image_suffix,
 )
 from personagent.application.use_cases.chat.helpers import (
-    is_relative_to as _is_relative_to,
-)
-from personagent.application.use_cases.chat.helpers import (
     optional_int as _optional_int,
 )
 from personagent.application.use_cases.chat.helpers import (
@@ -75,8 +71,8 @@ from personagent.application.use_cases.chat.state import (
 from personagent.application.use_cases.chat.state import (
     PromptPackage as _PromptPackage,
 )
-from personagent.application.use_cases.chat.state import (
-    PromptPreparation as _PromptPreparation,
+from personagent.application.use_cases.chat.tool_context_builder import (
+    ToolContextBuilder,
 )
 from personagent.application.use_cases.chat.tool_results import ToolResultHandler
 from personagent.application.use_cases.context import BuildContextUseCase
@@ -101,23 +97,10 @@ from personagent.domain.repositories.llm_backend_repository import LLMBackendRep
 from personagent.domain.tools import (
     ToolExecutionStatus,
     ToolResult,
-    ToolUseContext,
 )
 from personagent.infrastructure.artifacts import store_bytes_artifact
 
 logger = structlog.get_logger(__name__)
-
-_VALID_PERMISSION_MODES = frozenset({
-    "ask_for_risk",
-    "manual",
-    "read_only",
-    "readonly",
-    "accept_edits",
-    "full",
-    "bypass",
-    "dont_ask",
-})
-
 
 class ChatCompletionUseCase:
     """Orchestrates one chat interaction with the LLM."""
@@ -201,6 +184,9 @@ class ChatCompletionUseCase:
             compactor=self._compactor,
             context_window_tokens=self._context_window_tokens,
         )
+        self._tool_context_builder = ToolContextBuilder(
+            tool_runtime_config=self._tool_runtime_config,
+        )
         self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
         self._artifact_ttl_seconds = artifact_ttl_seconds if artifact_ttl_seconds and artifact_ttl_seconds > 0 else None
 
@@ -246,7 +232,7 @@ class ChatCompletionUseCase:
         self._enforce_provider_data_policy(request, prompt_package)
         await self._operational_memory.capture_user_message(request, context_result, conversation)
 
-        tool_context = self._build_tool_context(request, conversation, preparation) if tools else None
+        tool_context = self._tool_context_builder.build(request, conversation, preparation) if tools else None
         result = InferenceResult(content="")
         seen_tool_call_ids: set[str] = set()
         effective_max_iterations = self._effective_max_tool_iterations(request)
@@ -515,7 +501,7 @@ class ChatCompletionUseCase:
                 task_name="operational_user_capture",
             )
 
-        tool_context = self._build_tool_context(request, conversation, preparation) if tools else None
+        tool_context = self._tool_context_builder.build(request, conversation, preparation) if tools else None
         final_finish_reason = None
         final_usage = None
         final_model = request.model
@@ -1200,109 +1186,5 @@ class ChatCompletionUseCase:
             conversation.title = conversation.generate_title()
             await self._conversation_repo.update(conversation)
 
-    def _build_tool_context(
-        self,
-        request: ChatRequestDTO,
-        conversation: Conversation,
-        preparation: _PromptPreparation | None = None,
-    ) -> ToolUseContext:
-        if self._tool_runtime_config is None:
-            raise RuntimeError("Tool runtime is not configured")
 
-        config = self._tool_runtime_config
-        raw_context = request.tool_context or {}
-        raw_workspace_root = raw_context.get("workspace_root")
-        workspace_root = (
-            self._resolve_workspace_root(str(raw_workspace_root))
-            if raw_workspace_root
-            else config.workspace_root
-        )
-        root_scope = (workspace_root,) if raw_workspace_root else config.allowed_roots
-
-        requested_roots = raw_context.get("allowed_roots")
-        allowed_roots = root_scope
-        if isinstance(requested_roots, list) and requested_roots:
-            allowed_roots = tuple(
-                self._resolve_allowed_path(str(path), workspace_root, root_scope)
-                for path in requested_roots
-            )
-
-        raw_cwd = raw_context.get("cwd")
-        cwd = (
-            self._resolve_allowed_path(str(raw_cwd), workspace_root, allowed_roots)
-            if raw_cwd
-            else workspace_root
-        )
-        if not cwd.is_dir():
-            raise ValueError(f"Tool cwd is not a directory: {cwd}")
-
-        plan_state = normalize_plan_state(conversation.metadata)
-        plan_active = is_plan_mode_active(conversation.metadata)
-        permission_mode = (
-            str(raw_context.get("permission_mode")).strip().lower()
-            if raw_context.get("permission_mode")
-            else str(conversation.metadata.get("permission_mode") or "ask_for_risk")
-        )
-        if permission_mode not in _VALID_PERMISSION_MODES:
-            permission_mode = "ask_for_risk"
-        return ToolUseContext(
-            conversation_id=str(conversation.id),
-            workspace_root=workspace_root,
-            cwd=cwd,
-            allowed_roots=allowed_roots,
-            permissions={
-                "mode": permission_mode,
-                "plan_mode": plan_active,
-            },
-            limits={
-                "read_max_bytes": config.read_max_bytes,
-                "read_default_limit": config.read_default_limit,
-                "read_max_lines": config.read_max_lines,
-                "search_timeout_ms": config.search_timeout_ms,
-                "shell_timeout_ms": config.shell_timeout_ms,
-                "web_timeout_ms": config.web_timeout_ms,
-                "web_max_bytes": config.web_max_bytes,
-                "max_tool_iterations": config.max_tool_iterations,
-                "max_concurrency": config.max_concurrency,
-                "result_max_chars": config.result_max_chars,
-                "tool_result_storage_root": (
-                    str(config.tool_result_storage_root)
-                    if config.tool_result_storage_root
-                    else None
-                ),
-                "web_allowed_domains": config.web_allowed_domains,
-                "web_blocked_domains": config.web_blocked_domains,
-                "web_allow_private_hosts": config.web_allow_private_hosts,
-                "skill_roots": tuple(str(path) for path in config.skill_roots),
-            },
-            metadata={
-                "request": raw_context,
-                "todos": conversation.metadata.get("todos", []),
-                "plan_mode": plan_state,
-                "plan_mode_active": plan_active,
-                "structured_output_schema": raw_context.get("structured_output_schema"),
-                "browser_cooperation": conversation.metadata.get("browser_cooperation", {}),
-                "browser_workspace": conversation.metadata.get("browser_workspace", {}),
-                "browser_target": preparation.browser_target if preparation else None,
-            },
-        )
-
-    def _resolve_workspace_root(self, raw_path: str) -> Path:
-        path = Path(raw_path).expanduser().resolve()
-        if not path.is_dir():
-            raise ValueError(f"Workspace root is not a directory: {path}")
-        return path
-
-    def _resolve_allowed_path(
-        self,
-        raw_path: str,
-        base_root: Path,
-        allowed_roots: tuple[Path, ...],
-    ) -> Path:
-        path = Path(raw_path).expanduser()
-        candidate = path if path.is_absolute() else base_root / path
-        resolved = candidate.resolve()
-        if not any(_is_relative_to(resolved, root) for root in allowed_roots):
-            raise ValueError(f"Tool path is outside configured roots: {raw_path}")
-        return resolved
 
