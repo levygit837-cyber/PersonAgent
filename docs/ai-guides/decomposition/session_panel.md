@@ -48,7 +48,7 @@ by their tests — keep the exports.
 | 3 — Extract `useBrowserTabs` hook + browser-helpers | ✅ Merged | #62 | hook (~560L) + browser-helpers (~1000L); 61 new tests; session-panel 3,588→1,838 (−49%) |
 | 4 — Extract leaf components | ✅ Merged | #63 | 5 new files (browser-tab-strip, browser-controls, browser-cooperation, browser-tracing, shared-ui); 28 new tests; session-panel 1,838→1,247 (−32%) |
 | 5 — Extract `BrowserTabContent` | ✅ Merged | #64 | browser-tab-content.tsx (553L); session-panel 1,247→655 (−47%); 18 unused imports cleaned |
-| 6 — Extract right-rail detail sections | ⏳ Pending | — | |
+| 6 — Extract right-rail detail sections | ✅ Merged | #71 | detail-sections.tsx (9 components: SummaryContent, UsageSection, MemorySection, MemoryTopItemRow, FilesSection, SourcesSection, ProjectSection, ProjectGroup, DetailTabContent); session-panel 655→172 (−74%) |
 | 7 — Inline what remains | ⏳ Pending | — | |
 
 ## Proposed slices (in order)
