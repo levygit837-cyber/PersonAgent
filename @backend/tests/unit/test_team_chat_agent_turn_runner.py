@@ -19,7 +19,6 @@ from personagent.application.team_chat.types import TurnResult
 from personagent.domain.models.conversation import Conversation
 from personagent.domain.models.inference_result import StreamChunk
 
-
 # ---------------------------------------------------------------------------
 # Stubs
 # ---------------------------------------------------------------------------
@@ -154,7 +153,7 @@ class TestRunAgentTurn:
         runner = AgentTurnRunner(llm_backend=llm)
         events = []
         turn = None
-        async for event, t in runner._run_agent_turn(
+        async for event, _t in runner._run_agent_turn(
             request=_request(),
             team=_team(_agent()),
             conversation=_conversation(),
@@ -166,8 +165,8 @@ class TestRunAgentTurn:
             cancel_event=asyncio.Event(),
         ):
             events.append(event)
-            if t is not None:
-                turn = t
+            if _t is not None:
+                turn = _t
 
         assert turn is not None
         assert isinstance(turn, TurnResult)
@@ -182,7 +181,7 @@ class TestRunAgentTurn:
         runner = AgentTurnRunner(llm_backend=llm)
         events = []
         turn = None
-        async for event, t in runner._run_agent_turn(
+        async for event, _t in runner._run_agent_turn(
             request=_request(),
             team=_team(_agent()),
             conversation=_conversation(),
@@ -194,8 +193,8 @@ class TestRunAgentTurn:
             cancel_event=asyncio.Event(),
         ):
             events.append(event)
-            if t is not None:
-                turn = t
+            if _t is not None:
+                turn = _t
 
         assert turn is not None
         assert turn.blocker != ""
@@ -211,7 +210,7 @@ class TestRunAgentTurn:
         llm = _LLMBackendStub([chunk])
         runner = AgentTurnRunner(llm_backend=llm, tool_registry=None)
         events = []
-        async for event, t in runner._run_agent_turn(
+        async for event, _t in runner._run_agent_turn(
             request=_request(),
             team=_team(_agent(tools_enabled=True)),
             conversation=_conversation(),
@@ -240,7 +239,7 @@ class TestRunAgentTurnsParallel:
         a1 = _agent("a1")
         a2 = _agent("a2")
         turns: list[TurnResult] = []
-        async for event, turn in runner._run_agent_turns_parallel(
+        async for _event, turn in runner._run_agent_turns_parallel(
             request=_request(),
             team=_team(a1, a2),
             conversation=_conversation(),
@@ -312,7 +311,7 @@ class TestRunAgentTurnsParallel:
         cancel.set()
         a1 = _agent("a1")
         events = []
-        async for event, turn in runner._run_agent_turn(
+        async for event, _turn in runner._run_agent_turn(
             request=_request(),
             team=_team(a1),
             conversation=_conversation(),
