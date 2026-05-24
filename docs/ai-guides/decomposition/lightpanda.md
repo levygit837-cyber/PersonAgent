@@ -67,7 +67,7 @@ appropriate.
 | Slice | Status | PR | Notes |
 |-------|--------|----|-------|
 | 1 — Extract `_RawCdpClient` to `cdp_client.py` | ✅ Merged | — | 56 lines removed from lightpanda.py; new `CdpClient` class + backward-compat alias |
-| 2 — Extract `BrowserSnapshotCache` | ⏳ Pending | — | |
+| 2 — Extract `BrowserSnapshotCache` | ✅ Merged | — | 116 lines removed; `SnapshotCache` + `StylesheetDiskCache` in `cache.py` |
 | 3 — Extract `BrowserActions` | ⏳ Pending | — | |
 | 4 — Extract `BrowserPageLifecycle` | ⏳ Pending | — | |
 | 5 — Extract `BrowserSnapshot` | ⏳ Pending | — | |
