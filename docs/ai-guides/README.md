@@ -36,6 +36,14 @@ docs/ai-guides/
 │   ├── modify-memory-chunking.md      # Como mudar chunking de memória
 │   ├── modify-prompt.md               # Como modificar prompt
 │   └── modify-retry.md                # Como ajustar retry policy
+├── decomposition/                     # Playbooks para quebrar god files
+│   ├── README.md                      # Índice + quando usar cada playbook
+│   ├── _protocol.md                   # Protocolo compartilhado (ler primeiro)
+│   ├── chat_completion.md             # Backend: chat_completion.py (1.938 L)
+│   ├── team_chat_orchestrator.md      # Backend: team_chat/orchestrator.py (3.097 L)
+│   ├── lightpanda.md                  # Backend: infrastructure/browser/lightpanda.py (5.735 L)
+│   ├── session_panel.md               # Frontend: components/chat/session-panel.tsx (3.960 L)
+│   └── chat_store.md                  # Frontend: stores/chat-store.ts (3.307 L)
 └── scripts/
     ├── extract_backend_symbols.py     # Script de inventário Python
     └── extract_frontend_symbols.py   # Script de inventário TypeScript
@@ -77,6 +85,9 @@ Para funções de módulo:
 
 ### Quero implementar uma mudança comum
 → Leia `decisions/<tipo-de-mudança>.md`
+
+### Quero decompor um god file em módulos menores
+→ Leia `decomposition/README.md` primeiro, depois `decomposition/_protocol.md`, depois o playbook do arquivo alvo.
 
 ### Quero encontrar onde uma função/classe está definida
 → Busque em `_inventory/backend_symbols.json` ou `_inventory/frontend_symbols.json`
