@@ -1,4 +1,12 @@
-"""Model listing, command listing, and prompt preview endpoints."""
+"""Model listing, command listing, and prompt preview endpoints.
+
+Endpoint functions access ``get_container``, ``resolve_model``,
+``resolve_context_workspace_root``, and ``_create_chat_use_case``
+through the ``_chat`` module reference so that monkeypatched test
+values are resolved at call time rather than captured at import time.
+This preserves the original late-binding semantics that the test
+suite relies on.
+"""
 
 from typing import Any
 from uuid import UUID
@@ -6,6 +14,11 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Late-binding module reference.  See module docstring for rationale.
+# Imported inside the function body to avoid circular import at load time.
+# After the chat package is fully initialised, _chat points to the live
+# module and attribute lookups see any monkeypatched values.
+import personagent.interfaces.api.routes.chat as _chat
 from personagent.application.dto.chat_dto import ChatRequestDTO
 from personagent.domain.exceptions import (
     ConversationNotFoundError,
@@ -30,13 +43,6 @@ from personagent.interfaces.api.state_events import publish_state_change
 def register_model_listing_routes(router: APIRouter) -> None:
     """Register model listing, auth, commands, and prompt preview endpoints."""
 
-    # Lazy reference to the chat package so monkeypatched symbols
-    # (get_container, resolve_model, _create_chat_use_case, etc.)
-    # are resolved at call time rather than captured at import time.
-    def _chat():
-        import personagent.interfaces.api.routes.chat as _c
-        return _c
-
     @router.get("/models")
     async def list_models(
         provider: str = Query(
@@ -47,7 +53,7 @@ def register_model_listing_routes(router: APIRouter) -> None:
         refresh: bool = Query(default=False, description="Ignore the catalog cache"),
     ) -> dict:
         """List the models available from the LLM backend."""
-        container = _chat().get_container()
+        container = _chat.get_container()
         resolved_provider = resolve_provider(provider)
         llm_backend = container.get_llm_backend(resolved_provider)
         if resolved_provider in {"nvidia", "deepseek", "zenmux", "vertex", "kimi", "codex"}:
@@ -62,7 +68,7 @@ def register_model_listing_routes(router: APIRouter) -> None:
     @router.get("/auth/codex/status")
     async def codex_auth_status() -> dict[str, Any]:
         """Return Codex CLI authentication state without exposing tokens."""
-        container = _chat().get_container()
+        container = _chat.get_container()
         llm_backend = container.get_llm_backend("codex")
         auth_status = getattr(llm_backend, "auth_status", None)
         if auth_status is None:
@@ -72,7 +78,7 @@ def register_model_listing_routes(router: APIRouter) -> None:
     @router.post("/auth/codex/logout")
     async def codex_auth_logout() -> dict[str, Any]:
         """Executa `codex logout` para desconectar a conta do ChatGPT Subscription."""
-        container = _chat().get_container()
+        container = _chat.get_container()
         llm_backend = container.get_llm_backend("codex")
         logout = getattr(llm_backend, "logout", None)
         if logout is None:
@@ -93,10 +99,10 @@ def register_model_listing_routes(router: APIRouter) -> None:
     ) -> list[ChatCommandInfo]:
         """List prompt slash commands and user-invocable skills for desktop autocomplete."""
 
-        root = workspace_root or _chat().resolve_context_workspace_root(
+        root = workspace_root or _chat.resolve_context_workspace_root(
             ChatRequest(message="placeholder")
         )
-        container = _chat().get_container()
+        container = _chat.get_container()
         skill_roots = tuple(str(path) for path in container.get_tool_runtime_config().skill_roots)
         command_service = CommandService(container.create_command_registry())
         commands = [
@@ -156,14 +162,14 @@ def register_model_listing_routes(router: APIRouter) -> None:
     ) -> PromptPreviewResponse:
         """Build and return the prompt package without running a completion."""
 
-        container = _chat().get_container()
+        container = _chat.get_container()
         provider = resolve_provider(request.provider)
-        model = _chat().resolve_model(provider, request.model)
+        model = _chat.resolve_model(provider, request.model)
         prompt_mode = resolve_prompt_mode(request.prompt_mode)
         llm_backend = container.get_llm_backend(provider)
         conv_repo = await container.get_conversation_repo(session)
-        context_workspace_root = _chat().resolve_context_workspace_root(request)
-        use_case = _chat()._create_chat_use_case(
+        context_workspace_root = _chat.resolve_context_workspace_root(request)
+        use_case = _chat._create_chat_use_case(
             container=container,
             conv_repo=conv_repo,
             llm_backend=llm_backend,
