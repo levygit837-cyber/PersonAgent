@@ -62,6 +62,19 @@ The `_RawCdpClient` private class (5,505+) is *not* exported but
 is closely tied to the worker; extract them as a pair when
 appropriate.
 
+## Status
+
+| Slice | Status | PR | Notes |
+|-------|--------|----|-------|
+| 1 — Extract `_RawCdpClient` to `cdp_client.py` | ✅ Merged | — | 56 lines removed from lightpanda.py; new `CdpClient` class + backward-compat alias |
+| 2 — Extract `BrowserSnapshotCache` | ⏳ Pending | — | |
+| 3 — Extract `BrowserActions` | ⏳ Pending | — | |
+| 4 — Extract `BrowserPageLifecycle` | ⏳ Pending | — | |
+| 5 — Extract `BrowserSnapshot` | ⏳ Pending | — | |
+| 6 — Extract `BrowserSearch` | ⏳ Pending | — | |
+| 7 — Extract `BrowserViewActions` | ⏳ Pending | — | |
+| 8 — Inline what remains | ⏳ Pending | — | |
+
 ## Proposed slices (in order; expect 8+ PRs)
 
 ### Slice 1 — Extract `_RawCdpClient` to `cdp_client.py`
