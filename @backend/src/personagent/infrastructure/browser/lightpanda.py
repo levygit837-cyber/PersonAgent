@@ -33,6 +33,7 @@ from personagent.infrastructure.browser.models import (
 from personagent.infrastructure.browser.models import (
     BrowserSession as _BrowserSession,
 )
+from personagent.infrastructure.browser.opened_pages import OpenedPageTracker
 from personagent.infrastructure.browser.page_cache import get_browser_page_cache
 from personagent.infrastructure.browser.page_lifecycle import BrowserPageLifecycle
 from personagent.infrastructure.browser.scripts import (
@@ -144,6 +145,7 @@ class LightPandaBrowserWorker:
         self.view_actions = BrowserViewActions(self)
         self.content_module = BrowserContent(self)
         self.console = BrowserConsole(self)
+        self.opened_pages = OpenedPageTracker(self)
         self._lock = asyncio.Lock()
         self._sessions_lock = asyncio.Lock()
         self._container_start_lock = asyncio.Lock()
@@ -1560,39 +1562,11 @@ class LightPandaBrowserWorker:
         source_search_id: str | None,
         opener_tool_call_id: str | None,
     ) -> tuple[BrowserOpenedPage, bool]:
-        url = _clean_browser_url(url)
-        final_url = _clean_browser_url(final_url)
-        pages = self._opened_pages_cache.setdefault(conversation_id, [])
-        existing = self._opened_page_by_url(conversation_id, final_url) or self._opened_page_by_url(
-            conversation_id,
-            url,
-        )
-        if existing is not None:
-            existing.url = url or existing.url
-            existing.final_url = final_url or existing.final_url
-            existing.title = title or existing.title
-            existing.source_search_id = source_search_id or existing.source_search_id
-            existing.opener_tool_call_id = opener_tool_call_id or existing.opener_tool_call_id
-            existing.opened_at = time.monotonic()
-            pages[:] = [page for page in pages if page.page_id != existing.page_id]
-            pages.insert(0, existing)
-            del pages[_MAX_OPENED_PAGES_PER_CONVERSATION:]
-            self._last_open_cache[conversation_id] = existing
-            return existing, True
-        raw_id = f"{conversation_id}\n{final_url}\n{time.monotonic_ns()}"
-        page_id = f"page_{hashlib.sha256(raw_id.encode()).hexdigest()[:12]}"
-        opened_page = BrowserOpenedPage(
-            page_id=page_id,
-            url=url,
-            final_url=final_url,
-            title=title,
-            source_search_id=source_search_id,
+        return self.opened_pages.cache_opened_page(
+            conversation_id=conversation_id, url=url, final_url=final_url,
+            title=title, source_search_id=source_search_id,
             opener_tool_call_id=opener_tool_call_id,
         )
-        pages.insert(0, opened_page)
-        del pages[_MAX_OPENED_PAGES_PER_CONVERSATION:]
-        self._last_open_cache[conversation_id] = opened_page
-        return opened_page, False
 
     def _browser_open_response(
         self,
@@ -1604,27 +1578,14 @@ class LightPandaBrowserWorker:
         search_id: str | None,
         reused_existing_page: bool,
     ) -> dict[str, Any]:
-        return {
-            "type": "browser_open",
-            "url": requested_url,
-            "final_url": opened_page.final_url,
-            "title": title or opened_page.title,
-            "search_id": search_id,
-            "page_id": opened_page.page_id,
-            "window_id": opened_page.window_id,
-            "opened_page_count": len(self._opened_pages_cache.get(conversation_id, [])),
-            "recent_opened_pages": [
-                page.to_dict() for page in self._opened_pages_cache.get(conversation_id, [])[:5]
-            ],
-            "reused_existing_page": reused_existing_page,
-            "already_open": reused_existing_page,
-            "already_read": opened_page.extraction_count > 0,
-            "read_status": self._opened_page_read_status(opened_page),
-            "extraction_count": opened_page.extraction_count,
-        }
+        return self.opened_pages.browser_open_response(
+            conversation_id=conversation_id, opened_page=opened_page,
+            requested_url=requested_url, title=title, search_id=search_id,
+            reused_existing_page=reused_existing_page,
+        )
 
     def _opened_page_read_status(self, opened_page: BrowserOpenedPage) -> str:
-        return "read" if opened_page.extraction_count > 0 else "unread"
+        return OpenedPageTracker.opened_page_read_status(opened_page)
 
     def _opened_page_tab(
         self,
@@ -1634,59 +1595,27 @@ class LightPandaBrowserWorker:
         current_url: str | None,
         last_open_page_id: str | None,
     ) -> dict[str, Any]:
-        parsed = urlparse(page.final_url or page.url)
-        domain = parsed.netloc
-        title = page.title.strip() if page.title else ""
-        summary = title or domain or page.final_url
-        return {
-            "index": index,
-            "page_id": page.page_id,
-            "window_id": page.window_id,
-            "url": page.url,
-            "final_url": page.final_url,
-            "domain": domain,
-            "title": title,
-            "summary": summary,
-            "source_search_id": page.source_search_id,
-            "opener_tool_call_id": page.opener_tool_call_id,
-            "extraction_count": page.extraction_count,
-            "already_read": page.extraction_count > 0,
-            "read_status": self._opened_page_read_status(page),
-            "is_last_open": page.page_id == last_open_page_id,
-            "is_current_page": bool(current_url and current_url == page.final_url),
-        }
+        return self.opened_pages.opened_page_tab(
+            page, index=index, current_url=current_url,
+            last_open_page_id=last_open_page_id,
+        )
 
     def _opened_page(
         self,
         conversation_id: str,
         page_id: str,
     ) -> BrowserOpenedPage | None:
-        for opened_page in self._opened_pages_cache.get(conversation_id, []):
-            if opened_page.page_id == page_id:
-                return opened_page
-        return None
+        return self.opened_pages.opened_page(conversation_id, page_id)
 
     def _opened_page_by_url(
         self,
         conversation_id: str,
         url: str,
     ) -> BrowserOpenedPage | None:
-        target_url = _clean_browser_url(url)
-        if not target_url:
-            return None
-        for opened_page in self._opened_pages_cache.get(conversation_id, []):
-            if _urls_equivalent(opened_page.final_url, target_url) or _urls_equivalent(
-                opened_page.url,
-                target_url,
-            ):
-                return opened_page
-        return None
+        return self.opened_pages.opened_page_by_url(conversation_id, url)
 
     def _target_title(self, conversation_id: str, page_id: str | None) -> str:
-        if not page_id:
-            return ""
-        opened_page = self._opened_page(conversation_id, page_id)
-        return opened_page.title if opened_page is not None else ""
+        return self.opened_pages.target_title(conversation_id, page_id)
 
     def _resolve_content_target(
         self,
@@ -1759,14 +1688,7 @@ class LightPandaBrowserWorker:
         return None, None
 
     def _next_unextracted_opened_page(self, conversation_id: str) -> BrowserOpenedPage | None:
-        pages = [
-            page
-            for page in self._opened_pages_cache.get(conversation_id, [])
-            if page.extraction_count == 0
-        ]
-        if not pages:
-            return None
-        return min(pages, key=lambda page: page.opened_at)
+        return self.opened_pages.next_unextracted_opened_page(conversation_id)
 
     def _should_navigate_for_content(self, session: _BrowserSession, target_url: str) -> bool:
         target_url = _clean_browser_url(target_url)
