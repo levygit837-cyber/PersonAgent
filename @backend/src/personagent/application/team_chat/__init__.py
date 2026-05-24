@@ -12,6 +12,7 @@ from personagent.application.team_chat.contracts import (
     serialize_team_config,
 )
 from personagent.application.team_chat.coordinator_phase import CoordinatorPhase
+from personagent.application.team_chat.final_synthesis import FinalSynthesis
 from personagent.application.team_chat.orchestrator import TeamChatOrchestrator
 from personagent.application.team_chat.types import (
     BlackboardEntry,
@@ -26,6 +27,7 @@ from personagent.application.team_chat.types import (
 __all__ = [
     "ConsensusPhase",
     "CoordinatorPhase",
+    "FinalSynthesis",
     "DEFAULT_TEAM_ID",
     "TeamAgentConfig",
     "TeamChatOrchestrator",
