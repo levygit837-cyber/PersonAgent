@@ -30,9 +30,10 @@ directory.
 | Conversation lifecycle | #21 | ~33           | 1,065      |
 | Stream normalization   | #23 | ~29           | 1,036      |
 | Streaming turn state   | #24 | ~1 (prep)     | 1,035      |
-| **Current**            |     |               | **1,035**  |
+| Assistant pass runner  | #25 | ~80           |   955      |
+| **Current**            |     |               |   **955**  |
 
-Cumulative reduction: **2,742 → 1,035 lines (–62%)**.
+Cumulative reduction: **2,742 → 955 lines (–65%)**.
 
 ## Public contract that must be preserved
 
@@ -221,7 +222,7 @@ order of calls.
 **What moves out:**
 
 - `_stream_completion_turn` — outer turn loop (~370 lines)
-- `_stream_assistant_pass`
+- ~~`_stream_assistant_pass`~~ — landed in #25 (`AssistantPassRunner`)
 - ~~`_normalize_provider_stream_chunk`~~ — landed in #23 (`StreamChunkNormalizer`)
 - ~~`_empty_model_response_notice`~~ — landed in #23 (`StreamChunkNormalizer`)
 - ~~`_get_or_create_conversation`~~ — landed in #21 (`ConversationLifecycleHandler`)
@@ -252,8 +253,8 @@ This may need to be split into **3–4 sub-slices**:
 
 1. Extract `_StreamingTurnState` dataclass (move state vars off
    `_stream_completion_turn` into a typed struct).
-2. Extract the assistant-pass loop body (`_stream_assistant_pass`
-   already exists; move its dependencies in).
+2. ✅ Extract the assistant-pass loop body (`_stream_assistant_pass`
+   already exists; move its dependencies in). Landed in #25.
 3. Extract the outer turn loop (the `while True` with iteration
    guards).
 4. Extract image-handling and provider-data-policy as a small

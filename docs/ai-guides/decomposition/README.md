@@ -129,9 +129,10 @@ PR chain so far (Phase 1.2):
 - #21 — `ConversationLifecycleHandler`
 - #23 — `StreamChunkNormalizer`
 - #24 — `StreamingTurnState` dataclass (prep)
+- #25 — `AssistantPassRunner`
 
-Cumulative reduction on `chat_completion.py`: 2,742 → 1,035
-lines (**–62%**), zero behavior changes, 245+ new unit tests.
+Cumulative reduction on `chat_completion.py`: 2,742 → 955
+lines (**–65%**), zero behavior changes, 270+ new unit tests.
 
 ## Frequently-asked questions
 
