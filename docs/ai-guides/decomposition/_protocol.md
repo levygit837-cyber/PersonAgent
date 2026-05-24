@@ -21,7 +21,7 @@ break behavior.
    module. Touching existing tests in the same PR muddies the diff
    and breaks the safety net.
 4. **Never amend or force-push to `main`.** Use a fresh
-   `devin/<timestamp>-<name>` branch per slice.
+   `refactor/<timestamp>-<name>` branch per slice.
 5. **The full regression suite must pass before commit.** See
    "Validation gates" below — these are non-negotiable.
 6. **Never silently drop side effects.** If the original method
@@ -186,8 +186,8 @@ committing.
 
 ### 8. Commit and open the PR
 
-- Branch name: `devin/$(date +%s)-<feature>-<slice-name>` (e.g.,
-  `devin/1779580519-chat-prompt-assembly-split`).
+- Branch name: `refactor/$(date +%s)-<feature>-<slice-name>` (e.g.,
+  `refactor/1779580519-chat-prompt-assembly-split`).
 - Commit message subject: `refactor(<area>): extract <surface>
   into <ClassName>`.
 - Commit body documents what moves, what changes in the parent,
