@@ -81,11 +81,10 @@ appropriate.
 | 13 — Extract block detection | ✅ Merged | — | 4 methods, 113 lines removed; `BlockDetector` in `block_detection.py`; 18 new tests |
 | 14 — Extract page helpers | ✅ Merged | — | 4 methods, 44 lines removed; `PageHelpers` in `page_helpers.py`; 16 new tests |
 
-**After Phase 2 (slices 9–14):** lightpanda.py target: ~700 lines (init, facade
-delegations, session management, CDP infrastructure, page resolution, navigation).
-These remaining ~700 lines form the **identity core** of the worker and should NOT
-be extracted further — they are the state machine, connection pool, and CDP
-transport that all other modules depend on via `self._w`.
+**After Phase 2 (slices 9–14):** lightpanda.py actual: 1,469 lines. The original
+estimate of ~700 lines was too optimistic — many backward-compat delegation stubs
+(~550 lines) and session management (~340 lines) remain. Phase 3 below continues
+the decomposition to bring the file under 800 lines.
 
 ## Phase 2 — Additional low-risk slices (9–14)
 
@@ -463,6 +462,188 @@ However, each function is individually simple.
 - `snapshot.py` — `_safe_html`
 
 **Tests:** 10+ cases covering viewport, title, HTML, scroll, upload, drag.
+
+## Phase 3 — Session management & delegation cleanup (15–17)
+
+### Line budget after Phase 2 (slices 9–14)
+
+| Category | Lines | Risk |
+|----------|-------|------|
+| Imports + constants (L1–99) | 99 | ⛔ Core — stays |
+| `__init__` / warmup / close (L100–203) | 104 | ⛔ Core — stays |
+| Public facade delegations (L204–453) | 250 | ⛔ Core — stays (public API) |
+| **Session management** (L455–681 + L1356–1469) | **340** | 🟢 Extractable |
+| Page resolution — `_resolve_live_page` (L683–769) | 87 | 🟡 Tied to session |
+| Runtime/script helpers (L771–794) | 24 | ⛔ Core — stays |
+| **CDP infrastructure** (L796–948) | **153** | 🟢 Extractable |
+| Navigation — `_goto` / `_goto_page` (L960–1014) | 55 | 🟡 Tied to CDP |
+| `_evaluate_page` + console delegation (L1016–1069) | 54 | ⛔ Core — stays |
+| **Backward-compat private delegation stubs** (L1071–1354) | **284** | 🟢 Removable |
+
+**Target after Phase 3:** ~700 lines (imports + init + facade + core runtime).
+
+### Slice 15 — Extract session management to `session_manager.py`
+
+**What moves out:**
+
+- `_get_session` (L455–522)
+- `_cached_usable_session` (L535–550)
+- `_session_has_open_page` (L552–557)
+- `_preferred_session_page` (L559–570)
+- `_session_pages` (L572–581)
+- `_cleanup_live_pages` (L583–630)
+- `_live_page_entries` (L632–641)
+- `_ensure_session_page_alias` (L643–665)
+- `_is_session_page_alias` (L667–681)
+- `_resolve_live_page` (L683–742)
+- `_page_is_open` (L744–749)
+- `_cleanup_sessions` (L1408–1417)
+- `_cleanup_search_cache` (L1419–1420)
+- `_enforce_session_limit` (L1422–1428)
+- `_close_session` (L1438–1448)
+- `_close_sessions` (L1434–1436)
+- `_reset_browser` (L1430–1432)
+- `_release_browser` (L1450–1451)
+- `_best_effort_resource_call` (L1453–1466)
+- `_new_session_page` (L930–948)
+- `_resolve_content_target` (L1283–1351)
+- `_should_navigate_for_content` (L1356–1361)
+- Related instance attrs: `_sessions`, `_sessions_lock`, `_search_cache`,
+  `_current_url_cache`, `_last_open_cache`, `_opened_pages_cache`,
+  `_element_map_cache`, `_console_cache`, `_cooperation_event_cache`,
+  `_cooperation_listener_keys`, `_console_listener_keys`
+
+**Module:** `browser/session_manager.py`. Class: `BrowserSessionManager`.
+
+**Dependencies:** `_connect_browser` (stays on worker), `_install_console_capture`
+(delegation to console), `_goto_page` (navigation), `search_result_cache`,
+`opened_pages`, `console`, `page_helpers`, `_snapshot_cache`, `page_cache`.
+
+**Pattern:** The session manager receives the worker reference (`self._w`) for
+callbacks that require CDP or console. This follows the same pattern as all
+other extracted modules (Slices 3–14).
+
+**Risk:** 🟡 Medium. Session management is the most cross-cutting surface.
+Many extracted modules call session methods via `self._w`. Careful wiring needed
+but no behavior changes — pure delegation swap.
+
+**Callers that need updating:**
+- `content.py` — `_get_session`, `_cached_usable_session`, `_cleanup_live_pages`,
+  `_is_session_page_alias`, `_preferred_session_page`, `_new_session_page`,
+  `_resolve_content_target`, `_should_navigate_for_content`
+- `snapshot.py` — `_get_session`, `_preferred_session_page`, `_ensure_session_page_alias`
+- `search.py` — `_get_session`, `_new_session_page`, `_best_effort_resource_call`
+- `actions.py` — `_resolve_live_page`, `_get_session`, `_preferred_session_page`
+- `page_lifecycle.py` — `_get_session`, `_new_session_page`, `_preferred_session_page`,
+  `_best_effort_resource_call`
+- `view_actions.py` — via actions
+
+**Tests:** 20+ cases covering session creation, reuse, cleanup, page resolution,
+live page management, content target resolution, alias handling.
+
+### Slice 16 — Extract CDP connection infrastructure to `connection.py`
+
+**What moves out:**
+
+- `_connect_browser` (L836–867)
+- `_try_start_lightpanda_container` (L869–911)
+- `_connect_with_playwright` (L913–928)
+- `_resolve_endpoint` (L950–958)
+- `_goto` (L960–973)
+- `_goto_page` (L975–1014)
+- `_evaluate_page` (L1016–1044)
+- `_cdp_command_for_page` (L796–824)
+- `_first_open_context_page` (L826–834)
+- `_lightpanda_raw_cdp_command` (L1107–1173)
+- `_raw_runtime_evaluate_value` (L1071–1105)
+- `_lightpanda_markdown` (L217–219)
+- `_lightpanda_markdown_url` (L221–242)
+- Related instance attrs: `_lock`, `_container_start_lock`,
+  `_container_start_attempted`, `_playwright`, `_connector`
+- Related constants: `_RAW_CDP_RETRY_DELAYS`, `_BROWSER_SCRIPT_CDP_ALLOWLIST`
+
+**Module:** `browser/connection.py`. Class: `BrowserConnection`.
+
+**Dependencies:** `BrowserConsole.install_console_capture` (callback),
+`url_utils` functions, `_RawCdpClient`.
+
+**Risk:** 🟡 Medium. Connection/navigation is used everywhere but the surface
+is clean — these methods only depend on Playwright and httpx.
+
+**Callers that need updating:**
+- `session_manager.py` (from Slice 15) — `_connect_browser`, `_release_browser`
+- `content.py` — `_evaluate_page`, `_goto`, `_goto_page`,
+  `_lightpanda_markdown`, `_lightpanda_markdown_url`,
+  `_raw_runtime_evaluate_value`
+- `actions.py` — `_evaluate_page`
+- `page_lifecycle.py` — `_goto`, `_goto_page`, `_evaluate_page`
+- `search.py` — `_goto`, `_goto_page`, `_evaluate_page`
+- `snapshot.py` — `_evaluate_page`, `_cdp_command_for_page`,
+  `_lightpanda_raw_cdp_command`
+- `page_helpers.py` — `_evaluate_page`, `_raw_runtime_evaluate_value`
+- `block_detection.py` — `_evaluate_page`
+
+**Tests:** 15+ cases covering connection retry, container autostart,
+endpoint resolution, navigation success/failure, evaluate retry on
+context destruction.
+
+### Slice 17 — Remove backward-compat private delegation stubs
+
+**What moves out:**
+
+All remaining `_method_name` stubs on the worker that simply delegate to
+an extracted module attribute. These are private methods only called by
+other extracted modules via `self._w._method_name(...)`.
+
+After Slices 15–16, the extracted modules should import from each other
+(e.g., `self._w.session_manager.get_session(...)` instead of
+`self._w._get_session(...)`) or receive the collaborator directly.
+
+**Methods to remove (~280 lines):**
+- Console delegation stubs: `_attach_page_console_listeners`,
+  `_console_message_attr`, `_record_console_entry`,
+  `_install_console_capture`, `_install_cooperation_capture`,
+  `_drain_page_console_entries`, `_drain_cooperation_events`,
+  `_record_cooperation_event`
+- Search cache stubs: `_cache_search_results`,
+  `_latest_cached_search_results`, `_copy_search_results`,
+  `_remember_current_url`, `_result_url`, `_result_title`,
+  `_match_search_result_url`, `_match_search_result_title`,
+  `_cleanup_search_cache`
+- Opened pages stubs: `_cache_opened_page`, `_browser_open_response`,
+  `_opened_page_read_status`, `_opened_page_tab`, `_opened_page`,
+  `_opened_page_by_url`, `_target_title`, `_next_unextracted_opened_page`
+- Block detection stubs: `_raise_if_google_blocked`,
+  `_raise_if_bing_blocked`, `_raise_if_yahoo_blocked`,
+  `_raise_if_search_blocked`
+- Page helpers stubs: `_safe_title`, `_safe_title_for_url`
+- Element helpers stubs: `_element_selector`, `_element_target`,
+  `_browser_action_target_payload`, `_action_context_for_element`,
+  `_page_frames`, `_main_frame`, `_frame_id`, `_frame_viewport_offset`,
+  `_upload_files`, `_drag_between_elements`, `_set_page_viewport`,
+  `_safe_user_agent`, `_safe_html`, `_safe_scroll_state`
+- Page lifecycle stubs: `_wait_for_page_visual_ready`,
+  `_wait_for_page_load_complete`
+- Snapshot stubs: `_browser_view_snapshot`, `_enrich_browser_element_map`,
+  `_browser_element_map`, `_panel_session_tabs`,
+  `_html_with_embedded_stylesheet_fallbacks`, `_fetch_stylesheet_css`,
+  `_stylesheet_hrefs`, `_html_attrs`, `_rewrite_css_urls`, `_css_fidelity`
+- Search stub: `search_url`
+
+**Pattern:** Update each extracted module to call the collaborator
+directly instead of going through `self._w._stub(...)`:
+```python
+# Before (in actions.py)
+await self._w._evaluate_page(page, script)
+# After
+await self._w.connection.evaluate_page(page, script)
+```
+
+**Risk:** 🟡 Medium. High volume of small changes across many files but
+each change is mechanical. Run full test suite after each file update.
+
+**Tests:** No new tests — this slice only removes indirection. Existing
+tests must pass unchanged.
 
 ## Pre-condition tests
 

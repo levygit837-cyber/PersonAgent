@@ -6,6 +6,12 @@ import re
 from datetime import UTC, datetime
 from typing import Any, TypeAlias
 
+from personagent.application.team_chat.blackboard_json_parsing import (
+    _digest,
+    _normalize_coverage_matrix,
+    _parse_json_object,
+    _turn_blackboard_payload,
+)
 from personagent.application.team_chat.contracts import TeamAgentConfig, TeamConfig
 from personagent.application.team_chat.types import (
     BlackboardEntry,
@@ -761,7 +767,6 @@ class _Blackboard:
                 item.setdefault("evidence_node_ids", [])
                 if node.get("id") not in item["evidence_node_ids"]:
                     item["evidence_node_ids"].append(node.get("id"))
-
 
 def _coherency_score(text: str, user_input: str, execution_contract: Any) -> float:
     text_terms = _keyword_set(text)

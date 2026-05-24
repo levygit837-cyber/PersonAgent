@@ -3,8 +3,7 @@
 **Target file:** `@backend/src/personagent/application/team_chat/blackboard.py`
 (1,091 lines — 1 class with 26 methods + 14 module-level helper functions)
 
-**Target package:** `@backend/src/personagent/application/team_chat/blackboard/`
-(new directory; `__init__.py` re-exports `_Blackboard` and all phase constants)
+**Target package:** `@backend/src/personagent/application/team_chat/` (sibling modules with `blackboard_` prefix; `blackboard/` subpackage not possible due to Python import collision with `blackboard.py`)
 
 **Tests:**
 - `@backend/tests/unit/test_team_chat_blackboard.py`
@@ -61,9 +60,9 @@ Public surface:
 
 | Slice | Status | PR | Notes |
 |-------|--------|----|-------|
-| 1 — Extract JSON parsing helpers | ⏳ Pending | — | |
-| 2 — Extract claim graph analysis | ⏳ Pending | — | |
-| 3 — Extract scoring & metrics | ⏳ Pending | — | |
+| 1 — Extract JSON parsing helpers | ✅ Done | — | `blackboard_json_parsing.py` (208 L) |
+| 2 — Extract scoring & metrics | ⏳ Pending | — | order swapped: scoring before claim graph |
+| 3 — Extract claim graph analysis | ⏳ Pending | — | depends on both slices 1 and 3 |
 
 ## Proposed slices (in order)
 

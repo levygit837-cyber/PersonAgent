@@ -18,14 +18,14 @@ A file qualifies as a god file if it meets **all three**:
 
 | # | File | Original | Current | Status | Playbook |
 |---|------|------:|------:|--------|----------|
-| 1 | `infrastructure/browser/lightpanda.py` | 5,735 | 1,469 | ✅ Done — 14 slices (PRs #37–#56), −74% | `lightpanda.md` |
+| 1 | `infrastructure/browser/lightpanda.py` | 5,735 | 1,469 | 🔄 Phase 3 — 14 slices done (−74%), further decomp needed | `lightpanda.md` |
 | 2 | `infrastructure/tools/browser_tools/factories.py` | 2,786 | 61 | ✅ Done — 4 slices (PRs #48, #57–#59), −98% | `browser_tools.md` |
 | 3 | `infrastructure/persistence/operational_memory_repository.py` | 1,938 | 251 | ✅ Done — 6 slices (merged to main), −87% | `operational_memory_repository.md` |
-| 4 | `interfaces/api/routes/chat/__init__.py` | 1,905 | 1,419 | 🔄 In progress — 2 slices merged (PRs #75, #79), more pending | `routes_chat.md` |
+| 4 | `interfaces/api/routes/chat/__init__.py` | 1,905 | 612 | 🔄 In progress — 6 slices merged, more pending | `routes_chat.md` |
 | 5 | `infrastructure/llm/vertex_ai_adapter.py` | 1,064 | 31 | ✅ Done — 3 slices (PRs #47, #50, #53), −97% | `llm_adapters.md` |
 | 6 | `interfaces/api/routes/workspace/` | 1,576 | 30 | ✅ Done — 4 slices (PR #84), −98% | `routes_workspace.md` |
-| 7 | `interfaces/api/routes/sessions.py` | 1,471 | 1,471 | ⏳ Not started | `routes_sessions.md` |
-| 8 | `application/services/browser_cooperation.py` | 1,292 | 1,292 | ⏳ Not started | `browser_cooperation.md` |
+| 7 | `interfaces/api/routes/sessions/__init__.py` | 1,471 | 166 | ✅ Done — 5 slices (−89%) | `routes_sessions.md` |
+| 8 | `application/services/browser_cooperation/__init__.py` | 1,292 | 35 | ✅ Done — 4 slices (−97%) | `browser_cooperation.md` |
 | 9 | `application/team_chat/blackboard.py` | 1,091 | 1,091 | ⏳ Not started | `blackboard.md` |
 | 10 | `application/services/operational_memory.py` | 1,075 | 1,075 | ⏳ Not started | `operational_memory_service.md` |
 | 11 | `application/services/session_panel.py` | 976 | 976 | ⏳ Not started | `session_panel_service.md` |
@@ -41,11 +41,14 @@ A file qualifies as a god file if it meets **all three**:
 |------|------:|------:|--------|
 | `application/use_cases/chat_completion.py` | 2,742 | 483 | ✅ Done (−82%) |
 | `application/team_chat/orchestrator.py` | 3,097 | 127 | ✅ Done (−96%) |
-| `infrastructure/browser/lightpanda.py` | 5,735 | 1,469 | ✅ Done — 14 slices (−74%) |
+| `infrastructure/browser/lightpanda.py` | 5,735 | 1,469 | 🔄 Phase 3 — 14 slices done (−74%), further decomp needed |
 | `infrastructure/tools/browser_tools/` | 2,786 | 61 | ✅ Done — 4 slices (−98%) |
 | `infrastructure/persistence/operational_memory/` | 1,938 | 251 | ✅ Done — 6 slices (−87%) |
 | `infrastructure/llm/vertex_ai/` | 1,064 | 31 | ✅ Done — 3 slices (−97%) |
 | `interfaces/api/routes/workspace/` | 1,576 | 30 | ✅ Done — 4 slices (−98%) |
+| `interfaces/api/routes/sessions/` | 1,471 | 166 | ✅ Done — 5 slices (−89%) |
+| `application/services/browser_cooperation/` | 1,292 | 35 | ✅ Done — 4 slices (−97%) |
+| `infrastructure/tools/browser_tools/helpers.py` | 1,111 | 543 | ✅ Done — 3 slices (PRs #91, #93, #95), −51% |
 
 ### Frontend god files
 
@@ -92,14 +95,14 @@ threshold and meet the three criteria.
 ### Tier 2 — High (1,500–2,000L)
 
 5. ~~**`operational_memory_repository.py`** — 1,938→251L~~ ✅
-6. **`routes/chat.py`** — 1,905→1,419L 🔄 (2 slices merged, more pending)
+6. **`routes/chat.py`** — 1,905→612L 🔄 (6 slices merged, more pending)
 7. **`input-dock.tsx`** — 1,976L ⏳
-8. **`routes/workspace.py`** — 1,576L ⏳
-9. **`routes/sessions.py`** — 1,471L ⏳
+8. ~~**`routes/workspace.py`** — 1,576→30L~~ ✅
+9. ~~**`routes/sessions.py`** — 1,471→166L~~ ✅
 
 ### Tier 3 — Medium (800–1,500L)
 
-10. **`browser_cooperation.py`** — 1,292L ⏳
+10. ~~**`browser_cooperation.py`** — 1,292→35L~~ ✅
 11. **`blackboard.py`** — 1,091L ⏳
 12. **`operational_memory.py`** (service) — 1,075L ⏳
 13. ~~**`vertex_ai_adapter.py`** — 1,064→31L~~ ✅
@@ -275,26 +278,28 @@ After all decompositions are complete, the project structure will be:
 │   └── ...
 │
 ├── interfaces/api/routes/
-│   ├── chat/                              # 🔄 IN PROGRESS (was 1,905L → 1,419L)
-│   │   ├── __init__.py                    #   router + remaining endpoints (1,419L)
-│   │   ├── helpers.py                     #   ✅ extracted (PR #75) — shared helpers
-│   │   ├── models_listing.py              #   ✅ extracted (PR #79) — list_models, list_commands
-│   │   ├── completion.py                  #   planned — chat_completion + chat_completion_stream
-│   │   ├── plan_approval.py               #   planned — approve/continue/cancel plan
-│   │   ├── tool_approval.py               #   planned — approve/reject tool
-│   │   └── team_chat.py                   #   planned — team_chat_websocket + persistence
+│   ├── chat/                              # 🔄 IN PROGRESS (was 1,905L → 612L)
+│   │   ├── __init__.py                    #   router + remaining endpoints (612L)
+│   │   ├── helpers.py                     #   ✅ extracted — shared helpers (351L)
+│   │   ├── models_listing.py              #   ✅ extracted — list_models, list_commands (218L)
+│   │   ├── completion.py                  #   ✅ extracted — chat_completion + chat_completion_stream (606L)
+│   │   ├── plan_approval.py               #   ✅ extracted — approve/continue/cancel plan (148L)
+│   │   ├── tool_approval.py               #   ✅ extracted — approve/reject tool (287L)
+│   │   └── team_chat.py                   #   ✅ extracted — team_chat_websocket + persistence (478L)
 │   ├── workspace/                         # ← from routes/workspace.py (1,576L)
 │   │   ├── __init__.py
 │   │   ├── grant.py                       #   workspace grant endpoints
 │   │   ├── filesystem.py                  #   file read/write/search endpoints
 │   │   ├── git.py                         #   git operations endpoints
 │   │   └── helpers.py                     #   shared workspace resolution
-│   ├── sessions/                          # ← from routes/sessions.py (1,471L)
-│   │   ├── __init__.py
-│   │   ├── crud.py                        #   list/create/get/delete sessions
-│   │   ├── memory.py                      #   memory-related session endpoints
-│   │   ├── panel.py                       #   session panel data endpoints
-│   │   └── export.py                      #   export/import endpoints
+│   ├── sessions/                          # ✅ DONE (was 1,471L → 166L)
+│   │   ├── __init__.py                    #   ✅ router (166L)
+│   │   ├── browser_interaction.py         #   ✅ browser interaction endpoints (382L)
+│   │   ├── workspace_data.py              #   ✅ workspace data endpoints (280L)
+│   │   ├── _workspace_infra.py            #   ✅ workspace infrastructure (269L)
+│   │   ├── browser_viewport.py            #   ✅ browser viewport endpoints (213L)
+│   │   ├── cooperation.py                 #   ✅ cooperation endpoints (175L)
+│   │   └── models.py                      #   ✅ shared models (131L)
 │   └── ...
 │
 @desktop-electron/src/
