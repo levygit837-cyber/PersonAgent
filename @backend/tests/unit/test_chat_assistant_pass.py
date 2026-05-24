@@ -72,27 +72,27 @@ async def _drain(runner: AssistantPassRunner, **kwargs: Any) -> list[StreamChunk
 
 
 def _request(**overrides: Any) -> ChatRequestDTO:
-    defaults: dict[str, Any] = dict(
-        message="hi",
-        provider="openai",
-        model="gpt-4o",
-        temperature=0.5,
-        max_tokens=128,
-    )
+    defaults: dict[str, Any] = {
+        "message": "hi",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "temperature": 0.5,
+        "max_tokens": 128,
+    }
     defaults.update(overrides)
     return ChatRequestDTO(**defaults)
 
 
 def _run_kwargs(**overrides: Any) -> dict[str, Any]:
-    defaults: dict[str, Any] = dict(
-        request=_request(),
-        conversation_id="conv-1",
-        messages=[{"role": "user", "content": "hi"}],
-        tools=[],
-        seen_tool_call_ids=set(),
-        iteration=0,
-        state=AssistantStreamState(),
-    )
+    defaults: dict[str, Any] = {
+        "request": _request(),
+        "conversation_id": "conv-1",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [],
+        "seen_tool_call_ids": set(),
+        "iteration": 0,
+        "state": AssistantStreamState(),
+    }
     defaults.update(overrides)
     return defaults
 
