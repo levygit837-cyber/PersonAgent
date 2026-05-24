@@ -25,13 +25,15 @@ A file qualifies as a god file if it meets **all three**:
 | 5 | `interfaces/api/routes/workspace.py` | 1,576 | ⏳ Not started | `routes_workspace.md` |
 | 6 | `interfaces/api/routes/sessions.py` | 1,471 | ⏳ Not started | `routes_sessions.md` |
 | 7 | `application/services/browser_cooperation.py` | 1,292 | ⏳ Not started | `browser_cooperation.md` |
-| 8 | `application/services/operational_memory.py` | 1,075 | ⏳ Not started | `operational_memory_service.md` |
-| 9 | `infrastructure/llm/vertex_ai_adapter.py` | 1,064 | ⏳ Not started | `llm_adapters.md` |
-| 10 | `application/services/session_panel.py` | 976 | ⏳ Not started | `session_panel_service.md` |
-| 11 | `infrastructure/llm/codex_subscription_adapter.py` | 944 | ⏳ Not started | `llm_adapters.md` |
-| 12 | `infrastructure/llm/kimi_coding_adapter.py` | 892 | ⏳ Not started | `llm_adapters.md` |
-| 13 | `application/services/session_titles.py` | 848 | ⏳ Not started | `session_titles.md` |
-| 14 | `infrastructure/tools/filesystem_tools.py` | 810 | ⏳ Not started | `filesystem_tools.md` |
+| 8 | `application/team_chat/blackboard.py` | 1,091 | ⏳ Not started | `blackboard.md` |
+| 9 | `application/services/operational_memory.py` | 1,075 | ⏳ Not started | `operational_memory_service.md` |
+| 10 | `infrastructure/llm/vertex_ai_adapter.py` | 1,064 | ⏳ Not started | `llm_adapters.md` |
+| 11 | `application/services/session_panel.py` | 976 | ⏳ Not started | `session_panel_service.md` |
+| 12 | `infrastructure/llm/codex_subscription_adapter.py` | 944 | ⏳ Not started | `llm_adapters.md` |
+| 13 | `infrastructure/persistence/models.py` | 919 | ⏳ Not started | `persistence_models.md` |
+| 14 | `infrastructure/llm/kimi_coding_adapter.py` | 892 | ⏳ Not started | `llm_adapters.md` |
+| 15 | `application/services/session_titles.py` | 848 | ⏳ Not started | `session_titles.md` |
+| 16 | `infrastructure/tools/filesystem_tools.py` | 810 | ⏳ Not started | `filesystem_tools.md` |
 
 ### Already decomposed (backend)
 
@@ -44,14 +46,31 @@ A file qualifies as a god file if it meets **all three**:
 
 | # | File | Lines | Status | Playbook |
 |---|------|------:|--------|----------|
-| 15 | `components/chat/session-panel.tsx` | 3,960 | ⏳ Not started | `session_panel.md` |
-| 16 | `stores/chat-store.ts` | 3,307 | ⏳ Not started | `chat_store.md` |
-| 17 | `components/chat/input-dock.tsx` | 1,976 | ⏳ Not started | `input_dock.md` |
-| 18 | `components/chat/agent-message.tsx` | 1,419 | ⏳ Not started | `agent_message.md` |
-| 19 | `components/open-pr/open-pr-workspace.tsx` | 1,350 | ⏳ Not started | `open_pr_workspace.md` |
-| 20 | `components/chat/session-panel/browser-mirror.ts` | 1,261 | ⏳ Not started | `browser_mirror.md` |
-| 21 | `api/client.ts` | 1,231 | ⏳ Not started | `api_client.md` |
-| 22 | `components/chat/file-viewer-panel.tsx` | 1,079 | ⏳ Not started | `file_viewer_panel.md` |
+| 17 | `components/chat/session-panel.tsx` | 3,960 | ⏳ Not started | `session_panel.md` |
+| 18 | `stores/chat-store.ts` | 3,307 | ⏳ Not started | `chat_store.md` |
+| 19 | `components/chat/input-dock.tsx` | 1,976 | ⏳ Not started | `input_dock.md` |
+| 20 | `components/chat/agent-message.tsx` | 1,419 | ⏳ Not started | `agent_message.md` |
+| 21 | `components/open-pr/open-pr-workspace.tsx` | 1,350 | ⏳ Not started | `open_pr_workspace.md` |
+| 22 | `components/chat/session-panel/browser-mirror.ts` | 1,261 | ⏳ Not started | `browser_mirror.md` |
+| 23 | `api/client.ts` | 1,231 | ⏳ Not started | `api_client.md` |
+| 24 | `components/chat/file-viewer-panel.tsx` | 1,079 | ⏳ Not started | `file_viewer_panel.md` |
+| 25 | `components/chat/tool-block.tsx` | 919 | ⏳ Not started | `tool_block.md` |
+| 26 | `types/chat.ts` | 887 | ⏳ Not started | `chat_types.md` |
+
+### Watchlist (below threshold but trending)
+
+Files below 800L that may become god files as the codebase grows.
+Monitor quarterly; promote to the inventory if they cross the
+threshold and meet the three criteria.
+
+| File | Lines | Notes |
+|------|------:|-------|
+| `infrastructure/tools/shell_tool.py` | 751 | Close to threshold; mixes tool factory + PTY lifecycle |
+| `electron/main.ts` | 672 | Electron main process; mixes window management, IPC, PTY, auth, security |
+| `components/layout/sidebar.tsx` | 770 | Close to threshold; growing as nav features are added |
+| `domain/prompts/services/prompt_builder.py` | 649 | Complex prompt assembly; may grow with new providers |
+| `infrastructure/config/settings.py` | 642 | Pydantic Settings; may grow with new config sections |
+| `domain/exceptions.py` | 615 | Cross-cutting; may stay as-is if purely declarative |
 
 ---
 
@@ -75,18 +94,22 @@ A file qualifies as a god file if it meets **all three**:
 ### Tier 3 — Medium (800–1,500L)
 
 10. **`browser_cooperation.py`** — 1,292L
-11. **`operational_memory.py`** — 1,075L
-12. **`vertex_ai_adapter.py`** — 1,064L
-13. **`session_panel.py`** (service) — 976L
-14. **`codex_subscription_adapter.py`** — 944L
-15. **`kimi_coding_adapter.py`** — 892L
-16. **`agent-message.tsx`** — 1,419L
-17. **`open-pr-workspace.tsx`** — 1,350L
-18. **`browser-mirror.ts`** — 1,261L
-19. **`api/client.ts`** — 1,231L
-20. **`file-viewer-panel.tsx`** — 1,079L
-21. **`session_titles.py`** — 848L
-22. **`filesystem_tools.py`** — 810L
+11. **`blackboard.py`** — 1,091L *(new)*
+12. **`operational_memory.py`** — 1,075L
+13. **`vertex_ai_adapter.py`** — 1,064L
+14. **`session_panel.py`** (service) — 976L
+15. **`codex_subscription_adapter.py`** — 944L
+16. **`persistence/models.py`** — 919L *(new)*
+17. **`kimi_coding_adapter.py`** — 892L
+18. **`agent-message.tsx`** — 1,419L
+19. **`open-pr-workspace.tsx`** — 1,350L
+20. **`browser-mirror.ts`** — 1,261L
+21. **`api/client.ts`** — 1,231L
+22. **`file-viewer-panel.tsx`** — 1,079L
+23. **`tool-block.tsx`** — 919L *(new)*
+24. **`types/chat.ts`** — 887L *(new)*
+25. **`session_titles.py`** — 848L
+26. **`filesystem_tools.py`** — 810L
 
 ---
 
@@ -125,16 +148,22 @@ After all decompositions are complete, the project structure will be:
 │   │   │   ├── streaming/
 │   │   │   ├── bookkeeping/
 │   │   │   └── memory/
-│   │   ├── team_chat/                     # ✅ DONE (127L, was 3,097)
+│   │   ├── team_chat/                     # ✅ orchestrator DONE (127L, was 3,097)
 │   │   │   ├── orchestrator.py
 │   │   │   ├── types.py
-│   │   │   ├── blackboard.py
+│   │   │   ├── blackboard/               # ← from blackboard.py (1,091L) NEW
+│   │   │   │   ├── __init__.py            #   re-exports _Blackboard + constants
+│   │   │   │   ├── blackboard.py          #   _Blackboard class (~500L target)
+│   │   │   │   ├── json_parsing.py        #   Slice 1 — JSON/text extraction helpers
+│   │   │   │   ├── claim_graph.py         #   Slice 2 — ClaimGraphAnalyzer
+│   │   │   │   └── scoring.py             #   Slice 3 — coherency, novelty, keywords
 │   │   │   ├── agent_turn_runner.py
 │   │   │   ├── consensus_phase.py
 │   │   │   ├── coordinator_phase.py
 │   │   │   ├── final_synthesis.py
 │   │   │   ├── helpers.py
-│   │   │   └── phase_loop.py
+│   │   │   ├── phase_loop.py
+│   │   │   └── contracts.py
 │   │   ├── context/
 │   │   └── memory/
 │   ├── services/
@@ -194,13 +223,19 @@ After all decompositions are complete, the project structure will be:
 │   │   ├── shell_tool.py
 │   │   └── mcp_tools.py
 │   ├── persistence/
+│   │   ├── models/                        # ← from models.py (919L) NEW
+│   │   │   ├── __init__.py                #   re-exports all 31 ORM classes
+│   │   │   ├── core.py                    #   TenantORM, ConversationORM, MessageORM, TaskRecordORM
+│   │   │   ├── browser.py                 #   Slice 1 — 7 browser ORM classes
+│   │   │   ├── team.py                    #   Slice 2 — 3 team mode ORM classes
+│   │   │   ├── qa.py                      #   Slice 3 — 6 QA ORM classes
+│   │   │   └── memory.py                  #   Slice 4 — 11 memory ORM classes
 │   │   ├── operational_memory/            # ← from operational_memory_repository.py (1,938L)
 │   │   │   ├── repository.py              #   main repository class
 │   │   │   ├── chunking.py                #   chunk splitting/merging logic
 │   │   │   ├── vector_search.py           #   embedding + pgvector queries
 │   │   │   ├── structured_items.py        #   structured memory CRUD
 │   │   │   └── models.py                  #   SQLAlchemy models (StoredMemoryChunk, etc.)
-│   │   ├── models.py
 │   │   └── ...
 │   ├── llm/
 │   │   ├── vertex_ai/                     # ← from vertex_ai_adapter.py (1,064L)
@@ -246,6 +281,15 @@ After all decompositions are complete, the project structure will be:
 │   └── ...
 │
 @desktop-electron/src/
+├── types/
+│   ├── chat/                              # ← from chat.ts (887L) NEW
+│   │   ├── index.ts                       #   barrel re-exports
+│   │   ├── conversation.ts                #   conversation, message, command, skill types
+│   │   ├── team.ts                        #   Slice 1 — 15 team mode types (~250L)
+│   │   ├── tool-types.ts                  #   Slice 2 — ToolBlockUi, ToolBlockStatus
+│   │   ├── models.ts                      #   Slice 3 — provider, reasoning, streaming, auth types
+│   │   └── memory-types.ts                #   Slice 4 — memory trace types
+│   └── ...
 ├── components/
 │   ├── chat/
 │   │   ├── session-panel/                 # ← from session-panel.tsx (3,960L)
@@ -275,7 +319,16 @@ After all decompositions are complete, the project structure will be:
 │   │   │   ├── content-blocks.tsx         #   message block rendering
 │   │   │   ├── actions.tsx                #   action buttons (copy, retry)
 │   │   │   └── thinking-block.tsx         #   reasoning display
-│   │   ├── tool-block.tsx                 #   919L — may decompose later
+│   │   ├── tool-block/                    # ← from tool-block.tsx (919L) NEW
+│   │   │   ├── index.tsx                  #   ToolBlock router + CompactToolGroupBlock (~80L)
+│   │   │   ├── write-output.tsx           #   Slice 1 — WriteToolEvent + diff parsing
+│   │   │   ├── read-shell.tsx             #   Slice 2 — Read/Shell/Generic/Browser events
+│   │   │   ├── todo-block.tsx             #   Slice 3 — Todo components
+│   │   │   ├── utils.ts                   #   Slice 3 — shared utilities + status helpers
+│   │   │   ├── browser-output.ts          #   ← already extracted
+│   │   │   ├── search-output.ts           #   ← already extracted
+│   │   │   ├── todo.ts                    #   ← already extracted
+│   │   │   └── visibility.ts              #   ← already extracted
 │   │   ├── file-viewer-panel/             # ← from file-viewer-panel.tsx (1,079L)
 │   │   │   ├── index.tsx                  #   panel container
 │   │   │   ├── file-tree.tsx              #   tree navigation
@@ -416,6 +469,19 @@ the method carries the verb.
 
 If a slice exceeds 2,500 lines changed, split it into two PRs.
 
+### 8. ORM / Database Model Rules (for persistence/models decomposition)
+
+- **Never change table names or column names** — this would require a DB migration.
+- **Verify Alembic** — after each slice, run `uv run alembic check` to confirm no phantom migrations are generated.
+- **Preserve conditional imports** — the `pgvector` try/except pattern must be replicated in destination files.
+- **All models must be discoverable** — `Base.metadata` collects models at import time; the `__init__.py` barrel must import all sub-modules so Alembic sees them.
+
+### 9. Frontend Barrel Re-export Rules (for types/chat and store splits)
+
+- **Every consumer import path must keep working** — the barrel `index.ts` re-exports everything from sub-modules.
+- **Runtime values must not live in type-only files** — constants, arrays, and functions go in files importable at runtime.
+- **Do not rename exports** — renaming a 71-export type file would cascade across dozens of consumers.
+
 ---
 
 ## Execution Order (Recommended)
@@ -429,6 +495,7 @@ If a slice exceeds 2,500 lines changed, split it into two PRs.
 ### Phase 2.1 — Data layer
 - `operational_memory_repository.py` → 4 slices
 - `operational_memory.py` (service) → 3 slices
+- `persistence/models.py` → 4 slices *(new)*
 
 ### Phase 2.2 — API routes
 - `routes/chat.py` → 5 slices
@@ -442,6 +509,7 @@ If a slice exceeds 2,500 lines changed, split it into two PRs.
 
 ### Phase 2.4 — Application services
 - `browser_cooperation.py` → 3 slices
+- `blackboard.py` → 3 slices *(new)*
 - `session_panel.py` → 3 slices
 - `session_titles.py` → 2 slices
 
@@ -454,6 +522,20 @@ If a slice exceeds 2,500 lines changed, split it into two PRs.
 - `browser-mirror.ts` → 3 slices
 - `api/client.ts` → 3 slices
 - `file-viewer-panel.tsx` → 3 slices
+- `tool-block.tsx` → 3 slices *(new)*
+- `types/chat.ts` → 4 slices *(new)*
+
+---
+
+## Summary: Total Decomposition Scope
+
+| Category | Files | Slices | Status |
+|----------|------:|-------:|--------|
+| Backend — completed | 2 | — | ✅ Done |
+| Backend — in progress | 1 | 4 remaining | 🔄 lightpanda |
+| Backend — planned | 15 | ~48 slices | ⏳ |
+| Frontend — planned | 10 | ~39 slices | ⏳ |
+| **Total** | **28** | **~91 slices** | |
 
 ---
 
@@ -469,6 +551,8 @@ Key alignment points:
 - **Principle 6** (infrastructure mirrors external concerns) —
   browser/, llm/, persistence/ sub-packages align with decomposition.
 - Target structure above follows ADR 0022's shape exactly.
+- **`persistence/models/` split** aligns with Principle 2 (bounded
+  contexts in domain) — each ORM group maps to a domain concept.
 
 The ADR migration PR (Principle 7: `interfaces/` → `adapters/`)
 should be scheduled **after** all active decomposition slices are
