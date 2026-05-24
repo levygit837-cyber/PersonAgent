@@ -45,7 +45,7 @@ def test_vertex_catalog_marks_image_output_and_tool_capabilities():
 def test_vertex_payload_uses_include_thoughts_and_reasoning_level_mapping():
     adapter = VertexAiAdapter(api_key="google-test-key", default_max_tokens=2048)
 
-    payload, model = adapter._build_payload(
+    payload, model = adapter._content_builder.build_payload(
         [{"role": "system", "content": "You are concise."}, {"role": "user", "content": "hi"}],
         0.2,
         512,
@@ -66,7 +66,7 @@ def test_vertex_payload_uses_include_thoughts_and_reasoning_level_mapping():
 def test_vertex_payload_serializes_tool_result_as_user_function_response():
     adapter = VertexAiAdapter(api_key="google-test-key", default_max_tokens=2048)
 
-    payload, _model = adapter._build_payload(
+    payload, _model = adapter._content_builder.build_payload(
         [
             {"role": "user", "content": "Search LangChain."},
             {
@@ -153,7 +153,7 @@ def test_vertex_payload_replays_original_tool_call_parts_with_thought_signatures
         },
     ]
 
-    payload, _model = adapter._build_payload(
+    payload, _model = adapter._content_builder.build_payload(
         [
             {"role": "user", "content": "Search LangChain."},
             {
@@ -215,7 +215,7 @@ def test_vertex_payload_adds_skip_signature_when_gemini_3_returns_unsigned_funct
         },
     ]
 
-    payload, _model = adapter._build_payload(
+    payload, _model = adapter._content_builder.build_payload(
         [
             {"role": "user", "content": "Search LangChain."},
             {
@@ -272,7 +272,7 @@ def test_vertex_payload_adds_skip_signature_when_gemini_3_returns_unsigned_funct
 def test_vertex_stream_parser_keeps_original_tool_call_parts_for_replay():
     adapter = VertexAiAdapter(api_key="google-test-key")
 
-    chunks, _signatures = adapter._stream_chunks_from_data(
+    chunks, _signatures = adapter._streaming.stream_chunks_from_data(
         {
             "modelVersion": "gemini-3-flash-preview",
             "candidates": [
@@ -321,7 +321,7 @@ def test_vertex_stream_parser_keeps_original_tool_call_parts_for_replay():
 def test_vertex_payload_uses_thinking_budget_for_gemini_25_models():
     adapter = VertexAiAdapter(api_key="google-test-key", default_max_tokens=2048)
 
-    flash_lite_payload, _model = adapter._build_payload(
+    flash_lite_payload, _model = adapter._content_builder.build_payload(
         [{"role": "user", "content": "hi"}],
         0.2,
         512,
@@ -331,7 +331,7 @@ def test_vertex_payload_uses_thinking_budget_for_gemini_25_models():
             "reasoning_budget_tokens": 128,
         },
     )
-    flash_payload, _model = adapter._build_payload(
+    flash_payload, _model = adapter._content_builder.build_payload(
         [{"role": "user", "content": "hi"}],
         0.2,
         512,
@@ -357,7 +357,7 @@ def test_vertex_payload_uses_thinking_budget_for_gemini_25_models():
 def test_vertex_payload_maps_zero_budget_to_reasoning_preset_for_gemini_25_models():
     adapter = VertexAiAdapter(api_key="google-test-key", default_max_tokens=2048)
 
-    payload, _model = adapter._build_payload(
+    payload, _model = adapter._content_builder.build_payload(
         [{"role": "user", "content": "hi"}],
         0,
         1024,
@@ -377,7 +377,7 @@ def test_vertex_payload_maps_zero_budget_to_reasoning_preset_for_gemini_25_model
 def test_vertex_payload_clamps_exclusive_65536_output_bound():
     adapter = VertexAiAdapter(api_key="google-test-key", default_max_tokens=65536)
 
-    payload, _model = adapter._build_payload(
+    payload, _model = adapter._content_builder.build_payload(
         [{"role": "user", "content": "hi"}],
         0,
         65536,
@@ -394,7 +394,7 @@ def test_vertex_payload_clamps_exclusive_65536_output_bound():
 def test_vertex_payload_enables_text_and_image_response_modalities_for_image_models():
     adapter = VertexAiAdapter(api_key="google-test-key")
 
-    payload, _model = adapter._build_payload(
+    payload, _model = adapter._content_builder.build_payload(
         [{"role": "user", "content": "generate a small image"}],
         0.4,
         -1,
@@ -408,7 +408,7 @@ def test_vertex_payload_enables_text_and_image_response_modalities_for_image_mod
 def test_vertex_payload_omits_thinking_config_for_pro_image_model():
     adapter = VertexAiAdapter(api_key="google-test-key")
 
-    payload, _model = adapter._build_payload(
+    payload, _model = adapter._content_builder.build_payload(
         [{"role": "user", "content": "generate a small image"}],
         0.4,
         -1,
@@ -422,7 +422,7 @@ def test_vertex_payload_omits_thinking_config_for_pro_image_model():
 def test_vertex_parser_splits_thought_text_final_text_and_preserves_signature():
     adapter = VertexAiAdapter(api_key="google-test-key")
 
-    result = adapter._parse_inference_result(
+    result = adapter._streaming.parse_inference_result(
         {
             "modelVersion": "gemini-3.1-flash-lite-preview",
             "candidates": [
@@ -454,7 +454,7 @@ def test_vertex_parser_splits_thought_text_final_text_and_preserves_signature():
 def test_vertex_parser_accepts_string_thought_marker():
     adapter = VertexAiAdapter(api_key="google-test-key")
 
-    result = adapter._parse_inference_result(
+    result = adapter._streaming.parse_inference_result(
         {
             "candidates": [
                 {
@@ -477,7 +477,7 @@ def test_vertex_parser_accepts_string_thought_marker():
 def test_vertex_parser_extracts_inline_data_as_generated_image():
     adapter = VertexAiAdapter(api_key="google-test-key")
 
-    result = adapter._parse_inference_result(
+    result = adapter._streaming.parse_inference_result(
         {
             "candidates": [
                 {
@@ -512,7 +512,7 @@ def test_vertex_parser_extracts_inline_data_as_generated_image():
 def test_vertex_stream_parser_emits_reasoning_content_and_images_in_order():
     adapter = VertexAiAdapter(api_key="google-test-key")
 
-    chunks, signatures = adapter._stream_chunks_from_data(
+    chunks, signatures = adapter._streaming.stream_chunks_from_data(
         {
             "modelVersion": "gemini-3.1-flash-image-preview",
             "candidates": [
@@ -556,7 +556,7 @@ async def test_vertex_stream_events_parse_incremental_json_array_responses():
             ]:
                 yield part
 
-    events = [event async for event in adapter._stream_events(FakeResponse())]
+    events = [event async for event in adapter._streaming.stream_events(FakeResponse())]
 
     assert events[0]["candidates"][0]["content"]["parts"][0]["text"] == "hello"
     assert events[1]["candidates"][0]["finishReason"] == "STOP"

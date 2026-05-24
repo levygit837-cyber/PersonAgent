@@ -43,10 +43,10 @@ still returns the same list of `Tool` objects.
 
 | Slice | Status | PR | Notes |
 |-------|--------|----|-------|
-| 1 — Extract helpers to `helpers.py` | ⏳ Pending | — | |
-| 2 — Extract navigation tools | ⏳ Pending | — | |
-| 3 — Extract interaction tools | ⏳ Pending | — | |
-| 4 — Extract tab management tools | ⏳ Pending | — | |
+| 1 — Extract helpers to `helpers.py` | ✅ Merged | — | 920 lines → helpers.py; browser_tools.py → browser_tools/ package; factories.py 1,793 lines; 76 new tests; 0 regressions |
+| 2 — Extract navigation tools | ✅ Merged | — | 6 tool factories, 709 lines removed; `navigation.py`; 27 new tests |
+| 3 — Extract interaction tools | ✅ Merged | — | 8 tool factories, 706 lines removed; `interaction.py`; 35 new tests |
+| 4 — Extract tab management tools | ✅ Merged | — | 5 tool factories, 281 lines removed; `tab_management.py`; factories.py → 61-line orchestrator; 23 new tests |
 | 5 — Extract content tools | ⏳ Pending | — | |
 | 6 — Flatten factory into `factory.py` | ⏳ Pending | — | |
 

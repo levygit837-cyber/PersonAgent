@@ -74,6 +74,38 @@ appropriate.
 | 6 — Extract `BrowserSearch` | ✅ Merged | — | 253 lines removed; search + search_url + 4 scripts in `search.py` + backward-compat delegations; 27 new tests |
 | 7 — Extract `BrowserViewActions` | ✅ Merged | — | 317 lines removed; 7 view_* methods in `view_actions.py` + backward-compat delegations; 23 new tests |
 | 8 — Inline what remains | ✅ Merged | — | JS scripts → `scripts.py` (942 lines); content extraction → `content.py` (20 methods); 20 new tests; lightpanda.py: 3,520 → 2,015 (−43%) |
+| 9 — Extract console & cooperation | ✅ Merged | — | 8 methods, 105 lines removed; `BrowserConsole` in `console.py`; 32 new tests |
+| 10 — Extract opened page tracking | ✅ Merged | — | 8 methods, 116 lines removed; `OpenedPageTracker` in `opened_pages.py`; 27 new tests |
+| 11 — Extract search result cache | ✅ Merged | — | 9 methods, 74 lines removed; `SearchResultCache` in `search_cache.py`; 30 new tests |
+| 12 — Extract element & frame helpers | ✅ Merged | — | 14 methods, 159 lines removed; `ElementHelpers` in `element_helpers.py`; 37 new tests |
+| 13 — Extract block detection | ✅ Merged | — | 4 methods, 113 lines removed; `BlockDetector` in `block_detection.py`; 18 new tests |
+| 14 — Extract page helpers | ✅ Merged | — | 4 methods, 44 lines removed; `PageHelpers` in `page_helpers.py`; 16 new tests |
+
+**After Phase 2 (slices 9–14):** lightpanda.py target: ~700 lines (init, facade
+delegations, session management, CDP infrastructure, page resolution, navigation).
+These remaining ~700 lines form the **identity core** of the worker and should NOT
+be extracted further — they are the state machine, connection pool, and CDP
+transport that all other modules depend on via `self._w`.
+
+## Phase 2 — Additional low-risk slices (9–14)
+
+### Line budget after Phase 1 (slices 1–8)
+
+| Category | Methods | Lines | Risk |
+|----------|---------|-------|------|
+| Init / warmup / close | 3 | 94 | ⛔ Core — stays |
+| Facade delegations | 25 | 87 | ⛔ Core — stays |
+| **Console & cooperation** | **8** | **147** | 🟢 Low |
+| **Opened page tracking** | **8** | **148** | 🟢 Low |
+| **Search result cache** | **9** | **133** | 🟢 Low |
+| **Element & frame helpers** | **8** | **91** | 🟢 Low |
+| **Block detection** | **4** | **127** | 🟢 Low |
+| **Page helpers** | **10** | **180** | 🟡 Medium |
+| Session management | 20 | 339 | 🔴 Core — stays |
+| Page resolution | 8 | 245 | 🔴 Core — stays |
+| CDP infrastructure | 9 | 216 | 🔴 Core — stays |
+| Navigation | 2 | 56 | 🔴 Core — stays |
+| Misc (snapshot delegations) | 10 | 66 | ⛔ Core — stays |
 
 ## Proposed slices (in order; expect 8+ PRs)
 
@@ -249,6 +281,188 @@ so the callers don't change. The body of each method is now
 
 This is the **last** slice. Do not collapse the facade — it's
 the backward-compat layer.
+
+### Slice 9 — Extract console & cooperation listeners to `console.py`
+
+**What moves out:**
+
+- `_attach_page_console_listeners` (L935–974)
+- `_console_message_attr` (L975–981)
+- `_record_console_entry` (L982–1005)
+- `_install_console_capture` (L1281–1284)
+- `_install_cooperation_capture` (L1285–1302)
+- `_drain_page_console_entries` (L1303–1324)
+- `_drain_cooperation_events` (L1325–1342)
+- `_record_cooperation_event` (L1343–1356)
+- Related instance attrs: `_console_cache`, `_console_sequence`,
+  `_console_listener_keys`, `_cooperation_event_cache`,
+  `_cooperation_listener_keys`
+
+**Module:** `browser/console.py`. Class: `BrowserConsole`.
+
+**Dependencies (via `self._w`):** `_evaluate_page`, `_clean_browser_url`, scripts
+from `scripts.py`.
+
+**Risk:** 🟢 Low. Console capture is almost entirely self-contained.
+Only `_drain_page_console_entries` calls `_evaluate_page` on the worker.
+
+**Callers that need updating:**
+- `actions.py` calls `_drain_page_console_entries`, `_console_cache`, `_attach_page_console_listeners`
+- `page_lifecycle.py` calls `_attach_page_console_listeners`
+- `_resolve_live_page` calls `_attach_page_console_listeners`
+- Worker `close()` clears console caches
+
+**Tests:** 10+ cases covering attach, record, drain, cooperation events.
+
+### Slice 10 — Extract opened page tracking to `opened_pages.py`
+
+**What moves out:**
+
+- `_cache_opened_page` (L1658–1701)
+- `_browser_open_response` (L1702–1730)
+- `_opened_page_read_status` (L1731–1733)
+- `_opened_page_tab` (L1734–1763)
+- `_opened_page` (L1764–1773)
+- `_opened_page_by_url` (L1774–1789)
+- `_target_title` (L1790–1795)
+- `_next_unextracted_opened_page` (L1866–1875)
+- Related instance attrs: `_opened_pages_cache`, `_last_open_cache`
+
+**Module:** `browser/opened_pages.py`. Class: `OpenedPageTracker`.
+
+**Dependencies (via `self._w`):** `_clean_browser_url`, `_urls_equivalent`
+(both from `url_utils.py` — pure functions, easy to import directly).
+
+**Risk:** 🟢 Low. Pure state tracking with no async operations or CDP calls.
+Every method is synchronous.
+
+**Callers that need updating:**
+- `page_lifecycle.py` — `_cache_opened_page`, `_browser_open_response`,
+  `_opened_page_by_url`, `_opened_page_tab`, `_last_open_cache`
+- `content.py` — `_opened_page`, `_cleanup_live_pages` (uses `_opened_page`)
+- `_resolve_live_page` — `_opened_page`
+- `_resolve_content_target` — `_opened_page`, `_next_unextracted_opened_page`
+
+**Tests:** 10+ cases covering cache, lookup, response formatting.
+
+### Slice 11 — Extract search result cache to `search_cache.py`
+
+**What moves out:**
+
+- `_cache_search_results` (L1610–1631)
+- `_latest_cached_search_results` (L1632–1637)
+- `_copy_search_results` (L1638–1651)
+- `_remember_current_url` (L1652–1657)
+- `_result_url` (L1883–1916)
+- `_result_title` (L1917–1932)
+- `_match_search_result_url` (L1933–1948)
+- `_match_search_result_title` (L1949–1964)
+- `search_url` delegation (L386–388)
+- Related attrs: `_search_cache`, `_current_url_cache`
+
+**Module:** `browser/search_cache.py`. Class: `SearchResultCache`.
+
+**Dependencies:** `_clean_browser_url`, `_urls_equivalent`, `BrowserSearchResult`,
+`BrowserSearchSnapshot` (all pure).
+
+**Risk:** 🟢 Low. Pure synchronous state tracking, no CDP or async.
+
+**Callers that need updating:**
+- `page_lifecycle.py` — `_result_url`, `_result_title`, `_match_search_result_url`,
+  `_match_search_result_title`, `_remember_current_url`
+- `_get_session` — `_latest_cached_search_results`
+- `content.py` — `_remember_current_url`
+- `_cleanup_search_cache` — internal cache access
+
+**Tests:** 8+ cases covering cache, lookup, dedup.
+
+### Slice 12 — Extract element & frame helpers to `element_helpers.py`
+
+**What moves out:**
+
+- `_element_selector` (L422–427)
+- `_element_target` (L428–435)
+- `_browser_action_target_payload` (L437–454, static method)
+- `_action_context_for_element` (L455–464)
+- `_page_frames` (L465–477)
+- `_main_frame` (L478–486)
+- `_frame_id` (L487–495)
+- `_frame_viewport_offset` (L496–513)
+- Related attr: `_element_map_cache`
+
+**Module:** `browser/element_helpers.py`. Class: `ElementHelpers` or
+standalone functions.
+
+**Dependencies:** Only `_element_map_cache` (a dict), no CDP calls.
+
+**Risk:** 🟢 Low. Pure lookups and frame navigation — no async CDP needed
+except `_frame_viewport_offset` (minor bounding-box call).
+
+**Callers that need updating:**
+- `actions.py` — `_element_selector`, `_element_target`, `_browser_action_target_payload`,
+  `_action_context_for_element`, `_page_frames`, `_frame_id`, `_frame_viewport_offset`,
+  `_main_frame`, `_element_map_cache`
+- `snapshot.py` — `_page_frames`, `_frame_id`, `_browser_element_map`, `_element_map_cache`
+
+**Tests:** 8+ cases covering selector lookup, frame ID generation, viewport offset.
+
+### Slice 13 — Extract block detection to `block_detection.py`
+
+**What moves out:**
+
+- `_raise_if_google_blocked` (L1483–1523)
+- `_raise_if_bing_blocked` (L1524–1564)
+- `_raise_if_yahoo_blocked` (L1565–1604)
+- `_raise_if_search_blocked` (L1605–1609)
+
+**Module:** `browser/block_detection.py`. Standalone functions or
+`BlockDetector` class.
+
+**Dependencies (via `self._w`):** `_safe_title`, `_evaluate_page`.
+
+**Risk:** 🟢 Low. These are pure detection + raise logic. The only
+interaction with the worker is reading page title/body text.
+
+**Callers that need updating:**
+- `page_lifecycle.py` — `_raise_if_search_blocked` (after navigating)
+- `search.py` — may call `_raise_if_search_blocked` after search navigation
+
+**Tests:** 6+ cases covering each provider detection + no-block passthrough.
+
+### Slice 14 — Extract page helpers to `page_helpers.py`
+
+**What moves out:**
+
+- `_wait_for_page_visual_ready` (L389–414)
+- `_wait_for_page_load_complete` (L415–421)
+- `_upload_files` (L514–536)
+- `_drag_between_elements` (L537–591)
+- `_set_page_viewport` (L592–600)
+- `_safe_user_agent` (L601–607)
+- `_safe_html` (L608–622)
+- `_safe_scroll_state` (L623–638)
+- `_safe_title` (L1461–1473)
+- `_safe_title_for_url` (L1474–1482)
+
+**Module:** `browser/page_helpers.py`. Class: `PageHelpers`.
+
+**Dependencies (via `self._w`):** `_evaluate_page`,
+`_raw_runtime_evaluate_value`, `timeout_ms`, scripts from `scripts.py`.
+
+**Risk:** 🟡 Medium. These helpers are heavily used by actions.py,
+content.py, snapshot.py, and page_lifecycle.py. Careful wiring needed.
+However, each function is individually simple.
+
+**Callers that need updating:**
+- `actions.py` — `_safe_title`, `_safe_user_agent`, `_safe_html`,
+  `_safe_scroll_state`, `_set_page_viewport`, `_wait_for_page_load_complete`,
+  `_upload_files`, `_drag_between_elements`
+- `content.py` — `_safe_title`
+- `page_lifecycle.py` — `_safe_title`
+- `block_detection.py` (if already extracted) — `_safe_title`, `_evaluate_page`
+- `snapshot.py` — `_safe_html`
+
+**Tests:** 10+ cases covering viewport, title, HTML, scroll, upload, drag.
 
 ## Pre-condition tests
 

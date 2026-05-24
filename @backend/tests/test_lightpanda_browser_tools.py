@@ -15,10 +15,12 @@ from personagent.infrastructure.browser import (
     LightPandaBrowserWorker,
     normalize_lightpanda_cdp_endpoint,
 )
+from personagent.infrastructure.browser.content_cleanup import (
+    clean_extracted_content as _clean_extracted_content,
+)
 from personagent.infrastructure.browser.lightpanda import (
     _BrowserSession,
     _clean_browser_url,
-    _clean_extracted_content,
 )
 from personagent.infrastructure.browser.page_cache import BrowserPageCache
 from personagent.infrastructure.tools import create_browser_tools
