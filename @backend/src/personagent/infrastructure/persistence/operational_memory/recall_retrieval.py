@@ -1,0 +1,1254 @@
+"""Hybrid recall, scoring, and ranking pipeline for operational memory.
+
+Extracted from ``OperationalMemoryRepository`` (Slice 4).
+Owns the read path: semantic/lexical/recent search, hybrid scoring,
+deduplication, and structured-item/chunk-to-finding conversion.
+"""
+
+from __future__ import annotations
+
+import re
+import time
+import unicodedata
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from personagent.domain.memory.models.operational import (
+    MemoryContextBudget,
+    OperationalMemoryFilter,
+    RecallFinding,
+    StructuredMemoryItem,
+    StructuredMemoryPackage,
+    StructuredMemoryType,
+)
+from personagent.domain.memory.services.operational_memory import (
+    EmbeddingVector,
+    OperationalMemoryFormatter,
+)
+from personagent.infrastructure.persistence.models import (
+    MemoryDecisionORM,
+    MemoryRecallLogORM,
+)
+from personagent.infrastructure.persistence.operational_memory.models import (
+    StoredMemoryChunk,
+    StoredStructuredMemoryItem,
+)
+
+
+class RecallRetrievalPipeline:
+    """Read-path pipeline: hybrid search, scoring, dedup, and formatting."""
+
+    def __init__(self, *, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def recall(
+        self,
+        *,
+        project_slug: str,
+        query: str,
+        query_embedding: list[float] | None = None,
+        top_k: int = 6,
+        filters: dict[str, Any] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[RecallFinding]:
+        package = await self.recall_structured_package(
+            project_slug=project_slug,
+            query=query,
+            query_embedding=query_embedding,
+            top_k=top_k,
+            filters=filters,
+            provider=provider,
+            model=model,
+        )
+        return [
+            RecallFinding(
+                finding=item.summary,
+                source_ids=item.source_ids,
+                evidence=item.evidence,
+                paths=item.paths,
+                decisions=[item.summary] if item.type == StructuredMemoryType.DECISION else [],
+                cautions=[],
+                score=item.score,
+                event_types=item.event_types,
+                created_at=item.created_at,
+            )
+            for item in package.items
+        ]
+
+    async def recall_structured_package(
+        self,
+        *,
+        project_slug: str,
+        query: str,
+        query_embedding: list[float] | None = None,
+        top_k: int = 6,
+        filters: dict[str, Any] | None = None,
+        budget: MemoryContextBudget | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> StructuredMemoryPackage:
+        started = time.perf_counter()
+        memory_filter = OperationalMemoryFilter.from_mapping(filters)
+        budget = budget or MemoryContextBudget.for_context_window(262_144)
+        async with self._session_factory() as session:
+            semantic = await self._structured_semantic_candidates(
+                session=session,
+                project_slug=project_slug,
+                query_embedding=query_embedding,
+                filters=memory_filter,
+            )
+            lexical = await self._structured_lexical_candidates(
+                session=session,
+                project_slug=project_slug,
+                query=query,
+                filters=memory_filter,
+            )
+            recent = await self._structured_recent_candidates(
+                session=session,
+                project_slug=project_slug,
+                filters=memory_filter,
+            )
+            candidates = self._bounded_structured_candidates(
+                semantic,
+                lexical,
+                recent,
+                limit=max(25, min(50, top_k * 8)),
+            )
+            scored = self._score_structured_candidates(query, candidates, filters=memory_filter)
+            diversified = self._dedupe_structured_candidates(scored, top_k=max(1, top_k * 4))
+            items = self._to_structured_items(diversified)
+            formatted, budget_used, omitted_count, selected = (
+                OperationalMemoryFormatter.format_structured_items(items, budget=budget)
+            )
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            selected_ids = {source_id for item in selected for source_id in item.source_ids}
+            discarded = _discarded_candidate_payload(scored, selected_ids, limit=20)
+            included_reasons = _included_reason_payload(selected)
+            ranking_breakdown = {
+                "semantic_candidates": len(semantic),
+                "lexical_candidates": len(lexical),
+                "recent_candidates": len(recent),
+                "merged_candidates": len(candidates),
+                "scored_candidates": len(scored),
+                "selected_items": len(selected),
+            }
+            token_usage = {
+                "budget_tokens": int(budget.total_tokens),
+                "budget_used": int(budget_used),
+                "omitted_count": int(omitted_count),
+            }
+            session.add(
+                MemoryRecallLogORM(
+                    project_slug=project_slug,
+                    workspace_root=memory_filter.workspace_root,
+                    conversation_id=_uuid_or_none(memory_filter.current_conversation_id),
+                    recall_scope="conversation" if memory_filter.conversation_id else "workspace",
+                    query_intent=_query_intent(query),
+                    query=query,
+                    filters=memory_filter.to_log_dict(),
+                    result_ids=[source_id for item in selected for source_id in item.source_ids],
+                    scores={
+                        source_id: item.score
+                        for item in selected
+                        for source_id in item.source_ids[:1]
+                    },
+                    candidate_count=len(scored),
+                    selected_count=len(selected),
+                    discarded_candidates=discarded,
+                    included_reasons=included_reasons,
+                    ranking_breakdown=ranking_breakdown,
+                    token_usage=token_usage,
+                    budget_tokens=budget.total_tokens,
+                    budget_used=budget_used,
+                    latency_ms=latency_ms,
+                    provider=provider,
+                    model=model,
+                )
+            )
+            await session.commit()
+        return StructuredMemoryPackage(
+            formatted=formatted,
+            items=selected,
+            filters_applied=memory_filter.to_log_dict(),
+            budget_used=budget_used,
+            budget_tokens=budget.total_tokens,
+            omitted_count=omitted_count,
+            latency_ms=latency_ms,
+            recall_scope="conversation" if memory_filter.conversation_id else "workspace",
+            query_intent=_query_intent(query),
+            candidate_count=len(scored),
+            discarded_candidates=discarded,
+            included_reasons=included_reasons,
+            ranking_breakdown=ranking_breakdown,
+            token_usage=token_usage,
+        )
+
+    async def _structured_semantic_candidates(
+        self,
+        *,
+        session: Any,
+        project_slug: str,
+        query_embedding: list[float] | None,
+        filters: OperationalMemoryFilter,
+    ) -> list[StoredStructuredMemoryItem]:
+        if not query_embedding or len(query_embedding) != 4096 or filters.semantic_candidate_limit <= 0:
+            return []
+        params: dict[str, Any] = {
+            "project_slug": project_slug,
+            "query_vector": _vector_literal(query_embedding),
+            "limit": filters.semantic_candidate_limit,
+        }
+        where = _structured_where_clause("smi", filters, params)
+        try:
+            result = await session.execute(
+                text(
+                    f"""
+                    SELECT
+                        smi.id,
+                        smi.project_slug,
+                        smi.item_type,
+                        smi.summary,
+                        smi.evidence,
+                        smi.paths,
+                        smi.source_ids,
+                        smi.status,
+                        smi.source_type,
+                        smi.source_chunk_id,
+                        smi.primary_path,
+                        smi.conversation_id,
+                        smi.workspace_root,
+                        smi.trust_level,
+                        smi.importance,
+                        smi.created_at,
+                        ((subvector(me.embedding, 1, 2000))::vector(2000))
+                          <=> ((subvector(CAST(:query_vector AS vector(4096)), 1, 2000))::vector(2000))
+                          AS distance,
+                        0::double precision AS lexical_rank
+                    FROM memory_structured_items smi
+                    JOIN memory_embeddings me ON me.chunk_id = smi.source_chunk_id
+                    WHERE smi.project_slug = :project_slug
+                      AND me.dimensions = 4096
+                      {where}
+                    ORDER BY distance ASC
+                    LIMIT :limit
+                    """
+                ),
+                params,
+            )
+        except Exception:
+            return []
+        return _rows_to_structured_candidates(result.all())
+
+    async def _structured_lexical_candidates(
+        self,
+        *,
+        session: Any,
+        project_slug: str,
+        query: str,
+        filters: OperationalMemoryFilter,
+    ) -> list[StoredStructuredMemoryItem]:
+        lexical_query = _lexical_query_text(query)
+        if not lexical_query:
+            return []
+        params: dict[str, Any] = {
+            "project_slug": project_slug,
+            "lexical_query": lexical_query,
+            "limit": filters.semantic_candidate_limit,
+        }
+        where = _structured_where_clause("smi", filters, params)
+        try:
+            result = await session.execute(
+                text(
+                    f"""
+                    WITH q AS (SELECT plainto_tsquery('simple', :lexical_query) AS query)
+                    SELECT
+                        smi.id,
+                        smi.project_slug,
+                        smi.item_type,
+                        smi.summary,
+                        smi.evidence,
+                        smi.paths,
+                        smi.source_ids,
+                        smi.status,
+                        smi.source_type,
+                        smi.source_chunk_id,
+                        smi.primary_path,
+                        smi.conversation_id,
+                        smi.workspace_root,
+                        smi.trust_level,
+                        smi.importance,
+                        smi.created_at,
+                        NULL::double precision AS distance,
+                        ts_rank_cd(smi.search_vector, q.query)::double precision AS lexical_rank
+                    FROM memory_structured_items smi, q
+                    WHERE smi.project_slug = :project_slug
+                      AND smi.search_vector @@ q.query
+                      {where}
+                    ORDER BY lexical_rank DESC, smi.created_at DESC
+                    LIMIT :limit
+                    """
+                ),
+                params,
+            )
+        except Exception:
+            return []
+        return _rows_to_structured_candidates(result.all())
+
+    async def _structured_recent_candidates(
+        self,
+        *,
+        session: Any,
+        project_slug: str,
+        filters: OperationalMemoryFilter,
+    ) -> list[StoredStructuredMemoryItem]:
+        if filters.recent_candidate_limit <= 0:
+            return []
+        params: dict[str, Any] = {
+            "project_slug": project_slug,
+            "limit": filters.recent_candidate_limit,
+        }
+        where = _structured_where_clause("smi", filters, params)
+        result = await session.execute(
+            text(
+                f"""
+                SELECT
+                    smi.id,
+                    smi.project_slug,
+                    smi.item_type,
+                    smi.summary,
+                    smi.evidence,
+                    smi.paths,
+                    smi.source_ids,
+                    smi.status,
+                    smi.source_type,
+                    smi.source_chunk_id,
+                    smi.primary_path,
+                    smi.conversation_id,
+                    smi.workspace_root,
+                    smi.trust_level,
+                    smi.importance,
+                    smi.created_at,
+                    NULL::double precision AS distance,
+                    0::double precision AS lexical_rank
+                FROM memory_structured_items smi
+                WHERE smi.project_slug = :project_slug
+                  {where}
+                ORDER BY smi.created_at DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        )
+        return _rows_to_structured_candidates(result.all())
+
+    async def _ann_candidate_chunk_ids(
+        self,
+        *,
+        session: Any,
+        project_slug: str,
+        query_embedding: list[float] | None,
+        limit: int,
+    ) -> list[UUID]:
+        if not query_embedding or len(query_embedding) != 4096:
+            return []
+        try:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT me.chunk_id
+                    FROM memory_embeddings me
+                    WHERE me.project_slug = :project_slug
+                      AND me.dimensions = 4096
+                    ORDER BY ((subvector(me.embedding, 1, 2000))::vector(2000))
+                      <=> ((subvector(CAST(:query_vector AS vector(4096)), 1, 2000))::vector(2000))
+                    LIMIT :limit
+                    """
+                ),
+                {
+                    "project_slug": project_slug,
+                    "query_vector": _vector_literal(query_embedding),
+                    "limit": max(1, limit),
+                },
+            )
+        except Exception:
+            return []
+        return [row[0] for row in result.all()]
+
+    def _bounded_structured_candidates(
+        self,
+        semantic: list[StoredStructuredMemoryItem],
+        lexical: list[StoredStructuredMemoryItem],
+        recent: list[StoredStructuredMemoryItem],
+        *,
+        limit: int,
+    ) -> list[StoredStructuredMemoryItem]:
+        if not semantic and not lexical:
+            return self._merge_structured_candidates(recent[:limit])
+        semantic_quota = max(0, int(limit * 0.45))
+        lexical_quota = max(0, int(limit * 0.40))
+        recent_quota = max(0, limit - semantic_quota - lexical_quota)
+        return self._merge_structured_candidates(
+            [
+                *semantic[:semantic_quota],
+                *lexical[:lexical_quota],
+                *recent[:recent_quota],
+            ]
+        )
+
+    def _merge_structured_candidates(
+        self,
+        candidates: list[StoredStructuredMemoryItem],
+    ) -> list[StoredStructuredMemoryItem]:
+        merged: dict[UUID, StoredStructuredMemoryItem] = {}
+        for candidate in candidates:
+            existing = merged.get(candidate.id)
+            if existing is None:
+                merged[candidate.id] = candidate
+                continue
+            if existing.distance is None or (
+                candidate.distance is not None and candidate.distance < existing.distance
+            ):
+                existing.distance = candidate.distance
+            if candidate.lexical_rank > existing.lexical_rank:
+                existing.lexical_rank = candidate.lexical_rank
+        return list(merged.values())
+
+    def _score_structured_candidates(
+        self,
+        query: str,
+        candidates: list[StoredStructuredMemoryItem],
+        *,
+        filters: OperationalMemoryFilter,
+    ) -> list[StoredStructuredMemoryItem]:
+        query_terms = _terms(query)
+        query_text = query.lower()
+        for candidate in candidates:
+            text = " ".join(
+                str(part or "")
+                for part in (
+                    candidate.summary,
+                    " ".join(candidate.evidence),
+                    " ".join(candidate.paths),
+                    candidate.item_type,
+                    candidate.source_type,
+                    candidate.primary_path,
+                )
+            )
+            lexical = _lexical_score(query_terms, text)
+            exact = _exact_anchor_score(query_text, candidate)
+            vector = 0.0
+            if candidate.distance is not None:
+                vector = max(0.0, 1.0 - float(candidate.distance))
+            lexical_rank = min(1.0, max(0.0, candidate.lexical_rank) * 4.0)
+            recency = 0.05 if lexical > 0 or vector > 0 or lexical_rank > 0 else 0.0
+            same_conversation = (
+                0.18
+                if candidate.conversation_id
+                and filters.current_conversation_id
+                and str(candidate.conversation_id) == str(filters.current_conversation_id)
+                else 0.0
+            )
+            trust_multiplier = _trust_multiplier(candidate.trust_level)
+            raw_score = (
+                (vector * 1.7)
+                + lexical
+                + lexical_rank
+                + exact
+                + _structured_type_boost(candidate.item_type)
+                + same_conversation
+                + recency
+                + min(0.4, max(0.0, candidate.importance) * 0.2)
+            )
+            if candidate.trust_level == "low" and not _low_trust_memory_requested(query_terms) and exact < 0.6:
+                candidate.score = 0.0
+                candidate.ranking_reasons = ["discarded_low_trust_without_conversation_intent"]
+                continue
+            candidate.score = raw_score * trust_multiplier
+            candidate.ranking_reasons = _ranking_reasons(
+                vector=vector,
+                lexical=lexical,
+                lexical_rank=lexical_rank,
+                exact=exact,
+                same_conversation=same_conversation,
+                trust_level=candidate.trust_level,
+                item_type=candidate.item_type,
+            )
+        return sorted(candidates, key=lambda item: item.score, reverse=True)
+
+    def _dedupe_structured_candidates(
+        self,
+        candidates: list[StoredStructuredMemoryItem],
+        *,
+        top_k: int,
+    ) -> list[StoredStructuredMemoryItem]:
+        selected: list[StoredStructuredMemoryItem] = []
+        seen_ids: set[UUID] = set()
+        seen_sources: set[str] = set()
+        seen_signatures: set[str] = set()
+        seen_term_sets: list[set[str]] = []
+
+        for candidate in candidates:
+            if candidate.score <= 0:
+                continue
+            if candidate.id in seen_ids:
+                continue
+            if any(source_id in seen_sources for source_id in candidate.source_ids):
+                continue
+            signature = _semantic_signature(candidate.summary)
+            if signature and signature in seen_signatures:
+                continue
+            candidate_terms = _semantic_term_set(
+                " ".join([candidate.summary, *candidate.evidence, *candidate.paths])
+            )
+            if any(
+                _overlap_coefficient(candidate_terms, selected_terms) >= 0.88
+                for selected_terms in seen_term_sets
+            ):
+                continue
+            selected.append(candidate)
+            seen_ids.add(candidate.id)
+            seen_sources.update(candidate.source_ids)
+            if signature:
+                seen_signatures.add(signature)
+            if candidate_terms:
+                seen_term_sets.append(candidate_terms)
+            if len(selected) >= top_k:
+                break
+        return selected
+
+    def _to_structured_items(
+        self,
+        candidates: list[StoredStructuredMemoryItem],
+    ) -> list[StructuredMemoryItem]:
+        items: list[StructuredMemoryItem] = []
+        for candidate in candidates:
+            try:
+                item_type = StructuredMemoryType(candidate.item_type)
+            except ValueError:
+                item_type = StructuredMemoryType.FACT
+            items.append(
+                StructuredMemoryItem(
+                    type=item_type,
+                    summary=candidate.summary,
+                    evidence=candidate.evidence[:4],
+                    paths=candidate.paths[:8],
+                    source_ids=candidate.source_ids or [str(candidate.id)],
+                    event_types=candidate.event_types,
+                    score=round(candidate.score, 4),
+                    status=candidate.status,
+                    trust_level=candidate.trust_level,
+                    importance=candidate.importance,
+                    created_at=candidate.created_at,
+                    metadata={
+                        "project_slug": candidate.project_slug,
+                        "source_type": candidate.source_type,
+                        "source_chunk_id": str(candidate.source_chunk_id)
+                        if candidate.source_chunk_id
+                        else None,
+                        "primary_path": candidate.primary_path,
+                        "distance": candidate.distance,
+                        "lexical_rank": candidate.lexical_rank,
+                        "ranking_reasons": candidate.ranking_reasons or [],
+                    },
+                )
+            )
+        return items
+
+    def _score_candidates(
+        self,
+        query: str,
+        candidates: list[StoredMemoryChunk],
+        query_embedding: list[float] | None,
+    ) -> list[StoredMemoryChunk]:
+        query_terms = _terms(query)
+        for candidate in candidates:
+            text = " ".join(
+                str(part or "")
+                for part in (
+                    candidate.chunk.content,
+                    candidate.chunk.file_path,
+                    candidate.chunk.source_type,
+                    candidate.event.event_type if candidate.event else "",
+                    candidate.event.tool_name if candidate.event else "",
+                )
+            )
+            lexical = _lexical_score(query_terms, text)
+            vector = EmbeddingVector.cosine(query_embedding, candidate.embedding)
+            recency = 0.05
+            if lexical <= 0 and vector <= 0:
+                recency = 0.0
+            raw_score = lexical + (vector * 2.0)
+            event_type = str(candidate.event.event_type if candidate.event else candidate.chunk.source_type)
+            if event_type in {"assistant_message", "user_message"}:
+                candidate.score = (raw_score * 0.2) + recency
+            else:
+                candidate.score = raw_score + _event_type_boost(event_type) + recency
+        return sorted(candidates, key=lambda item: item.score, reverse=True)
+
+    def _dedupe_and_diversify(
+        self,
+        candidates: list[StoredMemoryChunk],
+        *,
+        top_k: int,
+    ) -> list[StoredMemoryChunk]:
+        selected: list[StoredMemoryChunk] = []
+        seen_hashes: set[str] = set()
+        seen_signatures: set[str] = set()
+        seen_term_sets: list[set[str]] = []
+
+        for candidate in candidates:
+            if candidate.score <= 0:
+                continue
+            content_hash = str(candidate.chunk.content_hash or "")
+            if content_hash and content_hash in seen_hashes:
+                continue
+            signature = _semantic_signature(candidate.chunk.content)
+            if signature and signature in seen_signatures:
+                continue
+            candidate_terms = _semantic_term_set(candidate.chunk.content)
+            if any(
+                _overlap_coefficient(candidate_terms, selected_terms) >= 0.82
+                for selected_terms in seen_term_sets
+            ):
+                continue
+            selected.append(candidate)
+            if content_hash:
+                seen_hashes.add(content_hash)
+            if signature:
+                seen_signatures.add(signature)
+            if candidate_terms:
+                seen_term_sets.append(candidate_terms)
+            if len(selected) >= top_k:
+                break
+        return selected
+
+    def _to_findings(
+        self,
+        candidates: list[StoredMemoryChunk],
+        active_decisions: list[MemoryDecisionORM],
+        *,
+        query_terms: set[str] | None = None,
+    ) -> list[RecallFinding]:
+        findings: list[RecallFinding] = []
+        decision_texts = [
+            f"{row.decision} ({row.status})"
+            for row in active_decisions
+            if row.decision
+        ]
+        for candidate in candidates:
+            if candidate.score <= 0:
+                continue
+            event = candidate.event
+            path = candidate.chunk.file_path
+            event_type = event.event_type if event else candidate.chunk.source_type
+            tool_name = f" via {event.tool_name}" if event and event.tool_name else ""
+            path_text = f" em {path}" if path else ""
+            excerpt = _excerpt(candidate.chunk.content, query_terms=query_terms)
+            finding = f"Evento operacional `{event_type}`{tool_name}{path_text}: {excerpt}"
+            cautions: list[str] = []
+            if event and event.error:
+                cautions.append(event.error[:300])
+            if event_type in {"assistant_message", "user_message"}:
+                cautions.append(
+                    "Conversation text is unverified; prefer tool, diff, file, and decision evidence."
+                )
+            findings.append(
+                RecallFinding(
+                    finding=finding,
+                    source_ids=[str(candidate.chunk.id)],
+                    evidence=[excerpt],
+                    paths=[path] if path else [],
+                    decisions=decision_texts[:4],
+                    cautions=cautions,
+                    score=round(candidate.score, 4),
+                    event_types=[str(event_type)],
+                    created_at=candidate.chunk.created_at,
+                )
+            )
+        return findings
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers (moved from operational_memory_repository.py)
+# ---------------------------------------------------------------------------
+
+
+def _uuid_or_none(value: str | UUID | None) -> UUID | None:
+    if value is None or isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _lexical_query_text(query: str) -> str:
+    terms = []
+    for token in re.findall(r"[A-Za-z0-9_./:-]+", query):
+        normalized = token.strip(".,:;()[]{}'\"`")
+        if len(normalized) >= 2:
+            terms.append(normalized.replace("/", " ").replace(".", " "))
+    return " ".join(terms)[:1_000]
+
+
+def _exact_anchor_score(query_text: str, candidate: StoredStructuredMemoryItem) -> float:
+    score = 0.0
+    exact_surfaces = [
+        candidate.primary_path or "",
+        *candidate.paths,
+        candidate.source_type,
+        candidate.item_type,
+    ]
+    for surface in exact_surfaces:
+        surface_text = str(surface).lower()
+        if surface_text and surface_text in query_text:
+            score += 0.7 if "/" in surface_text or "." in surface_text else 0.35
+    for token in _identifier_tokens(query_text):
+        haystack = " ".join(
+            [
+                candidate.summary,
+                " ".join(candidate.evidence),
+                " ".join(candidate.paths),
+                candidate.primary_path or "",
+            ]
+        ).lower()
+        if token in haystack:
+            score += 0.3
+    return min(1.5, score)
+
+
+def _identifier_tokens(text: str) -> set[str]:
+    return {
+        token.lower()
+        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_./:-]{2,}", text)
+        if "/" in token or "." in token or "_" in token or "-" in token
+    }
+
+
+def _trust_multiplier(trust_level: str) -> float:
+    return {
+        "high": 1.0,
+        "medium": 0.78,
+        "low": 0.25,
+    }.get(trust_level, 0.7)
+
+
+def _ranking_reasons(
+    *,
+    vector: float,
+    lexical: float,
+    lexical_rank: float,
+    exact: float,
+    same_conversation: float,
+    trust_level: str,
+    item_type: str,
+) -> list[str]:
+    reasons = []
+    if exact > 0:
+        reasons.append("exact_anchor_match")
+    if lexical_rank > 0:
+        reasons.append("tsvector_match")
+    if lexical > 0:
+        reasons.append("term_overlap")
+    if vector > 0:
+        reasons.append("semantic_vector_match")
+    if same_conversation > 0:
+        reasons.append("same_conversation_boost")
+    if trust_level == "low":
+        reasons.append("low_trust_penalty")
+    reasons.append(f"type={item_type}")
+    return reasons
+
+
+def _discarded_candidate_payload(
+    candidates: list[StoredStructuredMemoryItem],
+    selected_ids: set[str],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    discarded = []
+    for candidate in candidates:
+        source_ids = candidate.source_ids or [str(candidate.id)]
+        if any(source_id in selected_ids for source_id in source_ids):
+            continue
+        discarded.append(
+            {
+                "id": str(candidate.id),
+                "source_ids": source_ids[:3],
+                "score": round(candidate.score, 4),
+                "type": candidate.item_type,
+                "status": candidate.status,
+                "trust_level": candidate.trust_level,
+                "reasons": candidate.ranking_reasons or [],
+                "summary": _excerpt(candidate.summary, limit=180),
+            }
+        )
+        if len(discarded) >= limit:
+            break
+    return discarded
+
+
+def _included_reason_payload(items: list[StructuredMemoryItem]) -> list[dict[str, Any]]:
+    return [
+        {
+            "source_ids": item.source_ids[:3],
+            "score": item.score,
+            "type": item.type.value,
+            "status": item.status,
+            "trust_level": item.trust_level,
+            "reasons": item.metadata.get("ranking_reasons") or [],
+        }
+        for item in items
+    ]
+
+
+def _query_intent(query: str) -> str:
+    terms = _terms(query)
+    if _low_trust_memory_requested(terms):
+        return "conversation_or_prior_interaction"
+    if any("/" in token or "." in token for token in query.split()):
+        return "file_or_path"
+    if {"erro", "error", "falha", "failed"} & terms:
+        return "error_resolution"
+    if {"comando", "command", "test", "teste"} & terms:
+        return "command_or_test"
+    return "specific"
+
+
+def _low_trust_memory_requested(query_terms: set[str]) -> bool:
+    return bool(
+        query_terms
+        & {
+            "assistant",
+            "conversa",
+            "mensagem",
+            "pergunta",
+            "resposta",
+            "usuario",
+            "user",
+        }
+    )
+
+
+def _normalize_file_path_filter(file_path: str) -> str:
+    return str(file_path or "").replace("\\", "/").removeprefix("./").rstrip("/")
+
+
+def _file_path_filter_variants(file_path: str, workspace_root: str | None) -> list[str]:
+    variants = [file_path]
+    workspace = _normalize_file_path_filter(workspace_root or "")
+    if workspace and file_path.startswith(f"{workspace}/"):
+        variants.append(file_path[len(workspace) + 1 :])
+    return list(dict.fromkeys(path for path in variants if path))
+
+
+def _file_path_suffix_patterns(file_path: str) -> list[str]:
+    if not file_path or file_path.startswith("/"):
+        return []
+    return [f"%/{file_path}"]
+
+
+def _structured_where_clause(
+    alias: str,
+    filters: OperationalMemoryFilter,
+    params: dict[str, Any],
+) -> str:
+    clauses: list[str] = []
+    if not filters.include_raw_chunks:
+        clauses.append(f"{alias}.item_type <> 'raw_chunk'")
+    if filters.statuses:
+        placeholders = []
+        for index, status in enumerate(filters.statuses):
+            key = f"status_{index}"
+            params[key] = status
+            placeholders.append(f":{key}")
+        clauses.append(f"{alias}.status IN ({', '.join(placeholders)})")
+    elif filters.active_only:
+        clauses.append(f"{alias}.status = 'active'")
+    if filters.latest_only:
+        clauses.append(f"{alias}.is_latest = true")
+    conversation_id = _uuid_or_none(filters.conversation_id)
+    if conversation_id is not None:
+        params["conversation_id"] = conversation_id
+        clauses.append(f"{alias}.conversation_id = :conversation_id")
+    if filters.session_id:
+        params["session_id"] = filters.session_id
+        clauses.append(f"{alias}.session_id = :session_id")
+    if filters.workspace_root:
+        params["workspace_root"] = filters.workspace_root
+        clauses.append(f"{alias}.workspace_root = :workspace_root")
+    if filters.source_types:
+        placeholders = []
+        for index, source_type in enumerate(filters.source_types):
+            key = f"source_type_{index}"
+            params[key] = source_type
+            placeholders.append(f":{key}")
+        joined = ", ".join(placeholders)
+        clauses.append(f"({alias}.source_type IN ({joined}) OR {alias}.item_type IN ({joined}))")
+    if filters.file_paths:
+        exact_placeholders = []
+        variant_placeholders = []
+        suffix_clauses: list[str] = []
+        path_suffix_clauses: list[str] = []
+        for index, file_path in enumerate(filters.file_paths):
+            key = f"file_path_{index}"
+            normalized_path = _normalize_file_path_filter(file_path)
+            params[key] = normalized_path
+            exact_placeholders.append(f":{key}")
+            for variant_index, variant in enumerate(
+                variant
+                for variant in _file_path_filter_variants(normalized_path, filters.workspace_root)
+                if variant != normalized_path
+            ):
+                variant_key = f"file_path_{index}_variant_{variant_index}"
+                params[variant_key] = variant
+                variant_placeholders.append(f":{variant_key}")
+            for suffix_index, suffix in enumerate(_file_path_suffix_patterns(normalized_path)):
+                suffix_key = f"file_path_{index}_suffix_{suffix_index}"
+                params[suffix_key] = suffix
+                suffix_clauses.append(f"{alias}.primary_path LIKE :{suffix_key}")
+                path_suffix_clauses.append(f"memory_path.path LIKE :{suffix_key}")
+        exact_joined = ", ".join(exact_placeholders)
+        all_placeholders = [*exact_placeholders, *variant_placeholders]
+        all_joined = ", ".join(all_placeholders)
+        path_match_clauses = [
+            f"{alias}.primary_path IN ({exact_joined})",
+            f"EXISTS (SELECT 1 FROM jsonb_array_elements_text({alias}.paths) AS memory_path(path) "
+            f"WHERE memory_path.path IN ({all_joined})"
+            + (f" OR {' OR '.join(path_suffix_clauses)}" if path_suffix_clauses else "")
+            + ")",
+        ]
+        if variant_placeholders:
+            path_match_clauses.append(f"{alias}.primary_path IN ({', '.join(variant_placeholders)})")
+        path_match_clauses.extend(suffix_clauses)
+        clauses.append("(" + " OR ".join(path_match_clauses) + ")")
+    if filters.created_after:
+        params["created_after"] = filters.created_after
+        clauses.append(f"{alias}.created_at >= :created_after")
+    if filters.created_before:
+        params["created_before"] = filters.created_before
+        clauses.append(f"{alias}.created_at <= :created_before")
+    if not clauses:
+        return ""
+    return "AND " + "\n                      AND ".join(clauses)
+
+
+def _rows_to_structured_candidates(rows: list[Any]) -> list[StoredStructuredMemoryItem]:
+    candidates: list[StoredStructuredMemoryItem] = []
+    for row in rows:
+        evidence = row[4] if isinstance(row[4], list) else []
+        paths = row[5] if isinstance(row[5], list) else []
+        source_ids = row[6] if isinstance(row[6], list) else []
+        source_type = str(row[8] or row[2] or "")
+        candidates.append(
+            StoredStructuredMemoryItem(
+                id=row[0],
+                project_slug=str(row[1] or ""),
+                item_type=str(row[2] or StructuredMemoryType.FACT.value),
+                summary=str(row[3] or ""),
+                evidence=[str(item) for item in evidence if str(item).strip()],
+                paths=[str(item) for item in paths if str(item).strip()],
+                source_ids=[str(item) for item in source_ids if str(item).strip()],
+                event_types=[source_type] if source_type else [],
+                status=str(row[7] or "active"),
+                source_type=source_type,
+                source_chunk_id=row[9],
+                primary_path=row[10],
+                conversation_id=row[11],
+                workspace_root=str(row[12]) if row[12] else None,
+                trust_level=str(row[13] or "medium"),
+                importance=float(row[14] or 0.5),
+                created_at=row[15],
+                distance=float(row[16]) if row[16] is not None else None,
+                lexical_rank=float(row[17] or 0.0),
+            )
+        )
+    return candidates
+
+
+def _structured_type_boost(item_type: str) -> float:
+    if item_type in {StructuredMemoryType.DECISION.value, StructuredMemoryType.LATEST_STATE.value}:
+        return 0.55
+    if item_type == StructuredMemoryType.SESSION_SUMMARY.value:
+        return 0.45
+    if item_type in {
+        StructuredMemoryType.ERROR_SOLUTION.value,
+        StructuredMemoryType.FILE_STATE.value,
+        StructuredMemoryType.COMMAND_RESULT.value,
+        StructuredMemoryType.TEST_RESULT.value,
+        StructuredMemoryType.TOOL_TRACE.value,
+    }:
+        return 0.35
+    return 0.2
+
+
+def _embedding_to_list(value: Any) -> list[float] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [float(item) for item in value]
+    to_list = getattr(value, "to_list", None)
+    if callable(to_list):
+        return [float(item) for item in to_list()]
+    to_numpy = getattr(value, "to_numpy", None)
+    if callable(to_numpy):
+        return [float(item) for item in to_numpy().tolist()]
+    try:
+        return [float(item) for item in value]
+    except TypeError:
+        return None
+
+
+def _rows_to_candidates(rows: list[Any]) -> list[StoredMemoryChunk]:
+    return [
+        StoredMemoryChunk(chunk=row[0], event=row[1], embedding=_embedding_to_list(row[2]))
+        for row in rows
+    ]
+
+
+def _vector_literal(values: list[float]) -> str:
+    return "[" + ",".join(f"{value:.8g}" for value in values) + "]"
+
+
+def _terms(text: str) -> set[str]:
+    return {
+        term.lower()
+        for term in text.replace("_", " ").replace("-", " ").split()
+        if len(term.strip(".,:;()[]{}'\"`")) >= 3
+        for term in [term.strip(".,:;()[]{}'\"`")]
+    }
+
+
+def _semantic_signature(text: str, limit: int = 360) -> str:
+    """Normalize a chunk enough to collapse repeated synthetic filler."""
+
+    compact = " ".join(text.lower().split())
+    if not compact:
+        return ""
+
+    normalized: list[str] = []
+    current_size = 0
+    for raw in compact.replace("_", " ").replace("-", " ").split():
+        token = raw.strip(".,:;()[]{}'\"`")
+        if not token:
+            continue
+        if any(char.isdigit() for char in token):
+            token = "<num>"
+        normalized.append(token)
+        current_size += len(token) + 1
+        if current_size >= limit:
+            break
+    return " ".join(normalized)[:limit]
+
+
+def _semantic_term_set(text: str) -> set[str]:
+    terms: set[str] = set()
+    for raw in text.lower().replace("_", " ").replace("-", " ").split():
+        token = raw.strip(".,:;()[]{}'\"`")
+        if len(token) < 4:
+            continue
+        if any(char.isdigit() for char in token):
+            token = "<num>"
+        terms.add(token)
+    return terms
+
+
+def _is_contextually_relevant(query: str, candidate: StoredMemoryChunk) -> bool:
+    event_type = str(candidate.event.event_type if candidate.event else candidate.chunk.source_type)
+    query_terms = _relevance_terms(query)
+    if not query_terms:
+        return False
+    if event_type in {"assistant_message", "user_message"} and not _conversation_event_requested(query_terms):
+        return False
+
+    candidate_text = " ".join(
+        str(part or "")
+        for part in (
+            candidate.chunk.content,
+            candidate.chunk.file_path,
+            candidate.chunk.source_type,
+            event_type,
+            candidate.event.tool_name if candidate.event else "",
+        )
+    )
+    candidate_terms = _relevance_terms(candidate_text)
+    if not _focus_requirements_satisfied(query_terms, candidate_terms):
+        return False
+    overlap = query_terms & candidate_terms
+    if len(overlap) >= 2:
+        return True
+
+    anchor_terms = query_terms & _CONTEXT_ANCHOR_TERMS
+    anchor_overlap = anchor_terms & candidate_terms
+    return bool(anchor_overlap - _WEAK_SINGLE_MATCH_TERMS)
+
+
+def _focus_requirements_satisfied(query_terms: set[str], candidate_terms: set[str]) -> bool:
+    for focus, required_terms in _FOCUS_REQUIREMENTS.items():
+        if focus in query_terms and not (candidate_terms & required_terms):
+            return False
+    return True
+
+
+def _conversation_event_requested(query_terms: set[str]) -> bool:
+    return bool(
+        query_terms
+        & {
+            "assistant",
+            "conversa",
+            "mensagem",
+            "pergunta",
+            "resposta",
+            "usuario",
+            "user",
+        }
+    )
+
+
+def _relevance_terms(text: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKD", text)
+    ascii_text = "".join(char for char in normalized if not unicodedata.combining(char))
+    terms: set[str] = set()
+    for token in re.findall(r"[a-z0-9]+", ascii_text.lower()):
+        if len(token) < 3 or token in _RELEVANCE_STOPWORDS:
+            continue
+        terms.add(_canonical_relevance_term(token))
+    return terms
+
+
+def _canonical_relevance_term(token: str) -> str:
+    return _RELEVANCE_CANONICAL_TERMS.get(token, token)
+
+
+def _overlap_coefficient(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / min(len(left), len(right))
+
+
+def _lexical_score(query_terms: set[str], text: str) -> float:
+    if not query_terms:
+        return 0.0
+    lower = text.lower()
+    hits = sum(1 for term in query_terms if term in lower)
+    return hits / max(1, len(query_terms))
+
+
+def _event_type_boost(event_type: str) -> float:
+    if event_type in {"file_read", "file_created", "file_edited", "diff_applied"}:
+        return 0.6
+    if event_type in {"operational_summary", "decision"}:
+        return 0.5
+    if event_type in {"command_executed", "error_found", "dependency_installed", "tool_result"}:
+        return 0.35
+    return 0.1
+
+
+def _excerpt(text: str, limit: int = 420, query_terms: set[str] | None = None) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    if query_terms:
+        lower = compact.lower()
+        best: tuple[int, int, int] | None = None
+        for term in query_terms:
+            if not term:
+                continue
+            position = lower.find(term)
+            while position >= 0:
+                start = max(0, position - max(40, limit // 5))
+                end = min(len(compact), start + limit)
+                if end - start < limit:
+                    start = max(0, end - limit)
+                window = lower[start:end]
+                matched_terms = sum(1 for candidate in query_terms if candidate in window)
+                identifier_bonus = 1 if _has_identifier(compact[start:end]) else 0
+                score = matched_terms + identifier_bonus
+                candidate_window = (score, position, start)
+                if best is None or candidate_window > best:
+                    best = candidate_window
+                position = lower.find(term, position + len(term))
+        if best is not None:
+            start = best[2]
+            end = min(len(compact), start + limit)
+            prefix = "..." if start > 0 else ""
+            suffix = "..." if end < len(compact) else ""
+            return f"{prefix}{compact[start:end]}{suffix}"
+    head_size = max(120, limit // 2 - 3)
+    tail_size = max(120, limit - head_size - 5)
+    return f"{compact[:head_size]} ... {compact[-tail_size:]}"
+
+
+def _has_identifier(text: str) -> bool:
+    for token in text.replace("`", " ").split():
+        stripped = token.strip(".,:;()[]{}'\"")
+        if "_" in stripped and stripped.upper() == stripped and len(stripped) >= 6:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Relevance constants (moved from operational_memory_repository.py)
+# ---------------------------------------------------------------------------
+
+_RELEVANCE_STOPWORDS = {
+    "a", "as", "com", "como", "de", "da", "das", "do", "dos",
+    "e", "em", "foi", "na", "no", "nos", "o", "os",
+    "para", "por", "qual", "quais", "que",
+    "the", "to", "was", "what", "which",
+}
+
+_RELEVANCE_CANONICAL_TERMS = {
+    "arquitetura": "architecture",
+    "arquiteturais": "architecture",
+    "arquivo": "file",
+    "arquivos": "file",
+    "comando": "command",
+    "comandos": "command",
+    "decisao": "decision",
+    "decisoes": "decision",
+    "decisions": "decision",
+    "dependencia": "dependency",
+    "dependencias": "dependency",
+    "duplicados": "duplicate",
+    "duplicar": "duplicate",
+    "erros": "error",
+    "ferramenta": "tool",
+    "ferramentas": "tool",
+    "incidente": "incident",
+    "incidentes": "incident",
+    "marcador": "marker",
+    "marcadores": "marker",
+    "retries": "retry",
+    "solucao": "resolution",
+    "solucoes": "resolution",
+    "usuario": "user",
+}
+
+_CONTEXT_ANCHOR_TERMS = {
+    "architecture", "api", "auth", "backpressure", "benchmark", "budget",
+    "canary", "chunk", "command", "conversation", "cookie",
+    "decision", "dependency", "diff", "duplicate",
+    "error", "executor",
+    "fetch", "file", "fingerprint", "frontend",
+    "header", "idempotency", "incident",
+    "jwt",
+    "marker",
+    "planner",
+    "registry", "retry",
+    "tenant", "timeout", "tool",
+    "workspace",
+}
+
+_WEAK_SINGLE_MATCH_TERMS = {"benchmark", "incident"}
+
+_FOCUS_REQUIREMENTS = {
+    "decision": {"auth", "cookie", "decision", "executor", "jwt", "planner"},
+    "file": {"api", "backend", "file", "frontend", "path", "src"},
+    "header": {"fingerprint", "header", "idempotency"},
+    "marker": {"boundary", "canary", "marker", "tenant"},
+}
