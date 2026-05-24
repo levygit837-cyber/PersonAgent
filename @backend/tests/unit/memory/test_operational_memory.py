@@ -18,8 +18,8 @@ from personagent.domain.memory.services.operational_memory import (
 from personagent.infrastructure.persistence.operational_memory.models import (
     StoredMemoryChunk,
 )
-from personagent.infrastructure.persistence.operational_memory_repository import (
-    OperationalMemoryRepository,
+from personagent.infrastructure.persistence.operational_memory.recall_retrieval import (
+    RecallRetrievalPipeline,
     _excerpt,
     _is_contextually_relevant,
     _overlap_coefficient,
@@ -200,7 +200,7 @@ def test_semantic_signature_collapses_whitespace_and_number_noise() -> None:
 
 
 def test_recall_diversification_removes_duplicate_hashes_and_signatures() -> None:
-    repository = OperationalMemoryRepository(session_factory=None)  # type: ignore[arg-type]
+    pipeline = RecallRetrievalPipeline(session_factory=None)  # type: ignore[arg-type]
     duplicated_content = (
         "Operational summary captures diffs, tool outputs, architecture decisions, "
         "errors, dependency installs, and recall evidence across session 123."
@@ -212,7 +212,7 @@ def test_recall_diversification_removes_duplicate_hashes_and_signatures() -> Non
         _stored_candidate("hash-c", "Decision: planner delegates tool calls to executor.", 0.95),
     ]
 
-    selected = repository._dedupe_and_diversify(candidates, top_k=6)
+    selected = pipeline._dedupe_and_diversify(candidates, top_k=6)
 
     assert [candidate.chunk.content_hash for candidate in selected] == ["hash-a", "hash-c"]
 
