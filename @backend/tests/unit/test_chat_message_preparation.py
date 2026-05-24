@@ -29,7 +29,6 @@ from personagent.application.use_cases.chat.message_preparation import MessagePr
 from personagent.application.use_cases.chat.state import PromptPackage
 from personagent.domain.models.conversation import Conversation, Message, Role
 
-
 # ---------------------------------------------------------------------------
 # Doubles
 # ---------------------------------------------------------------------------
