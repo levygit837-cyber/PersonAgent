@@ -15,9 +15,11 @@ from personagent.domain.memory.services.operational_memory import (
     OperationalMemoryFormatter,
     OperationalMemoryRedactor,
 )
+from personagent.infrastructure.persistence.operational_memory.models import (
+    StoredMemoryChunk,
+)
 from personagent.infrastructure.persistence.operational_memory_repository import (
     OperationalMemoryRepository,
-    StoredMemoryChunk,
     _excerpt,
     _is_contextually_relevant,
     _overlap_coefficient,
