@@ -10,7 +10,8 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from personagent.application.team_chat.blackboard import _Blackboard, _now_iso
+from personagent.application.team_chat.blackboard import _Blackboard
+from personagent.application.team_chat.blackboard_scoring import _now_iso
 from personagent.application.team_chat.consensus_phase import _votes_text
 from personagent.application.team_chat.contracts import (
     TeamChatRequest,

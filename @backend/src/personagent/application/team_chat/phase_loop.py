@@ -21,6 +21,8 @@ from personagent.application.services import SessionTitleService
 from personagent.application.team_chat.agent_turn_runner import AgentTurnRunner
 from personagent.application.team_chat.blackboard import (
     _Blackboard,
+)
+from personagent.application.team_chat.blackboard_scoring import (
     _compact_workspace_memory,
     _now_iso,
 )

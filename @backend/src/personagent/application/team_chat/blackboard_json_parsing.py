@@ -14,6 +14,7 @@ import re
 from contextlib import suppress
 from typing import Any
 
+from personagent.application.team_chat.blackboard_scoring import _clamp_float
 from personagent.application.team_chat.types import TurnResult
 
 __all__ = [
@@ -184,7 +185,7 @@ def _normalize_coverage_matrix(raw: Any) -> list[dict[str, Any]]:
     return matrix
 
 
-# -- Temporary local copies (will be removed when Slice 2/3 extract them) --
+# -- Temporary local copy (will be removed when Slice 3 extracts _string_list) --
 
 
 def _string_list(value: Any) -> list[str]:
@@ -198,11 +199,3 @@ def _string_list(value: Any) -> list[str]:
             return [part.strip() for part in re.split(r"[,;]", value) if part.strip()]
         return [value.strip()]
     return []
-
-
-def _clamp_float(value: Any, minimum: float, maximum: float) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return minimum
-    return max(minimum, min(maximum, number))
