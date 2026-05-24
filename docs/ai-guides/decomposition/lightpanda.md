@@ -79,7 +79,7 @@ appropriate.
 | 11 — Extract search result cache | ✅ Merged | — | 9 methods, 74 lines removed; `SearchResultCache` in `search_cache.py`; 30 new tests |
 | 12 — Extract element & frame helpers | ✅ Merged | — | 14 methods, 159 lines removed; `ElementHelpers` in `element_helpers.py`; 37 new tests |
 | 13 — Extract block detection | ✅ Merged | — | 4 methods, 113 lines removed; `BlockDetector` in `block_detection.py`; 18 new tests |
-| 14 — Extract page helpers | ⏳ Pending | — | 10 methods, ~180 lines → `page_helpers.py` |
+| 14 — Extract page helpers | ✅ Merged | — | 4 methods, 44 lines removed; `PageHelpers` in `page_helpers.py`; 16 new tests |
 
 **After Phase 2 (slices 9–14):** lightpanda.py target: ~700 lines (init, facade
 delegations, session management, CDP infrastructure, page resolution, navigation).
