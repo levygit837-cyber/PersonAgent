@@ -20,6 +20,7 @@ import httpx
 import structlog
 
 from personagent.infrastructure.artifacts import store_bytes_artifact, store_text_artifact
+from personagent.infrastructure.browser.cache import SnapshotCache, StylesheetDiskCache
 from personagent.infrastructure.browser.content_cleanup import (
     MARKDOWN_LINK_PATTERN as _MARKDOWN_LINK_PATTERN,
 )
@@ -1097,10 +1098,16 @@ class LightPandaBrowserWorker:
         self.session_ttl_seconds = max(1, int(session_ttl_seconds))
         self.max_sessions = max(1, int(max_sessions))
         self.artifact_root = Path(artifact_root).expanduser() if artifact_root else None
-        self._max_render_snapshot_cache_entries = max(1, int(render_cache_entries))
-        self._render_snapshot_cache_ttl_seconds = max(1.0, float(render_cache_ttl_seconds))
+        self._snapshot_cache = SnapshotCache(
+            max_entries=max(1, int(render_cache_entries)),
+            ttl_seconds=max(1.0, float(render_cache_ttl_seconds)),
+        )
         self._max_stylesheet_cache_entries = max(1, int(css_cache_entries))
         self._stylesheet_cache_ttl_seconds = max(1.0, float(css_cache_ttl_seconds))
+        self._stylesheet_disk_cache = StylesheetDiskCache(
+            cache_dir=_STYLESHEET_CACHE_DIR,
+            max_entries=self._max_stylesheet_cache_entries,
+        )
         self.auto_start_lightpanda = auto_start_lightpanda
         self._connector = connector
         self._lock = asyncio.Lock()
@@ -1115,8 +1122,6 @@ class LightPandaBrowserWorker:
         self._opened_pages_cache: dict[str, list[BrowserOpenedPage]] = {}
         self._element_map_cache: dict[str, list[dict[str, Any]]] = {}
         self._stylesheet_cache: dict[str, tuple[float, str]] = {}
-        self._stylesheet_cache_dir = _STYLESHEET_CACHE_DIR
-        self._render_snapshot_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._console_cache: dict[str, dict[str, list[BrowserConsoleEntry]]] = {}
         self._console_sequence = 0
         self._console_listener_keys: set[tuple[str, str, int]] = set()
@@ -1150,7 +1155,7 @@ class LightPandaBrowserWorker:
             self._last_open_cache.clear()
             self._opened_pages_cache.clear()
             self._stylesheet_cache.clear()
-            self._render_snapshot_cache.clear()
+            self._snapshot_cache.clear()
             self._console_cache.clear()
             self._console_listener_keys.clear()
             self._cooperation_event_cache.clear()
@@ -2750,16 +2755,16 @@ class LightPandaBrowserWorker:
         await self._set_page_viewport(page, viewport_width, viewport_height)
         await self._install_cooperation_capture(page, browser_id, active_tab_id)
         current_url = _clean_browser_url(str(getattr(page, "url", "") or "about:blank"))
-        render_cache_key = self._render_snapshot_cache_key(
+        render_cache_key = SnapshotCache.cache_key(
             browser_id,
             current_url,
             active_tab_id,
             viewport_width,
             viewport_height,
         )
-        render_cache_url_key = self._render_snapshot_url_cache_key(browser_id, current_url)
+        render_cache_url_key = SnapshotCache.url_cache_key(browser_id, current_url)
         if cache_mode == "prefer_cached":
-            cached_snapshot = self._read_render_snapshot_cache(render_cache_key) or self._read_render_snapshot_cache(
+            cached_snapshot = self._snapshot_cache.read(render_cache_key) or self._snapshot_cache.read(
                 render_cache_url_key
             )
             if cached_snapshot is not None:
@@ -2888,7 +2893,7 @@ class LightPandaBrowserWorker:
                 suffix=".html",
                 mime_type="text/html; charset=utf-8",
                 root=self.artifact_root,
-                ttl_seconds=max(self.session_ttl_seconds, self._render_snapshot_cache_ttl_seconds),
+                ttl_seconds=max(self.session_ttl_seconds, self._snapshot_cache.ttl_seconds),
             )
             if html.strip()
             else None
@@ -2901,7 +2906,7 @@ class LightPandaBrowserWorker:
                 suffix=".png",
                 mime_type="image/png",
                 root=self.artifact_root,
-                ttl_seconds=max(self.session_ttl_seconds, self._render_snapshot_cache_ttl_seconds),
+                ttl_seconds=max(self.session_ttl_seconds, self._snapshot_cache.ttl_seconds),
             )
             if image_bytes
             else None
@@ -2971,7 +2976,7 @@ class LightPandaBrowserWorker:
             "viewport_height": viewport_height,
             "can_capture": bool(preview_artifact),
         }
-        self._store_render_snapshot_cache(render_cache_key, view, aliases=[render_cache_url_key])
+        self._snapshot_cache.store(render_cache_key, view, aliases=[render_cache_url_key])
         return view
 
     def _enrich_browser_element_map(
@@ -3230,78 +3235,6 @@ class LightPandaBrowserWorker:
         with suppress(Exception):
             await wait_for_load_state("load", timeout=min(timeout_ms or self.timeout_ms, 5_000))
 
-    @staticmethod
-    def _render_snapshot_cache_key(
-        browser_id: str,
-        current_url: str,
-        active_tab_id: str,
-        width: int,
-        height: int,
-    ) -> str:
-        raw = "|".join(
-            [
-                browser_id or "browser",
-                active_tab_id or browser_id or "page",
-                _clean_browser_url(current_url or "about:blank"),
-                str(int(width)),
-                str(int(height)),
-            ]
-        )
-        return "::".join([browser_id or "browser", hashlib.sha256(raw.encode("utf-8")).hexdigest()])
-
-    @staticmethod
-    def _render_snapshot_url_cache_key(browser_id: str, current_url: str) -> str:
-        raw = "|".join([browser_id or "browser", _clean_browser_url(current_url or "about:blank")])
-        return "::".join([browser_id or "browser", "url", hashlib.sha256(raw.encode("utf-8")).hexdigest()])
-
-    def _read_render_snapshot_cache(self, cache_key: str) -> dict[str, Any] | None:
-        if not cache_key:
-            return None
-        now = time.time()
-        cached = self._render_snapshot_cache.get(cache_key)
-        if cached is None:
-            return None
-        expires_at, view = cached
-        if expires_at <= now:
-            self._render_snapshot_cache.pop(cache_key, None)
-            return None
-        return self._clone_render_snapshot(view, status="hit")
-
-    def _store_render_snapshot_cache(
-        self,
-        cache_key: str,
-        view: dict[str, Any],
-        *,
-        aliases: list[str] | None = None,
-    ) -> None:
-        if not cache_key or not view.get("url") or view.get("url") == "about:blank":
-            return
-        now = time.time()
-        for key in [cache_key, *(aliases or [])]:
-            if not key:
-                continue
-            self._render_snapshot_cache.pop(key, None)
-            self._render_snapshot_cache[key] = (
-                now + self._render_snapshot_cache_ttl_seconds,
-                self._clone_render_snapshot(view, status="stored"),
-            )
-        if len(self._render_snapshot_cache) > self._max_render_snapshot_cache_entries:
-            expired = [key for key, (expires_at, _) in self._render_snapshot_cache.items() if expires_at <= now]
-            for key in expired:
-                self._render_snapshot_cache.pop(key, None)
-            while len(self._render_snapshot_cache) > self._max_render_snapshot_cache_entries:
-                self._render_snapshot_cache.pop(next(iter(self._render_snapshot_cache)))
-
-    @staticmethod
-    def _clone_render_snapshot(view: dict[str, Any], *, status: str) -> dict[str, Any]:
-        cloned = dict(view)
-        cloned["render_cache_status"] = status
-        if isinstance(cloned.get("browser_snapshot"), dict):
-            snapshot = dict(cloned["browser_snapshot"])
-            snapshot["render_cache_status"] = status
-            cloned["browser_snapshot"] = snapshot
-        return cloned
-
     async def _html_with_embedded_stylesheet_fallbacks(
         self,
         html: str,
@@ -3415,7 +3348,7 @@ class LightPandaBrowserWorker:
         cached = self._stylesheet_cache.get(href)
         if cached is not None and cached[0] > now:
             return cached[1], True
-        disk_cached = self._read_stylesheet_disk_cache(href, now=now)
+        disk_cached = self._stylesheet_disk_cache.read(href, now=now)
         if disk_cached:
             self._stylesheet_cache[href] = (now + self._stylesheet_cache_ttl_seconds, disk_cached)
             return disk_cached, True
@@ -3428,7 +3361,7 @@ class LightPandaBrowserWorker:
             return "", False
         css_text = self._rewrite_css_urls(css_text[:350_000], href)
         self._stylesheet_cache[href] = (now + self._stylesheet_cache_ttl_seconds, css_text)
-        self._write_stylesheet_disk_cache(href, css_text, expires_at=now + self._stylesheet_cache_ttl_seconds)
+        self._stylesheet_disk_cache.write(href, css_text, expires_at=now + self._stylesheet_cache_ttl_seconds)
         if len(self._stylesheet_cache) > self._max_stylesheet_cache_entries:
             expired = [key for key, (expires_at, _) in self._stylesheet_cache.items() if expires_at <= now]
             for key in expired:
@@ -3436,54 +3369,6 @@ class LightPandaBrowserWorker:
             while len(self._stylesheet_cache) > self._max_stylesheet_cache_entries:
                 self._stylesheet_cache.pop(next(iter(self._stylesheet_cache)))
         return css_text, False
-
-    def _stylesheet_disk_cache_path(self, href: str) -> Path:
-        digest = hashlib.sha256(href.encode("utf-8")).hexdigest()
-        return self._stylesheet_cache_dir / f"{digest}.json"
-
-    def _read_stylesheet_disk_cache(self, href: str, *, now: float) -> str:
-        path = self._stylesheet_disk_cache_path(href)
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return ""
-        if str(payload.get("url") or "") != href:
-            return ""
-        if float(payload.get("expires_at") or 0) <= now:
-            with suppress(Exception):
-                path.unlink()
-            return ""
-        css_text = str(payload.get("css") or "")
-        if not css_text.strip():
-            return ""
-        with suppress(Exception):
-            path.touch()
-        return css_text
-
-    def _write_stylesheet_disk_cache(self, href: str, css_text: str, *, expires_at: float) -> None:
-        if not css_text.strip():
-            return
-        with suppress(Exception):
-            self._stylesheet_cache_dir.mkdir(parents=True, exist_ok=True)
-            path = self._stylesheet_disk_cache_path(href)
-            tmp_path = path.with_suffix(".tmp")
-            tmp_path.write_text(
-                json.dumps({"url": href, "expires_at": expires_at, "css": css_text}, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            tmp_path.replace(path)
-            self._trim_stylesheet_disk_cache()
-
-    def _trim_stylesheet_disk_cache(self) -> None:
-        with suppress(Exception):
-            entries = sorted(
-                self._stylesheet_cache_dir.glob("*.json"),
-                key=lambda path: path.stat().st_mtime,
-                reverse=True,
-            )
-            for path in entries[self._max_stylesheet_cache_entries:]:
-                with suppress(Exception):
-                    path.unlink()
 
     @staticmethod
     def _rewrite_css_urls(css_text: str, stylesheet_url: str) -> str:
@@ -5476,8 +5361,7 @@ class LightPandaBrowserWorker:
         self._console_cache.pop(conversation_id, None)
         self._cooperation_event_cache.pop(conversation_id, None)
         get_browser_page_cache().clear_conversation(conversation_id)
-        for cache_key in [key for key in self._render_snapshot_cache if key.startswith(f"{conversation_id}::")]:
-            self._render_snapshot_cache.pop(cache_key, None)
+        self._snapshot_cache.clear_conversation(conversation_id)
         for page in self._session_pages(session):
             await self._best_effort_resource_call("browser_page_close", page.close)
         await self._best_effort_resource_call("browser_context_close", session.context.close)
