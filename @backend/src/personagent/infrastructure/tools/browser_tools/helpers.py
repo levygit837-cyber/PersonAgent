@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from collections.abc import Awaitable, Callable, Mapping
 from hashlib import sha256
 from typing import Any
@@ -30,6 +29,13 @@ from personagent.domain.tools import (
     build_tool,
 )
 from personagent.infrastructure.browser.page_cache import get_browser_page_cache
+from personagent.infrastructure.tools.browser_tools.link_helpers import (  # noqa: F401
+    _MARKDOWN_LINK_PATTERN,
+    _coerce_links,
+    _curate_links,
+    _extract_markdown_links,
+    _is_low_quality_link,
+)
 
 # ---------------------------------------------------------------------------
 # Module-level singletons & constants
@@ -40,58 +46,7 @@ _BROWSER_ACTION_ARBITER = BrowserActionArbiter()
 _DEFAULT_CHUNK_SIZE = 3_000
 _EXTRACT_INLINE_CONTENT_CHARS = 8_000
 _MAX_CHUNK_COUNT = 6
-_MAX_RETURNED_LINKS = 20
-_LINK_SUPPRESSION_THRESHOLD = 24
-_MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
-_LOW_QUALITY_LINK_TEXT = {
-    "about",
-    "advertise",
-    "all",
-    "author",
-    "careers",
-    "category",
-    "contact",
-    "deals",
-    "follow",
-    "games",
-    "home",
-    "login",
-    "more",
-    "privacy",
-    "read more",
-    "search",
-    "see all",
-    "see more",
-    "share",
-    "shop",
-    "sign in",
-    "sign up",
-    "subscribe",
-    "tag",
-    "terms",
-    "topics",
-}
-_LOW_QUALITY_PATH_MARKERS = (
-    "/about",
-    "/advert",
-    "/author/",
-    "/authors/",
-    "/category/",
-    "/contact",
-    "/deals",
-    "/gift",
-    "/login",
-    "/newsletter",
-    "/privacy",
-    "/search",
-    "/shop",
-    "/sitemap",
-    "/tag/",
-    "/tags/",
-    "/terms",
-    "/topics/",
-    "/vetted/",
-)
+
 _PAGE_CACHE = get_browser_page_cache()
 _BROWSER_EXTRACT_IN_FLIGHT: dict[tuple[str, str], asyncio.Task[dict[str, Any]]] = {}
 _BROWSER_OPEN_URL_KEYS = ("url", "result_url", "final_url", "href", "link")
@@ -521,73 +476,7 @@ def _trim_content(content: str, max_chars: int) -> str:
     return content[:max_chars].rstrip()
 
 
-# ---------------------------------------------------------------------------
-# Link helpers
-# ---------------------------------------------------------------------------
 
-
-def _extract_markdown_links(content: str) -> list[dict[str, str]]:
-    links: list[dict[str, str]] = []
-    for match in _MARKDOWN_LINK_PATTERN.finditer(content):
-        links.append({"text": " ".join(match.group(1).split()), "url": match.group(2).strip()})
-    return links
-
-
-def _coerce_links(raw_links: Any) -> list[dict[str, str]]:
-    if not isinstance(raw_links, list):
-        return []
-    links: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for item in raw_links:
-        if not isinstance(item, dict):
-            continue
-        url = str(item.get("url") or "").strip()
-        if not url.startswith(("http://", "https://")) or url in seen:
-            continue
-        seen.add(url)
-        links.append({"url": url, "text": " ".join(str(item.get("text") or "").split())})
-    return links
-
-
-def _curate_links(
-    raw_links: list[dict[str, str]],
-    *,
-    content: str,
-    source_url: str,
-) -> tuple[list[dict[str, str]], dict[str, Any]]:
-    unique_links = _coerce_links(raw_links)
-    low_quality = [link for link in unique_links if _is_low_quality_link(link, source_url)]
-    suppress = False
-    reason = ""
-    if len(unique_links) >= _LINK_SUPPRESSION_THRESHOLD:
-        low_quality_ratio = len(low_quality) / max(1, len(unique_links))
-        markdown_link_count = len(_MARKDOWN_LINK_PATTERN.findall(content))
-        if low_quality_ratio >= 0.55 or markdown_link_count >= _LINK_SUPPRESSION_THRESHOLD:
-            suppress = True
-            reason = "link_dense_navigation_or_low_quality_links"
-    returned = [] if suppress else unique_links[:_MAX_RETURNED_LINKS]
-    return returned, {
-        "total": len(unique_links),
-        "returned": len(returned),
-        "suppressed": suppress,
-        "reason": reason,
-        "max_returned": _MAX_RETURNED_LINKS,
-    }
-
-
-def _is_low_quality_link(link: dict[str, str], source_url: str) -> bool:
-    url = str(link.get("url") or "")
-    text = " ".join(str(link.get("text") or "").lower().split())
-    parsed = urlparse(url)
-    source = urlparse(source_url)
-    path = parsed.path.lower()
-    if not text or text in _LOW_QUALITY_LINK_TEXT:
-        return True
-    if any(marker in path for marker in _LOW_QUALITY_PATH_MARKERS):
-        return True
-    if parsed.netloc == source.netloc and path in {"", "/"}:
-        return True
-    return len(text) <= 3 and not any(char.isdigit() for char in text)
 
 
 # ---------------------------------------------------------------------------
