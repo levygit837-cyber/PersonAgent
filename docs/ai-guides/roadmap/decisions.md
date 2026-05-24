@@ -18,6 +18,7 @@ Formato: `DEC-XXX | Título | Status | Resumo | Phase impact`.
 | DEC-007 | God-file decomposition antes de tipagem | accepted | Não atacar `dict[str, Any]` (985 ocorrências) enquanto god files (chat_completion 2,742, team_chat 3,097, lightpanda 5,735, session-panel 3,960, chat-store 3,307) existirem — refactor de tipos em arquivo monolítico vira merge hell. | Fase 1 antes de Fase 2      |
 | DEC-008 | Local-first hoje, SaaS-ready amanhã  | accepted | App roda 100% local hoje (Electron + backend localhost, ADR-0018 = bearer token local-only). Toda fase 2/3 deve manter o caminho local funcional — SaaS é **adicional**, não substituto. | Fase 2, Fase 3              |
 | DEC-009 | CI gate é estrito por arquivo, não por pasta | accepted | Pinar nomes de arquivos na CI (ex.: `pytest tests/test_tools_runtime.py`) em vez de `tests/integration/` inteiro. Fixtures regionais (Postgres, sysprompt_benchmark) não devem entrar no gate. Aprendizado da PR #31. | Todas                       |
+| DEC-010 | Folder structure principles travados em ADR-0022 | proposed | 7 princípios para estrutura de pastas do backend: sem single-file folders, bounded contexts uniformes no `domain/`, `adapters/api/` só rotas e middleware, use cases >7 arquivos viram sub-pacotes, nomes concretos (sem `config/`/`utils/`), `infrastructure/` sem arquivos soltos no root, **renomear `interfaces/` → `adapters/`** (Hexagonal). Migração mecânica em PR único após Fase 1.3 + 1.5 fecharem. | Fase 1 close, Fase 2        |
 
 ## Como adicionar uma decisão nova
 
@@ -32,4 +33,4 @@ Formato: `DEC-XXX | Título | Status | Resumo | Phase impact`.
 
 ## IDs reservados / futuros
 
-Próximo ID livre: `DEC-010`.
+Próximo ID livre: `DEC-011`.

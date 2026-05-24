@@ -42,6 +42,7 @@ A Fase 1 tem dois eixos paralelos:
 - `DEC-004` — Postgres + pgvector + RLS (preparação aqui, RLS efetiva em Fase 3).
 - `DEC-006` — Multi-tenant primitives sem RBAC ainda.
 - `DEC-007` — God-file decomposition antes de tipagem.
+- `DEC-010` / [ADR-0022](../../adr/0022-folder-structure-principles.md) — Folder structure principles (migração mecânica programada para depois que 1.3 e 1.5 fecharem).
 
 ---
 
