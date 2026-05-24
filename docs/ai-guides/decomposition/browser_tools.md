@@ -43,7 +43,7 @@ still returns the same list of `Tool` objects.
 
 | Slice | Status | PR | Notes |
 |-------|--------|----|-------|
-| 1 — Extract helpers to `helpers.py` | ⏳ Pending | — | |
+| 1 — Extract helpers to `helpers.py` | ✅ Merged | — | 920 lines → helpers.py; browser_tools.py → browser_tools/ package; factories.py 1,793 lines; 76 new tests; 0 regressions |
 | 2 — Extract navigation tools | ⏳ Pending | — | |
 | 3 — Extract interaction tools | ⏳ Pending | — | |
 | 4 — Extract tab management tools | ⏳ Pending | — | |

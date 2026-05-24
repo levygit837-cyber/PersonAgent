@@ -79,6 +79,7 @@ class _StubWorker:
         self._safe_title = AsyncMock(return_value="Test Page")
         self._raw_runtime_evaluate_value = AsyncMock(return_value=None)
         self._lightpanda_raw_cdp_command = AsyncMock(return_value=None)
+        self._lightpanda_markdown_url = AsyncMock(return_value="")
         self._cleanup_live_pages = AsyncMock()
         self._opened_page = MagicMock(return_value=None)
         self._resolve_content_target = MagicMock(return_value=("https://example.com", None))
