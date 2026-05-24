@@ -121,9 +121,10 @@ PR chain so far (Phase 1.2):
 - #10 — `MemoryRecallCoordinator`
 - #11 — `PromptSurfacePreparer`
 - #13 — `PromptPackageBuilder`
+- #14 — `ToolResultHandler`
 
-Cumulative reduction on `chat_completion.py`: 2,742 → 1,648
-lines (**–40%**), zero behavior changes, 80+ new unit tests.
+Cumulative reduction on `chat_completion.py`: 2,742 → 1,396
+lines (**–49%**), zero behavior changes, 120+ new unit tests.
 
 ## Frequently-asked questions
 
