@@ -21,9 +21,10 @@ directory.
 | Operational memory     | #9  | ~145          | 2,125      |
 | Memory recall          | #10 | ~118          | 2,007      |
 | Prompt surfaces        | #11 | ~187          | 1,938      |
-| **Current**            |     |               | **1,938**  |
+| Prompt package         | #13 | ~290          | 1,648      |
+| **Current**            |     |               | **1,648**  |
 
-Cumulative reduction: **2,742 → 1,938 lines (–29%)**.
+Cumulative reduction: **2,742 → 1,648 lines (–40%)**.
 
 ## Public contract that must be preserved
 
@@ -47,7 +48,7 @@ go at the end of the kwargs list with `= None` defaults.
 The order is **low-risk → high-risk**. Always finish the current
 slice and land it before starting the next.
 
-### Slice 6 — `PromptPackageBuilder` (next; ~220 lines)
+### Slice 6 — `PromptPackageBuilder` (✅ landed in #13; ~290 lines)
 
 **What moves out:**
 
@@ -280,7 +281,7 @@ uv run pytest tests/unit tests/test_tool_loop_limit.py tests/test_alembic_setup.
               --deselect tests/unit/test_prompt_builder.py::TestPromptBuilder::test_agent_state_overlays_are_compact
 ```
 
-**Current baseline (post-#11):** 445 passed, 2 deselected.
+**Current baseline (post-#13):** 473 passed, 1 deselected.
 
 When you add tests for a new slice, the count goes up by N.
 **Never let it go down.**
@@ -297,6 +298,9 @@ directly via `self._<name>`:
   + operational recall
 - `self._prompt_surfaces: PromptSurfacePreparer` — slash command
   / skill / attachment routing
+- `self._prompt_package_builder: PromptPackageBuilder` — final
+  system-prompt assembly + 25+ metadata fields the use case forwards
+  to the assistant message
 
 Helper modules (functions, no class):
 
