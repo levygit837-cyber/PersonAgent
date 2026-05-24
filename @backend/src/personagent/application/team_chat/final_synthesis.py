@@ -40,7 +40,7 @@ class FinalSynthesis:
         cancel_event: Any,
     ) -> AsyncIterator[dict[str, Any]]:
         from personagent.application.team_chat.blackboard import _now_iso
-        from personagent.application.team_chat.orchestrator import (
+        from personagent.application.team_chat.messages import (
             _agent_tool_context,
             _duration_ms,
         )
@@ -87,7 +87,7 @@ class FinalSynthesis:
     ) -> list[dict[str, str]]:
         import json
 
-        from personagent.application.team_chat.orchestrator import (
+        from personagent.application.team_chat.messages import (
             _runtime_context,
             _team_policy_overlay,
         )

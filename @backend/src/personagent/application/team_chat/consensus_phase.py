@@ -196,7 +196,7 @@ class ConsensusPhase:
         run_id: str,
     ) -> Vote:
         from personagent.application.team_chat.blackboard import _clamp_float
-        from personagent.application.team_chat.orchestrator import (
+        from personagent.application.team_chat.messages import (
             _agent_tool_context,
             _duration_ms,
         )

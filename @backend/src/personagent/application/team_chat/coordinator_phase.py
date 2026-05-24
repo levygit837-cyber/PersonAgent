@@ -152,7 +152,7 @@ class CoordinatorPhase:
         blackboard: Any,
         run_id: str,
     ) -> ExecutionContract:
-        from personagent.application.team_chat.orchestrator import (
+        from personagent.application.team_chat.messages import (
             _agent_tool_context,
             _duration_ms,
         )
@@ -207,7 +207,7 @@ class CoordinatorPhase:
         blackboard: Any,
         run_id: str,
     ) -> CoordinatorGuidance:
-        from personagent.application.team_chat.orchestrator import (
+        from personagent.application.team_chat.messages import (
             _agent_tool_context,
             _duration_ms,
         )
@@ -252,7 +252,7 @@ class CoordinatorPhase:
         team: TeamConfig,
         blackboard: Any,
     ) -> list[dict[str, str]]:
-        from personagent.application.team_chat.orchestrator import (
+        from personagent.application.team_chat.messages import (
             _runtime_context,
             _team_policy_overlay,
         )
@@ -299,7 +299,7 @@ class CoordinatorPhase:
         round_index: int,
         blackboard: Any,
     ) -> list[dict[str, str]]:
-        from personagent.application.team_chat.orchestrator import (
+        from personagent.application.team_chat.messages import (
             _runtime_context,
             _team_policy_overlay,
         )

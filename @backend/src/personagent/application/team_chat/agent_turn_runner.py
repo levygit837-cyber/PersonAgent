@@ -112,7 +112,7 @@ class AgentTurnRunner:
         blackboard: _Blackboard,
         cancel_event: asyncio.Event,
     ) -> AsyncIterator[tuple[dict[str, Any], TurnResult | None]]:
-        from personagent.application.team_chat.orchestrator import (
+        from personagent.application.team_chat.messages import (
             _agent_tool_context,
             _duration_ms,
             _turn_coherency_score,
@@ -293,7 +293,7 @@ class AgentTurnRunner:
         raw_tool_calls: list[dict[str, Any]],
         audit: ToolAudit,
     ) -> AsyncIterator[dict[str, Any]]:
-        from personagent.application.team_chat.orchestrator import (
+        from personagent.application.team_chat.messages import (
             TOOL_PHASE_AUDIT,
             TOOL_PHASE_MUTATING_PROPOSAL,
             TOOL_PHASE_PLAN,
@@ -426,7 +426,7 @@ class AgentTurnRunner:
         phase: str,
         blackboard: _Blackboard,
     ) -> list[dict[str, str]]:
-        from personagent.application.team_chat.orchestrator import (
+        from personagent.application.team_chat.messages import (
             INDEPENDENT_PHASE,
             _agent_system_prompt,
             _claim_graph_output_contract,

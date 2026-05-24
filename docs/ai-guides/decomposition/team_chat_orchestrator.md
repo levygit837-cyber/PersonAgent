@@ -59,8 +59,8 @@ imports don't break.
 | 3 — Extract `AgentTurnRunner` | ✅ Merged | #21 | 405 lines removed from orchestrator.py |
 | 4 — Extract `ConsensusPhase` | ✅ Merged | #26 | 230 lines removed from orchestrator.py |
 | 5 — Extract `CoordinatorPhase` | ✅ Merged | #27 | 279 lines removed from orchestrator.py |
-| 6 — Extract `FinalSynthesis` | ✅ Ready | #28 | 83 lines removed from orchestrator.py |
-| 7 — Extract `MessageBuilders` to `team_chat/messages.py` | ⏳ Pending | — | |
+| 6 — Extract `FinalSynthesis` | ✅ Merged | #29 | 83 lines removed from orchestrator.py |
+| 7 — Extract `MessageBuilders` to `team_chat/messages.py` | 🔄 In Progress | — | ~296 lines removed from orchestrator.py |
 | 8 — Inline what remains (the outer phase loop) | ⏳ Pending | — | |
 
 ## Proposed slices (in order; never reorder without justification)
@@ -240,12 +240,20 @@ mutating proposal exists).
 
 **What moves out:**
 
-- `_agent_messages` (1884–1944)
+All pure message / context / tool helpers still remaining in the
+orchestrator after Slice 3 moved `_agent_messages` into
+`agent_turn_runner.py`:
 
-After the previous slices, `_agent_messages` is the last
-message-construction helper still on the orchestrator. Group it
-with `messages.py` so all message construction lives in one
-module.
+- `_agent_system_prompt`, `_team_policy_overlay`
+- `_runtime_context`, `_agent_tool_context`, `_workspace_id`
+- `_tool_use_context_from_request`, `_resolve_allowed_path`, `_is_relative_to`
+- `_tool_phase_event`, `_tool_proposal`, `_tool_result_payload`, `_unique_tool_call_ids`
+- `_turn_text`, `_claim_graph_output_contract`, `_turn_coherency_score`
+- `_duration_ms`
+
+Lazy imports in `agent_turn_runner.py`, `consensus_phase.py`,
+`coordinator_phase.py`, and `final_synthesis.py` are repointed
+to `messages.py`.
 
 **Risk:** Low.
 
