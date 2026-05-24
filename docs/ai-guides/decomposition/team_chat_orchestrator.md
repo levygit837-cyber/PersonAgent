@@ -60,8 +60,8 @@ imports don't break.
 | 4 — Extract `ConsensusPhase` | ✅ Merged | #26 | 230 lines removed from orchestrator.py |
 | 5 — Extract `CoordinatorPhase` | ✅ Merged | #27 | 279 lines removed from orchestrator.py |
 | 6 — Extract `FinalSynthesis` | ✅ Merged | #29 | 83 lines removed from orchestrator.py |
-| 7 — Extract shared helpers to `team_chat/helpers.py` | ✅ Ready | #33 | 404 lines removed from orchestrator.py, 13 lazy imports eliminated |
-| 8 — Inline what remains (the outer phase loop) | ⏳ Pending | — | |
+| 7 — Extract shared helpers to `team_chat/helpers.py` | ✅ Merged | #33 | 404 lines removed from orchestrator.py, 13 lazy imports eliminated |
+| 8 — Extract `TeamChatPhaseLoop` | 🔄 In Progress | — | 451 lines removed from orchestrator.py |
 
 ## Proposed slices (in order; never reorder without justification)
 
@@ -267,19 +267,31 @@ at module scope.
 
 **Risk:** Low.
 
-### Slice 8 — Inline what remains (the outer phase loop)
+### Slice 8 — Extract `TeamChatPhaseLoop`
 
-After slices 1–7, `TeamChatOrchestrator.execute()` should be a
-relatively flat function that:
-1. Initializes the blackboard.
-2. Runs the briefing phase.
-3. Loops through debate rounds, delegating to `AgentTurnRunner`
-   + `CoordinatorPhase` + checking `should_skip_debate`.
-4. Runs `ConsensusPhase` to vote.
-5. Runs `FinalSynthesis` to produce the user-facing answer.
+**What moves out:**
 
-At this point the file should be **under 800 lines** and
-read like a high-level phase coordinator.
+- `_execute_generator` (~380 lines) — the outer phase loop that
+  sequences: execution contract → debate rounds → vote → final synthesis.
+- `_get_or_create_conversation` (~10 lines)
+- `_refresh_session_title` (~15 lines)
+
+**Why this slice:**
+After Slices 1–7 the orchestrator is already under 800 lines, but the
+`_execute_generator` method still contains the entire high-level flow.
+Extracting it into `TeamChatPhaseLoop` makes `TeamChatOrchestrator` a
+thin facade that owns lifecycle and delegates to the phase loop.
+
+**Collaborators injected into PhaseLoop:**
+- `conversation_repo`
+- `consensus_phase`, `coordinator_phase`, `final_synthesis`
+- `agent_turn_runner`
+- `session_title_service` (optional)
+
+**Risk:** Low-medium. The phase loop is the sequencing glue; the risk
+is missing a yield or event ordering change. Mitigated by the existing
+integration test (`test_team_chat_orchestrator.py`) which exercises
+the full flow end-to-end.
 
 ## Pre-condition tests
 
