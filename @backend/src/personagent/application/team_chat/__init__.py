@@ -11,6 +11,15 @@ from personagent.application.team_chat.contracts import (
     serialize_team_config,
 )
 from personagent.application.team_chat.orchestrator import TeamChatOrchestrator
+from personagent.application.team_chat.types import (
+    BlackboardEntry,
+    CoordinatorGuidance,
+    ExecutionContract,
+    QueuedTurnItem,
+    ToolAudit,
+    TurnResult,
+    Vote,
+)
 
 __all__ = [
     "DEFAULT_TEAM_ID",
@@ -22,4 +31,12 @@ __all__ = [
     "default_team_config",
     "parse_team_config",
     "serialize_team_config",
+    # Re-export types for tests and downstream consumers
+    "BlackboardEntry",
+    "CoordinatorGuidance",
+    "ExecutionContract",
+    "QueuedTurnItem",
+    "ToolAudit",
+    "TurnResult",
+    "Vote",
 ]

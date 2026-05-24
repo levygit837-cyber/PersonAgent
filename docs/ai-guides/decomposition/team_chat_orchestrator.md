@@ -50,6 +50,19 @@ data types (`_TurnResult`, `_Vote`, `_CoordinatorGuidance`,
 extracting, expose them through `team_chat/__init__.py` so test
 imports don't break.
 
+## Status
+
+| Slice | Status | PR | Notes |
+|-------|--------|----|-------|
+| 1 — Extract dataclasses + types to `team_chat/types.py` | ✅ Merged | — | 76 lines removed from orchestrator.py |
+| 2 — Extract `_Blackboard` to `team_chat/blackboard.py` | 🔄 Next | — | |
+| 3 — Extract `AgentTurnRunner` | ⏳ Pending | — | |
+| 4 — Extract `ConsensusPhase` | ⏳ Pending | — | |
+| 5 — Extract `CoordinatorPhase` | ⏳ Pending | — | |
+| 6 — Extract `FinalSynthesis` | ⏳ Pending | — | |
+| 7 — Extract `MessageBuilders` to `team_chat/messages.py` | ⏳ Pending | — | |
+| 8 — Inline what remains (the outer phase loop) | ⏳ Pending | — | |
+
 ## Proposed slices (in order; never reorder without justification)
 
 ### Slice 1 — Extract dataclasses + types to `team_chat/types.py`
