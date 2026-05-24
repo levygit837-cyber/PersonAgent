@@ -56,8 +56,9 @@ imports don't break.
 |-------|--------|----|-------|
 | 1 — Extract dataclasses + types to `team_chat/types.py` | ✅ Merged | — | 76 lines removed from orchestrator.py |
 | 2 — Extract `_Blackboard` to `team_chat/blackboard.py` | ✅ Merged | — | 1,042 lines removed from orchestrator.py |
-| 3 — Extract `AgentTurnRunner` | 🔄 Next | — | |
-| 4 — Extract `ConsensusPhase` | ⏳ Pending | — | |
+| 3 — Extract `AgentTurnRunner` | ✅ Merged | — | 405 lines removed from orchestrator.py |
+| 4 — Extract `ConsensusPhase` | 🔄 Next | — | |
+| 5 — Extract `CoordinatorPhase` | ⏳ Pending | — | |
 | 4 — Extract `ConsensusPhase` | ⏳ Pending | — | |
 | 5 — Extract `CoordinatorPhase` | ⏳ Pending | — | |
 | 6 — Extract `FinalSynthesis` | ⏳ Pending | — | |
