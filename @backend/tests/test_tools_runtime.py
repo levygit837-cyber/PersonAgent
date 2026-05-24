@@ -766,7 +766,7 @@ def test_chat_completion_tool_context_uses_requested_workspace(tmp_path):
         ),
     )
 
-    context = use_case._build_tool_context(
+    context = use_case._tool_context_builder.build(
         ChatRequestDTO(
             message="Leia notes.txt",
             tool_context={

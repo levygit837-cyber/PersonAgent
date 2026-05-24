@@ -12,6 +12,9 @@ import pytest
 
 from personagent.application.dto.chat_dto import ChatRequestDTO
 from personagent.application.jobs.memory_job_scheduler import MemoryJobScheduler
+from personagent.application.services.operational_memory import (
+    project_slug_from_workspace,
+)
 from personagent.application.use_cases.chat_completion import ChatCompletionUseCase
 from personagent.application.use_cases.memory.recall_memory import RecallMemoryUseCase
 from personagent.domain.memory.models.memory_file import MemoryFile
@@ -195,7 +198,7 @@ class TestChatCompletionWithMemory:
             message="What language should I use?",
         )
 
-        relevant = await use_case._recall_relevant_memories(
+        relevant = await use_case._memory_recall.recall(
             request,
             SimpleNamespace(
                 system_context=SimpleNamespace(workspace_root="/tmp/default"),
@@ -242,11 +245,11 @@ class TestChatCompletionWithMemory:
         ctx = SimpleNamespace(system_context=SimpleNamespace(workspace_root="/tmp/default"))
 
         # Primeiro recall
-        relevant1 = await use_case._recall_relevant_memories(request, ctx, conv)
+        relevant1 = await use_case._memory_recall.recall(request, ctx, conv)
         assert len(relevant1.prompt_memories) == 1
 
         # Segundo recall com mesma query — deve retornar vazio
-        relevant2 = await use_case._recall_relevant_memories(request, ctx, conv)
+        relevant2 = await use_case._memory_recall.recall(request, ctx, conv)
         assert len(relevant2.prompt_memories) == 0
 
     @pytest.mark.asyncio
@@ -263,17 +266,17 @@ class TestChatCompletionWithMemory:
         )
 
         # Primeiro trigger
-        await use_case._trigger_memory_extraction(conv, request)
+        await use_case._operational_memory.trigger_memory_extraction(conv, request)
         assert "_last_memory_extraction" in conv.metadata
 
         # Segundo trigger imediato — deve ser skipado pelo debounce
-        await use_case._trigger_memory_extraction(conv, request)
+        await use_case._operational_memory.trigger_memory_extraction(conv, request)
         # O timestamp não deve mudar
         first_time = conv.metadata["_last_memory_extraction"]
 
         # Simula tempo passado removendo o timestamp
         del conv.metadata["_last_memory_extraction"]
-        await use_case._trigger_memory_extraction(conv, request)
+        await use_case._operational_memory.trigger_memory_extraction(conv, request)
         second_time = conv.metadata["_last_memory_extraction"]
         assert second_time != first_time
 
@@ -289,7 +292,7 @@ class TestChatCompletionWithMemory:
         request = ChatRequestDTO(message="Test")
         ctx = SimpleNamespace(system_context=SimpleNamespace(workspace_root="/tmp"))
 
-        relevant = await use_case._recall_relevant_memories(request, ctx, conv)
+        relevant = await use_case._memory_recall.recall(request, ctx, conv)
         assert relevant.prompt_memories == []
         assert relevant.trace is None
 
@@ -383,17 +386,21 @@ class TestChatCompletionWithMemory:
         assert operational_memory.recall_calls[0]["conversation_id"] is None
         assert operational_memory.recall_calls[0]["current_conversation_id"] == str(conv.id)
 
-    @pytest.mark.asyncio
-    async def test_sanitize_project_slug(self, repo, mock_llm, conv_repo):
-        """Testa sanitização de project_slug."""
-        use_case = self._create_use_case(conv_repo, mock_llm, repo)
+    def test_sanitize_project_slug(self):
+        """Testa sanitização de project_slug.
+
+        After the chat_completion decomposition (PRs #7-#30) the
+        ``_sanitize_project_slug`` wrapper was inlined; this test now
+        targets the underlying ``project_slug_from_workspace`` utility
+        directly so the same invariants stay covered.
+        """
 
         # Slug com espaços e caracteres especiais
-        slug = use_case._sanitize_project_slug("/path/to/My Project v2.0!")
+        slug = project_slug_from_workspace("/path/to/My Project v2.0!")
         assert slug == "my_project_v2_0_"
         assert " " not in slug
         assert "!" not in slug
 
         # Root vazio
-        assert use_case._sanitize_project_slug("") == "default"
-        assert use_case._sanitize_project_slug(None) == "default"
+        assert project_slug_from_workspace("") == "default"
+        assert project_slug_from_workspace(None) == "default"

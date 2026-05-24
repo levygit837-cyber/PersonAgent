@@ -35,7 +35,7 @@ Do **not** use them when:
 | `README.md`                 | This file. Index + when to use what.     |
 | `_protocol.md`              | **Shared rules.** Read first. Every     |
 |                             | playbook below extends it.               |
-| `chat_completion.md`        | Backend: `chat_completion.py` (1,938 L) |
+| `chat_completion.md`        | Backend: `chat_completion.py` (483 L)  |
 | `team_chat_orchestrator.md` | Backend: `team_chat/orchestrator.py` (3,097 L) |
 | `lightpanda.md`             | Backend: `infrastructure/browser/lightpanda.py` (5,735 L) |
 | `session_panel.md`          | Frontend: `chat/session-panel.tsx` (3,960 L) |
@@ -130,9 +130,11 @@ PR chain so far (Phase 1.2):
 - #23 — `StreamChunkNormalizer`
 - #24 — `StreamingTurnState` dataclass (prep)
 - #25 — `AssistantPassRunner`
+- #28 — `StreamingTurnExecutor`
+- #29 — `ToolRuntime` + `TurnContextResolver` + `schedule_background`
 
-Cumulative reduction on `chat_completion.py`: 2,742 → 955
-lines (**–65%**), zero behavior changes, 270+ new unit tests.
+Cumulative reduction on `chat_completion.py`: 2,742 → 483
+lines (**–82%**), zero behavior changes, 325+ new unit tests.
 
 ## Frequently-asked questions
 

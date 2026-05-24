@@ -31,9 +31,11 @@ directory.
 | Stream normalization   | #23 | ~29           | 1,036      |
 | Streaming turn state   | #24 | ~1 (prep)     | 1,035      |
 | Assistant pass runner  | #25 | ~80           |   955      |
-| **Current**            |     |               |   **955**  |
+| Streaming turn executor| #28 | ~368          |   587      |
+| Runtime helpers cleanup| #29 | ~104          |   483      |
+| **Current**            |     |               |   **483**  |
 
-Cumulative reduction: **2,742 → 955 lines (–65%)**.
+Cumulative reduction: **2,742 → 483 lines (–82%)**.
 
 ## Public contract that must be preserved
 
