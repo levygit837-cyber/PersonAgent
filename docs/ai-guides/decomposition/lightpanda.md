@@ -70,7 +70,7 @@ appropriate.
 | 2 — Extract `BrowserSnapshotCache` | ✅ Merged | — | 116 lines removed; `SnapshotCache` + `StylesheetDiskCache` in `cache.py` |
 | 3 — Extract `BrowserActions` | ✅ Merged | — | 535 lines removed; 7 action methods in `actions.py` + backward-compat delegations |
 | 4 — Extract `BrowserPageLifecycle` | ✅ Merged | — | 342 lines removed; 6 public methods in `page_lifecycle.py` + backward-compat delegations |
-| 5 — Extract `BrowserSnapshot` | ⏳ Pending | — | |
+| 5 — Extract `BrowserSnapshot` | ✅ Merged | — | 577 lines removed; 14 methods in `snapshot.py` + backward-compat delegations; 37 new tests |
 | 6 — Extract `BrowserSearch` | ⏳ Pending | — | |
 | 7 — Extract `BrowserViewActions` | ⏳ Pending | — | |
 | 8 — Inline what remains | ⏳ Pending | — | |
