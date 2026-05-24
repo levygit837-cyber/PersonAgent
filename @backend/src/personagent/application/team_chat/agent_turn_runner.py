@@ -20,6 +20,25 @@ from personagent.application.team_chat.contracts import (
     TeamChatRequest,
     TeamConfig,
 )
+from personagent.application.team_chat.helpers import (
+    INDEPENDENT_PHASE,
+    TOOL_PHASE_AUDIT,
+    TOOL_PHASE_MUTATING_PROPOSAL,
+    TOOL_PHASE_PLAN,
+    TOOL_PHASE_READ,
+    _agent_system_prompt,
+    _agent_tool_context,
+    _claim_graph_output_contract,
+    _duration_ms,
+    _runtime_context,
+    _tool_phase_event,
+    _tool_proposal,
+    _tool_result_payload,
+    _tool_use_context_from_request,
+    _turn_coherency_score,
+    _turn_text,
+    _unique_tool_call_ids,
+)
 from personagent.application.team_chat.types import (
     QueuedTurnItem,
     ToolAudit,
@@ -112,14 +131,6 @@ class AgentTurnRunner:
         blackboard: _Blackboard,
         cancel_event: asyncio.Event,
     ) -> AsyncIterator[tuple[dict[str, Any], TurnResult | None]]:
-        from personagent.application.team_chat.orchestrator import (
-            _agent_tool_context,
-            _duration_ms,
-            _turn_coherency_score,
-            _turn_text,
-            _unique_tool_call_ids,
-        )
-
         started = time.perf_counter()
         first_token_at: float | None = None
         content_parts: list[str] = []
@@ -293,16 +304,6 @@ class AgentTurnRunner:
         raw_tool_calls: list[dict[str, Any]],
         audit: ToolAudit,
     ) -> AsyncIterator[dict[str, Any]]:
-        from personagent.application.team_chat.orchestrator import (
-            TOOL_PHASE_AUDIT,
-            TOOL_PHASE_MUTATING_PROPOSAL,
-            TOOL_PHASE_PLAN,
-            TOOL_PHASE_READ,
-            _tool_phase_event,
-            _tool_proposal,
-            _tool_result_payload,
-            _tool_use_context_from_request,
-        )
 
         if self._tool_registry is None or self._tool_runtime_config is None:
             for raw_call in raw_tool_calls:
@@ -426,13 +427,6 @@ class AgentTurnRunner:
         phase: str,
         blackboard: _Blackboard,
     ) -> list[dict[str, str]]:
-        from personagent.application.team_chat.orchestrator import (
-            INDEPENDENT_PHASE,
-            _agent_system_prompt,
-            _claim_graph_output_contract,
-            _runtime_context,
-        )
-
         focus = blackboard.latest_focus_for(agent.id)
         lane = blackboard.latest_lane_for(agent.id)
         lane_text = ""
