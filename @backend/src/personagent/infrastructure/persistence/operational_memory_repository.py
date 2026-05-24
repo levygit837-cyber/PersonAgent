@@ -5,9 +5,8 @@ from __future__ import annotations
 import re
 import time
 import unicodedata
-from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import desc, func, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -18,7 +17,6 @@ from personagent.domain.memory.models.operational import (
     MemoryChunk,
     MemoryContextBudget,
     MemoryEvent,
-    OperationalMemoryEventType,
     OperationalMemoryFilter,
     RecallFinding,
     StructuredMemoryItem,
@@ -38,6 +36,9 @@ from personagent.infrastructure.persistence.models import (
     OperationalMemoryChunkORM,
     OperationalMemoryEventORM,
     StructuredMemoryItemORM,
+)
+from personagent.infrastructure.persistence.operational_memory.event_outbox import (
+    EventOutboxManager,
 )
 from personagent.infrastructure.persistence.operational_memory.models import (
     StoredMemoryChunk,
@@ -148,12 +149,10 @@ class OperationalMemoryRepository:
 
     def __init__(self, session_factory: async_sessionmaker) -> None:
         self._session_factory = session_factory
+        self._event_outbox = EventOutboxManager(session_factory=session_factory)
 
     async def record_event(self, event: MemoryEvent) -> MemoryEvent:
-        async with self._session_factory() as session:
-            session.add(_event_row(event))
-            await session.commit()
-        return event
+        return await self._event_outbox.record_event(event)
 
     async def record_event_with_outbox(
         self,
@@ -164,77 +163,24 @@ class OperationalMemoryRepository:
         dedupe_key: str,
     ) -> tuple[MemoryEvent, dict[str, Any]]:
         """Persist the raw event and durable outbox job in one transaction."""
-
-        async with self._session_factory() as session:
-            session.add(_event_row(event))
-            existing = await session.scalar(
-                select(MemoryOutboxORM).where(MemoryOutboxORM.dedupe_key == dedupe_key)
-            )
-            if existing is None:
-                existing = MemoryOutboxORM(
-                    id=uuid4(),
-                    event_id=event.id,
-                    project_slug=event.project_slug,
-                    workspace_root=event.workspace_root,
-                    job_type=job_type,
-                    payload=payload,
-                    status="pending",
-                    dedupe_key=dedupe_key,
-                )
-                session.add(existing)
-            await session.commit()
-            outbox = _outbox_payload(existing)
-        return event, outbox
+        return await self._event_outbox.record_event_with_outbox(
+            event, job_type=job_type, payload=payload, dedupe_key=dedupe_key
+        )
 
     async def get_event(self, event_id: str | UUID) -> MemoryEvent | None:
-        event_uuid = _uuid_or_none(event_id)
-        if event_uuid is None:
-            return None
-        async with self._session_factory() as session:
-            row = await session.get(OperationalMemoryEventORM, event_uuid)
-        return _event_from_row(row) if row is not None else None
+        return await self._event_outbox.get_event(event_id)
 
     async def mark_outbox_published(self, outbox_id: str | UUID) -> None:
-        await self._update_outbox(outbox_id, status="published", last_error=None)
+        await self._event_outbox.mark_outbox_published(outbox_id)
 
     async def mark_outbox_processing(self, outbox_id: str | UUID) -> None:
-        await self._update_outbox(outbox_id, status="processing")
+        await self._event_outbox.mark_outbox_processing(outbox_id)
 
     async def mark_outbox_completed(self, outbox_id: str | UUID) -> None:
-        await self._update_outbox(outbox_id, status="completed", last_error=None)
+        await self._event_outbox.mark_outbox_completed(outbox_id)
 
     async def mark_outbox_failed(self, outbox_id: str | UUID, error: str) -> None:
-        outbox_uuid = _uuid_or_none(outbox_id)
-        if outbox_uuid is None:
-            return
-        async with self._session_factory() as session:
-            row = await session.get(MemoryOutboxORM, outbox_uuid)
-            if row is None:
-                return
-            row.attempts = int(row.attempts or 0) + 1
-            row.status = "failed" if row.attempts >= 5 else "pending"
-            row.last_error = error[:2_000]
-            row.next_attempt_at = datetime.now(UTC) + timedelta(seconds=min(300, 2 ** row.attempts))
-            await session.commit()
-
-    async def _update_outbox(
-        self,
-        outbox_id: str | UUID,
-        *,
-        status: str,
-        last_error: str | None = None,
-    ) -> None:
-        outbox_uuid = _uuid_or_none(outbox_id)
-        if outbox_uuid is None:
-            return
-        async with self._session_factory() as session:
-            row = await session.get(MemoryOutboxORM, outbox_uuid)
-            if row is None:
-                return
-            row.status = status
-            row.last_error = last_error
-            row.updated_at = datetime.now(UTC)
-            await session.commit()
+        await self._event_outbox.mark_outbox_failed(outbox_id, error)
 
     async def record_chunks(self, chunks: list[MemoryChunk]) -> list[MemoryChunk]:
         if not chunks:
@@ -1056,29 +1002,7 @@ class OperationalMemoryRepository:
         }
 
     async def list_recent_events(self, project_slug: str, limit: int = 50) -> list[dict[str, Any]]:
-        async with self._session_factory() as session:
-            rows = (
-                await session.execute(
-                    select(OperationalMemoryEventORM)
-                    .where(OperationalMemoryEventORM.project_slug == project_slug)
-                    .order_by(desc(OperationalMemoryEventORM.created_at))
-                    .limit(max(1, min(200, limit)))
-                )
-            ).scalars().all()
-        return [
-            {
-                "id": str(row.id),
-                "project_slug": row.project_slug,
-                "conversation_id": str(row.conversation_id) if row.conversation_id else None,
-                "event_type": row.event_type,
-                "tool_name": row.tool_name,
-                "status": row.status,
-                "paths": row.paths or [],
-                "error": row.error,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-            }
-            for row in rows
-        ]
+        return await self._event_outbox.list_recent_events(project_slug, limit=limit)
 
     def _score_candidates(
         self,
@@ -1190,64 +1114,6 @@ class OperationalMemoryRepository:
                 )
             )
         return findings
-
-
-def _event_row(event: MemoryEvent) -> OperationalMemoryEventORM:
-    return OperationalMemoryEventORM(
-        id=event.id,
-        project_slug=event.project_slug,
-        workspace_root=event.workspace_root,
-        session_id=event.session_id,
-        conversation_id=_uuid_or_none(event.conversation_id),
-        agent_name=event.agent_name,
-        event_type=event.event_type.value,
-        task=event.task,
-        tool_name=event.tool_name,
-        status=event.status,
-        input=event.input,
-        output=event.output,
-        error=event.error,
-        resolution=event.resolution,
-        paths=event.paths,
-        metadata_=event.metadata,
-        source_hash=event.source_hash,
-        created_at=event.created_at,
-    )
-
-
-def _event_from_row(row: OperationalMemoryEventORM) -> MemoryEvent:
-    return MemoryEvent(
-        id=row.id,
-        project_slug=row.project_slug,
-        workspace_root=row.workspace_root,
-        session_id=row.session_id,
-        conversation_id=str(row.conversation_id) if row.conversation_id else None,
-        agent_name=row.agent_name,
-        event_type=OperationalMemoryEventType(str(row.event_type)),
-        task=row.task,
-        tool_name=row.tool_name,
-        status=row.status,
-        input=row.input or {},
-        output=row.output or {},
-        error=row.error,
-        resolution=row.resolution,
-        paths=row.paths or [],
-        metadata=row.metadata_ or {},
-        source_hash=row.source_hash,
-        created_at=row.created_at,
-    )
-
-
-def _outbox_payload(row: MemoryOutboxORM) -> dict[str, Any]:
-    return {
-        "id": str(row.id),
-        "event_id": str(row.event_id) if row.event_id else None,
-        "project_slug": row.project_slug,
-        "workspace_root": row.workspace_root,
-        "job_type": row.job_type,
-        "payload": row.payload or {},
-        "dedupe_key": row.dedupe_key,
-    }
 
 
 def _structured_search_text(
