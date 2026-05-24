@@ -14,18 +14,26 @@ from typing import Any
 
 import structlog
 
-from personagent.application.team_chat.blackboard import _clamp_float, _parse_json_object
+from personagent.application.team_chat.blackboard import (
+    _Blackboard,
+    _clamp_float,
+    _now_iso,
+    _parse_json_object,
+)
 from personagent.application.team_chat.contracts import (
     TeamAgentConfig,
     TeamChatRequest,
     TeamConfig,
 )
+from personagent.application.team_chat.helpers import (
+    VOTE_PHASE,
+    _agent_tool_context,
+    _duration_ms,
+)
 from personagent.application.team_chat.types import Vote
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
 logger = structlog.get_logger(__name__)
-
-VOTE_PHASE = "vote"
 
 
 def _fast_vote_enabled(request: TeamChatRequest) -> bool:
@@ -67,8 +75,6 @@ def _vote_event(
     round_index: int,
     vote: Vote,
 ) -> dict[str, Any]:
-    from personagent.application.team_chat.blackboard import _now_iso
-
     return {
         "event": "agent_vote",
         "run_id": run_id,
@@ -192,15 +198,9 @@ class ConsensusPhase:
         team: TeamConfig,
         agent: TeamAgentConfig,
         round_index: int,
-        blackboard: Any,
+        blackboard: _Blackboard,
         run_id: str,
     ) -> Vote:
-        from personagent.application.team_chat.blackboard import _clamp_float
-        from personagent.application.team_chat.orchestrator import (
-            _agent_tool_context,
-            _duration_ms,
-        )
-
         started = time.perf_counter()
         try:
             result = await self._llm_backend.chat_completion(
@@ -245,7 +245,7 @@ class ConsensusPhase:
         team: TeamConfig,
         agent: TeamAgentConfig,
         round_index: int,
-        blackboard: Any,
+        blackboard: _Blackboard,
     ) -> list[dict[str, str]]:
         return [
             {

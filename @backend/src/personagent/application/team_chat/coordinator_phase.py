@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 from personagent.application.team_chat.blackboard import (
+    _Blackboard,
     _normalize_coverage_matrix,
     _parse_json_object,
     _string_list,
@@ -19,14 +20,19 @@ from personagent.application.team_chat.contracts import (
     TeamChatRequest,
     TeamConfig,
 )
+from personagent.application.team_chat.helpers import (
+    COORDINATOR_PLANNING_PHASE,
+    EXECUTION_CONTRACT_PHASE,
+    _agent_tool_context,
+    _duration_ms,
+    _runtime_context,
+    _team_policy_overlay,
+)
 from personagent.application.team_chat.types import (
     CoordinatorGuidance,
     ExecutionContract,
 )
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
-
-EXECUTION_CONTRACT_PHASE = "execution_contract"
-COORDINATOR_PLANNING_PHASE = "coordinator_planning"
 
 
 def _default_focus_for_agent(agent: TeamAgentConfig) -> str:
@@ -149,14 +155,9 @@ class CoordinatorPhase:
         *,
         request: TeamChatRequest,
         team: TeamConfig,
-        blackboard: Any,
+        blackboard: _Blackboard,
         run_id: str,
     ) -> ExecutionContract:
-        from personagent.application.team_chat.orchestrator import (
-            _agent_tool_context,
-            _duration_ms,
-        )
-
         started = time.perf_counter()
         result = await self._llm_backend.chat_completion(
             messages=self.execution_contract_messages(request, team, blackboard),
@@ -204,14 +205,9 @@ class CoordinatorPhase:
         request: TeamChatRequest,
         team: TeamConfig,
         round_index: int,
-        blackboard: Any,
+        blackboard: _Blackboard,
         run_id: str,
     ) -> CoordinatorGuidance:
-        from personagent.application.team_chat.orchestrator import (
-            _agent_tool_context,
-            _duration_ms,
-        )
-
         started = time.perf_counter()
         result = await self._llm_backend.chat_completion(
             messages=self.coordinator_planning_messages(request, team, round_index, blackboard),
@@ -250,13 +246,8 @@ class CoordinatorPhase:
         self,
         request: TeamChatRequest,
         team: TeamConfig,
-        blackboard: Any,
+        blackboard: _Blackboard,
     ) -> list[dict[str, str]]:
-        from personagent.application.team_chat.orchestrator import (
-            _runtime_context,
-            _team_policy_overlay,
-        )
-
         return [
             {
                 "role": "system",
@@ -297,13 +288,8 @@ class CoordinatorPhase:
         request: TeamChatRequest,
         team: TeamConfig,
         round_index: int,
-        blackboard: Any,
+        blackboard: _Blackboard,
     ) -> list[dict[str, str]]:
-        from personagent.application.team_chat.orchestrator import (
-            _runtime_context,
-            _team_policy_overlay,
-        )
-
         return [
             {
                 "role": "system",

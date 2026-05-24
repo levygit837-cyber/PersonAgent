@@ -5,20 +5,27 @@ Produces the user-facing answer after consensus is reached.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import AsyncIterator
 from typing import Any
 
+from personagent.application.team_chat.blackboard import _Blackboard, _now_iso
 from personagent.application.team_chat.consensus_phase import _votes_text
 from personagent.application.team_chat.contracts import (
     TeamChatRequest,
     TeamConfig,
 )
+from personagent.application.team_chat.helpers import (
+    COORDINATOR_PHASE,
+    _agent_tool_context,
+    _duration_ms,
+    _runtime_context,
+    _team_policy_overlay,
+)
 from personagent.application.team_chat.types import Vote
 from personagent.domain.models.conversation import Conversation
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
-
-COORDINATOR_PHASE = "coordinator_final"
 
 
 class FinalSynthesis:
@@ -36,15 +43,9 @@ class FinalSynthesis:
         run_id: str,
         votes: list[Vote],
         consensus: dict[str, Any],
-        blackboard: Any,
+        blackboard: _Blackboard,
         cancel_event: Any,
     ) -> AsyncIterator[dict[str, Any]]:
-        from personagent.application.team_chat.blackboard import _now_iso
-        from personagent.application.team_chat.orchestrator import (
-            _agent_tool_context,
-            _duration_ms,
-        )
-
         started = time.perf_counter()
         async for chunk in self._llm_backend.chat_completion_stream(
             messages=self.final_messages(request, team, blackboard, votes, consensus),
@@ -81,17 +82,10 @@ class FinalSynthesis:
         self,
         request: TeamChatRequest,
         team: TeamConfig,
-        blackboard: Any,
+        blackboard: _Blackboard,
         votes: list[Vote],
         consensus: dict[str, Any],
     ) -> list[dict[str, str]]:
-        import json
-
-        from personagent.application.team_chat.orchestrator import (
-            _runtime_context,
-            _team_policy_overlay,
-        )
-
         return [
             {
                 "role": "system",
