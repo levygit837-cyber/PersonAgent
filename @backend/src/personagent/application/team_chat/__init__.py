@@ -1,5 +1,6 @@
 """Team chat orchestration primitives."""
 
+from personagent.application.team_chat.consensus_phase import ConsensusPhase
 from personagent.application.team_chat.contracts import (
     DEFAULT_TEAM_ID,
     TeamAgentConfig,
@@ -22,6 +23,7 @@ from personagent.application.team_chat.types import (
 )
 
 __all__ = [
+    "ConsensusPhase",
     "DEFAULT_TEAM_ID",
     "TeamAgentConfig",
     "TeamChatOrchestrator",
