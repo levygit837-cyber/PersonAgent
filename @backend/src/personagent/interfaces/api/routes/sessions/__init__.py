@@ -9,17 +9,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from personagent.application.services.session_panel import SessionPanelService
 from personagent.interfaces.api.routes.chat import get_db
+from personagent.interfaces.api.routes.sessions.browser_interaction import (
+    register_browser_interaction_routes,
+)
 from personagent.interfaces.api.routes.sessions.browser_viewport import (
     _browser_worker as _browser_worker,
 )
 from personagent.interfaces.api.routes.sessions.browser_viewport import (
     register_browser_viewport_routes,
 )
-from personagent.interfaces.api.routes.sessions.browser_workspace import (
-    register_browser_workspace_routes,
+from personagent.interfaces.api.routes.sessions.cooperation import (
+    register_cooperation_routes,
 )
 from personagent.interfaces.api.routes.sessions.models import (
     SessionTitleVerifyRequest,
+)
+from personagent.interfaces.api.routes.sessions.workspace_data import (
+    register_workspace_data_routes,
 )
 from personagent.interfaces.api.workspace_grants import resolve_workspace_root
 from personagent.interfaces.config.di_container import get_container
@@ -28,7 +34,9 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 DB_SESSION_DEPENDENCY = Depends(get_db)
 
 register_browser_viewport_routes(router)
-register_browser_workspace_routes(router)
+register_cooperation_routes(router)
+register_browser_interaction_routes(router)
+register_workspace_data_routes(router)
 
 
 # ---------------------------------------------------------------------------
