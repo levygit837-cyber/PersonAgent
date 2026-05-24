@@ -23,9 +23,10 @@ directory.
 | Prompt surfaces        | #11 | ~187          | 1,938      |
 | Prompt package         | #13 | ~290          | 1,648      |
 | Tool result handler    | #14 | ~252          | 1,396      |
-| **Current**            |     |               | **1,396**  |
+| Message preparation    | #16 | ~88           | 1,308      |
+| **Current**            |     |               | **1,308**  |
 
-Cumulative reduction: **2,742 → 1,396 lines (–49%)**.
+Cumulative reduction: **2,742 → 1,308 lines (–52%)**.
 
 ## Public contract that must be preserved
 
@@ -158,7 +159,7 @@ collaborator is already injected and tested elsewhere.
 (approvals, plan mode, user questions) that affects the next loop
 iteration. Tests must cover all six "result kind" branches.
 
-### Slice 8 — `MessagePreparation` (~95 lines)
+### Slice 8 — `MessagePreparation` (✅ landed in #16; ~88 lines)
 
 **What moves out:**
 
