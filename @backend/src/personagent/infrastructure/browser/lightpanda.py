@@ -211,6 +211,33 @@ class LightPandaBrowserWorker:
     async def get_html(self, **kwargs: Any) -> dict[str, Any]:
         return await self.content_module.get_html(**kwargs)
 
+    async def _lightpanda_markdown(self, session: Any) -> str:
+        url = _clean_browser_url(str(getattr(session.page, "url", "") or ""))
+        return await self._lightpanda_markdown_url(url)
+
+    async def _lightpanda_markdown_url(self, url: str) -> str:
+        url = _clean_browser_url(url)
+        if not url or url == "about:blank":
+            return ""
+        try:
+            payload = await asyncio.wait_for(
+                self._lightpanda_raw_cdp_command(
+                    url=url,
+                    method="LP.getMarkdown",
+                ),
+                timeout=min(self.timeout_ms / 1000, 15),
+            )
+            markdown = self.content_module._extract_markdown_payload(payload)
+            if markdown:
+                return markdown
+        except TimeoutError as exc:
+            logger.warning("lightpanda_markdown_raw_timeout", error=str(exc), url=url)
+            return ""
+        except Exception as exc:
+            logger.warning("lightpanda_markdown_failed", error=str(exc))
+            return ""
+        return ""
+
     async def view_snapshot(self, **kwargs: Any) -> dict[str, Any]:
         return await self.snapshot.view_snapshot(**kwargs)
 

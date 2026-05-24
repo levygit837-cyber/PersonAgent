@@ -482,7 +482,7 @@ class BrowserContent:
         return await self._markdown_or_text_url(url)
 
     async def _markdown_or_text_url(self, url: str) -> tuple[str, str, dict[str, Any]]:
-        markdown = await self._lightpanda_markdown_url(url)
+        markdown = await self._w._lightpanda_markdown_url(url)
         if markdown:
             cleaned_markdown, stats = _clean_extracted_content(markdown)
             if _should_prefer_readable_dom(cleaned_markdown, stats):
@@ -533,32 +533,7 @@ class BrowserContent:
         cleaned, _stats = _clean_extracted_content(content)
         return cleaned
 
-    async def _lightpanda_markdown(self, session: _BrowserSession) -> str:
-        url = _clean_browser_url(str(getattr(session.page, "url", "") or ""))
-        return await self._lightpanda_markdown_url(url)
 
-    async def _lightpanda_markdown_url(self, url: str) -> str:
-        url = _clean_browser_url(url)
-        if not url or url == "about:blank":
-            return ""
-        try:
-            payload = await asyncio.wait_for(
-                self._w._lightpanda_raw_cdp_command(
-                    url=url,
-                    method="LP.getMarkdown",
-                ),
-                timeout=min(self._w.timeout_ms / 1000, 15),
-            )
-            markdown = self._extract_markdown_payload(payload)
-            if markdown:
-                return markdown
-        except TimeoutError as exc:
-            logger.warning("lightpanda_markdown_raw_timeout", error=str(exc), url=url)
-            return ""
-        except Exception as exc:
-            logger.warning("lightpanda_markdown_failed", error=str(exc))
-            return ""
-        return ""
 
     def _extract_markdown_payload(self, payload: Any) -> str:
         if isinstance(payload, dict):
