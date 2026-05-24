@@ -23,7 +23,7 @@ A file qualifies as a god file if it meets **all three**:
 | 3 | `infrastructure/persistence/operational_memory_repository.py` | 1,938 | 251 | ✅ Done — 6 slices (merged to main), −87% | `operational_memory_repository.md` |
 | 4 | `interfaces/api/routes/chat/__init__.py` | 1,905 | 1,419 | 🔄 In progress — 2 slices merged (PRs #75, #79), more pending | `routes_chat.md` |
 | 5 | `infrastructure/llm/vertex_ai_adapter.py` | 1,064 | 31 | ✅ Done — 3 slices (PRs #47, #50, #53), −97% | `llm_adapters.md` |
-| 6 | `interfaces/api/routes/workspace.py` | 1,576 | 1,576 | ⏳ Not started | `routes_workspace.md` |
+| 6 | `interfaces/api/routes/workspace/` | 1,576 | 30 | ✅ Done — 4 slices (PR #84), −98% | `routes_workspace.md` |
 | 7 | `interfaces/api/routes/sessions.py` | 1,471 | 1,471 | ⏳ Not started | `routes_sessions.md` |
 | 8 | `application/services/browser_cooperation.py` | 1,292 | 1,292 | ⏳ Not started | `browser_cooperation.md` |
 | 9 | `application/team_chat/blackboard.py` | 1,091 | 1,091 | ⏳ Not started | `blackboard.md` |
@@ -45,6 +45,7 @@ A file qualifies as a god file if it meets **all three**:
 | `infrastructure/tools/browser_tools/` | 2,786 | 61 | ✅ Done — 4 slices (−98%) |
 | `infrastructure/persistence/operational_memory/` | 1,938 | 251 | ✅ Done — 6 slices (−87%) |
 | `infrastructure/llm/vertex_ai/` | 1,064 | 31 | ✅ Done — 3 slices (−97%) |
+| `interfaces/api/routes/workspace/` | 1,576 | 30 | ✅ Done — 4 slices (−98%) |
 
 ### Frontend god files
 

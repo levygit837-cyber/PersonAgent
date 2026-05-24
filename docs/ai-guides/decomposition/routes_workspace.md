@@ -29,10 +29,10 @@ Each concern has different security models and error handling patterns.
 
 | Slice | Status | PR | Notes |
 |-------|--------|----|-------|
-| 1 — Extract helpers to `workspace/helpers.py` | ⏳ Pending | — | |
-| 2 — Extract grant endpoints | ⏳ Pending | — | |
-| 3 — Extract filesystem endpoints | ⏳ Pending | — | |
-| 4 — Extract git endpoints | ⏳ Pending | — | |
+| 1 — Extract helpers to `workspace/helpers.py` | ✅ Done | #84 | Constants, models, shared utilities |
+| 2 — Extract grant endpoints | ✅ Done | #84 | Grant endpoint to `grant.py` |
+| 3 — Extract filesystem endpoints | ✅ Done | #84 | File/mention endpoints to `filesystem.py` |
+| 4 — Extract git endpoints | ✅ Done | #84 | All git endpoints to `git.py` |
 
 ## Proposed slices (in order)
 
