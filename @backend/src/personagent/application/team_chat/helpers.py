@@ -19,13 +19,15 @@ from typing import Any
 
 from personagent.application.team_chat.blackboard import (
     _Blackboard,
-    _clamp_float,
-    _coherency_score,
-    _now_iso,
 )
 from personagent.application.team_chat.blackboard_json_parsing import (
     _digest,
     _parse_json_object,
+)
+from personagent.application.team_chat.blackboard_scoring import (
+    _clamp_float,
+    _coherency_score,
+    _now_iso,
 )
 from personagent.application.team_chat.contracts import (
     TeamAgentConfig,

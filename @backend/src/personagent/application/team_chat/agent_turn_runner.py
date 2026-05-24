@@ -12,10 +12,12 @@ import structlog
 
 from personagent.application.team_chat.blackboard import (
     _Blackboard,
-    _now_iso,
 )
 from personagent.application.team_chat.blackboard_json_parsing import (
     _digest,
+)
+from personagent.application.team_chat.blackboard_scoring import (
+    _now_iso,
 )
 from personagent.application.team_chat.contracts import (
     TeamAgentConfig,
