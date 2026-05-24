@@ -3,36 +3,28 @@ import {
   Activity,
   ArrowLeft,
   ArrowRight,
-  Check,
-  ChevronDown,
   Database,
   ExternalLink,
   FilePenLine,
   GitBranch,
   GitCommit,
   GitPullRequest,
-  Globe2,
   ListChecks,
   MessageSquarePlus,
   RefreshCw,
   Loader2,
   PanelRightClose,
-  Plus,
   Upload,
   X,
 } from "lucide-react";
 import {
   fetchBackendText,
-  type SessionBrowserAnnotation,
   type SessionBrowserCooperationEvent,
   type SessionBrowserCooperationMode,
-  type SessionBrowserElement,
-  type SessionBrowserView,
   type SessionBrowserViewport,
 } from "../../api/client";
 import { cn } from "../../lib/utils";
 import { useAppStore } from "../../stores/app-store";
-import type { ComposerAnnotation } from "../../stores/chat-store";
 import type {
   ChangedFile,
   ProjectItem,
@@ -42,18 +34,9 @@ import type {
   SessionSource,
   SessionUsage,
   SessionUsageMetric,
-  ToolBlockStatus,
-  ToolBlockUi,
 } from "../../types/chat";
 
 import { Button } from "../ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import type { SessionDetailView } from "./session-detail-window";
 import {
@@ -66,20 +49,30 @@ import {
   browserRenderedElementStyle,
   browserToolEventAppliesToBrowser,
   browserToolEventIsPassive,
-  browserTraceBounds,
   browserViewport,
   browserVisualEventFromProposal,
   browserVisualEventsFromRecords,
   formatNumber,
-  formatValue,
   isBrowserViewportControlTarget,
-  labelize,
   normalizeBrowserElementMetadata,
   normalizeBrowserTextSelection,
   recordArray,
   selectedElementLabel,
 } from "./session-panel/browser-helpers";
+import { BrowserCooperationModeMenu, BrowserProposalOverlay } from "./session-panel/browser-cooperation";
+import { BrowserModeButton, BrowserNavButton } from "./session-panel/browser-controls";
 import { browserMirrorSrcDoc } from "./session-panel/browser-mirror";
+import { BrowserTabStrip } from "./session-panel/browser-tab-strip";
+import {
+  BrowserTracingPanel,
+  BrowserVisualEventList,
+  CommitsBlock,
+  FilesBlock,
+  MetadataBlock,
+  MetricBand,
+  TraceJson,
+} from "./session-panel/browser-tracing";
+import { EmptyList, EmptyPanel, PanelSkeleton, SectionTitle } from "./session-panel/shared-ui";
 import { useBrowserTabs } from "./session-panel/use-browser-tabs";
 import { useSessionPanelState } from "./session-panel/use-session-panel-state";
 export { SESSION_PANEL_CACHE_STORAGE_KEY } from "./session-panel/cache";
@@ -90,7 +83,6 @@ import {
   type BrowserElementMetadata,
   type BrowserTextSelectionMetadata,
   type BrowserTracingTab,
-  type BrowserVisualEffect,
   type BrowserVisualEvent,
   type BrowserToolEvent,
   summaryTab,
@@ -261,88 +253,6 @@ export function SessionPanel({
         )}
       </div>
     </aside>
-  );
-}
-
-function BrowserTabStrip({
-  tabs,
-  activeTabId,
-  onSelect,
-  onClose,
-  onAdd,
-}: {
-  tabs: BrowserTab[];
-  activeTabId: string;
-  onSelect: (id: string) => void;
-  onClose: (id: string) => void;
-  onAdd: () => void;
-}) {
-  return (
-    <div className="flex h-11 shrink-0 items-end border-b border-glass-border/25 bg-background/80 px-2 pt-1.5" role="tablist" aria-label="Session panel tabs">
-      <div className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto">
-        {tabs.map((tab) => {
-          const active = tab.id === activeTabId;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              aria-label={tab.title}
-              className={cn(
-                "group relative flex h-8 max-w-[170px] min-w-0 items-center gap-1.5 rounded-t-xl px-3 text-left text-xs transition-[background,color,box-shadow]",
-                active
-                  ? "bg-popover text-foreground shadow-[inset_0_1px_0_hsl(var(--glass-border)_/_0.45),inset_1px_0_0_hsl(var(--glass-border)_/_0.35),inset_-1px_0_0_hsl(var(--glass-border)_/_0.35)]"
-                  : "bg-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-              )}
-              onClick={() => onSelect(tab.id)}
-            >
-              <span className="min-w-0 flex-1 truncate">{tab.title}</span>
-              {tab.closeable ? (
-                <span
-                  role="button"
-                  aria-label={`Close tab ${tab.title}`}
-                  tabIndex={0}
-                  className="grid h-4 w-4 shrink-0 place-items-center rounded text-muted-foreground opacity-0 hover:bg-accent hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onClose(tab.id);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      onClose(tab.id);
-                    }
-                  }}
-                >
-                  <X className="h-3 w-3" />
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label="New panel tab"
-              className="mb-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent side="right" align="start" sideOffset={8} className="w-48 rounded-xl">
-            <DropdownMenuLabel>New tab</DropdownMenuLabel>
-            <DropdownMenuItem onClick={onAdd} className="gap-2 rounded-lg">
-              <Globe2 className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="min-w-0 flex-1">Browser</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <div className="h-8 min-w-2 flex-1" />
-      </div>
-    </div>
   );
 }
 
@@ -1332,506 +1242,6 @@ function BrowserTabContent({
           </form>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function BrowserNavButton({
-  label,
-  disabled,
-  onClick,
-  children,
-}: {
-  label: string;
-  disabled: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
-    >
-      {children}
-    </button>
-  );
-}
-
-function BrowserModeButton({
-  label,
-  active,
-  disabled,
-  onClick,
-  children,
-}: {
-  label: string;
-  active: boolean;
-  disabled: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-pressed={active}
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        "grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs transition-colors disabled:pointer-events-none disabled:opacity-35",
-        active ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-accent hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function BrowserCooperationModeMenu({
-  value,
-  disabled,
-  onChange,
-}: {
-  value: SessionBrowserCooperationMode | "off";
-  disabled: boolean;
-  onChange: (mode: SessionBrowserCooperationMode | "off") => void;
-}) {
-  const options: Array<{ value: SessionBrowserCooperationMode | "off"; label: string }> = [
-    { value: "off", label: "Off" },
-    { value: "observe_only", label: "Observe" },
-    { value: "suggest_before_action", label: "Suggest" },
-    { value: "agent_control", label: "Control" },
-  ];
-  const active = options.find((option) => option.value === value) ?? options[0];
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label="Browser cooperation mode"
-          disabled={disabled}
-          className={cn(
-            "inline-flex h-7 max-w-[132px] shrink-0 items-center gap-1.5 rounded-full border border-glass-border/35 bg-card/70 px-2.5 text-[11px] text-foreground outline-none transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-35",
-            value !== "off" && "border-primary/35 bg-primary/10 text-primary",
-          )}
-        >
-          <span className="truncate">{active.label}</span>
-          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-40">
-        <DropdownMenuLabel>Cooperation</DropdownMenuLabel>
-        {options.map((option) => (
-          <DropdownMenuItem key={option.value} onSelect={() => onChange(option.value)}>
-            <Check className={cn("mr-2 h-3.5 w-3.5", option.value === value ? "opacity-100" : "opacity-0")} />
-            <span>{option.label}</span>
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function BrowserProposalOverlay({
-  proposal,
-  target,
-  elementMap,
-  view,
-  surface,
-  onDecision,
-}: {
-  proposal: Record<string, unknown>;
-  target: Record<string, unknown>;
-  elementMap: SessionBrowserElement[];
-  view: SessionBrowserView;
-  surface: HTMLElement | null;
-  onDecision: (proposal: Record<string, unknown>, decision: "approve" | "deny" | "dismiss") => void;
-}) {
-  const bounds = browserTraceBounds(target, elementMap);
-  if (!bounds) {
-    return (
-      <div className="absolute right-3 top-3 z-40 w-[min(340px,calc(100%-24px))] rounded-lg border border-primary/35 bg-background/94 p-3 text-xs shadow-floating backdrop-blur-xl">
-        <ProposalBody proposal={proposal} onDecision={onDecision} />
-      </div>
-    );
-  }
-  const highlight = browserRenderedElementStyle(bounds, surface, view);
-  const barTop = Math.max(8, highlight.top - 38);
-  const barLeft = Math.max(8, Math.min(highlight.left, (view.viewport_width || 420) - 230));
-  return (
-    <>
-      <div
-        className="pointer-events-none absolute z-30 rounded-[4px] border-2 border-primary bg-primary/18 shadow-[0_0_0_3px_rgba(34,150,255,0.14)]"
-        style={highlight}
-      />
-      <div
-        className="absolute z-40 flex max-w-[min(360px,calc(100%-16px))] items-center gap-2 rounded-full border border-primary/35 bg-background/94 px-2 py-1.5 text-[11px] shadow-floating backdrop-blur-xl"
-        style={{ left: barLeft, top: barTop }}
-      >
-        <span className="min-w-0 max-w-32 truncate text-muted-foreground">
-          {String(proposal.tool_name ?? "Browser action")}
-        </span>
-        <button
-          type="button"
-          className="rounded-full bg-primary px-2.5 py-1 font-medium text-primary-foreground"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDecision(proposal, "approve");
-          }}
-        >
-          Allow
-        </button>
-        <button
-          type="button"
-          className="rounded-full border border-destructive/35 px-2.5 py-1 font-medium text-destructive"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDecision(proposal, "deny");
-          }}
-        >
-          Deny
-        </button>
-        <button
-          type="button"
-          className="rounded-full px-2 py-1 text-muted-foreground hover:text-foreground"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDecision(proposal, "dismiss");
-          }}
-        >
-          Dismiss
-        </button>
-      </div>
-    </>
-  );
-}
-
-function ProposalBody({
-  proposal,
-  onDecision,
-}: {
-  proposal: Record<string, unknown>;
-  onDecision: (proposal: Record<string, unknown>, decision: "approve" | "deny" | "dismiss") => void;
-}) {
-  return (
-    <div>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-foreground">
-            {String(proposal.tool_name ?? "Browser action")}
-          </div>
-          <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
-            {String(proposal.reason ?? "The agent needs permission before executing this action.")}
-          </div>
-        </div>
-        <span className="shrink-0 rounded-full border border-primary/30 px-2 py-0.5 font-mono text-[10px] text-primary">
-          {String(proposal.mode ?? "ask")}
-        </span>
-      </div>
-      <div className="mt-3 flex justify-end gap-2">
-        <Button size="sm" onClick={() => onDecision(proposal, "approve")}>
-          Allow
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => onDecision(proposal, "deny")}>
-          Deny
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function BrowserTracingPanel({
-  cooperation,
-  rawEvents,
-  usefulTimeline,
-  recentUserEvents,
-  recentAgentEvents,
-  pendingProposals,
-  visualEvents,
-  activeTab,
-  onTabChange,
-  onClose,
-  onProposalDecision,
-}: {
-  cooperation?: SessionBrowserView["cooperation"];
-  rawEvents: Array<Record<string, unknown>>;
-  usefulTimeline: Array<Record<string, unknown>>;
-  recentUserEvents: Array<Record<string, unknown>>;
-  recentAgentEvents: Array<Record<string, unknown>>;
-  pendingProposals: Array<Record<string, unknown>>;
-  visualEvents: BrowserVisualEvent[];
-  activeTab: BrowserTracingTab;
-  onTabChange: (tab: BrowserTracingTab) => void;
-  onClose: () => void;
-  onProposalDecision: (proposal: Record<string, unknown>, decision: "approve" | "deny" | "dismiss") => void;
-}) {
-  const tabs: Array<[BrowserTracingTab, string, number]> = [
-    ["timeline", "Useful Timeline", usefulTimeline.length],
-    ["raw", "Raw Events", rawEvents.length],
-    ["state", "Page State", 0],
-    ["agent", "Agent Actions", recentAgentEvents.length + visualEvents.length],
-    ["proposals", "Proposals", pendingProposals.length],
-  ];
-  return (
-    <aside
-      data-browser-tracing-panel="true"
-      className="absolute inset-y-3 right-3 z-50 flex w-[min(390px,calc(100%-24px))] flex-col overflow-hidden rounded-lg border border-glass-border/35 bg-background/96 shadow-floating backdrop-blur-xl"
-      onClick={(event) => event.stopPropagation()}
-      onWheel={(event) => event.stopPropagation()}
-    >
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-glass-border/25 px-3">
-        <Activity className="h-3.5 w-3.5 text-primary" />
-        <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">Tracing</div>
-        <button type="button" className="text-muted-foreground hover:text-foreground" onClick={onClose} aria-label="Close tracing">
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-      <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-glass-border/20 px-2 py-2">
-        {tabs.map(([tab, label, count]) => (
-          <button
-            key={tab}
-            type="button"
-            className={cn(
-              "shrink-0 rounded-full px-2.5 py-1 text-[11px] transition-colors",
-              activeTab === tab ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-            onClick={() => onTabChange(tab)}
-          >
-            {label}
-            {count ? <span className="ml-1 font-mono">{count}</span> : null}
-          </button>
-        ))}
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto p-3">
-        {activeTab === "timeline" ? <TraceList items={usefulTimeline} empty="No useful timeline events yet." /> : null}
-        {activeTab === "raw" ? <TraceList items={rawEvents} empty="No raw events persisted yet." raw /> : null}
-        {activeTab === "state" ? (
-          <TraceJson value={cooperation?.page_state ?? {}} />
-        ) : null}
-        {activeTab === "agent" ? (
-          <div className="space-y-3">
-            {visualEvents.length ? <BrowserVisualEventList events={visualEvents} /> : null}
-            <TraceList items={recentAgentEvents} empty="No agent browser actions yet." />
-          </div>
-        ) : null}
-        {activeTab === "proposals" ? (
-          <div className="space-y-2">
-            {pendingProposals.length ? (
-              pendingProposals.map((proposal) => (
-                <div key={String(proposal.proposal_id ?? proposal.approval_id)} className="rounded-lg border border-glass-border/30 p-2">
-                  <ProposalBody proposal={proposal} onDecision={onProposalDecision} />
-                  <TraceJson value={proposal} compact />
-                </div>
-              ))
-            ) : (
-              <EmptyList text="No pending proposals." />
-            )}
-          </div>
-        ) : null}
-      </div>
-    </aside>
-  );
-}
-
-function BrowserVisualEventList({ events }: { events: BrowserVisualEvent[] }) {
-  return (
-    <div className="space-y-2">
-      {events.slice(0, 8).map((event) => (
-        <div key={event.id} className="rounded-lg border border-primary/20 bg-primary/[0.04] p-2 text-xs">
-          <div className="flex items-center gap-2">
-            <TraceRoleBadge role={event.status === "permission_required" ? "system" : "agent"} />
-            <span className="min-w-0 flex-1 truncate text-foreground">{event.toolName}</span>
-            <span className="rounded-full border border-glass-border/30 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
-              {event.effect}
-            </span>
-          </div>
-          <div className="mt-1 truncate text-[10px] text-muted-foreground">
-            {event.nodeId || event.url || event.pageId || "viewport"}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TraceList({ items, empty, raw = false }: { items: Array<Record<string, unknown>>; empty: string; raw?: boolean }) {
-  if (!items.length) return <EmptyList text={empty} />;
-  return (
-    <div className="space-y-2">
-      {items.slice(-80).reverse().map((item, index) => (
-        <div key={String(item.event_id ?? item.id ?? index)} className="rounded-lg border border-glass-border/25 p-2 text-xs">
-          <div className="flex items-center gap-2">
-            <TraceRoleBadge role={String(item.trace_role ?? item.role ?? item.source ?? "browser")} />
-            <span className="min-w-0 flex-1 truncate text-foreground">
-              {String(item.semantic_label ?? item.label ?? item.kind ?? item.event_type ?? "event")}
-            </span>
-            {item.sequence !== undefined ? <span className="font-mono text-[10px] text-muted-foreground">#{String(item.sequence)}</span> : null}
-          </div>
-          <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
-            {item.kind ? <span>{String(item.kind)}</span> : null}
-            {item.importance ? <span>{String(item.importance)}</span> : null}
-            {item.trace_effect ? <span>{String(item.trace_effect)}</span> : null}
-          </div>
-          {raw ? <TraceJson value={item} compact /> : null}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TraceRoleBadge({ role }: { role: string }) {
-  const className =
-    role === "agent"
-      ? "border-primary/30 bg-primary/12 text-primary"
-      : role === "user"
-        ? "border-success/30 bg-success/10 text-success"
-        : role === "system"
-          ? "border-amber-400/30 bg-amber-400/10 text-amber-300"
-          : "border-glass-border/35 bg-muted/30 text-muted-foreground";
-  return <span className={cn("rounded-full border px-2 py-0.5 font-mono text-[10px]", className)}>{role}</span>;
-}
-
-function TraceJson({ value, compact = false }: { value: unknown; compact?: boolean }) {
-  return (
-    <pre
-      className={cn(
-        "mt-2 overflow-auto rounded-md border border-glass-border/25 bg-card/50 p-2 font-mono text-[10px] leading-4 text-muted-foreground",
-        compact ? "max-h-28" : "max-h-[55vh]",
-      )}
-    >
-      {JSON.stringify(value, null, 2)}
-    </pre>
-  );
-}
-
-function MetadataBlock({ metadata }: { metadata: Record<string, unknown> }) {
-  const entries = Object.entries(metadata).filter(([, value]) => value !== undefined && value !== null && value !== "");
-  if (entries.length === 0) return null;
-  return (
-    <dl className="grid gap-x-4 gap-y-2 text-xs">
-      {entries.map(([key, value]) => (
-        <div key={key} className="min-w-0 border-b border-glass-border/25 pb-2">
-          <dt className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground/70">{labelize(key)}</dt>
-          <dd className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-muted-foreground">
-            {formatValue(value)}
-          </dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-function FilesBlock({ files }: { files: Array<Record<string, unknown>> }) {
-  return (
-    <div className="border-t border-glass-border/25 pt-3">
-      <SectionTitle icon={<FilePenLine className="h-3.5 w-3.5" />} title="Files" />
-      <div className="mt-2 divide-y divide-glass-border/25 rounded-xl border border-glass-border/35">
-        {files.map((file, index) => (
-          <div key={`${String(file.filename ?? file.path ?? index)}-${index}`} className="py-2">
-            <div className="flex min-w-0 items-center gap-2 text-xs">
-              <span className="min-w-0 flex-1 truncate text-foreground">{String(file.filename ?? file.path ?? "file")}</span>
-              {file.additions !== undefined ? <span className="font-mono text-success">+{String(file.additions)}</span> : null}
-              {file.deletions !== undefined ? <span className="font-mono text-destructive">-{String(file.deletions)}</span> : null}
-            </div>
-            {typeof file.patch === "string" && file.patch.trim() ? (
-              <pre className="mt-2 max-h-44 overflow-auto rounded-lg border border-glass-border/35 bg-background/70 p-2 font-mono text-[11px] leading-5 text-muted-foreground">
-                {file.patch}
-              </pre>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function CommitsBlock({ commits }: { commits: Array<Record<string, unknown>> }) {
-  return (
-    <div className="border-t border-glass-border/25 pt-3">
-      <SectionTitle icon={<GitCommit className="h-3.5 w-3.5" />} title="Commits" />
-      <div className="mt-2 divide-y divide-glass-border/25 rounded-xl border border-glass-border/35">
-        {commits.map((commit, index) => (
-          <div key={`${String(commit.sha ?? index)}-${index}`} className="py-2 text-xs">
-            <div className="truncate font-medium text-foreground">{String(commit.message ?? commit.sha ?? "commit")}</div>
-            <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
-              {String(commit.sha ?? "")}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function MetricBand({ items }: { items: Array<[string, number]> }) {
-  return (
-    <div className="grid grid-cols-4 gap-2">
-      {items.map(([label, value]) => (
-        <div key={label} className="border-b border-glass-border/25 pb-2">
-          <div className="font-mono text-sm text-foreground">{formatNumber(value)}</div>
-          <div className="truncate text-[10px] text-muted-foreground">{label}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SectionTitle({ icon, title }: { icon: ReactNode; title: string }) {
-  return (
-    <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-      {icon}
-      <span>{title}</span>
-    </div>
-  );
-}
-
-function EmptyPanel({ text }: { text: string }) {
-  return <div className="flex min-h-[220px] items-center justify-center px-6 text-center text-xs text-muted-foreground">{text}</div>;
-}
-
-function EmptyList({ text }: { text: string }) {
-  return <div className="py-2 text-[11px] text-muted-foreground">{text}</div>;
-}
-
-function PanelSkeleton() {
-  return (
-    <div className="space-y-5 animate-pulse">
-      <div className="grid grid-cols-4 gap-2">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="border-b border-glass-border/25 pb-2">
-            <div className="h-5 w-8 rounded bg-muted" />
-            <div className="mt-1 h-3 w-14 rounded bg-muted/60" />
-          </div>
-        ))}
-      </div>
-      <section className="border-t border-glass-border/25 pt-3">
-        <div className="flex items-center gap-2">
-          <div className="h-3.5 w-3.5 rounded bg-muted" />
-          <div className="h-3 w-24 rounded bg-muted/60" />
-        </div>
-        <div className="mt-2 divide-y divide-glass-border/25">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 py-2">
-              <div className="h-3 w-full rounded bg-muted/50" />
-              <div className="h-3 w-8 rounded bg-muted/30" />
-            </div>
-          ))}
-        </div>
-      </section>
-      <section className="border-t border-glass-border/25 pt-3">
-        <div className="flex items-center gap-2">
-          <div className="h-3.5 w-3.5 rounded bg-muted" />
-          <div className="h-3 w-28 rounded bg-muted/60" />
-        </div>
-        <div className="mt-2 space-y-2">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-8 w-full rounded-lg border border-glass-border/25 bg-muted/20" />
-          ))}
-        </div>
-      </section>
     </div>
   );
 }
