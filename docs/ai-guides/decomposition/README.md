@@ -39,17 +39,17 @@ Do **not** use them when:
 | `chat_completion.md`        | ✅ `chat_completion.py` (2,742 → 483 L, −82%) |
 | `team_chat_orchestrator.md` | ✅ `team_chat/orchestrator.py` (3,097 → 127 L, −96%) |
 | **Backend — in progress** | |
-| `lightpanda.md`             | 🔄 `browser/lightpanda.py` (5,735 → 4,710 L, slices 1–4 done) |
+| `lightpanda.md`             | 🔄 `browser/lightpanda.py` (5,735 → 1,469 L, slices 1–14 done, Phase 3 needed) |
 | **Backend — planned** | |
-| `browser_tools.md`          | ⏳ `tools/browser_tools.py` (2,786 L) |
-| `operational_memory_repository.md` | ⏳ `persistence/operational_memory_repository.py` (1,938 L) |
-| `routes_chat.md`            | ⏳ `api/routes/chat.py` (1,905 L) |
-| `routes_workspace.md`       | ⏳ `api/routes/workspace.py` (1,576 L) |
-| `routes_sessions.md`        | ⏳ `api/routes/sessions.py` (1,471 L) |
-| `browser_cooperation.md`    | ⏳ `services/browser_cooperation.py` (1,292 L) |
+| `browser_tools.md`          | ✅ `tools/browser_tools/factories.py` (2,786 → 61 L, −98%) |
+| `operational_memory_repository.md` | ✅ `persistence/operational_memory_repository.py` (1,938 → 251 L, −87%) |
+| `routes_chat.md`            | 🔄 `api/routes/chat/__init__.py` (1,905 → 612 L, 6 slices merged) |
+| `routes_workspace.md`       | ✅ `api/routes/workspace/` (1,576 → 30 L, −98%) |
+| `routes_sessions.md`        | ✅ `api/routes/sessions/` (1,471 → 166 L, −89%) |
+| `browser_cooperation.md`    | ✅ `services/browser_cooperation/` (1,292 → 35 L, −97%) |
 | `blackboard.md`             | ⏳ `team_chat/blackboard.py` (1,091 L) |
 | `operational_memory_service.md` | ⏳ `services/operational_memory.py` (1,075 L) |
-| `llm_adapters.md`           | ⏳ `llm/vertex_ai + codex + kimi` (1,064 + 944 + 892 L) |
+| `llm_adapters.md`           | 🔄 `llm/vertex_ai` ✅ (1,064 → 31 L); `codex` ⏳ (944 L); `kimi` ⏳ (892 L) |
 | `session_panel_service.md`  | ⏳ `services/session_panel.py` (976 L) |
 | `persistence_models.md`     | ⏳ `persistence/models.py` (919 L, 31 ORM classes) |
 | `session_titles.md`         | ⏳ `services/session_titles.py` (848 L) |
