@@ -59,8 +59,8 @@ imports don't break.
 | 3 — Extract `AgentTurnRunner` | ✅ Merged | #21 | 405 lines removed from orchestrator.py |
 | 4 — Extract `ConsensusPhase` | ✅ Merged | #26 | 230 lines removed from orchestrator.py |
 | 5 — Extract `CoordinatorPhase` | ✅ Merged | #27 | 279 lines removed from orchestrator.py |
-| 6 — Extract `FinalSynthesis` | ✅ Ready | #28 | 83 lines removed from orchestrator.py |
-| 7 — Extract `MessageBuilders` to `team_chat/messages.py` | ⏳ Pending | — | |
+| 6 — Extract `FinalSynthesis` | ✅ Merged | #29 | 83 lines removed from orchestrator.py |
+| 7 — Extract shared helpers to `team_chat/helpers.py` | ✅ Ready | #33 | 404 lines removed from orchestrator.py, 13 lazy imports eliminated |
 | 8 — Inline what remains (the outer phase loop) | ⏳ Pending | — | |
 
 ## Proposed slices (in order; never reorder without justification)
@@ -236,16 +236,34 @@ mutating proposal exists).
 
 **Risk:** Low.
 
-### Slice 7 — Extract `MessageBuilders` to `team_chat/messages.py` (~250 lines)
+### Slice 7 — Extract shared helpers to `team_chat/helpers.py` (~450 lines)
 
 **What moves out:**
 
-- `_agent_messages` (1884–1944)
+All ~23 module-level pure helpers still remaining in the orchestrator
+after Slices 1–6, plus the phase constants:
 
-After the previous slices, `_agent_messages` is the last
-message-construction helper still on the orchestrator. Group it
-with `messages.py` so all message construction lives in one
-module.
+- Prompt / context: `_agent_system_prompt`, `_team_policy_overlay`,
+  `_runtime_context`, `_agent_tool_context`, `_workspace_id`
+- Tool helpers: `_tool_use_context_from_request`, `_resolve_allowed_path`,
+  `_is_relative_to`, `_tool_phase_event`, `_tool_proposal`,
+  `_tool_result_payload`, `_unique_tool_call_ids`
+- Scoring / contracts: `_turn_text`, `_claim_graph_output_contract`,
+  `_turn_coherency_score`, `_duration_ms`
+- Event builders: `_blackboard_event`, `_blackboard_snapshot_event`,
+  `_claim_graph_delta_event`, `_coverage_matrix_event`,
+  `_coherency_score_event`, `_cancelled_event`
+- Metadata: `_apply_workspace_metadata`
+- Constants: `INDEPENDENT_PHASE`, `BLACKBOARD_PHASE`, `DEBATE_PHASE`,
+  `VOTE_PHASE`, `TOOL_PHASE_*`, `CLAIM_TYPES`, `MUTATING_TOOL_NAMES`
+
+**Why `helpers.py` and not `messages.py`:**
+The surface includes event builders and metadata helpers, not just
+message construction. More importantly, making this a leaf module
+(no imports from orchestrator or phase collaborators) eliminates
+the 13 lazy/inline imports that Slices 3–6 had to use to avoid
+circular dependencies. All collaborators now import from `helpers.py`
+at module scope.
 
 **Risk:** Low.
 
