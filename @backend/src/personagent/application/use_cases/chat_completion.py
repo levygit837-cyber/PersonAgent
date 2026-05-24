@@ -51,9 +51,6 @@ from personagent.application.use_cases.chat.helpers import (
     attach_plan_approval_artifact as _attach_plan_approval_artifact,
 )
 from personagent.application.use_cases.chat.helpers import (
-    browser_target_from_context_attachments as _browser_target_from_context_attachments,
-)
-from personagent.application.use_cases.chat.helpers import (
     browser_target_reminder as _browser_target_reminder,
 )
 from personagent.application.use_cases.chat.helpers import (
@@ -78,6 +75,9 @@ from personagent.application.use_cases.chat.memory_recall import MemoryRecallCoo
 from personagent.application.use_cases.chat.operational_memory import (
     OperationalMemoryCapture,
 )
+from personagent.application.use_cases.chat.prompt_surfaces import (
+    PromptSurfacePreparer,
+)
 from personagent.application.use_cases.chat.state import (
     AssistantStreamState as _AssistantStreamState,
 )
@@ -101,18 +101,13 @@ from personagent.domain.models.inference_result import GeneratedImage, Inference
 from personagent.domain.prompts.commands import (
     CommandRegistry,
     CommandService,
-    SlashCommandResolution,
-    parse_slash_invocation,
 )
-from personagent.domain.prompts.context_attachments import resolve_context_attachments
 from personagent.domain.prompts.services import PromptBuilder, PromptContextAnalyzer
 from personagent.domain.prompts.services.agent_state_resolver import AgentStateResolver
 from personagent.domain.prompts.services.prompt_builder import estimate_text_tokens
 from personagent.domain.prompts.skills import (
     SkillDefinition,
     discover_enabled_skills,
-    find_skill,
-    is_skill_enabled,
 )
 from personagent.domain.repositories.conversation_repository import ConversationRepository
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
@@ -201,6 +196,10 @@ class ChatCompletionUseCase:
             operational_memory_service=operational_memory_service,
             context_window_tokens=self._context_window_tokens,
         )
+        self._prompt_surfaces = PromptSurfacePreparer(
+            command_service=self._command_service,
+            skill_roots_provider=self._skill_roots,
+        )
         self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
         self._artifact_ttl_seconds = artifact_ttl_seconds if artifact_ttl_seconds and artifact_ttl_seconds > 0 else None
 
@@ -214,7 +213,7 @@ class ChatCompletionUseCase:
             activate_plan_mode_if_requested(conversation.metadata, requested=True)
 
         context_result = await self._build_context_result(request, conversation)
-        preparation = self._prepare_prompt_surfaces(request, context_result)
+        preparation = self._prompt_surfaces.prepare(request, context_result)
         request = preparation.request
         tools = self._resolve_tool_schemas(request, conversation)
 
@@ -222,7 +221,7 @@ class ChatCompletionUseCase:
         user_msg = Message(
             role=Role.USER,
             content=request.message,
-            metadata=self._user_message_metadata(preparation),
+            metadata=self._prompt_surfaces.user_message_metadata(preparation),
         )
         conversation.add_message(user_msg)
 
@@ -405,7 +404,7 @@ class ChatCompletionUseCase:
             conversation = Conversation()
 
         context_result = await self._build_context_result(request, conversation)
-        preparation = self._prepare_prompt_surfaces(request, context_result)
+        preparation = self._prompt_surfaces.prepare(request, context_result)
         request = preparation.request
         tools = self._resolve_tool_schemas(request, conversation)
         prompt_package = await self._build_prompt_package(
@@ -476,7 +475,7 @@ class ChatCompletionUseCase:
     ) -> AsyncIterator[StreamChunk]:
         """Execute one streaming turn, optionally without a new user message."""
         context_result = await self._build_context_result(request, conversation)
-        preparation = self._prepare_prompt_surfaces(request, context_result)
+        preparation = self._prompt_surfaces.prepare(request, context_result)
         request = preparation.request
         tools = self._resolve_tool_schemas(request, conversation)
 
@@ -484,7 +483,7 @@ class ChatCompletionUseCase:
             user_msg = Message(
                 role=Role.USER,
                 content=request.message,
-                metadata=self._user_message_metadata(preparation),
+                metadata=self._prompt_surfaces.user_message_metadata(preparation),
             )
             conversation.add_message(user_msg)
             await self._conversation_repo.update(conversation)
@@ -1308,192 +1307,6 @@ class ChatCompletionUseCase:
             "The model stopped after tool execution without producing a visible final "
             f"answer. Provider: {provider}; model: {model}. The tool results were preserved, "
             "but the provider returned an empty terminal response."
-        )
-
-    def _prepare_prompt_surfaces(
-        self,
-        request: ChatRequestDTO,
-        context_result: ContextBuildResult,
-    ) -> _PromptPreparation:
-        workspace_root = context_result.system_context.workspace_root
-        context_cwd = context_result.system_context.cwd or workspace_root
-        attachment_context = resolve_context_attachments(
-            request.context_attachments,
-            workspace_root=workspace_root,
-            cwd=context_cwd,
-            extra_skill_roots=self._skill_roots(),
-        )
-        parsed = parse_slash_invocation(request.message)
-        if parsed is None:
-            return _PromptPreparation(
-                request=request,
-                context_reminders=attachment_context.reminders,
-                context_attachment_metadata=attachment_context.metadata,
-                browser_target=_browser_target_from_context_attachments(attachment_context.metadata),
-            )
-
-        resolution = self._command_service.resolve_prompt_command(request.message, workspace_root)
-        if resolution is not None:
-            return self._with_context_attachments(
-                self._preparation_from_command(request, resolution),
-                attachment_context.reminders,
-                attachment_context.metadata,
-            )
-
-        skill = find_skill(
-            parsed[0],
-            workspace_root=workspace_root,
-            cwd=context_result.system_context.cwd or workspace_root,
-            extra_roots=self._skill_roots(),
-        )
-        if skill is not None:
-            if not is_skill_enabled(
-                skill,
-                workspace_root=workspace_root,
-                cwd=context_result.system_context.cwd or workspace_root,
-                extra_roots=self._skill_roots(),
-            ):
-                raise ValueError(f"Skill is disabled: /{parsed[0]}")
-            if skill.user_invocable:
-                return self._with_context_attachments(
-                    self._preparation_from_skill(request, skill, parsed[1]),
-                    attachment_context.reminders,
-                    attachment_context.metadata,
-                )
-
-        builtin = self._command_service.resolve_builtin(request.message)
-        if builtin is not None:
-            return self._with_context_attachments(
-                self._preparation_from_builtin(request, builtin),
-                attachment_context.reminders,
-                attachment_context.metadata,
-            )
-
-        raise ValueError(f"Unknown slash command: /{parsed[0]}")
-
-    def _preparation_from_command(
-        self,
-        request: ChatRequestDTO,
-        resolution: SlashCommandResolution,
-    ) -> _PromptPreparation:
-        command = resolution.command
-        prepared = self._apply_prompt_surface_overrides(
-            request,
-            allowed_tools=command.allowed_tools,
-            model=command.model,
-            effort=command.effort,
-        )
-        return _PromptPreparation(
-            request=prepared,
-            slash_reminder=resolution.reminder(),
-            slash_metadata=resolution.metadata(),
-        )
-
-    def _preparation_from_builtin(
-        self,
-        request: ChatRequestDTO,
-        resolution: Any,
-    ) -> _PromptPreparation:
-        command = resolution.command
-        prepared = self._apply_prompt_surface_overrides(
-            request,
-            allowed_tools=command.allowed_tools,
-            model=command.model,
-            effort=command.effort,
-        )
-        metadata = resolution.metadata()
-        metadata["source"] = "builtin"
-        return _PromptPreparation(
-            request=prepared,
-            slash_reminder=resolution.reminder(),
-            slash_metadata=metadata,
-        )
-
-    def _preparation_from_skill(
-        self,
-        request: ChatRequestDTO,
-        skill: SkillDefinition,
-        raw_arguments: str,
-    ) -> _PromptPreparation:
-        prepared = self._apply_prompt_surface_overrides(
-            request,
-            allowed_tools=skill.allowed_tools,
-            model=skill.model,
-            effort=None,
-        )
-        reminder = (
-            "# Slash Skill Context\n\n"
-            f"Skill: {skill.slash_name}\n"
-            f"Arguments: {raw_arguments or '(none)'}\n"
-            f"Source: {skill.path}\n\n"
-            "The user invoked a user-invocable skill. Treat the skill body below as "
-            "procedural guidance for this turn and load additional resources only when needed.\n\n"
-            f"{skill.body.strip()}"
-        )
-        metadata = skill.to_inventory_dict()
-        metadata["arguments"] = raw_arguments
-        return _PromptPreparation(
-            request=prepared,
-            slash_reminder=reminder,
-            slash_metadata=metadata,
-        )
-
-    def _with_context_attachments(
-        self,
-        preparation: _PromptPreparation,
-        reminders: list[str],
-        metadata: list[dict[str, Any]],
-    ) -> _PromptPreparation:
-        preparation.context_reminders = list(preparation.context_reminders) + list(reminders)
-        preparation.context_attachment_metadata = list(metadata)
-        preparation.browser_target = _browser_target_from_context_attachments(metadata)
-        return preparation
-
-    def _user_message_metadata(self, preparation: _PromptPreparation) -> dict[str, Any]:
-        metadata: dict[str, Any] = {}
-        if preparation.slash_metadata:
-            metadata["slash_command"] = preparation.slash_metadata
-        if preparation.context_attachment_metadata:
-            metadata["context_attachments"] = preparation.context_attachment_metadata
-        return metadata
-
-    def _apply_prompt_surface_overrides(
-        self,
-        request: ChatRequestDTO,
-        *,
-        allowed_tools: tuple[str, ...] = (),
-        model: str | None = None,
-        effort: str | None = None,
-    ) -> ChatRequestDTO:
-        next_allowed_tools = request.allowed_tools
-        if allowed_tools:
-            if "*" in allowed_tools:
-                next_allowed_tools = None
-            elif next_allowed_tools:
-                next_allowed_tools = sorted(set(next_allowed_tools).union(allowed_tools))
-            else:
-                next_allowed_tools = list(allowed_tools)
-
-        normalized_effort = (effort or "").strip().lower()
-        next_reasoning_level = request.reasoning_level
-        if normalized_effort in {"low", "medium", "high", "xhigh", "max"}:
-            next_reasoning_level = normalized_effort
-
-        next_model = request.model
-        if model and model.strip() and model.strip().lower() != "inherit":
-            next_model = model.strip()
-
-        if (
-            next_allowed_tools == request.allowed_tools
-            and next_reasoning_level == request.reasoning_level
-            and next_model == request.model
-        ):
-            return request
-        return replace(
-            request,
-            allowed_tools=next_allowed_tools,
-            reasoning_level=next_reasoning_level,
-            model=next_model,
         )
 
     async def _analyze_prompt_profile(
