@@ -11,7 +11,7 @@ import structlog
 
 from personagent.application.services import SessionTitleService
 from personagent.application.team_chat.agent_turn_runner import AgentTurnRunner
-from personagent.application.team_chat.blackboard import (
+from personagent.application.team_chat.blackboard_json_parsing import (
     _parse_json_object,  # noqa: F401  # backward-compat for tests
 )
 from personagent.application.team_chat.consensus_phase import (
