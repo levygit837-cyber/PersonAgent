@@ -13,10 +13,12 @@ from personagent.infrastructure.llm.vertex_ai.models import (
     VERTEX_MODELS_BY_ID,
     VertexModelSpec,
 )
+from personagent.infrastructure.llm.vertex_ai.streaming import VertexStreamingHandler
 
 __all__ = [
     "VertexAiAdapter",
     "VertexContentBuilder",
+    "VertexStreamingHandler",
     "VertexModelSpec",
     "VERTEX_MODELS",
     "VERTEX_MODELS_BY_ID",

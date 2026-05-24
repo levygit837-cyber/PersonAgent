@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
@@ -21,18 +20,17 @@ from personagent.domain.exceptions import (
     LLMBackendTimeoutError,
     provider_http_error,
 )
-from personagent.domain.models.inference_result import GeneratedImage, InferenceResult, StreamChunk
+from personagent.domain.models.inference_result import InferenceResult, StreamChunk
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.infrastructure.llm.vertex_ai.content_builder import VertexContentBuilder
 from personagent.infrastructure.llm.vertex_ai.models import (
     DEFAULT_OUTPUT_TOKENS,
-    DEFAULT_STREAM_CONNECT_TIMEOUT_SECONDS,
-    DEFAULT_STREAM_POOL_TIMEOUT_SECONDS,
     DEFAULT_TIMEOUT_SECONDS,
     GOOGLE_CLOUD_SCOPE,
     VERTEX_MODELS,
     VertexModelSpec,
 )
+from personagent.infrastructure.llm.vertex_ai.streaming import VertexStreamingHandler
 
 logger = structlog.get_logger(__name__)
 
@@ -58,7 +56,6 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
         self.project_id = project_id.strip()
         self.location = location.strip() or "global"
         self.timeout = timeout
-        self.stream_read_timeout = self._normalize_stream_read_timeout(stream_read_timeout)
         self.default_model = default_model
         self.default_max_tokens = default_max_tokens
         self.models_cache_ttl_seconds = models_cache_ttl_seconds
@@ -71,6 +68,11 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
         self._content_builder = VertexContentBuilder(
             default_model=self.default_model,
             default_max_tokens=self.default_max_tokens,
+        )
+        self._streaming = VertexStreamingHandler(
+            timeout=self.timeout,
+            stream_read_timeout=stream_read_timeout,
+            auth_mode=self.auth_mode,
         )
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -124,7 +126,7 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
         except httpx.HTTPStatusError as exc:
             raise self._http_error(exc) from exc
 
-        return self._parse_inference_result(response.json(), model)
+        return self._streaming.parse_inference_result(response.json(), model)
 
     async def chat_completion_stream(
         self,
@@ -155,16 +157,16 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
                     "Accept": "text/event-stream",
                 },
                 json=payload,
-                timeout=self._stream_timeout_config(),
+                timeout=self._streaming.stream_timeout_config(),
             ) as response:
                 response.raise_for_status()
                 response.encoding = "utf-8"
 
-                async for event in self._stream_events(response):
+                async for event in self._streaming.stream_events(response):
                     if event == "[DONE]":
                         yield StreamChunk(
                             finish_reason="stop",
-                            metadata=self._metadata(model, thought_signatures),
+                            metadata=self._streaming.metadata(model, thought_signatures),
                         )
                         break
 
@@ -173,7 +175,7 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
                     if data.get("error"):
                         raise LLMBackendError(f"Vertex AI stream error: {data['error']}")
 
-                    chunks, signatures = self._stream_chunks_from_data(data, model)
+                    chunks, signatures = self._streaming.stream_chunks_from_data(data, model)
                     thought_signatures.extend(signatures)
                     for chunk in chunks:
                         yield chunk
@@ -185,7 +187,7 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
         except httpx.TimeoutException as exc:
             raise LLMBackendTimeoutError(
                 "Timeout streaming from Vertex AI "
-                f"({self._stream_timeout_label()}, model={model})"
+                f"({self._streaming.stream_timeout_label()}, model={model})"
             ) from exc
         except httpx.HTTPStatusError as exc:
             with suppress(Exception):
@@ -236,120 +238,6 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
         self._models_cache_at = now
         return self._filter_model_response(response, capability)
 
-    def _parse_inference_result(self, data: dict[str, Any], fallback_model: str) -> InferenceResult:
-        parsed = self._parse_candidate_data(data, fallback_model)
-        return InferenceResult(
-            content=parsed["content"],
-            reasoning_content=parsed["reasoning"],
-            finish_reason=parsed["finish_reason"],
-            usage=parsed["usage"],
-            model=parsed["model"],
-            tool_calls=parsed["tool_calls"] or None,
-            images=parsed["images"],
-            metadata=self._metadata(parsed["model"], parsed["thought_signatures"]),
-        )
-
-    def _stream_chunks_from_data(
-        self,
-        data: dict[str, Any],
-        fallback_model: str,
-    ) -> tuple[list[StreamChunk], list[str]]:
-        candidate = _first_candidate(data)
-        if not candidate:
-            return [], []
-
-        model = str(data.get("modelVersion") or data.get("model") or fallback_model)
-        metadata = self._metadata(model)
-        chunks: list[StreamChunk] = []
-        thought_signatures: list[str] = []
-        tool_calls: list[dict[str, Any]] = []
-
-        content = candidate.get("content") or {}
-        raw_parts = self._normalized_content_parts(content)
-        for index, part in enumerate(content.get("parts") or []):
-            signature = _part_thought_signature(part)
-            if signature:
-                thought_signatures.append(signature)
-
-            if part.get("functionCall"):
-                tool_calls.append(self._tool_call_from_part(part, index))
-                continue
-
-            image = self._image_from_part(part)
-            if image:
-                chunks.append(StreamChunk(images=[image], metadata=metadata))
-                continue
-
-            text = _part_text(part)
-            if not text:
-                continue
-            if _part_is_thought(part):
-                chunks.append(
-                    StreamChunk(
-                        reasoning_content=text,
-                        is_thinking=True,
-                        metadata=self._metadata(model, [signature] if signature else None),
-                    )
-                )
-            else:
-                chunks.append(StreamChunk(content=text, metadata=metadata))
-
-        finish_reason = self._finish_reason(candidate.get("finishReason"), bool(tool_calls))
-        self._attach_content_parts(tool_calls, raw_parts)
-        if tool_calls or finish_reason:
-            chunks.append(
-                StreamChunk(
-                    finish_reason=finish_reason,
-                    tool_calls=tool_calls or None,
-                    usage=_usage_metadata(data),
-                    metadata=self._metadata(model, thought_signatures),
-                )
-            )
-
-        return chunks, thought_signatures
-
-    def _parse_candidate_data(self, data: dict[str, Any], fallback_model: str) -> dict[str, Any]:
-        candidate = _first_candidate(data) or {}
-        model = str(data.get("modelVersion") or data.get("model") or fallback_model)
-        content = candidate.get("content") or {}
-        raw_parts = self._normalized_content_parts(content)
-        content_parts: list[str] = []
-        reasoning_parts: list[str] = []
-        thought_signatures: list[str] = []
-        images: list[GeneratedImage] = []
-        tool_calls: list[dict[str, Any]] = []
-
-        for index, part in enumerate(content.get("parts") or []):
-            signature = _part_thought_signature(part)
-            if signature:
-                thought_signatures.append(signature)
-            if part.get("functionCall"):
-                tool_calls.append(self._tool_call_from_part(part, index))
-                continue
-            image = self._image_from_part(part)
-            if image:
-                images.append(image)
-                continue
-            text = _part_text(part)
-            if not text:
-                continue
-            if _part_is_thought(part):
-                reasoning_parts.append(text)
-            else:
-                content_parts.append(text)
-
-        self._attach_content_parts(tool_calls, raw_parts)
-        return {
-            "content": "".join(content_parts),
-            "reasoning": "".join(reasoning_parts),
-            "images": images,
-            "tool_calls": tool_calls,
-            "thought_signatures": thought_signatures,
-            "finish_reason": self._finish_reason(candidate.get("finishReason"), bool(tool_calls)),
-            "usage": _usage_metadata(data),
-            "model": model,
-        }
-
     def _model_to_catalog_item(self, model: VertexModelSpec) -> dict[str, Any]:
         capabilities = ["chat", "image_input"]
         if model.supports_thinking:
@@ -391,59 +279,6 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
             "provider": "vertex",
             "data": models,
         }
-
-    def _attach_content_parts(
-        self,
-        tool_calls: list[dict[str, Any]],
-        parts: list[dict[str, Any]],
-    ) -> None:
-        if not tool_calls or not parts:
-            return
-        extra = tool_calls[0].get("extra_content")
-        next_extra = dict(extra) if isinstance(extra, dict) else {}
-        google = next_extra.get("google")
-        next_google = dict(google) if isinstance(google, dict) else {}
-        if not next_google.get("thought_signature"):
-            signature = next(
-                (signature for part in parts if (signature := _part_thought_signature(part))),
-                "",
-            )
-            if signature:
-                next_google["thought_signature"] = signature
-        next_google["content_parts"] = parts
-        next_extra["google"] = next_google
-        tool_calls[0]["extra_content"] = next_extra
-
-    def _normalized_content_parts(self, content: dict[str, Any]) -> list[dict[str, Any]]:
-        parts = content.get("parts") or []
-        return [part for part in parts if isinstance(part, dict)]
-
-    def _tool_call_from_part(self, part: dict[str, Any], index: int) -> dict[str, Any]:
-        function_call = part.get("functionCall") or {}
-        name = str(function_call.get("name") or "")
-        args = function_call.get("args")
-        call: dict[str, Any] = {
-            "id": f"vertex-call-{index}",
-            "type": "function",
-            "function": {
-                "name": name,
-                "arguments": json.dumps(args or {}, ensure_ascii=False),
-            },
-        }
-        signature = _part_thought_signature(part)
-        if signature:
-            call["extra_content"] = {"google": {"thought_signature": signature}}
-        return call
-
-    def _image_from_part(self, part: dict[str, Any]) -> GeneratedImage | None:
-        inline_data = part.get("inlineData") or part.get("inline_data")
-        if not isinstance(inline_data, dict):
-            return None
-        data = inline_data.get("data")
-        if not isinstance(data, str) or not data:
-            return None
-        mime_type = inline_data.get("mimeType") or inline_data.get("mime_type") or "image/png"
-        return GeneratedImage(mime_type=str(mime_type), data=data, alt="Generated image")
 
     def _request_path(self, model: str, *, stream: bool) -> str:
         suffix = "streamGenerateContent" if stream else "generateContent"
@@ -523,118 +358,6 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
             "VERTEX_AUTH_MODE must be auto, api_key, express, or adc"
         )
 
-    def _metadata(
-        self,
-        model: str,
-        thought_signatures: list[str] | None = None,
-    ) -> dict[str, Any]:
-        metadata: dict[str, Any] = {
-            "provider": "vertex",
-            "model": model,
-            "vertex_auth_mode": self._auth_strategy(),
-        }
-        if thought_signatures:
-            metadata["vertex_thought_signatures"] = [
-                signature for signature in thought_signatures if signature
-            ]
-        return metadata
-
-    def _finish_reason(self, raw: Any, has_tool_calls: bool) -> str | None:
-        if has_tool_calls:
-            return "tool_calls"
-        if raw is None:
-            return None
-        normalized = str(raw).strip().upper()
-        if normalized in {"", "FINISH_REASON_UNSPECIFIED"}:
-            return None
-        return {
-            "STOP": "stop",
-            "MAX_TOKENS": "length",
-            "SAFETY": "content_filter",
-            "RECITATION": "content_filter",
-            "BLOCKLIST": "content_filter",
-            "PROHIBITED_CONTENT": "content_filter",
-            "SPII": "content_filter",
-        }.get(normalized, normalized.lower())
-
-    def _stream_timeout_config(self) -> httpx.Timeout:
-        bounded_timeout = max(float(self.timeout), 1.0)
-        return httpx.Timeout(
-            timeout=None,
-            connect=min(DEFAULT_STREAM_CONNECT_TIMEOUT_SECONDS, bounded_timeout),
-            read=self.stream_read_timeout,
-            write=bounded_timeout,
-            pool=min(DEFAULT_STREAM_POOL_TIMEOUT_SECONDS, bounded_timeout),
-        )
-
-    def _stream_timeout_label(self) -> str:
-        if self.stream_read_timeout is None:
-            return "read timeout disabled"
-        return f"read timeout {self.stream_read_timeout}s"
-
-    def _normalize_stream_read_timeout(self, value: float | None) -> float | None:
-        if value is None:
-            return None
-        timeout = float(value)
-        return timeout if timeout > 0 else None
-
-    def _stream_data_from_line(self, line: str) -> str:
-        stripped = line.strip()
-        if not stripped:
-            return ""
-        if stripped.startswith("data: "):
-            return stripped[6:]
-        if stripped.startswith("{"):
-            return stripped
-        return ""
-
-    async def _stream_events(self, response: httpx.Response) -> AsyncIterator[dict[str, Any] | str]:
-        content_type = response.headers.get("content-type", "").lower()
-        if "application/json" in content_type:
-            async for data in self._json_stream_objects(response):
-                yield data
-            return
-
-        async for line in response.aiter_lines():
-            data_str = self._stream_data_from_line(line)
-            if not data_str:
-                continue
-            if data_str == "[DONE]":
-                yield data_str
-                return
-            try:
-                data = json.loads(data_str)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(data, dict):
-                yield data
-
-    async def _json_stream_objects(self, response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
-        decoder = json.JSONDecoder()
-        buffer = ""
-        async for text in response.aiter_text():
-            buffer += text
-            while True:
-                buffer = buffer.lstrip()
-                if not buffer:
-                    break
-                if buffer[0] in "[,":
-                    buffer = buffer[1:]
-                    continue
-                if buffer[0] == "]":
-                    return
-                try:
-                    item, index = decoder.raw_decode(buffer)
-                except json.JSONDecodeError:
-                    break
-                buffer = buffer[index:]
-                if isinstance(item, dict):
-                    yield item
-                elif isinstance(item, list):
-                    for nested in item:
-                        if isinstance(nested, dict):
-                            yield nested
-
     def _http_error(self, exc: httpx.HTTPStatusError) -> LLMBackendError:
         detail = exc.response.reason_phrase
         with suppress(ValueError, TypeError, httpx.ResponseNotRead):
@@ -646,29 +369,6 @@ class VertexAiAdapter(LLMBackendRepository):  # type: ignore[misc]
             detail=detail,
             retry_after=exc.response.headers.get("retry-after"),
         )
-
-
-def _first_candidate(data: dict[str, Any]) -> dict[str, Any] | None:
-    candidates = data.get("candidates") or []
-    if not candidates:
-        return None
-    candidate = candidates[0]
-    return candidate if isinstance(candidate, dict) else None
-
-
-def _usage_metadata(data: dict[str, Any]) -> dict[str, int] | None:
-    usage = data.get("usageMetadata") or data.get("usage_metadata")
-    return usage if isinstance(usage, dict) else None
-
-
-def _part_text(part: dict[str, Any]) -> str:
-    value = part.get("text")
-    return value if isinstance(value, str) else ""
-
-
-def _part_thought_signature(part: dict[str, Any]) -> str:
-    value = part.get("thoughtSignature") or part.get("thought_signature")
-    return value if isinstance(value, str) else ""
 
 
 def _error_message_from_body(body: Any, fallback: str) -> str:
@@ -687,20 +387,6 @@ def _error_message_from_body(body: Any, fallback: str) -> str:
     if detail:
         return str(detail)
     return fallback
-
-
-def _part_is_thought(part: dict[str, Any]) -> bool:
-    value = part.get("thought")
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"true", "1", "yes"}
-    snake_value = part.get("is_thought") or part.get("isThought")
-    if isinstance(snake_value, bool):
-        return snake_value
-    if isinstance(snake_value, str):
-        return snake_value.strip().lower() in {"true", "1", "yes"}
-    return False
 
 
 def _ensure_aware_datetime(value: datetime | None) -> datetime | None:

@@ -272,7 +272,7 @@ def test_vertex_payload_adds_skip_signature_when_gemini_3_returns_unsigned_funct
 def test_vertex_stream_parser_keeps_original_tool_call_parts_for_replay():
     adapter = VertexAiAdapter(api_key="google-test-key")
 
-    chunks, _signatures = adapter._stream_chunks_from_data(
+    chunks, _signatures = adapter._streaming.stream_chunks_from_data(
         {
             "modelVersion": "gemini-3-flash-preview",
             "candidates": [
@@ -422,7 +422,7 @@ def test_vertex_payload_omits_thinking_config_for_pro_image_model():
 def test_vertex_parser_splits_thought_text_final_text_and_preserves_signature():
     adapter = VertexAiAdapter(api_key="google-test-key")
 
-    result = adapter._parse_inference_result(
+    result = adapter._streaming.parse_inference_result(
         {
             "modelVersion": "gemini-3.1-flash-lite-preview",
             "candidates": [
@@ -454,7 +454,7 @@ def test_vertex_parser_splits_thought_text_final_text_and_preserves_signature():
 def test_vertex_parser_accepts_string_thought_marker():
     adapter = VertexAiAdapter(api_key="google-test-key")
 
-    result = adapter._parse_inference_result(
+    result = adapter._streaming.parse_inference_result(
         {
             "candidates": [
                 {
@@ -477,7 +477,7 @@ def test_vertex_parser_accepts_string_thought_marker():
 def test_vertex_parser_extracts_inline_data_as_generated_image():
     adapter = VertexAiAdapter(api_key="google-test-key")
 
-    result = adapter._parse_inference_result(
+    result = adapter._streaming.parse_inference_result(
         {
             "candidates": [
                 {
@@ -512,7 +512,7 @@ def test_vertex_parser_extracts_inline_data_as_generated_image():
 def test_vertex_stream_parser_emits_reasoning_content_and_images_in_order():
     adapter = VertexAiAdapter(api_key="google-test-key")
 
-    chunks, signatures = adapter._stream_chunks_from_data(
+    chunks, signatures = adapter._streaming.stream_chunks_from_data(
         {
             "modelVersion": "gemini-3.1-flash-image-preview",
             "candidates": [
@@ -556,7 +556,7 @@ async def test_vertex_stream_events_parse_incremental_json_array_responses():
             ]:
                 yield part
 
-    events = [event async for event in adapter._stream_events(FakeResponse())]
+    events = [event async for event in adapter._streaming.stream_events(FakeResponse())]
 
     assert events[0]["candidates"][0]["content"]["parts"][0]["text"] == "hello"
     assert events[1]["candidates"][0]["finishReason"] == "STOP"
