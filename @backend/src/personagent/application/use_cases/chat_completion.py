@@ -59,6 +59,7 @@ from personagent.application.use_cases.chat.helpers import (
     set_session_status as _set_session_status,
 )
 from personagent.application.use_cases.chat.memory_recall import MemoryRecallCoordinator
+from personagent.application.use_cases.chat.message_preparation import MessagePreparer
 from personagent.application.use_cases.chat.operational_memory import (
     OperationalMemoryCapture,
 )
@@ -196,6 +197,10 @@ class ChatCompletionUseCase:
             orchestrator_factory=self._new_orchestrator,
             operational_memory=self._operational_memory,
         )
+        self._message_preparer = MessagePreparer(
+            compactor=self._compactor,
+            context_window_tokens=self._context_window_tokens,
+        )
         self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
         self._artifact_ttl_seconds = artifact_ttl_seconds if artifact_ttl_seconds and artifact_ttl_seconds > 0 else None
 
@@ -258,7 +263,7 @@ class ChatCompletionUseCase:
                             "source": self._tool_iteration_limit_source(request),
                         },
                     )
-                messages, context_metadata = await self._prepare_messages_for_llm(
+                messages, context_metadata = await self._message_preparer.prepare(
                     conversation,
                     request,
                     prompt_package,
@@ -532,7 +537,7 @@ class ChatCompletionUseCase:
                             "source": self._tool_iteration_limit_source(request),
                         },
                     )
-                messages, context_metadata = await self._prepare_messages_for_llm(
+                messages, context_metadata = await self._message_preparer.prepare(
                     conversation,
                     request,
                     prompt_package,
@@ -584,7 +589,7 @@ class ChatCompletionUseCase:
                     async for forwarded_chunk in self._stream_assistant_pass(
                         request=request,
                         conversation_id=str(conversation.id),
-                        messages=self._messages_with_final_answer_reminder(messages),
+                        messages=self._message_preparer.with_final_answer_reminder(messages),
                         tools=[],
                         seen_tool_call_ids=seen_tool_call_ids,
                         iteration=iteration,
@@ -1032,25 +1037,6 @@ class ChatCompletionUseCase:
             },
         )
 
-    def _messages_with_final_answer_reminder(
-        self,
-        messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        reminder = (
-            "The previous provider pass stopped after tool results without a visible "
-            "final answer. Use the tool results already present in the conversation "
-            "and respond now with the final answer. Do not call more tools for this "
-            "recovery pass."
-        )
-        if messages and messages[0].get("role") == "system":
-            updated = dict(messages[0])
-            updated["content"] = f"{updated.get('content') or ''}\n\n{reminder}"
-            return [updated, *messages[1:]]
-        return [
-            {"role": "system", "content": reminder},
-            *messages,
-        ]
-
     def _empty_model_response_notice(self, *, provider: str, model: str) -> str:
         return (
             "The model stopped after tool execution without producing a visible final "
@@ -1167,80 +1153,6 @@ class ChatCompletionUseCase:
             build_duration_ms=0,
             metadata={"source": "fallback"},
         )
-
-    async def _prepare_messages_for_llm(
-        self,
-        conversation: Conversation,
-        request: ChatRequestDTO,
-        prompt_package: _PromptPackage,
-        tools: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        messages = self._messages_with_prompt(
-            conversation,
-            prompt_package,
-            include_reasoning_content=request.provider in {"deepseek", "zenmux"},
-            include_reasoning_details=request.provider == "zenmux",
-        )
-        estimated_tokens = self._compactor.estimate_request_tokens(messages, tools)
-        metadata = {
-            **prompt_package.metadata,
-            "context_tokens_estimated": estimated_tokens,
-            "context_compacted": False,
-            "context_window_tokens": self._context_window_tokens,
-        }
-
-        if not self._compactor.should_compact(estimated_tokens, request):
-            return messages, metadata
-
-        compacted = await self._compactor.compact_conversation(conversation, request)
-        if not compacted:
-            return messages, metadata
-
-        messages = self._messages_with_prompt(
-            conversation,
-            prompt_package,
-            include_reasoning_content=request.provider in {"deepseek", "zenmux"},
-            include_reasoning_details=request.provider == "zenmux",
-        )
-        estimated_tokens = self._compactor.estimate_request_tokens(messages, tools)
-        metadata.update(
-            {
-                "context_tokens_estimated": estimated_tokens,
-                "context_compacted": True,
-            }
-        )
-        return messages, metadata
-
-    def _messages_with_prompt(
-        self,
-        conversation: Conversation,
-        prompt_package: _PromptPackage,
-        *,
-        include_reasoning_content: bool = False,
-        include_reasoning_details: bool = False,
-    ) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = []
-        if prompt_package.system_prompt:
-            messages.append({"role": "system", "content": prompt_package.system_prompt})
-        for message in conversation.messages:
-            rendered = message.to_dict()
-            reasoning_content = message.metadata.get("reasoning_content")
-            if (
-                include_reasoning_content
-                and message.role == Role.ASSISTANT
-                and isinstance(reasoning_content, str)
-                and reasoning_content
-            ):
-                rendered["reasoning_content"] = reasoning_content
-            reasoning_details = message.metadata.get("zenmux_reasoning_details")
-            if (
-                include_reasoning_details
-                and message.role == Role.ASSISTANT
-                and reasoning_details
-            ):
-                rendered["reasoning_details"] = reasoning_details
-            messages.append(rendered)
-        return messages
 
     async def _after_turn_services(
         self,
