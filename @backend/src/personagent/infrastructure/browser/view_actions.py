@@ -319,7 +319,7 @@ class BrowserViewActions:
         if normalized_action == "upload":
             result = await self._w._upload_files(action_context, cached_selector, files or [])
         else:
-            from personagent.infrastructure.browser.lightpanda import _BROWSER_ACT_SCRIPT
+            from personagent.infrastructure.browser.scripts import _BROWSER_ACT_SCRIPT
 
             result = await self._w._evaluate_page(
                 action_context,
