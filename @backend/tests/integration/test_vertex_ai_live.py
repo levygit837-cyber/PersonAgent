@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
-from personagent.infrastructure.llm.vertex_ai_adapter import VertexAiAdapter
+from personagent.infrastructure.llm.vertex_ai import VertexAiAdapter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(PROJECT_ROOT / ".env")

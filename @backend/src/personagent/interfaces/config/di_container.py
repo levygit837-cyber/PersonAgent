@@ -29,7 +29,7 @@ from personagent.infrastructure.llm.process_manager import (
     EmbeddingServerProcessManager,
     LlamaServerProcessManager,
 )
-from personagent.infrastructure.llm.vertex_ai_adapter import VertexAiAdapter
+from personagent.infrastructure.llm.vertex_ai import VertexAiAdapter
 from personagent.infrastructure.llm.zenmux_adapter import ZenMuxAdapter
 from personagent.infrastructure.persistence.context import InMemoryContextRepository
 from personagent.infrastructure.persistence.database import AsyncSessionLocal
