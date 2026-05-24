@@ -10,11 +10,7 @@ import pytest
 
 from personagent.application.team_chat.contracts import TeamAgentConfig, TeamChatRequest, TeamConfig
 from personagent.application.team_chat.messages import (
-    INDEPENDENT_PHASE,
-    TOOL_PHASE_AUDIT,
-    TOOL_PHASE_MUTATING_PROPOSAL,
     TOOL_PHASE_PLAN,
-    TOOL_PHASE_READ,
     _agent_system_prompt,
     _agent_tool_context,
     _claim_graph_output_contract,
