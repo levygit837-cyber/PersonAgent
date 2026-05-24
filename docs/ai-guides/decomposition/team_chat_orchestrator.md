@@ -58,8 +58,8 @@ imports don't break.
 | 2 — Extract `_Blackboard` to `team_chat/blackboard.py` | ✅ Merged | — | 1,042 lines removed from orchestrator.py |
 | 3 — Extract `AgentTurnRunner` | ✅ Merged | #21 | 405 lines removed from orchestrator.py |
 | 4 — Extract `ConsensusPhase` | ✅ Merged | #26 | 230 lines removed from orchestrator.py |
-| 5 — Extract `CoordinatorPhase` | ✅ Ready | #27 | 279 lines removed from orchestrator.py |
-| 6 — Extract `FinalSynthesis` | ⏳ Pending | — | |
+| 5 — Extract `CoordinatorPhase` | ✅ Merged | #27 | 279 lines removed from orchestrator.py |
+| 6 — Extract `FinalSynthesis` | ✅ Ready | #28 | 83 lines removed from orchestrator.py |
 | 7 — Extract `MessageBuilders` to `team_chat/messages.py` | ⏳ Pending | — | |
 | 8 — Inline what remains (the outer phase loop) | ⏳ Pending | — | |
 
