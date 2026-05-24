@@ -26,9 +26,10 @@ directory.
 | Message preparation    | #16 | ~88           | 1,308      |
 | Tool context builder   | #17 | ~118          | 1,190      |
 | After-turn coordinator | #19 | ~38           | 1,152      |
-| **Current**            |     |               | **1,152**  |
+| Media policy handler   | #20 | ~54           | 1,098      |
+| **Current**            |     |               | **1,098**  |
 
-Cumulative reduction: **2,742 → 1,152 lines (–58%)**.
+Cumulative reduction: **2,742 → 1,098 lines (–60%)**.
 
 ## Public contract that must be preserved
 
@@ -212,18 +213,18 @@ team-chat.
 **Risk:** Low. Side-effect-only methods; tests need to pin the
 order of calls.
 
-### Slice 11 — `StreamingTurnExecutor` (LAST; ~600+ lines, HIGH RISK)
+### Slice 11 — `StreamingTurnExecutor` (LAST; ~500+ lines, HIGH RISK)
 
 **What moves out:**
 
-- `_stream_completion_turn` (467–838) — 370 lines
-- `_stream_assistant_pass` (1173–1259)
-- `_normalize_provider_stream_chunk` (1260–1285)
-- `_empty_model_response_notice` (1305–1311)
-- `_get_or_create_conversation` (839–855)
-- `_assistant_message_from_result` (856–875)
-- `_enforce_provider_data_policy` (876–888)
-- `_store_generated_images` (889–925)
+- `_stream_completion_turn` — outer turn loop (~370 lines)
+- `_stream_assistant_pass`
+- `_normalize_provider_stream_chunk`
+- `_empty_model_response_notice`
+- `_get_or_create_conversation`
+- `_assistant_message_from_result`
+- ~~`_enforce_provider_data_policy`~~ — landed in #20 (`MediaPolicyHandler`)
+- ~~`_store_generated_images`~~ — landed in #20 (`MediaPolicyHandler`)
 
 **Why this is last:**
 
