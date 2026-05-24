@@ -2,9 +2,6 @@ import { createContext, createElement, useContext, type ReactNode } from "react"
 import { useStore } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import {
-  approvePlan,
-  cancelPlan,
-  continuePlan,
   rejectTool,
   streamApproveTool,
 } from "../api/client";
@@ -34,11 +31,11 @@ import {
 import { createComposerSlice } from "./chat-store/composer-slice";
 import { createConversationSlice } from "./chat-store/conversation-slice";
 import { createStreamingSlice } from "./chat-store/streaming-slice";
+import { createPlanApprovalSlice } from "./chat-store/plan-approval-slice";
 import {
   handleChunk,
   flushTextBuffer,
   closeActiveReasoning,
-  updatePlanApprovalArtifact,
   stringValue,
   isRecord,
   messageFromPersisted,
@@ -63,7 +60,6 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
   return createStore<ChatState>((set, get) => ({
   workspaceRoot: options.initialWorkspaceRoot,
   messages: [],
-  isProcessingPlanDecision: false,
 
   ...createComposerSlice(set, get),
   ...createConversationSlice(set, get, {
@@ -73,84 +69,9 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
     isRecord,
   }),
   ...createStreamingSlice(set, get, { paneId }),
+  ...createPlanApprovalSlice(set, get),
 
   setWorkspaceRoot: (workspaceRoot) => set({ workspaceRoot: workspaceRoot?.trim() || undefined }),
-
-  approvePendingPlan: async (feedback) => {
-    const pending = get().pendingPlanApproval;
-    if (!pending || get().isStreaming || get().isProcessingPlanDecision) return;
-    set({ isProcessingPlanDecision: true });
-    try {
-      const response = await approvePlan(useAppStore.getState().baseUrl, {
-        conversationId: pending.conversationId,
-        approvalId: pending.approvalId,
-        feedback,
-      });
-      set((state) => ({
-        pendingPlanApproval: undefined,
-        error: undefined,
-        messages: updatePlanApprovalArtifact(state.messages, pending.approvalId, response.plan_status ?? "approved", feedback),
-      }));
-      setConversationStatus(set, pending.conversationId, "running");
-      const injected = response.injected_message?.trim();
-      if (injected) await get().sendMessage(injected);
-    } catch (error) {
-      set({ error: errorMessage(error) });
-      setConversationStatus(set, pending.conversationId, "error");
-    } finally {
-      set({ isProcessingPlanDecision: false });
-    }
-  },
-
-  continuePendingPlan: async (feedback) => {
-    const pending = get().pendingPlanApproval;
-    if (!pending || get().isStreaming || get().isProcessingPlanDecision) return;
-    set({ isProcessingPlanDecision: true });
-    try {
-      const response = await continuePlan(useAppStore.getState().baseUrl, {
-        conversationId: pending.conversationId,
-        approvalId: pending.approvalId,
-        feedback,
-      });
-      set((state) => ({
-        pendingPlanApproval: undefined,
-        error: undefined,
-        messages: updatePlanApprovalArtifact(state.messages, pending.approvalId, response.plan_status ?? "draft", feedback),
-      }));
-      setConversationStatus(set, pending.conversationId, "running");
-      const message = response.suggested_message?.trim();
-      if (message) await get().sendMessage(message);
-    } catch (error) {
-      set({ error: errorMessage(error) });
-      setConversationStatus(set, pending.conversationId, "error");
-    } finally {
-      set({ isProcessingPlanDecision: false });
-    }
-  },
-
-  cancelPendingPlan: async (feedback) => {
-    const pending = get().pendingPlanApproval;
-    if (!pending || get().isStreaming || get().isProcessingPlanDecision) return;
-    set({ isProcessingPlanDecision: true });
-    try {
-      await cancelPlan(useAppStore.getState().baseUrl, {
-        conversationId: pending.conversationId,
-        approvalId: pending.approvalId,
-        feedback,
-      });
-      set((state) => ({
-        pendingPlanApproval: undefined,
-        error: undefined,
-        messages: updatePlanApprovalArtifact(state.messages, pending.approvalId, "cancelled", feedback),
-      }));
-      setConversationStatus(set, pending.conversationId, "idle");
-    } catch (error) {
-      set({ error: errorMessage(error) });
-      setConversationStatus(set, pending.conversationId, "error");
-    } finally {
-      set({ isProcessingPlanDecision: false });
-    }
-  },
 
   approvePendingTool: async () => {
     const pending = get().pendingToolApproval;
