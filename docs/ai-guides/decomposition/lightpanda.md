@@ -76,7 +76,7 @@ appropriate.
 | 8 — Inline what remains | ✅ Merged | — | JS scripts → `scripts.py` (942 lines); content extraction → `content.py` (20 methods); 20 new tests; lightpanda.py: 3,520 → 2,015 (−43%) |
 | 9 — Extract console & cooperation | ✅ Merged | — | 8 methods, 105 lines removed; `BrowserConsole` in `console.py`; 32 new tests |
 | 10 — Extract opened page tracking | ✅ Merged | — | 8 methods, 116 lines removed; `OpenedPageTracker` in `opened_pages.py`; 27 new tests |
-| 11 — Extract search result cache | ⏳ Pending | — | 9 methods, ~133 lines → `search_cache.py` |
+| 11 — Extract search result cache | ✅ Merged | — | 9 methods, 74 lines removed; `SearchResultCache` in `search_cache.py`; 30 new tests |
 | 12 — Extract element & frame helpers | ⏳ Pending | — | 8 methods, ~91 lines → existing helpers or `element_helpers.py` |
 | 13 — Extract block detection | ⏳ Pending | — | 4 methods, ~127 lines → `block_detection.py` |
 | 14 — Extract page helpers | ⏳ Pending | — | 10 methods, ~180 lines → `page_helpers.py` |

@@ -40,6 +40,7 @@ from personagent.infrastructure.browser.scripts import (
     _STYLE_READY_SNAPSHOT_SCRIPT,
 )
 from personagent.infrastructure.browser.search import BrowserSearch
+from personagent.infrastructure.browser.search_cache import SearchResultCache
 from personagent.infrastructure.browser.snapshot import BrowserSnapshot
 from personagent.infrastructure.browser.url_utils import (
     clean_browser_url as _clean_browser_url,
@@ -146,6 +147,7 @@ class LightPandaBrowserWorker:
         self.content_module = BrowserContent(self)
         self.console = BrowserConsole(self)
         self.opened_pages = OpenedPageTracker(self)
+        self.search_result_cache = SearchResultCache(self)
         self._lock = asyncio.Lock()
         self._sessions_lock = asyncio.Lock()
         self._container_start_lock = asyncio.Lock()
@@ -1512,45 +1514,22 @@ class LightPandaBrowserWorker:
         search_url: str,
         results: list[BrowserSearchResult],
     ) -> BrowserSearchSnapshot:
-        raw_id = f"{conversation_id}\n{query}\n{search_url}\n{time.monotonic_ns()}"
-        search_id = f"search_{hashlib.sha256(raw_id.encode()).hexdigest()[:12]}"
-        snapshot = BrowserSearchSnapshot(
-            search_id=search_id,
-            query=query,
-            search_url=search_url,
-            provider=self.search_provider,
-            results=self._copy_search_results(results),
+        return self.search_result_cache.cache_search_results(
+            conversation_id=conversation_id, query=query,
+            search_url=search_url, results=results,
         )
-        snapshots = self._search_cache.setdefault(conversation_id, [])
-        snapshots.insert(0, snapshot)
-        del snapshots[_MAX_CACHED_SEARCHES_PER_CONVERSATION:]
-        return snapshot
 
     def _latest_cached_search_results(self, conversation_id: str) -> list[BrowserSearchResult]:
-        snapshots = self._search_cache.get(conversation_id) or []
-        if not snapshots:
-            return []
-        return self._copy_search_results(snapshots[0].results)
+        return self.search_result_cache.latest_cached_search_results(conversation_id)
 
     def _copy_search_results(
         self,
         results: list[BrowserSearchResult],
     ) -> list[BrowserSearchResult]:
-        return [
-            BrowserSearchResult(
-                index=result.index,
-                title=result.title,
-                url=result.url,
-                snippet=result.snippet,
-            )
-            for result in results
-        ]
+        return SearchResultCache.copy_search_results(results)
 
     def _remember_current_url(self, conversation_id: str, url: str | None) -> None:
-        url = _clean_browser_url(str(url or ""))
-        if not url or url == "about:blank":
-            return
-        self._current_url_cache[conversation_id] = url
+        self.search_result_cache.remember_current_url(conversation_id, url)
 
     def _cache_opened_page(
         self,
@@ -1705,30 +1684,8 @@ class LightPandaBrowserWorker:
         *,
         search_id: str | None = None,
     ) -> tuple[str, str | None]:
-        if search_id:
-            for snapshot in self._search_cache.get(conversation_id, []):
-                if snapshot.search_id != search_id:
-                    continue
-                for result in snapshot.results:
-                    if result.index == result_index:
-                        return _clean_browser_url(result.url), snapshot.search_id
-                raise BrowserError(
-                    f"No browser search result with index {result_index} in search_id {search_id}."
-                )
-            raise BrowserError(
-                f"No cached browser search with search_id {search_id}. Run BrowserSearch first."
-            )
-
-        for snapshot in self._search_cache.get(conversation_id, []):
-            for result in snapshot.results:
-                if result.index == result_index:
-                    return _clean_browser_url(result.url), snapshot.search_id
-
-        for result in session.search_results:
-            if result.index == result_index:
-                return _clean_browser_url(result.url), None
-        raise BrowserError(
-            f"No browser search result with index {result_index}. Run BrowserSearch first."
+        return self.search_result_cache.result_url(
+            conversation_id, session, result_index, search_id=search_id,
         )
 
     def _result_title(
@@ -1738,14 +1695,9 @@ class LightPandaBrowserWorker:
         *,
         search_id: str | None = None,
     ) -> str:
-        snapshots = self._search_cache.get(conversation_id, [])
-        for snapshot in snapshots:
-            if search_id and snapshot.search_id != search_id:
-                continue
-            for result in snapshot.results:
-                if result.index == result_index:
-                    return result.title
-        return ""
+        return self.search_result_cache.result_title(
+            conversation_id, result_index, search_id=search_id,
+        )
 
     def _match_search_result_url(
         self,
@@ -1754,14 +1706,9 @@ class LightPandaBrowserWorker:
         *,
         search_id: str | None = None,
     ) -> str | None:
-        snapshots = self._search_cache.get(conversation_id, [])
-        for snapshot in snapshots:
-            if search_id and snapshot.search_id != search_id:
-                continue
-            for result in snapshot.results:
-                if _urls_equivalent(url, result.url):
-                    return snapshot.search_id
-        return None
+        return self.search_result_cache.match_search_result_url(
+            conversation_id, url, search_id=search_id,
+        )
 
     def _match_search_result_title(
         self,
@@ -1770,14 +1717,9 @@ class LightPandaBrowserWorker:
         *,
         search_id: str | None = None,
     ) -> str:
-        snapshots = self._search_cache.get(conversation_id, [])
-        for snapshot in snapshots:
-            if search_id and snapshot.search_id != search_id:
-                continue
-            for result in snapshot.results:
-                if _urls_equivalent(url, result.url):
-                    return result.title
-        return ""
+        return self.search_result_cache.match_search_result_title(
+            conversation_id, url, search_id=search_id,
+        )
 
     async def _cleanup_sessions(self) -> None:
         now = time.monotonic()
@@ -1791,23 +1733,7 @@ class LightPandaBrowserWorker:
         self._cleanup_search_cache(now)
 
     def _cleanup_search_cache(self, now: float) -> None:
-        for conversation_id, snapshots in list(self._search_cache.items()):
-            fresh = [
-                snapshot
-                for snapshot in snapshots
-                if now - snapshot.created_at <= self.session_ttl_seconds
-            ][:_MAX_CACHED_SEARCHES_PER_CONVERSATION]
-            if fresh:
-                self._search_cache[conversation_id] = fresh
-            else:
-                self._search_cache.pop(conversation_id, None)
-                if conversation_id not in self._sessions:
-                    self._current_url_cache.pop(conversation_id, None)
-                    self._last_open_cache.pop(conversation_id, None)
-                    self._opened_pages_cache.pop(conversation_id, None)
-                    self._element_map_cache.pop(conversation_id, None)
-                    self._console_cache.pop(conversation_id, None)
-                    self._cooperation_event_cache.pop(conversation_id, None)
+        self.search_result_cache.cleanup_search_cache(now)
 
     async def _enforce_session_limit(self) -> None:
         while len(self._sessions) > self.max_sessions:
