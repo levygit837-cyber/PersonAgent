@@ -1,10 +1,6 @@
-"""Backward-compat shim: vertex_ai_adapter → vertex_ai package.
+"""Google Vertex AI native Gemini adapter sub-package."""
 
-TODO: Remove this file after all downstream consumers migrate to
-      `personagent.infrastructure.llm.vertex_ai`.
-"""
-
-from personagent.infrastructure.llm.vertex_ai import VertexAiAdapter
+from personagent.infrastructure.llm.vertex_ai.adapter import VertexAiAdapter
 from personagent.infrastructure.llm.vertex_ai.models import (
     DEFAULT_OUTPUT_TOKENS,
     DEFAULT_STREAM_CONNECT_TIMEOUT_SECONDS,
