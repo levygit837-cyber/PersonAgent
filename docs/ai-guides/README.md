@@ -44,6 +44,14 @@ docs/ai-guides/
 │   ├── lightpanda.md                  # Backend: infrastructure/browser/lightpanda.py (5.735 L)
 │   ├── session_panel.md               # Frontend: components/chat/session-panel.tsx (3.960 L)
 │   └── chat_store.md                  # Frontend: stores/chat-store.ts (3.307 L)
+├── roadmap/                           # Roadmap auditável (fases 0 → 3)
+│   ├── README.md                      # Índice das fases
+│   ├── _format.md                     # Template + regras de auditoria
+│   ├── decisions.md                   # Decisões transversais (DEC-001..)
+│   ├── phase-0-anti-fogo.md           # Fase 0 — completed
+│   ├── phase-1-hardening-estrutural.md # Fase 1 — in_progress
+│   ├── phase-2-tipagem-contratos.md   # Fase 2 — pending
+│   └── phase-3-escala-produto.md      # Fase 3 — pending
 └── scripts/
     ├── extract_backend_symbols.py     # Script de inventário Python
     └── extract_frontend_symbols.py   # Script de inventário TypeScript
@@ -88,6 +96,9 @@ Para funções de módulo:
 
 ### Quero decompor um god file em módulos menores
 → Leia `decomposition/README.md` primeiro, depois `decomposition/_protocol.md`, depois o playbook do arquivo alvo.
+
+### Quero saber em que fase do roadmap o projeto está
+→ Leia `roadmap/README.md` para o índice das fases. Cada fase tem deliverables checkable e PRs vinculados.
 
 ### Quero encontrar onde uma função/classe está definida
 → Busque em `_inventory/backend_symbols.json` ou `_inventory/frontend_symbols.json`
