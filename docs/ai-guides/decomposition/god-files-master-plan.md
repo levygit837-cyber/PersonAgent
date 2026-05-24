@@ -16,46 +16,51 @@ A file qualifies as a god file if it meets **all three**:
 
 ### Backend god files
 
-| # | File | Lines | Status | Playbook |
-|---|------|------:|--------|----------|
-| 1 | `infrastructure/browser/lightpanda.py` | 4,710 | 🔄 Slices 1–4 merged (PRs #37–#40), slices 5–8 pending | `lightpanda.md` |
-| 2 | `infrastructure/tools/browser_tools.py` | 2,786 | ⏳ Not started | `browser_tools.md` |
-| 3 | `infrastructure/persistence/operational_memory_repository.py` | 1,938 | ⏳ Not started | `operational_memory_repository.md` |
-| 4 | `interfaces/api/routes/chat.py` | 1,905 | ⏳ Not started | `routes_chat.md` |
-| 5 | `interfaces/api/routes/workspace.py` | 1,576 | ⏳ Not started | `routes_workspace.md` |
-| 6 | `interfaces/api/routes/sessions.py` | 1,471 | ⏳ Not started | `routes_sessions.md` |
-| 7 | `application/services/browser_cooperation.py` | 1,292 | ⏳ Not started | `browser_cooperation.md` |
-| 8 | `application/team_chat/blackboard.py` | 1,091 | ⏳ Not started | `blackboard.md` |
-| 9 | `application/services/operational_memory.py` | 1,075 | ⏳ Not started | `operational_memory_service.md` |
-| 10 | `infrastructure/llm/vertex_ai_adapter.py` | 1,064 | ⏳ Not started | `llm_adapters.md` |
-| 11 | `application/services/session_panel.py` | 976 | ⏳ Not started | `session_panel_service.md` |
-| 12 | `infrastructure/llm/codex_subscription_adapter.py` | 944 | ⏳ Not started | `llm_adapters.md` |
-| 13 | `infrastructure/persistence/models.py` | 919 | ⏳ Not started | `persistence_models.md` |
-| 14 | `infrastructure/llm/kimi_coding_adapter.py` | 892 | ⏳ Not started | `llm_adapters.md` |
-| 15 | `application/services/session_titles.py` | 848 | ⏳ Not started | `session_titles.md` |
-| 16 | `infrastructure/tools/filesystem_tools.py` | 810 | ⏳ Not started | `filesystem_tools.md` |
+| # | File | Original | Current | Status | Playbook |
+|---|------|------:|------:|--------|----------|
+| 1 | `infrastructure/browser/lightpanda.py` | 5,735 | 1,469 | ✅ Done — 14 slices (PRs #37–#56), −74% | `lightpanda.md` |
+| 2 | `infrastructure/tools/browser_tools/factories.py` | 2,786 | 61 | ✅ Done — 4 slices (PRs #48, #57–#59), −98% | `browser_tools.md` |
+| 3 | `infrastructure/persistence/operational_memory_repository.py` | 1,938 | 251 | ✅ Done — 6 slices (merged to main), −87% | `operational_memory_repository.md` |
+| 4 | `interfaces/api/routes/chat/__init__.py` | 1,905 | 1,419 | 🔄 In progress — 2 slices merged (PRs #75, #79), more pending | `routes_chat.md` |
+| 5 | `infrastructure/llm/vertex_ai_adapter.py` | 1,064 | 31 | ✅ Done — 3 slices (PRs #47, #50, #53), −97% | `llm_adapters.md` |
+| 6 | `interfaces/api/routes/workspace.py` | 1,576 | 1,576 | ⏳ Not started | `routes_workspace.md` |
+| 7 | `interfaces/api/routes/sessions.py` | 1,471 | 1,471 | ⏳ Not started | `routes_sessions.md` |
+| 8 | `application/services/browser_cooperation.py` | 1,292 | 1,292 | ⏳ Not started | `browser_cooperation.md` |
+| 9 | `application/team_chat/blackboard.py` | 1,091 | 1,091 | ⏳ Not started | `blackboard.md` |
+| 10 | `application/services/operational_memory.py` | 1,075 | 1,075 | ⏳ Not started | `operational_memory_service.md` |
+| 11 | `application/services/session_panel.py` | 976 | 976 | ⏳ Not started | `session_panel_service.md` |
+| 12 | `infrastructure/llm/codex_subscription_adapter.py` | 944 | 944 | ⏳ Not started | `llm_adapters.md` |
+| 13 | `infrastructure/persistence/models.py` | 919 | 919 | ⏳ Not started | `persistence_models.md` |
+| 14 | `infrastructure/llm/kimi_coding_adapter.py` | 892 | 892 | ⏳ Not started | `llm_adapters.md` |
+| 15 | `application/services/session_titles.py` | 848 | 848 | ⏳ Not started | `session_titles.md` |
+| 16 | `infrastructure/tools/filesystem_tools.py` | 810 | 810 | ⏳ Not started | `filesystem_tools.md` |
 
 ### Already decomposed (backend)
 
-| File | Lines | Status |
-|------|------:|--------|
-| `application/use_cases/chat_completion.py` | 483 | ✅ Done (was 2,742, −82%) |
-| `application/team_chat/orchestrator.py` | 127 | ✅ Done (was 3,097, −96%) |
+| File | Original | Current | Status |
+|------|------:|------:|--------|
+| `application/use_cases/chat_completion.py` | 2,742 | 483 | ✅ Done (−82%) |
+| `application/team_chat/orchestrator.py` | 3,097 | 127 | ✅ Done (−96%) |
+| `infrastructure/browser/lightpanda.py` | 5,735 | 1,469 | ✅ Done — 14 slices (−74%) |
+| `infrastructure/tools/browser_tools/` | 2,786 | 61 | ✅ Done — 4 slices (−98%) |
+| `infrastructure/persistence/operational_memory/` | 1,938 | 251 | ✅ Done — 6 slices (−87%) |
+| `infrastructure/llm/vertex_ai/` | 1,064 | 31 | ✅ Done — 3 slices (−97%) |
 
 ### Frontend god files
 
-| # | File | Lines | Status | Playbook |
-|---|------|------:|--------|----------|
-| 17 | `components/chat/session-panel.tsx` | 3,960 | ⏳ Not started | `session_panel.md` |
-| 18 | `stores/chat-store.ts` | 3,307 | ⏳ Not started | `chat_store.md` |
-| 19 | `components/chat/input-dock.tsx` | 1,976 | ⏳ Not started | `input_dock.md` |
-| 20 | `components/chat/agent-message.tsx` | 1,419 | ⏳ Not started | `agent_message.md` |
-| 21 | `components/open-pr/open-pr-workspace.tsx` | 1,350 | ⏳ Not started | `open_pr_workspace.md` |
-| 22 | `components/chat/session-panel/browser-mirror.ts` | 1,261 | ⏳ Not started | `browser_mirror.md` |
-| 23 | `api/client.ts` | 1,231 | ⏳ Not started | `api_client.md` |
-| 24 | `components/chat/file-viewer-panel.tsx` | 1,079 | ⏳ Not started | `file_viewer_panel.md` |
-| 25 | `components/chat/tool-block.tsx` | 919 | ⏳ Not started | `tool_block.md` |
-| 26 | `types/chat.ts` | 887 | ⏳ Not started | `chat_types.md` |
+| # | File | Original | Current | Status | Playbook |
+|---|------|------:|------:|--------|----------|
+| 17 | `components/chat/session-panel.tsx` | 3,960 | 172 | ✅ Done — 6 slices (PRs #60–#63, #70, #71), −96% | `session_panel.md` |
+| 18 | `stores/chat-store.ts` | 3,307 | 121 | ✅ Done — 6 slices (PRs #72–#74, #76–#78), −96% | `chat_store.md` |
+| 19 | `stores/chat-store/streaming-helpers.ts` | 2,033 | 30 | ✅ Done — 4 modules (PR #80), −99% | — |
+| 20 | `components/chat/input-dock.tsx` | 1,976 | 1,976 | ⏳ Not started | `input_dock.md` |
+| 21 | `components/chat/agent-message.tsx` | 1,419 | 1,419 | ⏳ Not started | `agent_message.md` |
+| 22 | `components/open-pr/open-pr-workspace.tsx` | 1,350 | 1,350 | ⏳ Not started | `open_pr_workspace.md` |
+| 23 | `components/chat/session-panel/browser-mirror.ts` | 1,261 | 1,261 | ⏳ Not started | `browser_mirror.md` |
+| 24 | `api/client.ts` | 1,231 | 1,231 | ⏳ Not started | `api_client.md` |
+| 25 | `components/chat/file-viewer-panel.tsx` | 1,079 | 1,079 | ⏳ Not started | `file_viewer_panel.md` |
+| 26 | `components/chat/tool-block.tsx` | 919 | 919 | ⏳ Not started | `tool_block.md` |
+| 27 | `types/chat.ts` | 887 | 887 | ⏳ Not started | `chat_types.md` |
 
 ### Watchlist (below threshold but trending)
 
@@ -76,40 +81,41 @@ threshold and meet the three criteria.
 
 ## Decomposition Priority
 
-### Tier 1 — Critical (>2,000L or blocking other work)
+### Tier 1 — Critical (>2,000L or blocking other work) — ALL DONE
 
-1. **`lightpanda.py`** — 4,710L, in progress (slices 5–8 remain)
-2. **`browser_tools.py`** — 2,786L, tightly coupled with lightpanda
-3. **`session-panel.tsx`** — 3,960L, largest frontend file
-4. **`chat-store.ts`** — 3,307L, frontend state monolith
+1. ~~**`lightpanda.py`** — 5,735→1,469L~~ ✅
+2. ~~**`browser_tools.py`** — 2,786→61L~~ ✅
+3. ~~**`session-panel.tsx`** — 3,960→172L~~ ✅
+4. ~~**`chat-store.ts`** — 3,307→121L~~ ✅
 
 ### Tier 2 — High (1,500–2,000L)
 
-5. **`operational_memory_repository.py`** — 1,938L
-6. **`routes/chat.py`** — 1,905L
-7. **`input-dock.tsx`** — 1,976L
-8. **`routes/workspace.py`** — 1,576L
-9. **`routes/sessions.py`** — 1,471L
+5. ~~**`operational_memory_repository.py`** — 1,938→251L~~ ✅
+6. **`routes/chat.py`** — 1,905→1,419L 🔄 (2 slices merged, more pending)
+7. **`input-dock.tsx`** — 1,976L ⏳
+8. **`routes/workspace.py`** — 1,576L ⏳
+9. **`routes/sessions.py`** — 1,471L ⏳
 
 ### Tier 3 — Medium (800–1,500L)
 
-10. **`browser_cooperation.py`** — 1,292L
-11. **`blackboard.py`** — 1,091L *(new)*
-12. **`operational_memory.py`** — 1,075L
-13. **`vertex_ai_adapter.py`** — 1,064L
-14. **`session_panel.py`** (service) — 976L
-15. **`codex_subscription_adapter.py`** — 944L
-16. **`persistence/models.py`** — 919L *(new)*
-17. **`kimi_coding_adapter.py`** — 892L
-18. **`agent-message.tsx`** — 1,419L
-19. **`open-pr-workspace.tsx`** — 1,350L
-20. **`browser-mirror.ts`** — 1,261L
-21. **`api/client.ts`** — 1,231L
-22. **`file-viewer-panel.tsx`** — 1,079L
-23. **`tool-block.tsx`** — 919L *(new)*
-24. **`types/chat.ts`** — 887L *(new)*
-25. **`session_titles.py`** — 848L
-26. **`filesystem_tools.py`** — 810L
+10. **`browser_cooperation.py`** — 1,292L ⏳
+11. **`blackboard.py`** — 1,091L ⏳
+12. **`operational_memory.py`** (service) — 1,075L ⏳
+13. ~~**`vertex_ai_adapter.py`** — 1,064→31L~~ ✅
+14. **`session_panel.py`** (service) — 976L ⏳
+15. **`codex_subscription_adapter.py`** — 944L ⏳
+16. **`persistence/models.py`** — 919L ⏳
+17. **`kimi_coding_adapter.py`** — 892L ⏳
+18. **`agent-message.tsx`** — 1,419L ⏳
+19. **`open-pr-workspace.tsx`** — 1,350L ⏳
+20. **`browser-mirror.ts`** — 1,261L ⏳
+21. **`api/client.ts`** — 1,231L ⏳
+22. **`file-viewer-panel.tsx`** — 1,079L ⏳
+23. **`tool-block.tsx`** — 919L ⏳
+24. **`types/chat.ts`** — 887L ⏳
+25. **`session_titles.py`** — 848L ⏳
+26. **`filesystem_tools.py`** — 810L ⏳
+27. **`streaming-helpers.ts`** — ~~2,033→30L~~ ✅
 
 ---
 
@@ -194,26 +200,32 @@ After all decompositions are complete, the project structure will be:
 │
 ├── infrastructure/
 │   ├── browser/                           # ← from lightpanda.py (4,710L)
-│   │   ├── lightpanda.py                  #   coordinator (~1,500L target after all slices)
+│   │   ├── lightpanda.py                  #   ✅ coordinator (1,469L — identity core)
 │   │   ├── cdp_client.py                  #   ✅ Slice 1 — CDP transport
 │   │   ├── cache.py                       #   ✅ Slice 2 — snapshot + stylesheet caches
 │   │   ├── actions.py                     #   ✅ Slice 3 — click/type/scroll/screenshot/script/wait
 │   │   ├── page_lifecycle.py              #   ✅ Slice 4 — open/close/switch/reload/history/list_tabs
-│   │   ├── snapshot.py                    #   Slice 5 — DOM → structured view pipeline
-│   │   ├── search.py                      #   Slice 6 — search URL building + result extraction
-│   │   ├── view_actions.py                #   Slice 7 — view_* API (agent interaction layer)
+│   │   ├── snapshot.py                    #   ✅ Slice 5 — DOM → structured view pipeline
+│   │   ├── search.py                      #   ✅ Slice 6 — search URL building + result extraction
+│   │   ├── view_actions.py                #   ✅ Slice 7 — view_* API (agent interaction layer)
+│   │   ├── content.py                     #   ✅ Slice 8 — content extraction + markdown
+│   │   ├── console.py                     #   ✅ Slice 9 — console listeners + cooperation
+│   │   ├── opened_pages.py                #   ✅ Slice 10 — opened page tracking
+│   │   ├── search_cache.py                #   ✅ Slice 11 — search result caching
+│   │   ├── element_helpers.py             #   ✅ Slice 12 — element + frame helpers
+│   │   ├── block_detection.py             #   ✅ Slice 13 — block/captcha detection
+│   │   ├── page_helpers.py                #   ✅ Slice 14 — page resolution helpers
 │   │   ├── models.py
 │   │   ├── url_utils.py
 │   │   └── content_cleanup.py
 │   ├── tools/
-│   │   ├── browser_tools/                 # ← from browser_tools.py (2,786L)
-│   │   │   ├── __init__.py                #   re-exports create_browser_tools
-│   │   │   ├── factory.py                 #   create_browser_tools registry
-│   │   │   ├── navigation.py              #   search/open/extract/get_html tools
-│   │   │   ├── interaction.py             #   click/type/scroll/screenshot/script tools
-│   │   │   ├── tab_management.py          #   list_tabs/close_tab/switch_tab/reload/history tools
-│   │   │   ├── content.py                 #   extract_content/read_chunk/element_map tools
-│   │   │   └── helpers.py                 #   shared response prep, normalization, permission
+│   │   ├── browser_tools/                 # ✅ DONE (was 2,786L → 61L orchestrator)
+│   │   │   ├── __init__.py                #   ✅ re-exports create_browser_tools
+│   │   │   ├── factories.py               #   ✅ create_browser_tools orchestrator (61L)
+│   │   │   ├── navigation.py              #   ✅ search/open/extract/get_html tools
+│   │   │   ├── interaction.py             #   ✅ click/type/scroll/screenshot/script tools
+│   │   │   ├── tab_management.py          #   ✅ list_tabs/close_tab/switch_tab/reload/history
+│   │   │   └── helpers.py                 #   ✅ shared response prep, normalization (1,111L)
 │   │   ├── filesystem_tools/              # ← from filesystem_tools.py (810L)
 │   │   │   ├── __init__.py
 │   │   │   ├── factory.py                 #   create_filesystem_tools registry
@@ -223,26 +235,30 @@ After all decompositions are complete, the project structure will be:
 │   │   ├── shell_tool.py
 │   │   └── mcp_tools.py
 │   ├── persistence/
-│   │   ├── models/                        # ← from models.py (919L) NEW
+│   │   ├── models/                        # ← from models.py (919L) — planned
 │   │   │   ├── __init__.py                #   re-exports all 31 ORM classes
 │   │   │   ├── core.py                    #   TenantORM, ConversationORM, MessageORM, TaskRecordORM
 │   │   │   ├── browser.py                 #   Slice 1 — 7 browser ORM classes
 │   │   │   ├── team.py                    #   Slice 2 — 3 team mode ORM classes
 │   │   │   ├── qa.py                      #   Slice 3 — 6 QA ORM classes
 │   │   │   └── memory.py                  #   Slice 4 — 11 memory ORM classes
-│   │   ├── operational_memory/            # ← from operational_memory_repository.py (1,938L)
-│   │   │   ├── repository.py              #   main repository class
-│   │   │   ├── chunking.py                #   chunk splitting/merging logic
-│   │   │   ├── vector_search.py           #   embedding + pgvector queries
-│   │   │   ├── structured_items.py        #   structured memory CRUD
-│   │   │   └── models.py                  #   SQLAlchemy models (StoredMemoryChunk, etc.)
+│   │   ├── operational_memory/            # ✅ DONE (was 1,938L → 251L repository)
+│   │   │   ├── __init__.py                #   ✅ barrel
+│   │   │   ├── operational_memory_repository.py  #   ✅ main repository (251L)
+│   │   │   ├── recall_retrieval.py         #   ✅ recall + search + scoring pipeline
+│   │   │   ├── scoring.py                 #   ✅ ScoringRanker
+│   │   │   ├── structured_items.py        #   ✅ StructuredItemStore
+│   │   │   ├── event_outbox.py            #   ✅ EventOutboxManager
+│   │   │   ├── models.py                  #   ✅ StoredMemoryChunk + StoredStructuredMemoryItem
+│   │   │   └── _search_helpers.py         #   ✅ SQL-building helpers
 │   │   └── ...
 │   ├── llm/
-│   │   ├── vertex_ai/                     # ← from vertex_ai_adapter.py (1,064L)
-│   │   │   ├── adapter.py                 #   VertexAiAdapter main class
-│   │   │   ├── streaming.py               #   stream response handling
-│   │   │   ├── content_builder.py         #   request content formatting
-│   │   │   └── models.py                  #   VertexModelSpec, config types
+│   │   ├── vertex_ai/                     # ✅ DONE (was 1,064L → 31L re-export)
+│   │   │   ├── __init__.py                #   ✅ re-export barrel (31L)
+│   │   │   ├── adapter.py                 #   ✅ VertexAiAdapter main class (397L)
+│   │   │   ├── streaming.py               #   ✅ stream response handling (364L)
+│   │   │   ├── content_builder.py         #   ✅ request content formatting (302L)
+│   │   │   └── models.py                  #   ✅ VertexModelSpec, config types (100L)
 │   │   ├── codex/                          # ← from codex_subscription_adapter.py (944L)
 │   │   │   ├── adapter.py                 #   CodexSubscriptionAdapter
 │   │   │   ├── auth.py                    #   CodexAuthStore + CodexAuthSnapshot
@@ -258,14 +274,14 @@ After all decompositions are complete, the project structure will be:
 │   └── ...
 │
 ├── interfaces/api/routes/
-│   ├── chat/                              # ← from routes/chat.py (1,905L)
-│   │   ├── __init__.py                    #   re-exports router
-│   │   ├── completion.py                  #   chat_completion + chat_completion_stream
-│   │   ├── plan_approval.py               #   approve/continue/cancel plan
-│   │   ├── tool_approval.py               #   approve/reject tool
-│   │   ├── team_chat.py                   #   team_chat_websocket + persistence endpoints
-│   │   ├── models_listing.py              #   list_models, list_commands, prompt_preview
-│   │   └── helpers.py                     #   _create_chat_use_case, resolve_* helpers
+│   ├── chat/                              # 🔄 IN PROGRESS (was 1,905L → 1,419L)
+│   │   ├── __init__.py                    #   router + remaining endpoints (1,419L)
+│   │   ├── helpers.py                     #   ✅ extracted (PR #75) — shared helpers
+│   │   ├── models_listing.py              #   ✅ extracted (PR #79) — list_models, list_commands
+│   │   ├── completion.py                  #   planned — chat_completion + chat_completion_stream
+│   │   ├── plan_approval.py               #   planned — approve/continue/cancel plan
+│   │   ├── tool_approval.py               #   planned — approve/reject tool
+│   │   └── team_chat.py                   #   planned — team_chat_websocket + persistence
 │   ├── workspace/                         # ← from routes/workspace.py (1,576L)
 │   │   ├── __init__.py
 │   │   ├── grant.py                       #   workspace grant endpoints
@@ -292,19 +308,21 @@ After all decompositions are complete, the project structure will be:
 │   └── ...
 ├── components/
 │   ├── chat/
-│   │   ├── session-panel/                 # ← from session-panel.tsx (3,960L)
-│   │   │   ├── index.tsx                  #   SessionPanel shell (props, composition)
-│   │   │   ├── helpers.ts                 #   pure helper functions (already planned)
-│   │   │   ├── browser-tab-strip.tsx      #   browser tabs UI
-│   │   │   ├── browser-tracing.tsx        #   live event timeline
-│   │   │   ├── memory-panel.tsx           #   memory/files/sources tabs
-│   │   │   ├── browser-cooperation.tsx    #   proposal acceptance overlay
-│   │   │   ├── hooks/
-│   │   │   │   ├── use-browser-state.ts   #   browser state management hook
-│   │   │   │   ├── use-panel-data.ts      #   session panel data hook
-│   │   │   │   └── use-browser-sync.ts    #   backend tab sync hook
-│   │   │   ├── browser-mirror.ts          #   ← already extracted (1,261L, may need further split)
-│   │   │   └── cache.ts                   #   ← already extracted
+│   │   ├── session-panel/                 # ✅ DONE (was 3,960L → 172L orchestrator)
+│   │   │   ├── session-panel.tsx           #   ✅ orchestrator (172L)
+│   │   │   ├── helpers.ts                 #   ✅ Slice 1 — types + pure functions (401L)
+│   │   │   ├── use-session-panel-state.ts #   ✅ Slice 2 — data loading hook (117L)
+│   │   │   ├── use-browser-tabs.ts        #   ✅ Slice 3 — browser tab hook (560L)
+│   │   │   ├── browser-helpers.ts         #   ✅ Slice 3 — browser pure functions (1,000L)
+│   │   │   ├── browser-tab-strip.tsx      #   ✅ Slice 4 — tab strip UI (93L)
+│   │   │   ├── browser-controls.tsx       #   ✅ Slice 4 — nav + mode buttons (56L)
+│   │   │   ├── browser-cooperation.tsx    #   ✅ Slice 4 — proposal overlay (157L)
+│   │   │   ├── browser-tracing.tsx        #   ✅ Slice 4 — tracing panel (243L)
+│   │   │   ├── shared-ui.tsx              #   ✅ Slice 4 — shared components (62L)
+│   │   │   ├── browser-tab-content.tsx    #   ✅ Slice 5 — tab content (553L)
+│   │   │   ├── detail-sections.tsx        #   ✅ Slice 6 — right-rail sections (348L)
+│   │   │   ├── browser-mirror.ts          #   ← pre-existing (1,261L, may need further split)
+│   │   │   └── cache.ts                   #   ← pre-existing
 │   │   ├── input-dock/                    # ← from input-dock.tsx (1,976L)
 │   │   │   ├── index.tsx                  #   InputDock shell
 │   │   │   ├── composer.tsx               #   rich text input area
@@ -345,16 +363,19 @@ After all decompositions are complete, the project structure will be:
 │   │   └── ...
 │   └── ...
 ├── stores/
-│   ├── chat-store/                        # ← from chat-store.ts (3,307L)
-│   │   ├── index.ts                       #   re-exports createChatStore, providers
-│   │   ├── internal.ts                    #   pure helpers + constants (already planned)
-│   │   ├── conversation-slice.ts          #   conversation lifecycle actions
-│   │   ├── message-slice.ts              #   message CRUD + streaming
-│   │   ├── plan-slice.ts                 #   plan mode approval flow
-│   │   ├── tool-slice.ts                 #   tool approval flow
-│   │   ├── composer-slice.ts             #   composer state + slash commands
-│   │   ├── usage-slice.ts               #   live usage + context window
-│   │   └── browser-slice.ts             #   browser tool blocks sync
+│   ├── chat-store/                        # ✅ DONE (was 3,307L → 121L orchestrator)
+│   │   ├── chat-store.ts                  #   ✅ orchestrator + providers (121L)
+│   │   ├── internal.ts                    #   ✅ Slice 1 — pure helpers + constants (690L)
+│   │   ├── composer-slice.ts              #   ✅ Slice 2 — composer state + actions (42L)
+│   │   ├── conversation-slice.ts          #   ✅ Slice 3 — load/start/regenerate/rewind/branch (93L)
+│   │   ├── streaming-slice.ts             #   ✅ Slice 4 — sendMessage + stopStreaming (191L)
+│   │   ├── streaming-helpers.ts           #   ✅ re-export barrel (30L) ← decomposed further:
+│   │   │   ├── chunk-handlers.ts          #   ✅ handleChunk + text/tool processing (~530L)
+│   │   │   ├── team-event-handlers.ts     #   ✅ handleTeamEvent + ~40 team functions (~1,100L)
+│   │   │   ├── approval-helpers.ts        #   ✅ plan/tool approval parsing (~69L)
+│   │   │   └── message-helpers.ts         #   ✅ messageFromPersisted + image helpers (~108L)
+│   │   ├── plan-approval-slice.ts         #   ✅ Slice 5 — approve/continue/cancel plan (97L)
+│   │   └── tool-approval-slice.ts         #   ✅ Slice 6 — approve/reject tool (131L)
 │   ├── terminal-store.ts
 │   └── ...
 ├── api/
@@ -486,56 +507,74 @@ If a slice exceeds 2,500 lines changed, split it into two PRs.
 
 ## Execution Order (Recommended)
 
-### Phase 1.5 — Complete lightpanda.py (in progress)
-- Slices 5–8 remaining → target: **~1,500L**
+### Phase 1.5 — Complete lightpanda.py ✅ DONE
+- All 14 slices merged (PRs #37–#56): 5,735 → 1,469L (−74%)
 
-### Phase 2.0 — Browser ecosystem
-- `browser_tools.py` → 6 slices (navigation, interaction, tabs, content, helpers, factory)
+### Phase 2.0 — Browser ecosystem ✅ DONE
+- `browser_tools.py` → 4 slices (PRs #48, #57–#59): 2,786 → 61L (−98%)
 
-### Phase 2.1 — Data layer
-- `operational_memory_repository.py` → 4 slices
-- `operational_memory.py` (service) → 3 slices
-- `persistence/models.py` → 4 slices *(new)*
+### Phase 2.1 — Data layer (partially done)
+- ~~`operational_memory_repository.py`~~ → 6 slices: 1,938 → 251L (−87%) ✅
+- `operational_memory.py` (service) → 3 slices ⏳
+- `persistence/models.py` → 4 slices ⏳
 
-### Phase 2.2 — API routes
-- `routes/chat.py` → 5 slices
-- `routes/workspace.py` → 4 slices
-- `routes/sessions.py` → 4 slices
+### Phase 2.2 — API routes (partially started)
+- `routes/chat.py` → 2 slices merged (PRs #75, #79): 1,905 → 1,419L (−26%) 🔄
+- `routes/workspace.py` → 4 slices ⏳
+- `routes/sessions.py` → 4 slices ⏳
 
-### Phase 2.3 — LLM adapters
-- `vertex_ai_adapter.py` → 3 slices
-- `codex_subscription_adapter.py` → 3 slices
-- `kimi_coding_adapter.py` → 3 slices
+### Phase 2.3 — LLM adapters (partially done)
+- ~~`vertex_ai_adapter.py`~~ → 3 slices (PRs #47, #50, #53): 1,064 → 31L (−97%) ✅
+- `codex_subscription_adapter.py` → 3 slices ⏳
+- `kimi_coding_adapter.py` → 3 slices ⏳
 
 ### Phase 2.4 — Application services
-- `browser_cooperation.py` → 3 slices
-- `blackboard.py` → 3 slices *(new)*
-- `session_panel.py` → 3 slices
-- `session_titles.py` → 2 slices
+- `browser_cooperation.py` → 3 slices ⏳
+- `blackboard.py` → 3 slices ⏳
+- `session_panel.py` → 3 slices ⏳
+- `session_titles.py` → 2 slices ⏳
 
-### Phase 3.0 — Frontend
-- `session-panel.tsx` → 6 slices
-- `chat-store.ts` → 7 slices
-- `input-dock.tsx` → 4 slices
-- `agent-message.tsx` → 3 slices
-- `open-pr-workspace.tsx` → 3 slices
-- `browser-mirror.ts` → 3 slices
-- `api/client.ts` → 3 slices
-- `file-viewer-panel.tsx` → 3 slices
-- `tool-block.tsx` → 3 slices *(new)*
-- `types/chat.ts` → 4 slices *(new)*
+### Phase 3.0 — Frontend (partially done)
+- ~~`session-panel.tsx`~~ → 6 slices (PRs #60–#63, #70, #71): 3,960 → 172L (−96%) ✅
+- ~~`chat-store.ts`~~ → 6 slices (PRs #72–#74, #76–#78): 3,307 → 121L (−96%) ✅
+- ~~`streaming-helpers.ts`~~ → 4 modules (PR #80): 2,033 → 30L (−99%) ✅
+- `input-dock.tsx` → 4 slices ⏳
+- `agent-message.tsx` → 3 slices ⏳
+- `open-pr-workspace.tsx` → 3 slices ⏳
+- `browser-mirror.ts` → 3 slices ⏳
+- `api/client.ts` → 3 slices ⏳
+- `file-viewer-panel.tsx` → 3 slices ⏳
+- `tool-block.tsx` → 3 slices ⏳
+- `types/chat.ts` → 4 slices ⏳
 
 ---
 
 ## Summary: Total Decomposition Scope
 
-| Category | Files | Slices | Status |
+| Category | Files | Slices done | Status |
 |----------|------:|-------:|--------|
-| Backend — completed | 2 | — | ✅ Done |
-| Backend — in progress | 1 | 4 remaining | 🔄 lightpanda |
-| Backend — planned | 15 | ~48 slices | ⏳ |
-| Frontend — planned | 10 | ~39 slices | ⏳ |
-| **Total** | **28** | **~91 slices** | |
+| Backend — completed | 6 | ~36 slices | ✅ lightpanda (14), browser_tools (4), op_memory_repo (6), vertex_ai (3), chat_completion, orchestrator |
+| Backend — in progress | 1 | 2 slices | 🔄 routes/chat |
+| Backend — remaining | 10 | ~31 slices est. | ⏳ |
+| Frontend — completed | 3 | ~16 slices | ✅ session-panel (6), chat-store (6), streaming-helpers (4) |
+| Frontend — remaining | 8 | ~29 slices est. | ⏳ |
+| **Total** | **28** | **~54 done / ~60 remaining** | **~47% complete** |
+
+### Lines reduced so far
+
+| God file | Original | Current | Reduction |
+|----------|------:|------:|-----------|
+| `lightpanda.py` | 5,735 | 1,469 | −74% |
+| `browser_tools/factories.py` | 2,786 | 61 | −98% |
+| `chat_completion.py` | 2,742 | 483 | −82% |
+| `team_chat/orchestrator.py` | 3,097 | 127 | −96% |
+| `operational_memory_repository.py` | 1,938 | 251 | −87% |
+| `vertex_ai_adapter.py` | 1,064 | 31 | −97% |
+| `session-panel.tsx` | 3,960 | 172 | −96% |
+| `chat-store.ts` | 3,307 | 121 | −96% |
+| `streaming-helpers.ts` | 2,033 | 30 | −99% |
+| `routes/chat/__init__.py` | 1,905 | 1,419 | −26% (in progress) |
+| **Total** | **28,567** | **4,164** | **−85%** |
 
 ---
 
