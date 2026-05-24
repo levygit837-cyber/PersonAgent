@@ -1,11 +1,9 @@
 """Caso de uso: Chat Completion."""
 
-import asyncio
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator
 from dataclasses import replace
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import structlog
 
@@ -14,7 +12,6 @@ from personagent.application.jobs.memory_job_scheduler import MemoryJobScheduler
 from personagent.application.plan_mode import (
     activate_plan_mode_if_requested,
     auto_finalize_plan_mode,
-    is_plan_mode_active,
     plan_mode_event,
 )
 from personagent.application.services import (
@@ -24,13 +21,12 @@ from personagent.application.services import (
     SessionTitleService,
 )
 from personagent.application.tools import (
-    ToolOrchestrator,
     ToolRegistry,
     ToolRuntimeConfig,
 )
-from personagent.application.tools.runtime_config import resolve_effective_tool_iterations
 from personagent.application.use_cases.chat.after_turn import AfterTurnCoordinator
 from personagent.application.use_cases.chat.assistant_pass import AssistantPassRunner
+from personagent.application.use_cases.chat.background_tasks import schedule_background
 from personagent.application.use_cases.chat.compaction import ConversationCompactor
 from personagent.application.use_cases.chat.conversation_lifecycle import (
     ConversationLifecycleHandler,
@@ -61,9 +57,10 @@ from personagent.application.use_cases.chat.tool_context_builder import (
     ToolContextBuilder,
 )
 from personagent.application.use_cases.chat.tool_results import ToolResultHandler
+from personagent.application.use_cases.chat.tool_runtime import ToolRuntime
+from personagent.application.use_cases.chat.turn_context import TurnContextResolver
 from personagent.application.use_cases.context import BuildContextUseCase
 from personagent.application.use_cases.memory.recall_memory import RecallMemoryUseCase
-from personagent.domain.context.models import ContextBuildResult, SystemContext, UserContext
 from personagent.domain.exceptions import (
     ConversationNotFoundError,
     LLMBackendError,
@@ -144,6 +141,14 @@ class ChatCompletionUseCase:
             operational_memory_service=operational_memory_service,
             context_window_tokens=self._context_window_tokens,
         )
+        self._tool_runtime = ToolRuntime(
+            tool_registry=self._tool_registry,
+            tool_runtime_config=self._tool_runtime_config,
+        )
+        self._turn_context = TurnContextResolver(
+            build_context_use_case=self._build_context_use_case,
+            operational_memory=self._operational_memory,
+        )
         self._prompt_surfaces = PromptSurfacePreparer(
             command_service=self._command_service,
             skill_roots_provider=self._skill_roots,
@@ -158,7 +163,7 @@ class ChatCompletionUseCase:
             skill_roots_provider=self._skill_roots,
         )
         self._tool_results = ToolResultHandler(
-            orchestrator_factory=self._new_orchestrator,
+            orchestrator_factory=self._tool_runtime.new_orchestrator,
             operational_memory=self._operational_memory,
         )
         self._message_preparer = MessagePreparer(
@@ -203,12 +208,12 @@ class ChatCompletionUseCase:
             stream_chunk_normalizer=self._stream_chunk_normalizer,
             tool_results=self._tool_results,
             after_turn=self._after_turn,
-            build_context_result=self._build_context_result,
-            resolve_tool_schemas=self._resolve_tool_schemas,
-            new_orchestrator=self._new_orchestrator,
-            effective_max_tool_iterations=self._effective_max_tool_iterations,
-            tool_iteration_limit_source=self._tool_iteration_limit_source,
-            schedule_background=self._schedule_background,
+            build_context_result=self._turn_context.build,
+            resolve_tool_schemas=self._tool_runtime.resolve_schemas,
+            new_orchestrator=self._tool_runtime.new_orchestrator,
+            effective_max_tool_iterations=self._tool_runtime.effective_max_tool_iterations,
+            tool_iteration_limit_source=self._tool_runtime.tool_iteration_limit_source,
+            schedule_background=schedule_background,
         )
 
     async def execute(self, request: ChatRequestDTO) -> ChatResponseDTO:
@@ -220,10 +225,10 @@ class ChatCompletionUseCase:
         if request.plan_mode_requested:
             activate_plan_mode_if_requested(conversation.metadata, requested=True)
 
-        context_result = await self._build_context_result(request, conversation)
+        context_result = await self._turn_context.build(request, conversation)
         preparation = self._prompt_surfaces.prepare(request, context_result)
         request = preparation.request
-        tools = self._resolve_tool_schemas(request, conversation)
+        tools = self._tool_runtime.resolve_schemas(request, conversation)
 
         # Adiciona mensagem do usuário
         user_msg = Message(
@@ -256,7 +261,7 @@ class ChatCompletionUseCase:
         tool_context = self._tool_context_builder.build(request, conversation, preparation) if tools else None
         result = InferenceResult(content="")
         seen_tool_call_ids: set[str] = set()
-        effective_max_iterations = self._effective_max_tool_iterations(request)
+        effective_max_iterations = self._tool_runtime.effective_max_tool_iterations(request)
 
         try:
             iteration = 0
@@ -267,7 +272,7 @@ class ChatCompletionUseCase:
                         metadata={
                             "limit": effective_max_iterations,
                             "conversation_id": str(conversation.id),
-                            "source": self._tool_iteration_limit_source(request),
+                            "source": self._tool_runtime.tool_iteration_limit_source(request),
                         },
                     )
                 messages, context_metadata = await self._message_preparer.prepare(
@@ -411,10 +416,10 @@ class ChatCompletionUseCase:
         else:
             conversation = Conversation()
 
-        context_result = await self._build_context_result(request, conversation)
+        context_result = await self._turn_context.build(request, conversation)
         preparation = self._prompt_surfaces.prepare(request, context_result)
         request = preparation.request
-        tools = self._resolve_tool_schemas(request, conversation)
+        tools = self._tool_runtime.resolve_schemas(request, conversation)
         prompt_package = await self._prompt_package_builder.build(
             request,
             conversation,
@@ -472,116 +477,7 @@ class ChatCompletionUseCase:
         ):
             yield chunk
 
-    def _resolve_tool_schemas(
-        self,
-        request: ChatRequestDTO,
-        conversation: Conversation | None = None,
-    ) -> list[dict[str, Any]]:
-        if not request.tools_enabled or self._tool_registry is None:
-            return []
-        allowed_tools = set(request.allowed_tools) if request.allowed_tools else None
-        schemas = cast(
-            list[dict[str, Any]],
-            self._tool_registry.openai_schemas(
-                allowed_tools=allowed_tools,
-                cache_scope=f"{request.provider}:{request.model}",
-            ),
-        )
-        # Conditionally filter planning tools based on conversation plan mode state
-        if conversation is not None:
-            plan_active = is_plan_mode_active(conversation.metadata)
-            filtered: list[dict[str, Any]] = []
-            for schema in schemas:
-                function = schema.get("function") if isinstance(schema, dict) else None
-                name = function.get("name") if isinstance(function, dict) else None
-                if name == "ExitPlanMode" and not plan_active:
-                    continue
-                if name == "EnterPlanMode" and plan_active:
-                    continue
-                filtered.append(schema)
-            return filtered
-        return schemas
-
     def _skill_roots(self) -> tuple[str | Path, ...]:
         if self._tool_runtime_config is None:
             return ()
         return tuple(str(path) for path in self._tool_runtime_config.skill_roots)
-
-    def _new_orchestrator(self) -> ToolOrchestrator:
-        if self._tool_registry is None or self._tool_runtime_config is None:
-            raise RuntimeError("Tool runtime is not configured")
-        return ToolOrchestrator(self._tool_registry, self._tool_runtime_config)
-
-    def _effective_max_tool_iterations(self, request: ChatRequestDTO) -> int:
-        """Return the bounded tool-iteration cap for the current chat turn.
-
-        See ``resolve_effective_tool_iterations`` for the precedence rules.
-        """
-
-        config_max = (
-            self._tool_runtime_config.max_tool_iterations
-            if self._tool_runtime_config is not None
-            else None
-        )
-        return int(
-            resolve_effective_tool_iterations(
-                request_max=request.max_tool_iterations,
-                config_max=config_max,
-            )
-        )
-
-    def _tool_iteration_limit_source(self, request: ChatRequestDTO) -> str:
-        """Describe which input determined the active tool-iteration cap."""
-
-        if request.max_tool_iterations is not None:
-            return "request"
-        config_max = (
-            self._tool_runtime_config.max_tool_iterations
-            if self._tool_runtime_config is not None
-            else None
-        )
-        if config_max is not None:
-            return "runtime_config"
-        return "safety_ceiling"
-
-    def _schedule_background(self, coro: Awaitable[Any], *, task_name: str) -> None:
-        task = asyncio.create_task(coro, name=task_name)
-
-        def _log_failure(done: asyncio.Task) -> None:
-            try:
-                done.result()
-            except asyncio.CancelledError:
-                return
-            except Exception:
-                logger.warning("background_task_failed", task_name=task_name, exc_info=True)
-
-        task.add_done_callback(_log_failure)
-
-    async def _build_context_result(
-        self,
-        request: ChatRequestDTO,
-        conversation: Conversation,
-    ) -> ContextBuildResult:
-        if self._build_context_use_case:
-            try:
-                return await self._build_context_use_case.execute(
-                    conversation_id=str(conversation.id),
-                    use_cache=True,
-                )
-            except Exception:
-                logger.warning("context_build_failed", exc_info=True)
-
-        workspace_root = self._operational_memory.resolve_workspace_root(request)
-        return ContextBuildResult(
-            system_context=SystemContext(
-                workspace_root=str(workspace_root),
-                cwd=str(workspace_root),
-            ),
-            user_context=UserContext(current_date=datetime.now(UTC).strftime("%Y-%m-%d")),
-            build_duration_ms=0,
-            metadata={"source": "fallback"},
-        )
-
-
-
-
