@@ -22,9 +22,10 @@ directory.
 | Memory recall          | #10 | ~118          | 2,007      |
 | Prompt surfaces        | #11 | ~187          | 1,938      |
 | Prompt package         | #13 | ~290          | 1,648      |
-| **Current**            |     |               | **1,648**  |
+| Tool result handler    | #14 | ~252          | 1,396      |
+| **Current**            |     |               | **1,396**  |
 
-Cumulative reduction: **2,742 → 1,648 lines (–40%)**.
+Cumulative reduction: **2,742 → 1,396 lines (–49%)**.
 
 ## Public contract that must be preserved
 
@@ -119,7 +120,7 @@ orchestrator and inject the helper as a callable.
 **Risk:** Medium-low. The class has many collaborators but every
 collaborator is already injected and tested elsewhere.
 
-### Slice 7 — `ToolResultHandler` (~150 lines)
+### Slice 7 — `ToolResultHandler` (✅ landed in #14; ~252 lines)
 
 **What moves out:**
 

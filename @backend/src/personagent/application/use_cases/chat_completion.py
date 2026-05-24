@@ -14,16 +14,11 @@ import structlog
 from personagent.application.dto.chat_dto import ChatRequestDTO, ChatResponseDTO
 from personagent.application.jobs.memory_job_scheduler import MemoryJobScheduler
 from personagent.application.plan_mode import (
-    PENDING_TOOL_APPROVAL_KEY,
-    PENDING_USER_QUESTION_KEY,
     activate_plan_mode_if_requested,
     auto_finalize_plan_mode,
     is_plan_mode_active,
-    new_tool_approval_id,
     normalize_plan_state,
-    now_iso,
     plan_mode_event,
-    write_plan_state,
 )
 from personagent.application.security.provider_data_policy import enforce_provider_data_policy
 from personagent.application.services import (
@@ -31,9 +26,6 @@ from personagent.application.services import (
     OperationalMemoryService,
     SessionMemoryService,
     SessionTitleService,
-)
-from personagent.application.services.browser_cooperation import (
-    attach_browser_action_proposal,
 )
 from personagent.application.tools import (
     ToolOrchestrator,
@@ -85,6 +77,7 @@ from personagent.application.use_cases.chat.state import (
 from personagent.application.use_cases.chat.state import (
     PromptPreparation as _PromptPreparation,
 )
+from personagent.application.use_cases.chat.tool_results import ToolResultHandler
 from personagent.application.use_cases.context import BuildContextUseCase
 from personagent.application.use_cases.memory.recall_memory import RecallMemoryUseCase
 from personagent.domain.context.models import ContextBuildResult, SystemContext, UserContext
@@ -105,13 +98,11 @@ from personagent.domain.prompts.services.agent_state_resolver import AgentStateR
 from personagent.domain.repositories.conversation_repository import ConversationRepository
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.domain.tools import (
-    ToolCall,
     ToolExecutionStatus,
     ToolResult,
     ToolUseContext,
 )
 from personagent.infrastructure.artifacts import store_bytes_artifact
-from personagent.interfaces.api.action_approvals import canonical_args_hash
 
 logger = structlog.get_logger(__name__)
 
@@ -200,6 +191,10 @@ class ChatCompletionUseCase:
             tool_registry=self._tool_registry,
             session_memory_service=self._session_memory_service,
             skill_roots_provider=self._skill_roots,
+        )
+        self._tool_results = ToolResultHandler(
+            orchestrator_factory=self._new_orchestrator,
+            operational_memory=self._operational_memory,
         )
         self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
         self._artifact_ttl_seconds = artifact_ttl_seconds if artifact_ttl_seconds and artifact_ttl_seconds > 0 else None
@@ -292,7 +287,7 @@ class ChatCompletionUseCase:
                         role=assistant_msg.role,
                         content=assistant_msg.content,
                         timestamp=assistant_msg.timestamp,
-                        tool_calls=self._unique_tool_call_ids(
+                        tool_calls=self._tool_results.unique_call_ids(
                             assistant_msg.tool_calls,
                             seen_tool_call_ids,
                             iteration,
@@ -302,11 +297,11 @@ class ChatCompletionUseCase:
                     )
                 conversation.add_message(assistant_msg)
 
-                tool_calls = self._parse_tool_calls(assistant_msg.tool_calls)
+                tool_calls = self._tool_results.parse_calls(assistant_msg.tool_calls)
                 if not tool_calls or not tool_context:
                     break
 
-                await self._execute_tools_into_conversation(
+                await self._tool_results.execute(
                     tool_calls,
                     tool_context,
                     conversation,
@@ -656,7 +651,7 @@ class ChatCompletionUseCase:
                     )
                 )
 
-                tool_calls = self._parse_tool_calls(assistant_state.tool_calls)
+                tool_calls = self._tool_results.parse_calls(assistant_state.tool_calls)
                 if not tool_calls or not tool_context:
                     break
 
@@ -676,10 +671,10 @@ class ChatCompletionUseCase:
                         )
                     metadata = event.to_stream_metadata()
                     if event.result is not None and event.event == "permission_required":
-                        if self._is_user_question_result(event.result):
+                        if self._tool_results.is_user_question(event.result):
                             _set_session_status(conversation, "pending")
                             metadata.update(
-                                self._record_pending_user_question(
+                                self._tool_results.record_pending_question(
                                     conversation,
                                     event.call,
                                     event.result,
@@ -692,7 +687,7 @@ class ChatCompletionUseCase:
                         else:
                             _set_session_status(conversation, "pending")
                             metadata.update(
-                                self._record_pending_tool_approval(
+                                self._tool_results.record_pending_approval(
                                     conversation,
                                     event.call,
                                     event.result,
@@ -702,9 +697,9 @@ class ChatCompletionUseCase:
                             waiting_for_tool_approval = True
                             final_finish_reason = "permission_required"
                     yield StreamChunk(metadata=metadata)
-                    if event.result is not None and self._is_plan_approval_result(event.result):
-                        self._apply_tool_state_result(event.result, conversation)
-                        state = self._plan_state_from_result(event.result, conversation)
+                    if event.result is not None and self._tool_results.is_plan_approval(event.result):
+                        self._tool_results.apply_state(event.result, conversation)
+                        state = self._tool_results.plan_state_from(event.result, conversation)
                         _attach_plan_approval_artifact(conversation, state)
                         yield StreamChunk(
                             metadata=plan_mode_event(
@@ -715,9 +710,9 @@ class ChatCompletionUseCase:
                         )
                         waiting_for_plan_approval = True
                         final_finish_reason = "plan_approval_requested"
-                    elif event.result is not None and self._is_plan_mode_result(event.result):
-                        self._apply_tool_state_result(event.result, conversation)
-                        state = self._plan_state_from_result(event.result, conversation)
+                    elif event.result is not None and self._tool_results.is_plan_mode(event.result):
+                        self._tool_results.apply_state(event.result, conversation)
+                        state = self._tool_results.plan_state_from(event.result, conversation)
                         yield StreamChunk(
                             metadata=plan_mode_event(str(conversation.id), state)
                         )
@@ -725,9 +720,9 @@ class ChatCompletionUseCase:
                 for call in tool_calls:
                     result = results_by_id.get(call.id)
                     if result is not None:
-                        self._apply_tool_state_result(result, conversation)
+                        self._tool_results.apply_state(result, conversation)
                         if result.status != ToolExecutionStatus.PERMISSION_REQUIRED:
-                            conversation.add_message(self._tool_message_from_result(result))
+                            conversation.add_message(self._tool_results.tool_message_from(result))
                             executed_tools = True
                 iteration += 1
                 if waiting_for_plan_approval or waiting_for_tool_approval:
@@ -924,253 +919,6 @@ class ChatCompletionUseCase:
             )
         return stored
 
-    def _tool_message_from_result(self, result: ToolResult) -> Message:
-        return Message(
-            role=Role.TOOL,
-            content=result.content,
-            tool_call_id=result.tool_call_id,
-            metadata={
-                "tool_name": result.tool_name,
-                "status": result.status.value,
-                "is_error": result.is_error,
-                "data": result.data,
-                **result.metadata,
-            },
-        )
-
-    async def _execute_tools_into_conversation(
-        self,
-        tool_calls: list[ToolCall],
-        tool_context: ToolUseContext,
-        conversation: Conversation,
-    ) -> None:
-        orchestrator = self._new_orchestrator()
-        results = await orchestrator.execute_collect(tool_calls, tool_context)
-        calls_by_id = {call.id: call for call in tool_calls}
-        for result in results:
-            call = calls_by_id.get(result.tool_call_id)
-            if call is not None:
-                await self._operational_memory.capture_tool_result(
-                    None,
-                    conversation,
-                    call,
-                    result,
-                    tool_context,
-                )
-            self._apply_tool_state_result(result, conversation)
-            if result.status != ToolExecutionStatus.PERMISSION_REQUIRED:
-                conversation.add_message(self._tool_message_from_result(result))
-
-    def _apply_tool_state_result(self, result: ToolResult, conversation: Conversation) -> None:
-        result_type = result.data.get("type")
-        if result_type == "plan_mode":
-            state = result.data.get("state")
-            if not isinstance(state, dict):
-                state = normalize_plan_state(conversation.metadata)
-                state.update(
-                    {
-                        "active": bool(result.data.get("active")),
-                        "status": result.data.get("status")
-                        or ("draft" if result.data.get("active") else "inactive"),
-                        "plan_id": result.data.get("plan_id") or state.get("plan_id"),
-                        "plan_content": result.data.get("plan_content")
-                        or state.get("plan_content")
-                        or "",
-                        "approval_id": result.data.get("approval_id"),
-                        "feedback": result.data.get("feedback"),
-                        "cancelled": bool(result.data.get("cancelled", False)),
-                    }
-                )
-            write_plan_state(conversation.metadata, state)
-        if result_type == "todos":
-            conversation.metadata["todos"] = result.data.get("todos", [])
-
-    def _is_plan_mode_result(self, result: ToolResult) -> bool:
-        return result.data.get("type") == "plan_mode"
-
-    def _is_plan_approval_result(self, result: ToolResult) -> bool:
-        return (
-            self._is_plan_mode_result(result)
-            and result.data.get("action") == "request_approval"
-        )
-
-    def _is_user_question_result(self, result: ToolResult) -> bool:
-        return result.data.get("type") == "ask_user_question"
-
-    def _plan_state_from_result(
-        self,
-        result: ToolResult,
-        conversation: Conversation,
-    ) -> dict[str, Any]:
-        state = result.data.get("state")
-        if isinstance(state, dict):
-            return normalize_plan_state({"plan_mode": state})
-        return normalize_plan_state(conversation.metadata)
-
-    def _record_pending_tool_approval(
-        self,
-        conversation: Conversation,
-        call: ToolCall,
-        result: ToolResult,
-        request: ChatRequestDTO,
-    ) -> dict[str, Any]:
-        existing = conversation.metadata.get(PENDING_TOOL_APPROVAL_KEY)
-        approval_id = (
-            str(existing.get("approval_id"))
-            if isinstance(existing, dict) and existing.get("tool_call_id") == call.id
-            else new_tool_approval_id()
-        )
-        args_hash = canonical_args_hash(
-            "chat.tool_approval",
-            {
-                "tool_call_id": call.id,
-                "tool_name": call.name,
-                "arguments": call.arguments,
-            },
-        )
-        pending = {
-            "conversation_id": str(conversation.id),
-            "approval_id": approval_id,
-            "args_hash": args_hash,
-            "status": "awaiting_approval",
-            "tool_call_id": call.id,
-            "tool_name": call.name,
-            "arguments": call.arguments,
-            "message": result.content,
-            "tool_context": request.tool_context,
-            "resume_request": {
-                "message": request.message,
-                "system_prompt": request.system_prompt,
-                "temperature": request.temperature,
-                "max_tokens": request.max_tokens,
-                "provider": request.provider,
-                "model": request.model,
-                "prompt_mode": request.prompt_mode,
-                "reasoning_level": request.reasoning_level,
-                "reasoning_budget_tokens": request.reasoning_budget_tokens,
-                "tools_enabled": request.tools_enabled,
-                "allowed_tools": request.allowed_tools,
-                "tool_context": request.tool_context,
-                "max_tool_iterations": request.max_tool_iterations,
-                "context_attachments": request.context_attachments,
-            },
-            "created_at": now_iso(),
-        }
-        conversation.metadata[PENDING_TOOL_APPROVAL_KEY] = pending
-        arbiter_metadata = result.metadata.get("browser_action_arbiter") if isinstance(result.metadata, dict) else None
-        if isinstance(arbiter_metadata, dict):
-            attach_browser_action_proposal(
-                conversation.metadata,
-                pending=pending,
-                arbiter_metadata=arbiter_metadata,
-                message=result.content,
-            )
-        return {
-            "conversation_id": str(conversation.id),
-            "approval_id": approval_id,
-            "args_hash": args_hash,
-            "tool_approval": pending,
-        }
-
-    def _record_pending_user_question(
-        self,
-        conversation: Conversation,
-        call: ToolCall,
-        result: ToolResult,
-        request: ChatRequestDTO,
-    ) -> dict[str, Any]:
-        approval_id = str(result.data.get("approval_id") or new_tool_approval_id())
-        pending = {
-            "conversation_id": str(conversation.id),
-            "approval_id": approval_id,
-            "status": "awaiting_answer",
-            "tool_call_id": call.id,
-            "tool_name": call.name,
-            "arguments": call.arguments,
-            "questions": result.data.get("questions") or [],
-            "title": result.data.get("title") or "User input requested",
-            "resume_request": {
-                "message": request.message,
-                "system_prompt": request.system_prompt,
-                "temperature": request.temperature,
-                "max_tokens": request.max_tokens,
-                "provider": request.provider,
-                "model": request.model,
-                "prompt_mode": request.prompt_mode,
-                "reasoning_level": request.reasoning_level,
-                "reasoning_budget_tokens": request.reasoning_budget_tokens,
-                "tools_enabled": request.tools_enabled,
-                "allowed_tools": request.allowed_tools,
-                "tool_context": request.tool_context,
-                "max_tool_iterations": request.max_tool_iterations,
-                "context_attachments": request.context_attachments,
-            },
-            "created_at": now_iso(),
-        }
-        conversation.metadata[PENDING_USER_QUESTION_KEY] = pending
-        return {
-            "conversation_id": str(conversation.id),
-            "approval_id": approval_id,
-            "user_question": pending,
-            "questions": pending["questions"],
-            "question_title": pending["title"],
-        }
-
-    def _parse_tool_calls(self, tool_calls: list[dict[str, Any]] | None) -> list[ToolCall]:
-        if not tool_calls:
-            return []
-        calls = [ToolCall.from_openai(call) for call in tool_calls]
-        return [call for call in calls if call.id and call.name]
-
-    def _unique_tool_call_ids(
-        self,
-        tool_calls: list[dict[str, Any]],
-        seen_ids: set[str],
-        iteration: int,
-    ) -> list[dict[str, Any]]:
-        """Keep provider-emitted tool ids stable enough for UI and tool responses."""
-        unique_calls: list[dict[str, Any]] = []
-        for index, tool_call in enumerate(tool_calls):
-            original_id = str(tool_call.get("id") or "").strip()
-            candidate = original_id or f"tool-call-{iteration}-{index}"
-            if candidate in seen_ids:
-                base = candidate
-                suffix = 2
-                candidate = f"{base}-{iteration}-{index}"
-                while candidate in seen_ids:
-                    suffix += 1
-                    candidate = f"{base}-{iteration}-{index}-{suffix}"
-            seen_ids.add(candidate)
-            if candidate == original_id:
-                unique_calls.append(tool_call)
-                continue
-            next_call = dict(tool_call)
-            next_call["id"] = candidate
-            extra = next_call.get("extra_content")
-            next_extra = dict(extra) if isinstance(extra, dict) else {}
-            next_extra["original_tool_call_id"] = original_id or None
-            next_call["extra_content"] = next_extra
-            unique_calls.append(next_call)
-        return unique_calls
-
-    def _forwarded_finish_reason(
-        self,
-        chunk: StreamChunk,
-        *,
-        has_pending_tool_calls: bool,
-    ) -> str | None:
-        if chunk.finish_reason == "tool_calls":
-            return None
-        if (
-            has_pending_tool_calls
-            and chunk.finish_reason
-            and not chunk.content
-            and not chunk.reasoning_content
-            and not chunk.images
-        ):
-            return None
-        return chunk.finish_reason
-
     async def _stream_assistant_pass(
         self,
         *,
@@ -1211,7 +959,7 @@ class ChatCompletionUseCase:
             if chunk.images:
                 state.images.extend(chunk.images)
             if chunk.tool_calls:
-                state.tool_calls = self._unique_tool_call_ids(
+                state.tool_calls = self._tool_results.unique_call_ids(
                     chunk.tool_calls,
                     seen_tool_call_ids,
                     iteration,
@@ -1238,7 +986,7 @@ class ChatCompletionUseCase:
                 state.usage = chunk.usage
             state.model = str(chunk_metadata.get("model") or request.model)
             state.provider = str(chunk_metadata.get("provider") or request.provider)
-            forwarded_finish_reason = self._forwarded_finish_reason(
+            forwarded_finish_reason = self._tool_results.forwarded_finish_reason(
                 chunk,
                 has_pending_tool_calls=state.tool_calls is not None,
             )
