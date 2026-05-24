@@ -77,352 +77,51 @@ import { readSessionPanelCache, persistSessionPanelCache } from "./session-panel
 import { browserMirrorSrcDoc } from "./session-panel/browser-mirror";
 export { SESSION_PANEL_CACHE_STORAGE_KEY } from "./session-panel/cache";
 export { browserMirrorSrcDoc, sanitizeBrowserMirrorHtml } from "./session-panel/browser-mirror";
-
-type BrowserTab = {
-  id: string;
-  title: string;
-  subtitle?: string;
-  closeable: boolean;
-  detail?: SessionDetailView;
-  browser?: BrowserState;
-};
-
-type BrowserState = {
-  browserId: string;
-  pageId?: string;
-  currentUrl: string;
-  draftUrl: string;
-  history: string[];
-  historyIndex: number;
-  mode: "browse" | "annotate";
-  selectedNodeId?: string;
-  elementMetadata: Record<string, BrowserElementMetadata>;
-  annotationDraft: string;
-  loading: boolean;
-  requestId: number;
-  error?: string;
-  view?: SessionBrowserView;
-};
-
-type BrowserElementMetadata = SessionBrowserElement & {
-  color?: string;
-  background?: string;
-  font?: string;
-};
-
-type BrowserTextSelectionMetadata = {
-  text: string;
-  node_id?: string;
-  selector?: string;
-  role?: string;
-  tag?: string;
-  start_offset?: number;
-  end_offset?: number;
-  bounds?: { x: number; y: number; width: number; height: number };
-};
-
-type BrowserTracingTab = "timeline" | "raw" | "state" | "agent" | "proposals";
-
-type BrowserVisualEffect = "map" | "click" | "type" | "scroll" | "extract" | "highlight";
-
-type BrowserVisualEvent = {
-  id: string;
-  toolName: string;
-  status: ToolBlockStatus;
-  effect: BrowserVisualEffect;
-  browserId?: string;
-  pageId?: string;
-  windowId?: string;
-  url?: string;
-  nodeId?: string;
-  target?: BrowserElementMetadata;
-  elements: BrowserElementMetadata[];
-  coordinates?: { x: number; y: number };
-  startedAt?: number;
-  completedAt?: number;
-  data: Record<string, unknown>;
-};
-
-type BrowserToolEvent = BrowserVisualEvent;
-
-const summaryTab: BrowserTab = {
-  id: "summary",
-  title: "Summary",
-  closeable: false,
-};
-
-const SESSION_PANEL_STREAMING_REFETCH_MS = 1_500;
-const SESSION_PANEL_STALE_MS = 5 * 60_000;
-const BROWSER_LOADING_MESSAGES = [
-  "Preparando o ambiente...",
-  "Baixando HTML da pagina...",
-  "Aplicando CSS original...",
-  "Estilizando seu site...",
-  "Mapeando elementos clicaveis...",
-];
-const BROWSER_RENDER_CACHE_LIMIT = 32;
-const BROWSER_TOOL_VIEW_SETTLE_MS = 650;
-const BROWSER_TOOL_HYDRATE_NAMES = new Set([
-  "BrowserOpen",
-  "BrowserGetElementMap",
-  "BrowserExtractContent",
-  "BrowserReadContentChunk",
-  "BrowserGetHtml",
-  "BrowserClick",
-  "BrowserType",
-  "BrowserScreenshot",
-  "BrowserScroll",
-  "BrowserReload",
-  "BrowserHistory",
-  "BrowserSwitchTab",
-  "BrowserWait",
-  "BrowserAct",
-]);
-const BROWSER_TOOL_PASSIVE_VIEW_NAMES = new Set([
-  "BrowserGetElementMap",
-  "BrowserExtractContent",
-  "BrowserReadContentChunk",
-  "BrowserGetHtml",
-]);
-const BROWSER_TOOL_NAVIGATION_VIEW_NAMES = new Set([
-  "BrowserOpen",
-  "BrowserReload",
-  "BrowserHistory",
-  "BrowserSwitchTab",
-]);
-const browserRenderCache = new Map<string, SessionBrowserView>();
-const browserRenderCacheByUrl = new Map<string, string>();
-let composerAnnotationSequence = 0;
-
-function createEmptyBrowserState(browserId = `browser:${Date.now()}`): BrowserState {
-  return {
-    browserId,
-    pageId: undefined,
-    currentUrl: "",
-    draftUrl: "",
-    history: [],
-    historyIndex: -1,
-    mode: "browse",
-    elementMetadata: {},
-    annotationDraft: "",
-    loading: false,
-    requestId: 0,
-  };
-}
-
-function browserPanelTabId(browserId: string) {
-  return browserId.startsWith("browser:") ? browserId : `browser:${browserId}`;
-}
-
-function browserPagePanelTabId(browserId: string, pageId: string) {
-  const normalizedBrowserId = browserId || "browser";
-  const normalizedPageId = pageId || normalizedBrowserId;
-  return `browser:${normalizedBrowserId}:${normalizedPageId}`;
-}
-
-function isBrowserTab(tab: BrowserTab) {
-  return Boolean(tab.browser) || tab.id.startsWith("browser:") || tab.title === "Browser";
-}
-
-function browserTabsRepresentSamePage(left: BrowserTab, right: BrowserTab) {
-  if (left.id === right.id) return true;
-  const leftPageIds = browserTabPageIds(left);
-  const rightPageIds = browserTabPageIds(right);
-  if (leftPageIds.size && rightPageIds.size) {
-    for (const pageId of leftPageIds) {
-      if (rightPageIds.has(pageId)) return true;
-    }
-  }
-  const leftUrl = browserTabComparableUrl(left);
-  const rightUrl = browserTabComparableUrl(right);
-  return Boolean(leftUrl && rightUrl && leftUrl === rightUrl);
-}
-
-function browserTabPageIds(tab: BrowserTab) {
-  const ids = new Set<string>();
-  const browser = tab.browser;
-  const viewRecord = recordValue(browser?.view);
-  [
-    browser?.pageId,
-    browser?.view?.active_tab_id,
-    viewRecord.page_id,
-    viewRecord.window_id,
-    viewRecord.tab_id,
-  ].forEach((value) => {
-    if (typeof value === "string" && value.trim()) ids.add(value.trim());
-  });
-  return ids;
-}
-
-function browserTabComparableUrl(tab: BrowserTab) {
-  const url = tab.browser?.currentUrl || tab.browser?.view?.url || tab.subtitle || "";
-  return isMeaningfulBrowserUrl(url) ? normalizeComparableUrl(url) : "";
-}
-
-function browserPreferredSyncedView(
-  existingView: SessionBrowserView | undefined,
-  syncedView: SessionBrowserView | undefined,
-) {
-  if (!syncedView) return existingView;
-  if (!existingView) return syncedView;
-  const existingUrl = browserViewComparableUrl(existingView);
-  const syncedUrl = browserViewComparableUrl(syncedView);
-  if (
-    existingUrl &&
-    syncedUrl &&
-    existingUrl === syncedUrl &&
-    browserViewIsPlaceholder(syncedView) &&
-    !browserViewIsPlaceholder(existingView)
-  ) {
-    return existingView;
-  }
-  return syncedView;
-}
-
-function browserViewComparableUrl(view: SessionBrowserView | undefined) {
-  return view?.url && isMeaningfulBrowserUrl(view.url) ? normalizeComparableUrl(view.url) : "";
-}
-
-function browserViewIsPlaceholder(view: SessionBrowserView | undefined) {
-  if (!view) return true;
-  return (
-    !view.can_capture &&
-    !String(view.image_data || "").trim() &&
-    !String(view.preview_image_url || "").trim() &&
-    !String(view.html || "").trim() &&
-    !String(view.document_html || "").trim() &&
-    !String(view.document_url || "").trim()
-  );
-}
-
-function browserCooperationFromView(view?: SessionBrowserView) {
-  return view?.cooperation ?? view?.workspace_state?.cooperation ?? view?.browser_snapshot?.cooperation;
-}
-
-function browserRenderCacheKey(
-  browserId: string,
-  url: string,
-  viewport: Pick<SessionBrowserViewport, "width" | "height">,
-  pageId = "",
-) {
-  const normalizedUrl = normalizeComparableUrl(url || "about:blank");
-  return [browserId || "browser", pageId || normalizedUrl, normalizedUrl, Math.round(viewport.width), Math.round(viewport.height)].join(
-    "::",
-  );
-}
-
-function browserRenderUrlCacheKey(browserId: string, url: string) {
-  return [browserId || "browser", "url", normalizeComparableUrl(url || "about:blank")].join("::");
-}
-
-function browserRenderCacheKeyFromView(browserId: string, view: SessionBrowserView) {
-  const viewRecord = recordValue(view);
-  return (
-    browserStringValue(view.render_cache_key) ||
-    browserRenderCacheKey(
-      browserId || view.browser_id,
-      view.url || "about:blank",
-      {
-        width: view.viewport_width || 1024,
-        height: view.viewport_height || 720,
-      },
-      browserStringValue(view.active_tab_id) || browserStringValue(viewRecord.page_id) || "",
-    )
-  );
-}
-
-function rememberBrowserRenderView(browserId: string, view: SessionBrowserView) {
-  if (!view.url || view.url === "about:blank") return;
-  const resolvedBrowserId = browserId || view.browser_id;
-  const key = browserRenderCacheKeyFromView(resolvedBrowserId, view);
-  const fallbackKey = browserRenderCacheKey(browserId || view.browser_id, view.url, {
-    width: view.viewport_width || 1024,
-    height: view.viewport_height || 720,
-  });
-  const cachedView = compactBrowserViewForMemory({
-    ...view,
-    render_cache_key: view.render_cache_key || key,
-    render_cache_status: "stored",
-  });
-  for (const cacheKey of Array.from(new Set([key, fallbackKey]))) {
-    browserRenderCache.delete(cacheKey);
-    browserRenderCache.set(cacheKey, cachedView);
-  }
-  browserRenderCacheByUrl.set(browserRenderUrlCacheKey(resolvedBrowserId, view.url), key);
-  while (browserRenderCache.size > BROWSER_RENDER_CACHE_LIMIT) {
-    const oldest = browserRenderCache.keys().next().value;
-    if (!oldest) break;
-    browserRenderCache.delete(oldest);
-    for (const [urlKey, cacheKey] of browserRenderCacheByUrl.entries()) {
-      if (cacheKey === oldest) browserRenderCacheByUrl.delete(urlKey);
-    }
-  }
-}
-
-function compactBrowserViewForMemory(view: SessionBrowserView): SessionBrowserView {
-  const snapshot = view.browser_snapshot
-    ? {
-        ...view.browser_snapshot,
-        html: "",
-        document_html: "",
-        image_data: "",
-      }
-    : view.browser_snapshot;
-  return {
-    ...view,
-    html: "",
-    document_html: "",
-    image_data: "",
-    browser_snapshot: snapshot,
-  };
-}
-
-function resolveBackendUrlPath(baseUrl: string, value?: string) {
-  const raw = browserStringValue(value);
-  if (!raw) return "";
-  if (/^https?:\/\//i.test(raw) || raw.startsWith("data:") || raw.startsWith("blob:")) return raw;
-  const root = baseUrl.replace(/\/+$/, "");
-  return raw.startsWith("/") ? `${root}${raw}` : `${root}/${raw}`;
-}
-
-function readBrowserRenderCache(
-  browserId: string,
-  url: string,
-  viewport: Pick<SessionBrowserViewport, "width" | "height">,
-  pageId = "",
-) {
-  if (!url || url === "about:blank") return undefined;
-  const key = browserRenderCacheKey(browserId, url, viewport, pageId);
-  const urlKey = browserRenderUrlCacheKey(browserId, url);
-  const urlAlias = browserRenderCacheByUrl.get(urlKey);
-  const normalizedUrl = normalizeComparableUrl(url);
-  const scannedKey =
-    urlAlias ??
-    Array.from(browserRenderCache.entries()).find(
-      ([, value]) => value.browser_id === browserId && normalizeComparableUrl(value.url || "") === normalizedUrl,
-    )?.[0];
-  for (const candidateKey of Array.from(new Set([key, urlAlias, scannedKey])).filter(
-    (candidateKey): candidateKey is string => Boolean(candidateKey),
-  )) {
-    const cached = browserRenderCache.get(candidateKey);
-    if (!cached) continue;
-    browserRenderCache.delete(candidateKey);
-    browserRenderCache.set(candidateKey, cached);
-    browserRenderCacheByUrl.set(urlKey, candidateKey);
-    return { ...cached, render_cache_key: cached.render_cache_key || candidateKey, render_cache_status: "hit" };
-  }
-  return undefined;
-}
-
-function isBrowserCooperationEvent(value: unknown): value is SessionBrowserCooperationEvent {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      typeof (value as { kind?: unknown }).kind === "string",
-  );
-}
-
+import {
+  type BrowserTab,
+  type BrowserState,
+  type BrowserElementMetadata,
+  type BrowserTextSelectionMetadata,
+  type BrowserTracingTab,
+  type BrowserVisualEffect,
+  type BrowserVisualEvent,
+  type BrowserToolEvent,
+  summaryTab,
+  SESSION_PANEL_STREAMING_REFETCH_MS,
+  SESSION_PANEL_STALE_MS,
+  BROWSER_LOADING_MESSAGES,
+  BROWSER_RENDER_CACHE_LIMIT,
+  BROWSER_TOOL_VIEW_SETTLE_MS,
+  BROWSER_TOOL_HYDRATE_NAMES,
+  BROWSER_TOOL_PASSIVE_VIEW_NAMES,
+  BROWSER_TOOL_NAVIGATION_VIEW_NAMES,
+  browserRenderCache,
+  browserRenderCacheByUrl,
+  incrementComposerAnnotationSequence,
+  isMeaningfulBrowserUrl,
+  normalizeComparableUrl,
+  browserStringValue,
+  recordValue,
+  createEmptyBrowserState,
+  browserPanelTabId,
+  browserPagePanelTabId,
+  isBrowserTab,
+  browserTabsRepresentSamePage,
+  browserTabPageIds,
+  browserTabComparableUrl,
+  browserPreferredSyncedView,
+  browserViewComparableUrl,
+  browserViewIsPlaceholder,
+  browserCooperationFromView,
+  browserRenderCacheKey,
+  browserRenderUrlCacheKey,
+  browserRenderCacheKeyFromView,
+  rememberBrowserRenderView,
+  compactBrowserViewForMemory,
+  resolveBackendUrlPath,
+  readBrowserRenderCache,
+  isBrowserCooperationEvent,
+} from "./session-panel/helpers";
 
 export function SessionPanel({
   visible,
@@ -3368,10 +3067,6 @@ function browserToolEventIsAction(visual: BrowserToolEvent) {
   return visual.toolName === "BrowserClick" || visual.toolName === "BrowserType" || visual.toolName === "BrowserAct";
 }
 
-function isMeaningfulBrowserUrl(url: string | undefined) {
-  const normalized = url?.trim();
-  return Boolean(normalized && normalized !== "about:blank");
-}
 
 function browserHasMeaningfulPage(browser: BrowserState | undefined) {
   return Boolean(isMeaningfulBrowserUrl(browser?.currentUrl) || isMeaningfulBrowserUrl(browser?.view?.url));
@@ -3493,11 +3188,7 @@ function browserSnapshotViewFromToolEvent(visual: BrowserToolEvent): SessionBrow
   };
 }
 
-function browserStringValue(value: unknown) {
-  if (typeof value === "string" && value.trim()) return value;
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return undefined;
-}
+
 
 function browserToolEventUrl(visual: BrowserToolEvent) {
   return browserStringValue(visual.data.final_url) || browserStringValue(visual.data.url) || visual.url || "";
@@ -3528,9 +3219,7 @@ function browserRenderModeValue(value: unknown): SessionBrowserView["render_mode
   return "screenshot";
 }
 
-function normalizeComparableUrl(value: string) {
-  return value.trim().replace(/\/+$/, "");
-}
+
 
 const BROWSER_FORWARD_KEYS = new Set([
   "Enter",
@@ -3690,9 +3379,7 @@ function recordArray(value: unknown): Array<Record<string, unknown>> {
     : [];
 }
 
-function recordValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
+
 
 function browserAnnotationCounts(annotations: SessionBrowserAnnotation[]) {
   return annotations.reduce<Record<string, number>>((counts, annotation) => {
@@ -3915,8 +3602,7 @@ function normalizeBrowserTextSelection(value: unknown): BrowserTextSelectionMeta
 }
 
 function nextComposerAnnotationId() {
-  composerAnnotationSequence += 1;
-  return Date.now() + composerAnnotationSequence;
+  return Date.now() + incrementComposerAnnotationSequence();
 }
 
 function browserAnnotationDisplayPath(url: string, title: string) {
