@@ -246,6 +246,147 @@ never decreases. Regression grows as unit tests accumulate.
 
 ---
 
+## Uncorrected errors (mypy)
+
+These errors existed **before** the decomposition started and were
+**preserved verbatim** per the protocol ("no behavior changes"). They
+should be fixed in dedicated follow-up PRs, not extraction PRs.
+
+### 1. `agent_turn_runner.py:278` — `Returning Any` from `_tool_schemas_for_agent`
+
+```python
+def _tool_schemas_for_agent(...) -> list[dict[str, Any]]:
+    ...
+    return self._tool_registry.openai_schemas(...)  # <-- returns Any
+```
+
+**Why:** `ToolRegistry.openai_schemas()` has no return type annotation.
+**Fix:** Add `-> list[dict[str, Any]]` to `ToolRegistry.openai_schemas()`.
+
+---
+
+### 2. `blackboard.py:661` — Incompatible type assignment
+
+```python
+extra = {}  # mypy infers dict[str, list[str]] from next line
+extra["coverage"] = self._infer_coverage_for_claim(...)  # list[str]
+extra["coverage_inferred"] = True   # <-- bool into dict[str, list[str]]
+```
+
+**Why:** `_infer_coverage_for_claim` returns `list[str]`, so mypy narrows
+`extra` to `dict[str, list[str]]`. Then assigning `bool` fails.
+
+**Fix:** Annotate `extra: dict[str, Any] = {}` explicitly.
+
+---
+
+### 3. `blackboard.py:663` — Incompatible type assignment
+
+```python
+extra["mutating"] = True   # <-- bool into dict[str, list[str]]
+```
+
+**Same root cause as #2.**
+
+**Fix:** Same fix — annotate `extra: dict[str, Any] = {}`.
+
+---
+
+### 4. `consensus_phase.py:105` — `Returning Any` from `_parse_vote_payload`
+
+```python
+def _parse_vote_payload(content: str) -> dict[str, Any]:
+    parsed = _parse_json_object(content)  # returns Any
+    if _looks_like_vote(parsed):
+        return parsed   # <-- Any into dict[str, Any]
+```
+
+**Why:** `_parse_json_object` has return type `Any`.
+
+**Fix:** Add proper return type to `_parse_json_object` or cast:
+```python
+return dict(parsed)  # type: ignore[no-any-return]
+```
+
+---
+
+### 5. `consensus_phase.py:157` — `Returning Any` from `_regex_number`
+
+```python
+def _regex_number(...) -> float | None:
+    ...
+    return _clamp_float(match.group(1), 0, 1)  # _clamp_float returns Any
+```
+
+**Why:** `_clamp_float` is imported from `blackboard.py` which has no type
+annotation on that function.
+
+**Fix:** Add `-> float` to `_clamp_float` in `blackboard.py`.
+
+---
+
+### 6. `coordinator_phase.py:46` — `Returning Any` from `_coverage_matrix_from_payload`
+
+```python
+def _coverage_matrix_from_payload(...) -> list[dict[str, Any]]:
+    matrix = _normalize_coverage_matrix(...)  # returns Any
+    if matrix:
+        return matrix   # <-- Any into list[dict[str, Any]]
+```
+
+**Why:** `_normalize_coverage_matrix` has no return type annotation.
+
+**Fix:** Add `-> list[dict[str, Any]]` to `_normalize_coverage_matrix`.
+
+---
+
+### 7. `orchestrator.py:875` — `union-attr` on `_tool_proposal`
+
+```python
+def _tool_proposal(raw_call: dict[str, Any], *, reason: str) -> dict[str, Any]:
+    function = raw_call.get("function") if isinstance(raw_call.get("function"), dict) else {}
+    name = str(function.get("name") or raw_call.get("name") or "tool")
+    # ^ function is dict[str, Any] | {} — mypy sees the `else {}` branch
+```
+
+**Why:** Mypy infers `function` as `Any | dict[Any, Any] | None` because
+`raw_call.get("function")` returns `Any`. The `isinstance` guard doesn't
+narrow `function` enough.
+
+**Fix:** Use a narrower type for `raw_call` or explicit cast:
+```python
+function = raw_call.get("function")
+function_dict = function if isinstance(function, dict) else {}
+```
+
+---
+
+### 8. `orchestrator.py:944` — `Returning Any` from `_turn_coherency_score`
+
+```python
+def _turn_coherency_score(...) -> float:
+    ...
+    return round(_clamp_float(raw, 0, 1), 3)  # _clamp_float returns Any
+```
+
+**Why:** `_clamp_float` has no return type.
+
+**Fix:** Add `-> float` to `_clamp_float` in `blackboard.py`.
+
+---
+
+### 9. `orchestrator.py:945` — `Returning Any` from `_turn_coherency_score`
+
+```python
+    return round(_coherency_score(...), 3)  # _coherency_score returns Any
+```
+
+**Why:** `_coherency_score` in `blackboard.py` has no return type.
+
+**Fix:** Add `-> float` to `_coherency_score` in `blackboard.py`.
+
+---
+
 ## What to do differently next time
 
 1. **Document errors in real-time.** Instead of reconstructing from memory,
@@ -259,3 +400,6 @@ never decreases. Regression grows as unit tests accumulate.
 5. **Run mypy on the new module in isolation.** Before wiring into the
    orchestrator, type-check the extracted module standalone to catch import
    issues early.
+6. **File follow-up issues for uncorrected errors.** The 9 mypy errors above
+   should each have a dedicated issue or be batched into a "type-hardening"
+   PR after Slice 8 completes.
