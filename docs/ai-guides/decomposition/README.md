@@ -47,9 +47,11 @@ Do **not** use them when:
 | `routes_workspace.md`       | ⏳ `api/routes/workspace.py` (1,576 L) |
 | `routes_sessions.md`        | ⏳ `api/routes/sessions.py` (1,471 L) |
 | `browser_cooperation.md`    | ⏳ `services/browser_cooperation.py` (1,292 L) |
+| `blackboard.md`             | ⏳ `team_chat/blackboard.py` (1,091 L) |
 | `operational_memory_service.md` | ⏳ `services/operational_memory.py` (1,075 L) |
 | `llm_adapters.md`           | ⏳ `llm/vertex_ai + codex + kimi` (1,064 + 944 + 892 L) |
 | `session_panel_service.md`  | ⏳ `services/session_panel.py` (976 L) |
+| `persistence_models.md`     | ⏳ `persistence/models.py` (919 L, 31 ORM classes) |
 | `session_titles.md`         | ⏳ `services/session_titles.py` (848 L) |
 | `filesystem_tools.md`       | ⏳ `tools/filesystem_tools.py` (810 L) |
 | **Frontend — planned** | |
@@ -61,6 +63,8 @@ Do **not** use them when:
 | `browser_mirror.md`         | ⏳ `session-panel/browser-mirror.ts` (1,261 L) |
 | `api_client.md`             | ⏳ `api/client.ts` (1,231 L) |
 | `file_viewer_panel.md`      | ⏳ `chat/file-viewer-panel.tsx` (1,079 L) |
+| `tool_block.md`             | ⏳ `chat/tool-block.tsx` (919 L) |
+| `chat_types.md`             | ⏳ `types/chat.ts` (887 L, 71 exports) |
 
 ## How a playbook works
 
@@ -112,9 +116,9 @@ Each slice → one PR → one merge → next slice. Never bundle.
 
 If the file is:
 
-- Over 1,500 lines, **and**
-- Mixing more than one responsibility, **and**
-- Hot path (called from multiple places, with multiple
+- Over **800 lines** (1,500+ is severe), **and**
+- Mixing **more than one responsibility**, **and**
+- **Hot path** (called from multiple places, with multiple
   collaborators),
 
 then it likely deserves a playbook. Write a new one in this
