@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.use_cases.chat_completion import ChatCompletionUseCase
 from personagent.interfaces.api.routes.chat.models_listing import register_model_listing_routes
-
 
 # ---------------------------------------------------------------------------
 # Stubs
