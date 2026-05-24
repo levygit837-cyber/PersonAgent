@@ -46,7 +46,7 @@ by their tests — keep the exports.
 | 1 — Extract helpers to `helpers.ts` | ✅ Merged | — | 19 functions + 7 types + 8 constants; `helpers.ts`; 40 new tests |
 | 2 — Extract `useSessionPanelState` hook | ✅ Merged | — | hook + `mergeUsage`; `use-session-panel-state.ts`; 8 new tests |
 | 3 — Extract `useBrowserTabs` hook + browser-helpers | ✅ Merged | #62 | hook (~560L) + browser-helpers (~1000L); 61 new tests; session-panel 3,588→1,838 (−49%) |
-| 4 — Extract leaf components | ⏳ Pending | — | |
+| 4 — Extract leaf components | ✅ Merged | #63 | 5 new files (browser-tab-strip, browser-controls, browser-cooperation, browser-tracing, shared-ui); 28 new tests; session-panel 1,838→1,247 (−32%) |
 | 5 — Extract `BrowserTabContent` | ⏳ Pending | — | |
 | 6 — Extract right-rail detail sections | ⏳ Pending | — | |
 | 7 — Inline what remains | ⏳ Pending | — | |
