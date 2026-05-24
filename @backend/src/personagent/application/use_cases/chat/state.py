@@ -103,9 +103,49 @@ class AssistantStreamState:
         return bool(self.content or self.images)
 
 
+@dataclass(slots=True)
+class StreamingTurnState:
+    """Cross-iteration state for the streaming completion turn loop.
+
+    Bundles the standalone tracking variables that previously lived as
+    local bindings inside ``_stream_completion_turn`` so that the
+    streaming-loop extraction can pass a single typed argument around
+    instead of a long parameter list. Each field maps 1:1 to a former
+    local:
+
+    * ``final_finish_reason`` / ``final_usage`` / ``final_model`` /
+      ``final_provider`` -- the values written into the final
+      ``conversation_saved`` :class:`StreamChunk`. They start from
+      ``None`` (with ``final_model`` / ``final_provider`` seeded from
+      the request) and may be overwritten by each iteration's
+      assistant pass or by an error branch.
+    * ``seen_tool_call_ids`` -- IDs the assistant has already emitted;
+      passed by reference into the per-iteration assistant pass to
+      keep duplicate detection consistent across iterations.
+    * ``iteration`` / ``executed_tools`` -- loop control + a flag the
+      retry-on-empty-tool-response branch reads to decide whether to
+      replay the assistant pass with the final-answer reminder.
+    * ``last_prompt_context_metadata`` -- the most recent context
+      metadata dict, surfaced into the ``conversation_saved`` payload.
+
+    The dataclass is mutable (``slots=True`` but no ``frozen=True``)
+    because the streaming loop mutates these fields in place.
+    """
+
+    final_finish_reason: str | None = None
+    final_usage: dict[str, int] | None = None
+    final_model: str | None = None
+    final_provider: str | None = None
+    seen_tool_call_ids: set[str] = field(default_factory=set)
+    iteration: int = 0
+    executed_tools: bool = False
+    last_prompt_context_metadata: dict[str, Any] = field(default_factory=dict)
+
+
 __all__ = [
     "AssistantStreamState",
     "MemoryRecallResult",
     "PromptPackage",
     "PromptPreparation",
+    "StreamingTurnState",
 ]

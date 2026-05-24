@@ -29,9 +29,10 @@ directory.
 | Media policy handler   | #20 | ~54           | 1,098      |
 | Conversation lifecycle | #21 | ~33           | 1,065      |
 | Stream normalization   | #23 | ~29           | 1,036      |
-| **Current**            |     |               | **1,036**  |
+| Streaming turn state   | #24 | ~1 (prep)     | 1,035      |
+| **Current**            |     |               | **1,035**  |
 
-Cumulative reduction: **2,742 → 1,036 lines (–62%)**.
+Cumulative reduction: **2,742 → 1,035 lines (–62%)**.
 
 ## Public contract that must be preserved
 
@@ -245,7 +246,7 @@ order of calls.
 - A `_StreamingTurnState` dataclass is extracted **first** (no
   behavior change) to give the streaming method a single
   mutable-state object. Then the loop body is extracted in a
-  separate PR.
+  separate PR. ✅ Landed in #24.
 
 This may need to be split into **3–4 sub-slices**:
 
