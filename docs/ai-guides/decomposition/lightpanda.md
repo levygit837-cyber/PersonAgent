@@ -72,7 +72,7 @@ appropriate.
 | 4 — Extract `BrowserPageLifecycle` | ✅ Merged | — | 342 lines removed; 6 public methods in `page_lifecycle.py` + backward-compat delegations |
 | 5 — Extract `BrowserSnapshot` | ✅ Merged | — | 577 lines removed; 14 methods in `snapshot.py` + backward-compat delegations; 37 new tests |
 | 6 — Extract `BrowserSearch` | ✅ Merged | — | 253 lines removed; search + search_url + 4 scripts in `search.py` + backward-compat delegations; 27 new tests |
-| 7 — Extract `BrowserViewActions` | ⏳ Pending | — | |
+| 7 — Extract `BrowserViewActions` | ✅ Merged | — | 317 lines removed; 7 view_* methods in `view_actions.py` + backward-compat delegations; 23 new tests |
 | 8 — Inline what remains | ⏳ Pending | — | |
 
 ## Proposed slices (in order; expect 8+ PRs)
