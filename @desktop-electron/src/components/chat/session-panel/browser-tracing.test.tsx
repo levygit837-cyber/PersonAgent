@@ -79,7 +79,7 @@ describe("MetricBand", () => {
 describe("BrowserVisualEventList", () => {
   it("renders visual events", () => {
     const events: BrowserVisualEvent[] = [
-      { id: "e1", toolName: "BrowserClick", status: "completed", effect: "click", url: "https://example.com" },
+      { id: "e1", toolName: "BrowserClick", status: "completed", effect: "click", url: "https://example.com", elements: [], data: {} },
     ];
     render(<BrowserVisualEventList events={events} />);
     expect(screen.getByText("BrowserClick")).toBeDefined();
@@ -92,6 +92,8 @@ describe("BrowserVisualEventList", () => {
       toolName: `Tool${i}`,
       status: "completed" as const,
       effect: "click" as const,
+      elements: [],
+      data: {},
     }));
     const { container } = render(<BrowserVisualEventList events={events} />);
     const items = container.querySelectorAll(".rounded-lg.border-primary\\/20");
