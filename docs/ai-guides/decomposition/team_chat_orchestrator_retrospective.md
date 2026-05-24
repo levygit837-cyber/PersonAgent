@@ -403,3 +403,33 @@ def _turn_coherency_score(...) -> float:
 6. **File follow-up issues for uncorrected errors.** The 9 mypy errors above
    should each have a dedicated issue or be batched into a "type-hardening"
    PR after Slice 8 completes.
+
+---
+
+## Slice 7 — MessageBuilders extraction (PR #34)
+
+### Error location changes
+
+Three mypy errors moved from `orchestrator.py` to `messages.py` because the
+underlying code was relocated verbatim:
+
+| Old location | New location | Error |
+|--------------|--------------|-------|
+| `orchestrator.py:875` | `messages.py:240` | `union-attr` on `function.get("name")` |
+| `orchestrator.py:944` | `messages.py:309` | `Returning Any` from `_turn_coherency_score` |
+| `orchestrator.py:945` | `messages.py:310` | `Returning Any` from `_turn_coherency_score` |
+
+The fixes remain the same as documented in the Slice 4–6 catalog above.
+
+### Lessons
+
+* **Re-exports for test imports:** `_parse_json_object` was imported by the
+  existing integration test. Removing it from `orchestrator.py` broke test
+  collection. Always grep `tests/` for every symbol before deleting.
+* **Lazy-import repointing is safe but verbose:** Updating 4 modules to import
+  from `messages.py` instead of `orchestrator.py` was mechanical and produced
+  a clean diff. Keeping the old lazy imports would have worked too, but
+  repointing removes a hidden circular dependency.
+* **Ruff unused-import in tests:** Importing phase constants for "coverage"
+  without using them in assertions triggers F401. Only import what the test
+  actually exercises.
