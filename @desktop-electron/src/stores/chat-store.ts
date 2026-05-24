@@ -104,6 +104,7 @@ import {
   estimateTokens,
   normalizeUsageTokens,
 } from "./chat-store/internal";
+import { createComposerSlice } from "./chat-store/composer-slice";
 
 export type { ComposerAnnotation } from "./chat-store/internal";
 type ComposerAnnotation = ComposerAnnotationInternal;
@@ -123,8 +124,6 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
   return createStore<ChatState>((set, get) => ({
   workspaceRoot: options.initialWorkspaceRoot,
   messages: [],
-  composerAnnotations: [],
-  composerPlanMode: false,
   isStreaming: false,
   isFinalizing: false,
   isProcessingPlanDecision: false,
@@ -134,19 +133,9 @@ export function createChatStore(options: CreateChatStoreOptions = {}): ChatStore
   contextTokenEstimate: 0,
   browserToolBlocks: [],
 
+  ...createComposerSlice(set, get),
+
   setWorkspaceRoot: (workspaceRoot) => set({ workspaceRoot: workspaceRoot?.trim() || undefined }),
-
-  addComposerAnnotation: (annotation) => set((state) => ({
-    composerAnnotations: [...state.composerAnnotations.filter((item) => item.id !== annotation.id), annotation],
-  })),
-
-  removeComposerAnnotation: (id) => set((state) => ({
-    composerAnnotations: state.composerAnnotations.filter((annotation) => annotation.id !== id),
-  })),
-
-  clearComposerAnnotations: () => set({ composerAnnotations: [] }),
-
-  setComposerPlanMode: (active) => set({ composerPlanMode: active }),
 
   loadConversation: async (id, workspaceRoot) => {
     if (get().loadingConversationId === id) return;
