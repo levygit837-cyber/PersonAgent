@@ -28,9 +28,10 @@ directory.
 | After-turn coordinator | #19 | ~38           | 1,152      |
 | Media policy handler   | #20 | ~54           | 1,098      |
 | Conversation lifecycle | #21 | ~33           | 1,065      |
-| **Current**            |     |               | **1,065**  |
+| Stream normalization   | #23 | ~29           | 1,036      |
+| **Current**            |     |               | **1,036**  |
 
-Cumulative reduction: **2,742 → 1,065 lines (–61%)**.
+Cumulative reduction: **2,742 → 1,036 lines (–62%)**.
 
 ## Public contract that must be preserved
 
@@ -220,8 +221,8 @@ order of calls.
 
 - `_stream_completion_turn` — outer turn loop (~370 lines)
 - `_stream_assistant_pass`
-- `_normalize_provider_stream_chunk`
-- `_empty_model_response_notice`
+- ~~`_normalize_provider_stream_chunk`~~ — landed in #23 (`StreamChunkNormalizer`)
+- ~~`_empty_model_response_notice`~~ — landed in #23 (`StreamChunkNormalizer`)
 - ~~`_get_or_create_conversation`~~ — landed in #21 (`ConversationLifecycleHandler`)
 - ~~`_assistant_message_from_result`~~ — landed in #21 (`ConversationLifecycleHandler`)
 - ~~`_enforce_provider_data_policy`~~ — landed in #20 (`MediaPolicyHandler`)

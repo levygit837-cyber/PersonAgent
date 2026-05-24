@@ -127,9 +127,10 @@ PR chain so far (Phase 1.2):
 - #19 — `AfterTurnCoordinator`
 - #20 — `MediaPolicyHandler`
 - #21 — `ConversationLifecycleHandler`
+- #23 — `StreamChunkNormalizer`
 
-Cumulative reduction on `chat_completion.py`: 2,742 → 1,065
-lines (**–61%**), zero behavior changes, 215+ new unit tests.
+Cumulative reduction on `chat_completion.py`: 2,742 → 1,036
+lines (**–62%**), zero behavior changes, 230+ new unit tests.
 
 ## Frequently-asked questions
 
