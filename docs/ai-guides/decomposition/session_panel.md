@@ -44,7 +44,7 @@ by their tests — keep the exports.
 | Slice | Status | PR | Notes |
 |-------|--------|----|-------|
 | 1 — Extract helpers to `helpers.ts` | ✅ Merged | — | 19 functions + 7 types + 8 constants; `helpers.ts`; 40 new tests |
-| 2 — Extract `useSessionPanelState` hook | ⏳ Pending | — | |
+| 2 — Extract `useSessionPanelState` hook | ✅ Merged | — | hook + `mergeUsage`; `use-session-panel-state.ts`; 8 new tests |
 | 3 — Extract `useBrowserTabs` hook | ⏳ Pending | — | |
 | 4 — Extract leaf components | ⏳ Pending | — | |
 | 5 — Extract `BrowserTabContent` | ⏳ Pending | — | |

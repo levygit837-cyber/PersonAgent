@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode, type WheelEvent } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   ArrowLeft,
@@ -29,7 +28,6 @@ import {
   createSessionBrowserAnnotation,
   fetchBackendText,
   getSessionBrowserView,
-  getSessionPanel,
   getSessionProjectDetail,
   ingestSessionBrowserEvents,
   keySessionBrowser,
@@ -49,7 +47,7 @@ import {
 } from "../../api/client";
 import { cn } from "../../lib/utils";
 import { useAppStore } from "../../stores/app-store";
-import { useChatStore, type ComposerAnnotation } from "../../stores/chat-store";
+import type { ComposerAnnotation } from "../../stores/chat-store";
 import type {
   ChangedFile,
   ProjectItem,
@@ -62,7 +60,7 @@ import type {
   ToolBlockStatus,
   ToolBlockUi,
 } from "../../types/chat";
-import { emptySessionUsage } from "../../types/chat";
+
 import { Button } from "../ui/button";
 import {
   DropdownMenu,
@@ -73,7 +71,7 @@ import {
 } from "../ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import type { SessionDetailView } from "./session-detail-window";
-import { readSessionPanelCache, persistSessionPanelCache } from "./session-panel/cache";
+import { useSessionPanelState } from "./session-panel/use-session-panel-state";
 import { browserMirrorSrcDoc } from "./session-panel/browser-mirror";
 export { SESSION_PANEL_CACHE_STORAGE_KEY } from "./session-panel/cache";
 export { browserMirrorSrcDoc, sanitizeBrowserMirrorHtml } from "./session-panel/browser-mirror";
@@ -87,8 +85,6 @@ import {
   type BrowserVisualEvent,
   type BrowserToolEvent,
   summaryTab,
-  SESSION_PANEL_STREAMING_REFETCH_MS,
-  SESSION_PANEL_STALE_MS,
   BROWSER_LOADING_MESSAGES,
   BROWSER_RENDER_CACHE_LIMIT,
   BROWSER_TOOL_VIEW_SETTLE_MS,
@@ -130,18 +126,20 @@ export function SessionPanel({
   visible: boolean;
   onClose: () => void;
 }) {
-  const baseUrl = useAppStore((state) => state.baseUrl);
-  const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
-  const paneWorkspaceRoot = useChatStore((state) => state.workspaceRoot);
-  const workspaceRoot = paneWorkspaceRoot || selectedWorkspace;
-  const conversationId = useChatStore((state) => state.conversationId);
-  const isStreaming = useChatStore((state) => state.isStreaming);
-  const liveUsage = useChatStore((state) => state.liveSessionUsage);
-  const browserToolBlocks = useChatStore((state) => state.browserToolBlocks);
-  const addComposerAnnotation = useChatStore((state) => state.addComposerAnnotation);
-  const approvePendingTool = useChatStore((state) => state.approvePendingTool);
-  const rejectPendingTool = useChatStore((state) => state.rejectPendingTool);
-  const queryClient = useQueryClient();
+  const {
+    baseUrl,
+    workspaceRoot,
+    conversationId,
+    isStreaming,
+    browserToolBlocks,
+    addComposerAnnotation,
+    approvePendingTool,
+    rejectPendingTool,
+    snapshot,
+    usage,
+    panelIsLoading,
+    panelError,
+  } = useSessionPanelState(visible);
   const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
   const [tabs, setTabs] = useState<BrowserTab[]>([summaryTab]);
   const [activeTabId, setActiveTabId] = useState(summaryTab.id);
@@ -150,42 +148,6 @@ export function SessionPanel({
   const cooperationSocketsRef = useRef<Record<string, WebSocket>>({});
   const tabsRef = useRef<BrowserTab[]>(tabs);
   const browserToolTabOpenRef = useRef("");
-  const cachedPanel = useMemo(
-    () => readSessionPanelCache(baseUrl, conversationId, workspaceRoot),
-    [baseUrl, conversationId, workspaceRoot],
-  );
-
-  const panel = useQuery({
-    queryKey: ["session-panel", baseUrl, conversationId, workspaceRoot],
-    queryFn: () => getSessionPanel(baseUrl, conversationId!, workspaceRoot),
-    enabled: Boolean(visible && baseUrl && conversationId),
-    initialData: () => cachedPanel?.snapshot,
-    initialDataUpdatedAt: () => cachedPanel?.cachedAt,
-    refetchInterval: isStreaming ? SESSION_PANEL_STREAMING_REFETCH_MS : false,
-    refetchIntervalInBackground: true,
-    staleTime: SESSION_PANEL_STALE_MS,
-    refetchOnWindowFocus: false,
-  });
-
-  useEffect(() => {
-    const handler = () => {
-      void queryClient.invalidateQueries({ queryKey: ["session-panel"] });
-    };
-    window.addEventListener("personagent:session-panel-changed", handler);
-    window.addEventListener("personagent:conversations-changed", handler);
-    return () => {
-      window.removeEventListener("personagent:session-panel-changed", handler);
-      window.removeEventListener("personagent:conversations-changed", handler);
-    };
-  }, [queryClient]);
-
-  const snapshot = panel.data;
-  useEffect(() => {
-    if (!snapshot) return;
-    persistSessionPanelCache(baseUrl, conversationId, workspaceRoot, snapshot);
-  }, [baseUrl, conversationId, workspaceRoot, snapshot]);
-
-  const usage = useMemo(() => mergeUsage(snapshot?.usage, liveUsage), [snapshot?.usage, liveUsage]);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? summaryTab;
   const browserVisualEvents = useMemo(() => browserVisualEventsFromBlocks(browserToolBlocks), [browserToolBlocks]);
   const browserToolEvent = browserVisualEvents[0];
@@ -1040,10 +1002,10 @@ export function SessionPanel({
           />
         ) : !conversationId ? (
           <EmptyPanel text="Start or open a conversation to view session data." />
-        ) : panel.isLoading ? (
+        ) : panelIsLoading ? (
           <PanelSkeleton />
-        ) : panel.error ? (
-          <EmptyPanel text={panel.error instanceof Error ? panel.error.message : String(panel.error)} />
+        ) : panelError ? (
+          <EmptyPanel text={panelError instanceof Error ? panelError.message : String(panelError)} />
         ) : activeTab.id === summaryTab.id ? (
           <SummaryContent
             snapshot={snapshot}
@@ -2655,26 +2617,6 @@ function PanelSkeleton() {
   );
 }
 
-function mergeUsage(snapshot: SessionUsage | undefined, live: SessionUsage): SessionUsage {
-  const base = snapshot ?? emptySessionUsage();
-  const next = emptySessionUsage();
-  for (const key of Object.keys(next) as Array<keyof SessionUsage>) {
-    if (key === "context_tokens") {
-      const snapshotValue = base[key]?.value ?? 0;
-      const liveValue = live[key]?.value ?? 0;
-      next[key] = {
-        value: Math.max(snapshotValue, liveValue),
-        estimated: Boolean(base[key]?.estimated || live[key]?.estimated),
-      };
-      continue;
-    }
-    next[key] = {
-      value: (base[key]?.value ?? 0) + (live[key]?.value ?? 0),
-      estimated: Boolean(base[key]?.estimated || live[key]?.estimated),
-    };
-  }
-  return next;
-}
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
