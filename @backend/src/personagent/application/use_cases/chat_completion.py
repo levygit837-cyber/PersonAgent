@@ -1,8 +1,6 @@
 """Caso de uso: Chat Completion."""
 
 import asyncio
-import base64
-import binascii
 from collections.abc import AsyncIterator, Awaitable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -19,7 +17,6 @@ from personagent.application.plan_mode import (
     is_plan_mode_active,
     plan_mode_event,
 )
-from personagent.application.security.provider_data_policy import enforce_provider_data_policy
 from personagent.application.services import (
     NextStepSuggestionService,
     OperationalMemoryService,
@@ -47,14 +44,12 @@ from personagent.application.use_cases.chat.helpers import (
     context_usage_metadata as _context_usage_metadata,
 )
 from personagent.application.use_cases.chat.helpers import (
-    image_suffix as _image_suffix,
-)
-from personagent.application.use_cases.chat.helpers import (
     optional_int as _optional_int,
 )
 from personagent.application.use_cases.chat.helpers import (
     set_session_status as _set_session_status,
 )
+from personagent.application.use_cases.chat.media_policy import MediaPolicyHandler
 from personagent.application.use_cases.chat.memory_recall import MemoryRecallCoordinator
 from personagent.application.use_cases.chat.message_preparation import MessagePreparer
 from personagent.application.use_cases.chat.operational_memory import (
@@ -68,9 +63,6 @@ from personagent.application.use_cases.chat.prompt_surfaces import (
 )
 from personagent.application.use_cases.chat.state import (
     AssistantStreamState as _AssistantStreamState,
-)
-from personagent.application.use_cases.chat.state import (
-    PromptPackage as _PromptPackage,
 )
 from personagent.application.use_cases.chat.tool_context_builder import (
     ToolContextBuilder,
@@ -86,7 +78,7 @@ from personagent.domain.exceptions import (
 )
 from personagent.domain.memory.repositories.memory_repository import MemoryRepository
 from personagent.domain.models.conversation import Conversation, Message, Role
-from personagent.domain.models.inference_result import GeneratedImage, InferenceResult, StreamChunk
+from personagent.domain.models.inference_result import InferenceResult, StreamChunk
 from personagent.domain.prompts.commands import (
     CommandRegistry,
     CommandService,
@@ -99,7 +91,6 @@ from personagent.domain.tools import (
     ToolExecutionStatus,
     ToolResult,
 )
-from personagent.infrastructure.artifacts import store_bytes_artifact
 
 logger = structlog.get_logger(__name__)
 
@@ -196,6 +187,10 @@ class ChatCompletionUseCase:
         )
         self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
         self._artifact_ttl_seconds = artifact_ttl_seconds if artifact_ttl_seconds and artifact_ttl_seconds > 0 else None
+        self._media_policy = MediaPolicyHandler(
+            artifact_root=self._artifact_root,
+            artifact_ttl_seconds=self._artifact_ttl_seconds,
+        )
 
     async def execute(self, request: ChatRequestDTO) -> ChatResponseDTO:
         """Execute a synchronous chat completion."""
@@ -236,7 +231,7 @@ class ChatCompletionUseCase:
             relevant_memories=memory_recall.prompt_memories,
             memory_trace=memory_recall.trace,
         )
-        self._enforce_provider_data_policy(request, prompt_package)
+        self._media_policy.enforce_request_policy(request, prompt_package)
         await self._operational_memory.capture_user_message(request, context_result, conversation)
 
         tool_context = self._tool_context_builder.build(request, conversation, preparation) if tools else None
@@ -276,7 +271,7 @@ class ChatCompletionUseCase:
                 )
                 result = replace(
                     result,
-                    images=self._store_generated_images(str(conversation.id), result.images),
+                    images=self._media_policy.store_generated_images(str(conversation.id), result.images),
                 )
 
                 assistant_msg = self._assistant_message_from_result(result, context_metadata)
@@ -501,7 +496,7 @@ class ChatCompletionUseCase:
             relevant_memories=memory_recall.prompt_memories,
             memory_trace=memory_recall.trace,
         )
-        self._enforce_provider_data_policy(request, prompt_package)
+        self._media_policy.enforce_request_policy(request, prompt_package)
         if append_user_message:
             self._schedule_background(
                 self._operational_memory.capture_user_message(request, context_result, conversation),
@@ -867,55 +862,6 @@ class ChatCompletionUseCase:
             },
         )
 
-    def _enforce_provider_data_policy(
-        self,
-        request: ChatRequestDTO,
-        prompt_package: _PromptPackage,
-    ) -> None:
-        result = enforce_provider_data_policy(
-            request=request,
-            system_prompt=prompt_package.system_prompt,
-            user_context_message=prompt_package.user_context_message,
-        )
-        prompt_package.metadata["provider_data_policy"] = result.policy
-        prompt_package.metadata["provider_data_policy_findings"] = result.findings
-
-    def _store_generated_images(
-        self,
-        conversation_id: str,
-        images: list[GeneratedImage],
-    ) -> list[GeneratedImage]:
-        stored: list[GeneratedImage] = []
-        for image in images:
-            if image.url or image.artifact_id or not image.data:
-                stored.append(image)
-                continue
-            try:
-                raw = base64.b64decode(image.data, validate=True)
-            except (binascii.Error, ValueError):
-                stored.append(image)
-                continue
-            mime_type = image.mime_type or "image/png"
-            artifact = store_bytes_artifact(
-                category="generated-images",
-                conversation_id=conversation_id,
-                content=raw,
-                suffix=_image_suffix(mime_type),
-                mime_type=mime_type,
-                root=self._artifact_root,
-                ttl_seconds=self._artifact_ttl_seconds,
-            )
-            stored.append(
-                GeneratedImage(
-                    mime_type=mime_type,
-                    alt=image.alt,
-                    artifact_id=artifact.artifact_id,
-                    url=artifact.url,
-                    size_bytes=artifact.size_bytes,
-                    sha256=artifact.sha256,
-                )
-            )
-        return stored
 
     async def _stream_assistant_pass(
         self,
@@ -943,7 +889,7 @@ class ChatCompletionUseCase:
             if chunk.images:
                 chunk = replace(
                     chunk,
-                    images=self._store_generated_images(conversation_id, chunk.images),
+                    images=self._media_policy.store_generated_images(conversation_id, chunk.images),
                 )
             chunk_metadata = {
                 "provider": request.provider,

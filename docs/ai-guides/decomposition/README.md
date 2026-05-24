@@ -125,9 +125,10 @@ PR chain so far (Phase 1.2):
 - #16 — `MessagePreparer`
 - #17 — `ToolContextBuilder`
 - #19 — `AfterTurnCoordinator`
+- #20 — `MediaPolicyHandler`
 
-Cumulative reduction on `chat_completion.py`: 2,742 → 1,152
-lines (**–58%**), zero behavior changes, 180+ new unit tests.
+Cumulative reduction on `chat_completion.py`: 2,742 → 1,098
+lines (**–60%**), zero behavior changes, 195+ new unit tests.
 
 ## Frequently-asked questions
 
