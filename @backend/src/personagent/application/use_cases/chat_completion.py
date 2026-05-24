@@ -64,6 +64,9 @@ from personagent.application.use_cases.chat.prompt_surfaces import (
 from personagent.application.use_cases.chat.state import (
     AssistantStreamState as _AssistantStreamState,
 )
+from personagent.application.use_cases.chat.stream_normalization import (
+    StreamChunkNormalizer,
+)
 from personagent.application.use_cases.chat.tool_context_builder import (
     ToolContextBuilder,
 )
@@ -194,6 +197,7 @@ class ChatCompletionUseCase:
         self._conversation_lifecycle = ConversationLifecycleHandler(
             conversation_repo=self._conversation_repo,
         )
+        self._stream_chunk_normalizer = StreamChunkNormalizer()
 
     async def execute(self, request: ChatRequestDTO) -> ChatResponseDTO:
         """Execute a synchronous chat completion."""
@@ -590,7 +594,7 @@ class ChatCompletionUseCase:
                     if retry_state.has_visible_output or retry_state.tool_calls:
                         assistant_state = retry_state
                     else:
-                        notice = self._empty_model_response_notice(
+                        notice = self._stream_chunk_normalizer.empty_model_response_notice(
                             provider=assistant_state.provider or request.provider,
                             model=assistant_state.model or request.model,
                         )
@@ -852,7 +856,7 @@ class ChatCompletionUseCase:
             reasoning_level=request.reasoning_level,
             reasoning_budget_tokens=request.reasoning_budget_tokens,
         ):
-            chunk = self._normalize_provider_stream_chunk(request, state, chunk)
+            chunk = self._stream_chunk_normalizer.normalize_provider_stream_chunk(request, state, chunk)
             if chunk.images:
                 chunk = replace(
                     chunk,
@@ -916,39 +920,6 @@ class ChatCompletionUseCase:
                     is_thinking=chunk.is_thinking,
                     metadata=chunk_metadata,
                 )
-
-    def _normalize_provider_stream_chunk(
-        self,
-        request: ChatRequestDTO,
-        state: _AssistantStreamState,
-        chunk: StreamChunk,
-    ) -> StreamChunk:
-        if (
-            request.provider != "deepseek"
-            or not state.content
-            or not chunk.reasoning_content
-            or chunk.content
-            or chunk.tool_calls
-            or chunk.images
-        ):
-            return chunk
-        return replace(
-            chunk,
-            content=chunk.reasoning_content,
-            reasoning_content="",
-            is_thinking=False,
-            metadata={
-                **chunk.metadata,
-                "deepseek_reasoning_rerouted_to_content": True,
-            },
-        )
-
-    def _empty_model_response_notice(self, *, provider: str, model: str) -> str:
-        return (
-            "The model stopped after tool execution without producing a visible final "
-            f"answer. Provider: {provider}; model: {model}. The tool results were preserved, "
-            "but the provider returned an empty terminal response."
-        )
 
     def _resolve_tool_schemas(
         self,
