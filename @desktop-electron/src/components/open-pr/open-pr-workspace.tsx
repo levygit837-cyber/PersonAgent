@@ -37,10 +37,12 @@ import { FilterSelect } from "./queue/filter-select";
 import { PullRequestCard } from "./queue/pull-request-card";
 import { QueueFilterButton } from "./queue/queue-filter-button";
 import { QueueState } from "./queue/queue-state";
+import { ContextValue } from "./shared/context-value";
 import { StatusPill } from "./shared/status-pill";
-import { clampValue, formatDateTime, prTotals, shortPath, statusText, uniqueBranches, uniqueProjects } from "./shared/pr-utils";
+import { clampValue, prTotals, shortPath, uniqueBranches, uniqueProjects } from "./shared/pr-utils";
+import { PullRequestCommentComposer } from "./comments/pull-request-comment-composer";
+import { PullRequestComments } from "./comments/pull-request-comments";
 import type {
-  PullRequestComment,
   PullRequestCommentKind,
   PullRequestStatus,
   PullRequestSummary,
@@ -60,19 +62,6 @@ interface ReviewAgentMessage {
   role: "agent" | "user";
   content: string;
 }
-
-const COMMENT_OPTIONS: Array<{
-  id: string;
-  label: string;
-  kind: PullRequestCommentKind;
-  status?: PullRequestStatus;
-}> = [
-  { id: "human_review", label: "Human analysis", kind: "human_review" },
-  { id: "ai_review", label: "AI analysis", kind: "ai_review" },
-  { id: "needs_review", label: "Needs review", kind: "status", status: "needs_review" },
-  { id: "merged", label: "Merged", kind: "status", status: "merged" },
-  { id: "refused", label: "Refused", kind: "status", status: "refused" },
-];
 
 export function OpenPrWorkspace() {
   const selectedWorkspace = useAppStore((state) => state.selectedWorkspace);
@@ -499,125 +488,6 @@ function PullRequestDetailPanel({
         </DetailCard>
       </div>
     </section>
-  );
-}
-
-function PullRequestComments({ comments }: { comments: PullRequestComment[] }) {
-  if (comments.length === 0) {
-    return <p className="mt-2 text-xs leading-5 text-muted-foreground">No PR comments yet.</p>;
-  }
-
-  return (
-    <div className="mt-3 space-y-2">
-      {comments.slice(0, 5).map((comment) => (
-        <article key={comment.id} className="rounded-xl border border-glass-border/25 bg-background/35 p-3">
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-            <span className="inline-flex items-center gap-1 font-medium text-foreground">
-              {comment.source === "ai" ? <Bot className="h-3.5 w-3.5 text-primary" /> : <UserRound className="h-3.5 w-3.5" />}
-              {comment.author}
-            </span>
-            <CommentKindPill comment={comment} />
-            {comment.createdAt ? <span>{formatDateTime(comment.createdAt)}</span> : null}
-          </div>
-          <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">{comment.body}</p>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function PullRequestCommentComposer({
-  pullRequest,
-  onCreateComment,
-  disabled,
-}: {
-  pullRequest: PullRequestSummary;
-  onCreateComment: (input: { number: number; body: string; kind: PullRequestCommentKind; status?: PullRequestStatus | null }) => Promise<unknown>;
-  disabled: boolean;
-}) {
-  const [optionId, setOptionId] = useState(COMMENT_OPTIONS[0].id);
-  const [body, setBody] = useState("");
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const selectedOption = COMMENT_OPTIONS.find((option) => option.id === optionId) ?? COMMENT_OPTIONS[0];
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    const value = body.trim();
-    if (!value) return;
-    setFeedback(null);
-    try {
-      await onCreateComment({ number: pullRequest.number, body: value, kind: selectedOption.kind, status: selectedOption.status ?? null });
-      setBody("");
-      setFeedback("Comment sent");
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Comment failed");
-    }
-  };
-
-  return (
-    <form className="mt-3 rounded-xl border border-glass-border/25 bg-background/30 p-3" onSubmit={submit}>
-      <div className="flex flex-wrap gap-1.5">
-        {COMMENT_OPTIONS.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            className={cn(
-              "rounded-full border px-2.5 py-1 text-[11px] transition-[background,border-color,color] duration-150",
-              option.id === optionId
-                ? "border-primary/35 bg-primary/10 text-foreground"
-                : "border-glass-border/30 text-muted-foreground hover:bg-glass/80 hover:text-foreground",
-            )}
-            onClick={() => setOptionId(option.id)}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-      <textarea
-        value={body}
-        rows={3}
-        onChange={(event) => setBody(event.currentTarget.value)}
-        placeholder="Write a PR comment..."
-        className="mt-3 min-h-20 w-full resize-none rounded-xl border border-glass-border/35 bg-background/55 px-3 py-2 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-primary/35 focus:ring-1 focus:ring-primary/20"
-      />
-      <div className="mt-2 flex items-center justify-between gap-3">
-        <span className="min-w-0 text-[11px] text-muted-foreground">{feedback}</span>
-        <Button type="submit" size="xs" className="rounded-xl" disabled={disabled || !body.trim()}>
-          <Send className="h-3.5 w-3.5" />
-          Send comment
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-function ContextValue({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-glass-border/20 bg-background/30 px-3 py-2">
-      <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{label}</div>
-      <div className="mt-1 break-words text-foreground">{value}</div>
-    </div>
-  );
-}
-
-function CommentKindPill({ comment }: { comment: PullRequestComment }) {
-  const label = comment.kind === "status" && comment.status
-    ? statusText(comment.status)
-    : comment.kind === "ai_review"
-      ? "AI analysis"
-      : "Human analysis";
-
-  return (
-    <span
-      className={cn(
-        "rounded-full border px-2 py-0.5 font-medium",
-        comment.kind === "ai_review" && "border-primary/25 bg-primary/10 text-primary",
-        comment.kind === "human_review" && "border-glass-border/30 bg-muted text-muted-foreground",
-        comment.kind === "status" && "border-warning/25 bg-warning/10 text-warning",
-      )}
-    >
-      {label}
-    </span>
   );
 }
 
