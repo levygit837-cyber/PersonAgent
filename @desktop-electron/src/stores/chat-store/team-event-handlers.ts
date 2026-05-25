@@ -1,15 +1,7 @@
 import {
   type ChatMessageUi,
-  type TeamAgentTraceUi,
   type TeamAgentLogUi,
-  type TeamBlackboardTraceUi,
-  type TeamClaimTraceUi,
-  type TeamCompactStatus,
-  type TeamCoverageTraceUi,
-  type TeamRunUi,
   type TeamRunEvent,
-  type TeamTraceEventUi,
-  type TeamToolTraceUi,
 } from "../../types/chat";
 import type { ChatState } from "./internal";
 import {
