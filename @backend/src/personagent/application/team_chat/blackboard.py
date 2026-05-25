@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 from personagent.application.team_chat.blackboard_claim_graph import (
     ClaimGraphAnalyzer,
