@@ -11,11 +11,11 @@ from typing import Any
 
 from personagent.application.team_chat.blackboard import (
     _Blackboard,
-    _string_list,
 )
 from personagent.application.team_chat.blackboard_json_parsing import (
     _normalize_coverage_matrix,
     _parse_json_object,
+    _string_list,
 )
 from personagent.application.team_chat.contracts import (
     TeamAgentConfig,
