@@ -4,19 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from difflib import SequenceMatcher
 from hashlib import sha256
 from typing import Any
 from uuid import UUID
 
 import structlog
 
-from personagent.domain.models.conversation import Conversation, Message, Role
+from personagent.application.services.session_titles._common import (
+    _chunks,
+    _date_suffix,
+    _fit_title,
+    _is_generic_title,
+    _keyword_tokens,
+    _normalize_title,
+    _sanitize_title,
+    _title_similarity,
+)
+from personagent.application.services.session_titles.llm_titles import TitleGenerator
+from personagent.domain.models.conversation import Conversation, Role
 from personagent.domain.repositories.conversation_repository import ConversationRepository
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
@@ -33,37 +42,6 @@ DEFAULT_SCAN_LIMIT = 10_000
 DEFAULT_MAX_HISTORY_CHARS = 180_000
 DEFAULT_DUPLICATE_CHECK_INTERVAL_SECONDS = 300.0
 DEFAULT_SIMILARITY_THRESHOLD = 0.9
-MAX_TITLE_CHARS = 72
-MAX_TITLE_WORDS = 9
-
-_GENERIC_TITLES = {
-    "",
-    "chat",
-    "new chat",
-    "new conversation",
-    "session",
-    "test",
-    "untitled",
-}
-
-_STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "from",
-    "in",
-    "is",
-    "it",
-    "of",
-    "on",
-    "or",
-    "that",
-    "the",
-    "this",
-    "to",
-    "with",
-    "you",
-}
 
 
 @dataclass(slots=True)
@@ -181,6 +159,15 @@ class SessionTitleService:
         self._similarity_threshold = max(0.0, min(1.0, float(similarity_threshold)))
         self._last_duplicate_check_at = 0.0
         self._duplicate_check_lock = asyncio.Lock()
+        self._title_generator = TitleGenerator(
+            primary_llm_backend=primary_llm_backend,
+            fallback_llm_backend=fallback_llm_backend,
+            primary_provider=primary_provider,
+            primary_model=primary_model,
+            fallback_provider=fallback_provider,
+            fallback_model=fallback_model,
+            max_history_chars=self._max_history_chars,
+        )
 
     async def refresh_title(
         self,
@@ -297,9 +284,9 @@ class SessionTitleService:
         if not pending:
             return result
 
-        generated, source, reason = await self._generate_titles_for_batch(
+        generated, source, reason = await self._title_generator.generate_titles_for_batch(
             [conversation for conversation, _hash in pending],
-            existing_titles=uniqueness.titles(),
+            existing_titles=list(uniqueness.titles()),
         )
         if source in {"llm_error", "fallback_error"}:
             logger.warning("session_title_batch_generation_failed", reason=reason)
@@ -373,109 +360,6 @@ class SessionTitleService:
             )
             repaired.duplicate_groups = duplicate_groups
             return repaired
-
-    async def _generate_titles_for_batch(
-        self,
-        conversations: list[Conversation],
-        *,
-        existing_titles: Iterable[str],
-    ) -> tuple[dict[str, str], str, str]:
-        if not conversations:
-            return {}, "none", ""
-        payload = {
-            "existing_titles": list(existing_titles)[:500],
-            "sessions": [
-                {
-                    "id": str(conversation.id),
-                    "current_title": conversation.title,
-                    "created_at": conversation.created_at.isoformat(),
-                    "updated_at": conversation.updated_at.isoformat(),
-                    "message_count": len(conversation.messages),
-                    "history": self._render_history(conversation.messages),
-                }
-                for conversation in conversations
-            ],
-        }
-
-        primary = await self._call_title_llm(
-            self._primary_llm_backend,
-            provider=self._primary_provider,
-            model=self._primary_model,
-            payload=payload,
-            batch_size=len(conversations),
-        )
-        if primary is not None:
-            return primary, "primary", ""
-
-        fallback = await self._call_title_llm(
-            self._fallback_llm_backend,
-            provider=self._fallback_provider,
-            model=self._fallback_model,
-            payload=payload,
-            batch_size=len(conversations),
-        )
-        if fallback is not None:
-            return fallback, "fallback", "primary_failed"
-
-        if len(conversations) > 1:
-            merged: dict[str, str] = {}
-            split_existing = list(existing_titles)
-            used_fallback = False
-            for conversation in conversations:
-                single, single_source, _reason = await self._generate_titles_for_batch(
-                    [conversation],
-                    existing_titles=split_existing,
-                )
-                if single:
-                    merged.update(single)
-                    split_existing.extend(single.values())
-                    used_fallback = used_fallback or single_source == "fallback"
-            if merged:
-                return (
-                    merged,
-                    "fallback" if used_fallback else "primary",
-                    "split_after_batch_failure",
-                )
-
-        return {}, "fallback_error", "all_llm_generation_failed"
-
-    async def _call_title_llm(
-        self,
-        llm_backend: LLMBackendRepository | None,
-        *,
-        provider: str,
-        model: str,
-        payload: dict[str, Any],
-        batch_size: int,
-    ) -> dict[str, str] | None:
-        if llm_backend is None:
-            return None
-        try:
-            response = await llm_backend.chat_completion(
-                messages=[
-                    {"role": "system", "content": _TITLE_SYSTEM_PROMPT},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ],
-                temperature=0,
-                max_tokens=max(4_096, min(8_192, 768 * max(1, batch_size) + 512)),
-                stream=False,
-                tools=None,
-                tool_choice=None,
-                model=model,
-                provider=provider,
-                reasoning_level="low",
-                reasoning_budget_tokens=0,
-            )
-            return _parse_title_response(response.content or response.reasoning_content)
-        except Exception as exc:
-            logger.warning(
-                "session_title_llm_failed",
-                provider=provider,
-                model=model,
-                error_type=type(exc).__name__,
-                error=str(exc)[:240],
-            )
-            return None
 
     async def _apply_title(
         self,
@@ -667,39 +551,6 @@ class SessionTitleService:
                 return " ".join(tokens[:2])
         return ""
 
-    def _render_history(self, messages: list[Message]) -> str:
-        if not messages:
-            return "(empty session)"
-        per_message_limit = max(1_000, min(8_000, self._max_history_chars // len(messages)))
-        rendered: list[str] = []
-        total = 0
-        for index, message in enumerate(messages, start=1):
-            content = message.content.strip()
-            if len(content) > per_message_limit:
-                content = f"{content[:per_message_limit].rstrip()}\n[message truncated]"
-            block = f"## {index}. {message.role.value}\n{content}"
-            if message.tool_calls:
-                block += f"\nTool calls: {message.tool_calls}"
-            if message.metadata:
-                tool_name = message.metadata.get("tool_name")
-                finish_reason = message.metadata.get("finish_reason")
-                metadata_bits = {
-                    key: value
-                    for key, value in {
-                        "tool_name": tool_name,
-                        "finish_reason": finish_reason,
-                    }.items()
-                    if value
-                }
-                if metadata_bits:
-                    block += f"\nMetadata: {metadata_bits}"
-            total += len(block)
-            if total > self._max_history_chars:
-                rendered.append("[session history truncated to title-analysis budget]")
-                break
-            rendered.append(block)
-        return "\n\n".join(rendered)
-
     def _history_hash(self, conversation: Conversation) -> str:
         digest = sha256()
         for message in conversation.messages:
@@ -747,102 +598,3 @@ class _TitleUniqueness:
 
     def titles(self) -> list[str]:
         return list(self._titles)
-
-
-def _parse_title_response(content: str) -> dict[str, str]:
-    text = content.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:].strip()
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start < 0 or end <= start:
-            raise
-        payload = json.loads(text[start : end + 1])
-
-    items = payload.get("titles") if isinstance(payload, dict) else payload
-    if not isinstance(items, list):
-        raise ValueError("title response must contain a titles list")
-    parsed: dict[str, str] = {}
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        raw_id = str(item.get("id") or item.get("conversation_id") or "").strip()
-        title = _sanitize_title(str(item.get("title") or ""))
-        if raw_id and title:
-            parsed[raw_id] = title
-    if not parsed:
-        raise ValueError("title response did not contain usable titles")
-    return parsed
-
-
-def _sanitize_title(title: str) -> str:
-    cleaned = " ".join(title.replace("\n", " ").replace("\r", " ").split())
-    cleaned = cleaned.strip(" \"'`*_#:-.")
-    if cleaned.lower().startswith("title:"):
-        cleaned = cleaned.split(":", 1)[1].strip()
-    words = cleaned.split()
-    if len(words) > MAX_TITLE_WORDS:
-        cleaned = " ".join(words[:MAX_TITLE_WORDS])
-    return _fit_title(cleaned)
-
-
-def _fit_title(title: str) -> str:
-    cleaned = " ".join(title.split())
-    if len(cleaned) <= MAX_TITLE_CHARS:
-        return cleaned
-    clipped = cleaned[:MAX_TITLE_CHARS].rsplit(" ", 1)[0].strip()
-    return clipped or cleaned[:MAX_TITLE_CHARS].strip()
-
-
-def _is_generic_title(title: str) -> bool:
-    return _normalize_title(title) in _GENERIC_TITLES
-
-
-def _normalize_title(title: str) -> str:
-    text = title.lower()
-    text = re.sub(r"[^\wÀ-ÿ]+", " ", text, flags=re.UNICODE)
-    return " ".join(text.split())
-
-
-def _title_similarity(left: str, right: str) -> float:
-    if not left or not right:
-        return 0.0
-    return SequenceMatcher(None, left, right).ratio()
-
-
-def _keyword_tokens(text: str) -> list[str]:
-    tokens = re.findall(r"[\wÀ-ÿ]{3,}", text.lower(), flags=re.UNICODE)
-    return [token for token in tokens if token not in _STOPWORDS][:12]
-
-
-def _date_suffix(conversation: Conversation) -> str:
-    try:
-        return conversation.updated_at.strftime("%d%m %H%M")
-    except Exception:
-        return ""
-
-
-def _chunks(items: list[str], size: int) -> Iterable[list[str]]:
-    for index in range(0, len(items), size):
-        yield items[index : index + size]
-
-
-_TITLE_SYSTEM_PROMPT = """You rename PersonAgent chat sessions.
-
-Rules:
-- Analyze the whole provided session history, not only the first message.
-- Produce one short natural-language phrase per session in English, even when the source history is in another language.
-- Keep each title under 9 words and under 72 characters.
-- Avoid generic titles such as "New Chat", "Test", "Chat", "Session", or titles based only on the first user message.
-- Titles must be distinct from each other and from existing_titles. If two sessions discuss similar topics, include a concrete differentiator from the history.
-- Prefer concrete nouns from the actual task, repo, tool, provider, or bug discussed.
-- Do not invent projects, files, providers, or outcomes that are not present in the history.
-- Do not mention that you are generating titles.
-
-Return only compact JSON:
-{"titles":[{"id":"<session id>","title":"<short unique title>"}]}"""
