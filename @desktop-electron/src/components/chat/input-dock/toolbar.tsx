@@ -19,13 +19,12 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../ui/tooltip";
 import {
   type ModelOption,
-  MODEL_CATALOG_STALE_MS,
-  CODEX_AUTH_STALE_MS,
   providerIconUrl,
   toModelOption,
   buildModelOptions,
   groupModelOptions,
-} from "./helpers";
+} from "./model-catalog";
+import { MODEL_CATALOG_STALE_MS, CODEX_AUTH_STALE_MS } from "./helpers";
 
 export function ProviderIcon({ group, className }: { group: string; className?: string }) {
   const [failed, setFailed] = useState(false);
