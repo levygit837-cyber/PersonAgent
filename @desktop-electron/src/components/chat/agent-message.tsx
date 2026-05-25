@@ -12,7 +12,6 @@ import type {
   TeamToolTraceUi,
   TeamTraceEventUi,
 } from "../../types/chat";
-import { useChatStore } from "../../stores/chat-store";
 import { ReasoningBlock } from "./reasoning-block";
 import {
   AgentMessageContent,
@@ -26,6 +25,7 @@ import {
   memoryTraceFromMetadata,
   type MemoryTraceTab,
 } from "./agent-message/actions";
+import { AgentMessageThinking } from "./agent-message/thinking-block";
 
 const TEAM_CARD_ARRIVAL_STAGGER_MS = 120;
 
@@ -33,55 +33,19 @@ export const AgentMessage = memo(function AgentMessage({ message }: { message: C
   const memoryTrace = memoryTraceFromMetadata(message.metadata?.memory_trace);
   const [memoryInspectorOpen, setMemoryInspectorOpen] = useState(false);
   const [memoryTraceTab, setMemoryTraceTab] = useState<MemoryTraceTab>("used");
-  const setReasoningBlockExpanded = useChatStore((state) => state.setReasoningBlockExpanded);
 
   if (!message.isStreaming && !hasRenderableProgress(message)) {
     return null;
   }
 
   const hasVisibleAnswerContent = hasVisibleContent(message);
-  const hasLegacyThinking = message.parts.length === 0 && (message.reasoning || message.isReasoningStreaming);
-  const orphanReasoningBlocks =
-    message.parts.length > 0
-      ? message.reasoningBlocks.filter(
-          (block) => !message.parts.some((part) => part.reasoningBlockId === block.id),
-        )
-      : [];
-  const hasOrphanReasoningFallback =
-    orphanReasoningBlocks.length === 0 &&
-    message.parts.length > 0 &&
-    message.reasoning.trim().length > 0 &&
-    !message.parts.some((part) => part.kind === "reasoning");
   const showExecutionStatus = message.isStreaming && !hasRenderableProgress(message);
   const showActions = !message.isStreaming && hasVisibleAnswerContent;
 
   return (
     <article className="group/agent-message mb-7 min-w-0 max-w-full">
       {showExecutionStatus ? <ChatExecutionStatus /> : null}
-      {hasLegacyThinking ? (
-        <ReasoningBlock
-          reasoning={message.reasoning}
-          isStreaming={message.isReasoningStreaming}
-          autoCollapse={hasVisibleAnswerContent}
-        />
-      ) : null}
-      {orphanReasoningBlocks.map((block) => (
-        <ReasoningBlock
-          key={block.id}
-          reasoning={block.content}
-          isStreaming={block.isStreaming}
-          autoCollapse={hasVisibleAnswerContent}
-          userExpanded={block.userExpanded}
-          onToggleExpanded={() => setReasoningBlockExpanded(message.id, block.id, !block.userExpanded)}
-        />
-      ))}
-      {hasOrphanReasoningFallback ? (
-        <ReasoningBlock
-          reasoning={message.reasoning}
-          isStreaming={message.isReasoningStreaming}
-          autoCollapse={hasVisibleAnswerContent}
-        />
-      ) : null}
+      <AgentMessageThinking message={message} hasVisibleAnswerContent={hasVisibleAnswerContent} />
       {message.teamRun ? <TeamModeCompactTrace run={message.teamRun} /> : message.teamEvents.length > 0 ? <TeamTrace events={message.teamEvents} /> : null}
       <AgentMessageContent message={message} hasVisibleAnswerContent={hasVisibleAnswerContent} />
       {memoryTrace && memoryInspectorOpen ? (
