@@ -1,36 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  actSessionBrowser,
-  clickSessionBrowser,
-  connectSessionBrowserCooperation,
-  createSessionBrowserAnnotation,
   getSessionBrowserView,
-  getSessionProjectDetail,
-  ingestSessionBrowserEvents,
-  keySessionBrowser,
-  moveSessionBrowserHistory,
-  navigateSessionBrowser,
-  reloadSessionBrowser,
-  scrollSessionBrowser,
-  setSessionBrowserCooperation,
-  type SessionBrowserCooperationEvent,
-  type SessionBrowserCooperationMode,
-  type SessionBrowserCooperationWsEvent,
-  type SessionBrowserView,
-  type SessionBrowserViewport,
 } from "../../../../api/client";
 import type { ComposerAnnotation } from "../../../../stores/chat-store";
-import type { ProjectItem, ToolBlockUi } from "../../../../types/chat";
-import type { SessionDetailView } from "../../session-detail-window";
+import type { ToolBlockUi } from "../../../../types/chat";
 import {
-  browserAnnotationToComposerAnnotation,
-  browserTextSelectionToComposerAnnotation,
   browserToolEventAppliesToBrowser,
   browserToolEventIsAction,
   browserToolEventIsPassive,
   browserVisualEventsFromBlocks,
-  localBrowserAnnotation,
-  normalizeBrowserUrl,
 } from "../helpers/browser-helpers";
 import { browserTabsFromBlocks } from "../helpers/browser-tab-helpers";
 import {
@@ -46,29 +24,24 @@ import {
   browserViewFromToolEvent,
 } from "../helpers/browser-view-helpers";
 import {
-  type BrowserElementMetadata,
   type BrowserState,
   type BrowserTab,
-  type BrowserTextSelectionMetadata,
   type BrowserToolEvent,
-  type BrowserVisualEvent,
-  browserCooperationFromView,
   browserPanelTabId,
   browserPreferredSyncedView,
   browserStringValue,
   browserTabsRepresentSamePage,
   createEmptyBrowserState,
   isBrowserTab,
-  isMeaningfulBrowserUrl,
   normalizeComparableUrl,
   numericValue,
-  readBrowserRenderCache,
-  recordArray,
-  recordValue,
-  rememberBrowserRenderView,
   summaryTab,
   BROWSER_TOOL_VIEW_SETTLE_MS,
 } from "../helpers/helpers";
+import { createTabState } from "./tab-state";
+import { createBrowserNavigation } from "./browser-navigation";
+import { createBrowserAnnotation } from "./browser-annotation";
+import { useBrowserCooperation } from "./use-browser-cooperation";
 
 export function useBrowserTabs(args: {
   browserToolBlocks: ToolBlockUi[];
@@ -110,156 +83,66 @@ export function useBrowserTabs(args: {
     tabsRef.current = tabs;
   }, [tabs]);
 
-  const openDetailTab = (detail: SessionDetailView) => {
-    const tab: BrowserTab = {
-      id: `${detail.type}:${detail.id}`,
-      title: detail.title,
-      subtitle: detail.subtitle,
-      closeable: true,
-      detail,
-    };
-    setTabs((current) => {
-      if (current.some((item) => item.id === tab.id)) {
-        return current.map((item) => (item.id === tab.id ? tab : item));
-      }
-      return [...current, tab];
-    });
-    setActiveTabId(tab.id);
-  };
+  const tabState = useMemo(() => createTabState({
+    tabs,
+    setTabs,
+    activeTabId,
+    setActiveTabId,
+    loadingDetailId,
+    setLoadingDetailId,
+    browserRequestIdsRef,
+    conversationId,
+    baseUrl,
+    workspaceRoot,
+  }), [tabs, activeTabId, loadingDetailId, conversationId, baseUrl, workspaceRoot]);
+  const {
+    closeTab,
+    openBrowserPlaceholder,
+    openDetailTab,
+    openProjectDetail,
+    updateBrowserTab,
+    browserForTab,
+    startBrowserRequest,
+    applyBrowserView,
+    setBrowserError,
+  } = tabState;
 
-  const openProjectDetail = async (item: ProjectItem) => {
-    if (!conversationId) return;
-    const loadingKey = `${item.type}:${item.id}`;
-    setLoadingDetailId(loadingKey);
-    try {
-      const detail = await getSessionProjectDetail(baseUrl, conversationId, {
-        type: item.type,
-        id: item.id,
-        workspaceRoot,
-      });
-      openDetailTab({
-        ...detail,
-        title: detail.title || item.title,
-        subtitle: item.subtitle,
-      });
-    } catch (error) {
-      openDetailTab({
-        type: item.type,
-        id: item.id,
-        title: item.title,
-        subtitle: item.subtitle,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setLoadingDetailId(null);
-    }
-  };
+  const browserNav = useMemo(() => createBrowserNavigation({
+    browserForTab,
+    startBrowserRequest,
+    applyBrowserView,
+    setBrowserError,
+    baseUrl,
+    conversationId,
+  }), [browserForTab, startBrowserRequest, applyBrowserView, setBrowserError, baseUrl, conversationId]);
+  const {
+    loadBrowserView,
+    navigateBrowser,
+    moveBrowserHistory,
+    refreshBrowser,
+    clickBrowser,
+    keyBrowser,
+    scrollBrowser,
+  } = browserNav;
 
-  const closeTab = (tabId: string) => {
-    setTabs((current) => current.filter((tab) => tab.id === summaryTab.id || tab.id !== tabId));
-    if (activeTabId === tabId) setActiveTabId(summaryTab.id);
-  };
-
-  const openBrowserPlaceholder = () => {
-    const id = conversationId ? `browser:${conversationId}` : `browser:${Date.now()}`;
-    const browserId = conversationId || id;
-    const existing = tabs.find((tab) => tab.browser?.browserId === browserId);
-    if (existing) {
-      setActiveTabId(existing.id);
-      return;
-    }
-    setTabs((current) => [
-      ...current,
-      {
-        id,
-        title: "Browser",
-        closeable: true,
-        browser: createEmptyBrowserState(browserId),
-      },
-    ]);
-    setActiveTabId(id);
-  };
-
-  const updateBrowserTab = (tabId: string, updater: (browser: BrowserState) => BrowserState) => {
-    setTabs((current) =>
-      current.map((tab) => {
-        if (tab.id !== tabId || !isBrowserTab(tab)) return tab;
-        return { ...tab, browser: updater(tab.browser ?? createEmptyBrowserState(tab.id)) };
-      }),
-    );
-  };
-
-  const browserForTab = (tabId: string) => tabs.find((tab) => tab.id === tabId)?.browser;
-
-  const startBrowserRequest = (tabId: string, options: { showLoading?: boolean } = {}) => {
-    const requestId = (browserRequestIdsRef.current[tabId] ?? 0) + 1;
-    browserRequestIdsRef.current[tabId] = requestId;
-    updateBrowserTab(tabId, (browser) => ({
-      ...browser,
-      requestId,
-      loading: options.showLoading === false ? browser.loading : true,
-      error: undefined,
-    }));
-    return requestId;
-  };
-
-  const applyBrowserView = (
-    tabId: string,
-    view: SessionBrowserView,
-    options: { addHistory?: boolean; historyIndex?: number } = {},
-    requestId?: number,
-  ) => {
-    rememberBrowserRenderView(browserForTab(tabId)?.browserId || view.browser_id || tabId, view);
-    updateBrowserTab(tabId, (browser) => {
-      if (requestId !== undefined && browserRequestIdsRef.current[tabId] !== requestId) return browser;
-      if (!isMeaningfulBrowserUrl(view.url) && browserHasMeaningfulPage(browser)) {
-        return {
-          ...browser,
-          requestId: requestId ?? browser.requestId,
-          loading: false,
-        };
-      }
-      const nextUrl = isMeaningfulBrowserUrl(view.url) ? view.url : browser.currentUrl;
-      let history = browser.history;
-      let historyIndex = browser.historyIndex;
-      if (nextUrl && options.addHistory) {
-        const baseHistory = browser.history.slice(0, browser.historyIndex + 1);
-        history = baseHistory.at(-1) === nextUrl ? baseHistory : [...baseHistory, nextUrl];
-        historyIndex = history.length - 1;
-      } else if (nextUrl && options.historyIndex !== undefined) {
-        historyIndex = Math.min(Math.max(options.historyIndex, 0), Math.max(browser.history.length - 1, 0));
-      } else if (nextUrl && history.length === 0) {
-        history = [nextUrl];
-        historyIndex = 0;
-      }
-      return {
-        ...browser,
-        requestId: requestId ?? browser.requestId,
-        currentUrl: nextUrl,
-        draftUrl: nextUrl || browser.draftUrl,
-        history,
-        historyIndex,
-        loading: false,
-        error:
-          view.can_capture || view.render_mode === "html_mirror" || view.render_mode === "computed_html" || view.render_mode === "pixel"
-            ? undefined
-            : view.screenshot_error || "Browser rendering is unavailable.",
-        view,
-      };
-    });
-  };
-
-  const setBrowserError = (tabId: string, error: unknown, requestId?: number) => {
-    updateBrowserTab(tabId, (browser) => {
-      if (requestId !== undefined && browserRequestIdsRef.current[tabId] !== requestId) return browser;
-      return {
-        ...browser,
-        requestId: requestId ?? browser.requestId,
-        loading: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    });
-  };
+  const browserAnnot = useMemo(() => createBrowserAnnotation({
+    browserForTab,
+    updateBrowserTab,
+    startBrowserRequest,
+    applyBrowserView,
+    setBrowserError,
+    baseUrl,
+    conversationId,
+    addComposerAnnotation,
+  }), [browserForTab, updateBrowserTab, startBrowserRequest, applyBrowserView, setBrowserError, baseUrl, conversationId, addComposerAnnotation]);
+  const {
+    setBrowserMode,
+    selectBrowserElement,
+    updateAnnotationDraft,
+    addBrowserTextSelection,
+    saveBrowserAnnotation,
+    activateBrowserElement,
+  } = browserAnnot;
 
   const openBrowserForToolEvent = (visual: BrowserToolEvent) => {
     const browserId =
@@ -477,426 +360,24 @@ export function useBrowserTabs(args: {
     });
   }, [baseUrl, conversationId, tabs]);
 
-  const loadBrowserView = async (tabId: string, viewport: SessionBrowserViewport) => {
-    const browser = browserForTab(tabId);
-    if (!browser || !baseUrl) return;
-    const cached = browser.currentUrl
-      ? readBrowserRenderCache(browser.browserId, browser.currentUrl, viewport, browser.view?.active_tab_id)
-      : undefined;
-    const requestId = startBrowserRequest(tabId, { showLoading: !cached });
-    if (cached) applyBrowserView(tabId, cached, { historyIndex: browser.historyIndex }, requestId);
-    try {
-      const view = await getSessionBrowserView(
-        baseUrl,
-        browser.browserId,
-        {
-          ...viewport,
-          cache_mode: cached ? "prefer_cached" : "prefer_live",
-          wait_for_styles: !cached,
-        },
-        conversationId,
-      );
-      applyBrowserView(tabId, view, {}, requestId);
-    } catch (error) {
-      if (!cached) setBrowserError(tabId, error, requestId);
-    }
-  };
-
-  const navigateBrowser = async (tabId: string, rawUrl: string, viewport: SessionBrowserViewport) => {
-    const browser = browserForTab(tabId);
-    const normalized = normalizeBrowserUrl(rawUrl);
-    if (!browser || !normalized || !baseUrl) return;
-    const cached = readBrowserRenderCache(browser.browserId, normalized, viewport);
-    const requestId = startBrowserRequest(tabId, { showLoading: !cached });
-    if (cached) applyBrowserView(tabId, cached, { addHistory: true }, requestId);
-    try {
-      const view = await navigateSessionBrowser(
-        baseUrl,
-        browser.browserId,
-        {
-          url: normalized,
-          ...viewport,
-          cache_mode: cached ? "prefer_cached" : "prefer_live",
-          wait_for_styles: false,
-        },
-        conversationId,
-      );
-      applyBrowserView(tabId, view, { addHistory: true }, requestId);
-    } catch (error) {
-      if (!cached) setBrowserError(tabId, error, requestId);
-    }
-  };
-
-  const moveBrowserHistory = async (tabId: string, direction: -1 | 1, viewport: SessionBrowserViewport) => {
-    const browser = browserForTab(tabId);
-    if (!browser || !baseUrl) return;
-    const historyIndex = browser.historyIndex + direction;
-    const targetUrl = browser.history[historyIndex];
-    if (!targetUrl) return;
-    const cached = readBrowserRenderCache(browser.browserId, targetUrl, viewport, browser.view?.active_tab_id);
-    const requestId = startBrowserRequest(tabId, { showLoading: !cached });
-    if (cached) applyBrowserView(tabId, cached, { historyIndex }, requestId);
-    try {
-      const view = await moveSessionBrowserHistory(
-        baseUrl,
-        browser.browserId,
-        {
-          direction,
-          ...viewport,
-          cache_mode: cached ? "prefer_cached" : "prefer_live",
-          wait_for_styles: false,
-        },
-        conversationId,
-      );
-      applyBrowserView(tabId, view, { historyIndex }, requestId);
-    } catch (error) {
-      if (!cached) setBrowserError(tabId, error, requestId);
-    }
-  };
-
-  const refreshBrowser = async (tabId: string, viewport: SessionBrowserViewport) => {
-    const browser = browserForTab(tabId);
-    if (!browser || !baseUrl || !browser.currentUrl) return;
-    const cached = readBrowserRenderCache(browser.browserId, browser.currentUrl, viewport, browser.view?.active_tab_id);
-    const requestId = startBrowserRequest(tabId, { showLoading: !cached });
-    if (cached) applyBrowserView(tabId, cached, { historyIndex: browser.historyIndex }, requestId);
-    try {
-      const view = await reloadSessionBrowser(
-        baseUrl,
-        browser.browserId,
-        {
-          ...viewport,
-          cache_mode: cached ? "prefer_cached" : "prefer_live",
-          wait_for_styles: false,
-        },
-        conversationId,
-      );
-      applyBrowserView(tabId, view, { historyIndex: browser.historyIndex }, requestId);
-    } catch (error) {
-      if (!cached) setBrowserError(tabId, error, requestId);
-    }
-  };
-
-  const clickBrowser = async (
-    tabId: string,
-    input: SessionBrowserViewport & { x: number; y: number; button?: "left" | "middle" | "right" },
-  ) => {
-    const browser = browserForTab(tabId);
-    if (!browser || !baseUrl) return;
-    const requestId = startBrowserRequest(tabId);
-    try {
-      const view = await clickSessionBrowser(baseUrl, browser.browserId, input, conversationId);
-      applyBrowserView(tabId, view, { addHistory: true }, requestId);
-    } catch (error) {
-      setBrowserError(tabId, error, requestId);
-    }
-  };
-
-  const keyBrowser = async (tabId: string, input: SessionBrowserViewport & { text?: string; key?: string }) => {
-    const browser = browserForTab(tabId);
-    if (!browser || !baseUrl) return;
-    const requestId = startBrowserRequest(tabId);
-    try {
-      const view = await keySessionBrowser(baseUrl, browser.browserId, input, conversationId);
-      applyBrowserView(tabId, view, { addHistory: true }, requestId);
-    } catch (error) {
-      setBrowserError(tabId, error, requestId);
-    }
-  };
-
-  const scrollBrowser = async (
-    tabId: string,
-    input: SessionBrowserViewport & { delta_x: number; delta_y: number },
-  ) => {
-    const browser = browserForTab(tabId);
-    if (!browser || !baseUrl) return;
-    try {
-      const view = await scrollSessionBrowser(baseUrl, browser.browserId, input, conversationId);
-      applyBrowserView(tabId, view);
-    } catch (error) {
-      setBrowserError(tabId, error);
-    }
-  };
-
-  const setBrowserMode = (tabId: string, mode: BrowserState["mode"]) => {
-    updateBrowserTab(tabId, (browser) => ({
-      ...browser,
-      mode,
-      selectedNodeId: mode === "browse" ? undefined : browser.selectedNodeId,
-      annotationDraft: mode === "annotate" ? browser.annotationDraft : "",
-    }));
-  };
-
-  const selectBrowserElement = (tabId: string, nodeId: string, element?: BrowserElementMetadata) => {
-    updateBrowserTab(tabId, (browser) => ({
-      ...browser,
-      selectedNodeId: nodeId || undefined,
-      elementMetadata: element?.node_id
-        ? { ...browser.elementMetadata, [element.node_id]: element }
-        : browser.elementMetadata,
-      error: undefined,
-    }));
-  };
-
-  const updateAnnotationDraft = (tabId: string, value: string) => {
-    updateBrowserTab(tabId, (browser) => ({ ...browser, annotationDraft: value }));
-  };
-
-  const addBrowserTextSelection = (tabId: string, selection: BrowserTextSelectionMetadata) => {
-    const browser = browserForTab(tabId);
-    if (!browser || !selection.text.trim()) return;
-    addComposerAnnotation(
-      browserTextSelectionToComposerAnnotation({
-        selection,
-        fallbackUrl: browser.currentUrl,
-        fallbackTitle: browser.view?.title,
-      }),
-    );
-  };
-
-  const saveBrowserAnnotation = async (tabId: string) => {
-    const browser = browserForTab(tabId);
-    if (!browser?.selectedNodeId || !browser.annotationDraft.trim()) return;
-    const element =
-      browser.view?.element_map?.find((item) => item.node_id === browser.selectedNodeId) ??
-      browser.elementMetadata[browser.selectedNodeId];
-    if (!baseUrl || !conversationId) {
-      const annotation = localBrowserAnnotation({
-        browserId: browser.browserId,
-        nodeId: browser.selectedNodeId,
-        body: browser.annotationDraft.trim(),
-        quote: element?.text,
-        url: browser.currentUrl,
-        title: browser.view?.title,
-      });
-      updateBrowserTab(tabId, (current) => ({
-        ...current,
-        annotationDraft: "",
-        selectedNodeId: undefined,
-        view: current.view
-          ? { ...current.view, annotations: [...(current.view.annotations ?? []), annotation] }
-          : current.view,
-      }));
-      addComposerAnnotation(
-        browserAnnotationToComposerAnnotation({
-          annotation,
-          element,
-          fallbackUrl: browser.currentUrl,
-          fallbackTitle: browser.view?.title,
-        }),
-      );
-      return;
-    }
-    try {
-      const result = await createSessionBrowserAnnotation(baseUrl, conversationId, browser.browserId, {
-        node_id: browser.selectedNodeId,
-        body: browser.annotationDraft.trim(),
-        quote: element?.text,
-        url: browser.currentUrl,
-        title: browser.view?.title,
-        selector: element?.selector,
-        frame_id: element?.frame_id,
-        selector_chain: element?.selector_chain,
-        shadow_path: element?.shadow_path,
-        tab_id: element?.tab_id ?? browser.view?.active_tab_id,
-      });
-      updateBrowserTab(tabId, (current) => ({
-        ...current,
-        annotationDraft: "",
-        selectedNodeId: undefined,
-        view: current.view
-          ? { ...current.view, annotations: result.annotations, timeline_events: result.timeline_events }
-          : current.view,
-      }));
-      addComposerAnnotation(
-        browserAnnotationToComposerAnnotation({
-          annotation: result.annotation,
-          element,
-          fallbackUrl: browser.currentUrl,
-          fallbackTitle: browser.view?.title,
-        }),
-      );
-    } catch (error) {
-      setBrowserError(tabId, error);
-    }
-  };
-
-  const activateBrowserElement = async (
-    tabId: string,
-    nodeId: string,
-    viewport: SessionBrowserViewport,
-    action: "click" | "submit" = "click",
-  ) => {
-    const browser = browserForTab(tabId);
-    if (!browser || !baseUrl) return;
-    const requestId = startBrowserRequest(tabId);
-    try {
-      const view = await actSessionBrowser(
-        baseUrl,
-        browser.browserId,
-        { ...viewport, node_id: nodeId, action, source: "user" },
-        conversationId,
-      );
-      applyBrowserView(tabId, view, { addHistory: true }, requestId);
-    } catch (error) {
-      setBrowserError(tabId, error, requestId);
-    }
-  };
-
-  const applyBrowserCooperationPatch = (
-    tabId: string,
-    cooperation: SessionBrowserView["cooperation"],
-  ) => {
-    if (!cooperation) return;
-    updateBrowserTab(tabId, (current) => {
-      const view = current.view;
-      if (!view) return current;
-      const currentCooperation = browserCooperationFromView(view);
-      const nextCooperation = { ...currentCooperation, ...cooperation };
-      return {
-        ...current,
-        view: {
-          ...view,
-          cooperation: nextCooperation,
-          workspace_state: view.workspace_state
-            ? { ...view.workspace_state, cooperation: nextCooperation }
-            : { cooperation: nextCooperation },
-          browser_snapshot: view.browser_snapshot
-            ? { ...view.browser_snapshot, cooperation: nextCooperation }
-            : view.browser_snapshot,
-        },
-      };
-    });
-  };
-
-  const applyBrowserCooperationWsEvent = (tabId: string, event: SessionBrowserCooperationWsEvent) => {
-    if (event.type === "error") return;
-    const message = event as SessionBrowserCooperationWsEvent & Record<string, unknown>;
-    const statePatch = recordValue(message.state_patch);
-    const stateCooperation = statePatch.cooperation;
-    const cooperationPatch =
-      stateCooperation && typeof stateCooperation === "object" && !Array.isArray(stateCooperation)
-        ? (stateCooperation as SessionBrowserView["cooperation"])
-        : "cooperation" in event
-          ? event.cooperation
-          : undefined;
-    const debugPatch =
-      event.type === "snapshot" || event.type === "timeline.patch" || event.type === "event_batch.accepted"
-        ? {
-            ...(cooperationPatch ?? {}),
-            ...(Array.isArray(message.raw_events) ? { raw_events: message.raw_events } : {}),
-            ...(Array.isArray(message.useful_timeline) ? { useful_timeline: message.useful_timeline } : {}),
-            ...(Array.isArray(message.recent_user_events) ? { recent_user_events: message.recent_user_events } : {}),
-            ...(Array.isArray(message.recent_agent_events) ? { recent_agent_events: message.recent_agent_events } : {}),
-            ...(Array.isArray(message.pending_action_proposals)
-              ? { pending_action_proposals: message.pending_action_proposals }
-              : {}),
-            ...(message.page_state ? { page_state: message.page_state } : {}),
-          }
-        : cooperationPatch;
-    applyBrowserCooperationPatch(tabId, debugPatch as SessionBrowserView["cooperation"]);
-  };
-
-  useEffect(() => {
-    return () => {
-      Object.values(cooperationSocketsRef.current).forEach((socket) => socket.close());
-      cooperationSocketsRef.current = {};
-    };
-  }, []);
-
-  useEffect(() => {
-    const browser = activeTab.browser;
-    const enabled = Boolean(browserCooperationFromView(browser?.view)?.enabled);
-    if (!visible || !baseUrl || !conversationId || !browser || !enabled) return;
-    const socketKey = browser.browserId;
-    const existing = cooperationSocketsRef.current[socketKey];
-    if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) return;
-    const socket = connectSessionBrowserCooperation(baseUrl, conversationId, browser.browserId, {
-      onMessage: (event) => applyBrowserCooperationWsEvent(activeTab.id, event),
-      onClose: () => {
-        if (cooperationSocketsRef.current[socketKey] === socket) delete cooperationSocketsRef.current[socketKey];
-      },
-    });
-    cooperationSocketsRef.current[socketKey] = socket;
-    const pingInterval = window.setInterval(() => {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "ping" }));
-      }
-    }, 2000);
-    return () => {
-      window.clearInterval(pingInterval);
-      if (cooperationSocketsRef.current[socketKey] === socket) delete cooperationSocketsRef.current[socketKey];
-      socket.close();
-    };
-  }, [
-    activeTab.id,
-    activeTab.browser?.browserId,
+  const cooperation = useBrowserCooperation({
+    browserForTab,
+    updateBrowserTab,
+    setBrowserError,
+    cooperationSocketsRef,
+    activeTab,
     baseUrl,
-    browserCooperationFromView(activeTab.browser?.view)?.enabled,
     conversationId,
     visible,
-  ]);
-
-  const setBrowserCooperationMode = async (
-    tabId: string,
-    mode: SessionBrowserCooperationMode | "off",
-  ) => {
-    const browser = browserForTab(tabId);
-    if (!browser || !baseUrl || !conversationId) return;
-    const enabled = mode !== "off";
-    const nextMode = enabled ? mode : browserCooperationFromView(browser.view)?.mode ?? "observe_only";
-    const socket = cooperationSocketsRef.current[browser.browserId];
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "mode.set", enabled, mode: nextMode }));
-      return;
-    }
-    try {
-      const result = await setSessionBrowserCooperation(baseUrl, conversationId, browser.browserId, {
-        enabled,
-        mode: nextMode,
-      });
-      applyBrowserCooperationPatch(tabId, result.cooperation);
-    } catch (error) {
-      setBrowserError(tabId, error);
-    }
-  };
-
-  const decideBrowserProposal = async (
-    tabId: string,
-    proposal: Record<string, unknown>,
-    decision: "approve" | "deny" | "dismiss",
-  ) => {
-    const browser = browserForTab(tabId);
-    if (!browser) return;
-    const proposalId = String(proposal.proposal_id ?? proposal.id ?? "");
-    if (!proposalId) return;
-    const socket = cooperationSocketsRef.current[browser.browserId];
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: `proposal.${decision}`, proposal_id: proposalId }));
-    }
-    if (decision === "approve") {
-      await approvePendingTool();
-    } else if (decision === "deny") {
-      await rejectPendingTool();
-    }
-  };
-
-  const recordBrowserEvents = async (tabId: string, events: SessionBrowserCooperationEvent[]) => {
-    const browser = browserForTab(tabId);
-    if (!browser || !baseUrl || !conversationId || !events.length) return;
-    if (!browserCooperationFromView(browser.view)?.enabled) return;
-    const socket = cooperationSocketsRef.current[browser.browserId];
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "event_batch", events }));
-      return;
-    }
-    try {
-      const result = await ingestSessionBrowserEvents(baseUrl, conversationId, browser.browserId, events);
-      applyBrowserCooperationPatch(tabId, result.state_patch.cooperation);
-    } catch {
-      // Event ingestion is best-effort; normal browsing should not be interrupted.
-    }
-  };
+    approvePendingTool,
+    rejectPendingTool,
+  });
+  const {
+    applyBrowserCooperationPatch,
+    setBrowserCooperationMode,
+    decideBrowserProposal,
+    recordBrowserEvents,
+  } = cooperation;
 
   return {
     tabs,
