@@ -16,13 +16,13 @@ from collections.abc import Mapping
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
-from personagent.infrastructure.browser.models import BrowserConsoleEntry
-from personagent.infrastructure.browser.scripts import (
+from personagent.infrastructure.browser.capture_scripts import (
     _CONSOLE_CAPTURE_SCRIPT,
     _CONSOLE_DRAIN_SCRIPT,
     _COOPERATION_CAPTURE_SCRIPT,
     _COOPERATION_DRAIN_SCRIPT,
 )
+from personagent.infrastructure.browser.models import BrowserConsoleEntry
 from personagent.infrastructure.browser.url_utils import (
     clean_browser_url as _clean_browser_url,
 )
