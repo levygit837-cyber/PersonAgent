@@ -151,6 +151,8 @@ def _extract_complete_json_objects_from_array(text: str, key: str) -> list[dict[
 
 
 def _normalize_coverage_matrix(raw: Any) -> list[dict[str, Any]]:
+    from personagent.application.team_chat.blackboard_claim_graph import _string_list
+
     if not isinstance(raw, list):
         return []
     matrix: list[dict[str, Any]] = []
@@ -183,19 +185,3 @@ def _normalize_coverage_matrix(raw: Any) -> list[dict[str, Any]]:
             }
         )
     return matrix
-
-
-# -- Temporary local copy (will be removed when Slice 3 extracts _string_list) --
-
-
-def _string_list(value: Any) -> list[str]:
-    if isinstance(value, list):
-        values: list[str] = []
-        for item in value:
-            values.extend(_string_list(item))
-        return values
-    if isinstance(value, str) and value.strip():
-        if "," in value or ";" in value:
-            return [part.strip() for part in re.split(r"[,;]", value) if part.strip()]
-        return [value.strip()]
-    return []
