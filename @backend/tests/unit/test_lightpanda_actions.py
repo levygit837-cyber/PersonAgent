@@ -305,15 +305,6 @@ class _StubViewActions:
         text = str(value)
         return text, value, False
 
-    async def view_act(
-        self, *, browser_id: str, node_id: str, action: str, width: int = 1024, height: int = 720, **kwargs: Any
-    ) -> dict[str, Any]:
-        return {
-            "url": "https://example.com",
-            "title": "Example",
-            "last_action": {"action": action, "target": node_id, "result": "ok"},
-        }
-
     async def view_scroll(
         self, *, browser_id: str, delta_x: float = 0.0, delta_y: float = 600.0, width: int = 1024, height: int = 720
     ) -> dict[str, Any]:
