@@ -357,7 +357,7 @@ class BrowserSnapshot:
         return enriched
 
     async def browser_element_map(self, page: Any) -> list[dict[str, Any]]:
-        from personagent.infrastructure.browser.scripts import _BROWSER_ELEMENT_MAP_SCRIPT
+        from personagent.infrastructure.browser.snapshot_scripts import _BROWSER_ELEMENT_MAP_SCRIPT
 
         mapped: list[dict[str, Any]] = []
         with suppress(Exception):
@@ -376,7 +376,7 @@ class BrowserSnapshot:
         return mapped[:500]
 
     async def browser_iframe_element_map(self, page: Any) -> list[dict[str, Any]]:
-        from personagent.infrastructure.browser.scripts import _BROWSER_ELEMENT_MAP_SCRIPT
+        from personagent.infrastructure.browser.snapshot_scripts import _BROWSER_ELEMENT_MAP_SCRIPT
 
         frames = await self._w.element_helpers.page_frames(page)
         if len(frames) <= 1:
@@ -617,7 +617,9 @@ class BrowserSnapshot:
         return f"{style_block}{html}", stats
 
     async def computed_html_snapshot(self, page: Any, current_url: str) -> str:
-        from personagent.infrastructure.browser.scripts import _COMPUTED_HTML_SNAPSHOT_SCRIPT
+        from personagent.infrastructure.browser.snapshot_scripts import (
+            _COMPUTED_HTML_SNAPSHOT_SCRIPT,
+        )
 
         with suppress(Exception):
             value = await self._w._evaluate_page(
