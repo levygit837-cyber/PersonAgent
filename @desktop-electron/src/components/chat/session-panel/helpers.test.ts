@@ -32,7 +32,7 @@ import {
   rememberBrowserRenderView,
   resolveBackendUrlPath,
   type BrowserTab,
-} from "./helpers";
+} from "./helpers/helpers";
 
 describe("helpers", () => {
   // -----------------------------------------------------------------------

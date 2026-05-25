@@ -14,8 +14,8 @@ import {
   type SessionBrowserCooperationEvent,
   type SessionBrowserCooperationMode,
   type SessionBrowserViewport,
-} from "../../../api/client";
-import { cn } from "../../../lib/utils";
+} from "../../../../api/client";
+import { cn } from "../../../../lib/utils";
 import type {
   ChangedFile,
   ProjectItem,
@@ -25,9 +25,9 @@ import type {
   SessionSource,
   SessionUsage,
   SessionUsageMetric,
-} from "../../../types/chat";
-import type { SessionDetailView } from "../session-detail-window";
-import { formatNumber } from "./browser-helpers";
+} from "../../../../types/chat";
+import type { SessionDetailView } from "../../session-detail-window";
+import { formatNumber } from "../helpers/browser-helpers";
 import { BrowserTabContent } from "./browser-tab-content";
 import {
   CommitsBlock,
@@ -42,11 +42,11 @@ import type {
   BrowserTextSelectionMetadata,
   BrowserVisualEvent,
   BrowserToolEvent,
-} from "./helpers";
+} from "../helpers";
 import {
   createEmptyBrowserState,
   isBrowserTab,
-} from "./helpers";
+} from "../helpers";
 import { EmptyList, EmptyPanel, SectionTitle } from "./shared-ui";
 
 export function SummaryContent({

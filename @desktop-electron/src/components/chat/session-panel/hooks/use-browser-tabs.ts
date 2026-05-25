@@ -18,20 +18,25 @@ import {
   type SessionBrowserCooperationWsEvent,
   type SessionBrowserView,
   type SessionBrowserViewport,
-} from "../../../api/client";
-import type { ComposerAnnotation } from "../../../stores/chat-store";
-import type { ProjectItem, ToolBlockUi } from "../../../types/chat";
-import type { SessionDetailView } from "../session-detail-window";
+} from "../../../../api/client";
+import type { ComposerAnnotation } from "../../../../stores/chat-store";
+import type { ProjectItem, ToolBlockUi } from "../../../../types/chat";
+import type { SessionDetailView } from "../../session-detail-window";
 import {
   browserAnnotationToComposerAnnotation,
-  browserHasMeaningfulPage,
-  browserMeaningfulToolUrl,
-  browserSnapshotViewFromToolEvent,
-  browserTabsFromBlocks,
   browserTextSelectionToComposerAnnotation,
   browserToolEventAppliesToBrowser,
   browserToolEventIsAction,
   browserToolEventIsPassive,
+  browserVisualEventsFromBlocks,
+  localBrowserAnnotation,
+  normalizeBrowserUrl,
+} from "../helpers/browser-helpers";
+import { browserTabsFromBlocks } from "../helpers/browser-tab-helpers";
+import {
+  browserHasMeaningfulPage,
+  browserMeaningfulToolUrl,
+  browserSnapshotViewFromToolEvent,
   browserToolEventUrl,
   browserToolShouldFetchRenderedView,
   browserToolShouldHydrateView,
@@ -39,11 +44,7 @@ import {
   browserToolShouldSyncDisplayedPage,
   browserToolUrlChanged,
   browserViewFromToolEvent,
-  browserVisualEventsFromBlocks,
-  localBrowserAnnotation,
-  normalizeBrowserUrl,
-  numericValue,
-} from "./browser-helpers";
+} from "../helpers/browser-view-helpers";
 import {
   type BrowserElementMetadata,
   type BrowserState,
@@ -60,12 +61,14 @@ import {
   isBrowserTab,
   isMeaningfulBrowserUrl,
   normalizeComparableUrl,
+  numericValue,
   readBrowserRenderCache,
+  recordArray,
   recordValue,
   rememberBrowserRenderView,
   summaryTab,
   BROWSER_TOOL_VIEW_SETTLE_MS,
-} from "./helpers";
+} from "../helpers/helpers";
 
 export function useBrowserTabs(args: {
   browserToolBlocks: ToolBlockUi[];

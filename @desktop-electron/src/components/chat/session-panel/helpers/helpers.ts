@@ -9,8 +9,8 @@ import type {
   SessionBrowserElement,
   SessionBrowserView,
   SessionBrowserViewport,
-} from "../../../api/client";
-import type { ToolBlockStatus } from "../../../types/chat";
+} from "../../../../api/client";
+import type { ToolBlockStatus } from "../../../../types/chat";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -21,7 +21,7 @@ export type BrowserTab = {
   title: string;
   subtitle?: string;
   closeable: boolean;
-  detail?: import("../session-detail-window").SessionDetailView;
+  detail?: import("../../session-detail-window").SessionDetailView;
   browser?: BrowserState;
 };
 
@@ -398,4 +398,70 @@ export function isBrowserCooperationEvent(value: unknown): value is SessionBrows
       !Array.isArray(value) &&
       typeof (value as { kind?: unknown }).kind === "string",
   );
+}
+
+export function normalizeBrowserElementMetadata(value: unknown, fallbackNodeId: string): BrowserElementMetadata | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const source = value as Record<string, unknown>;
+  const nodeId = typeof source.node_id === "string" && source.node_id ? source.node_id : fallbackNodeId;
+  if (!nodeId) return undefined;
+  const boundsValue = source.bounds as Record<string, unknown> | undefined;
+  const boundsX = numericValue(boundsValue?.x);
+  const boundsY = numericValue(boundsValue?.y);
+  const boundsWidth = numericValue(boundsValue?.width);
+  const boundsHeight = numericValue(boundsValue?.height);
+  const bounds =
+    boundsX !== undefined &&
+    boundsY !== undefined &&
+    boundsWidth !== undefined &&
+    boundsHeight !== undefined
+      ? {
+          x: boundsX,
+          y: boundsY,
+          width: boundsWidth,
+          height: boundsHeight,
+        }
+      : undefined;
+  return {
+    node_id: nodeId,
+    tab_id: typeof source.tab_id === "string" ? source.tab_id : undefined,
+    frame_id: typeof source.frame_id === "string" ? source.frame_id : undefined,
+    frame_url: typeof source.frame_url === "string" ? source.frame_url : undefined,
+    role: typeof source.role === "string" ? source.role : undefined,
+    tag: typeof source.tag === "string" ? source.tag : undefined,
+    text: typeof source.text === "string" ? source.text : undefined,
+    selector: typeof source.selector === "string" ? source.selector : undefined,
+    selector_chain: Array.isArray(source.selector_chain) ? source.selector_chain.filter((item): item is string => typeof item === "string") : undefined,
+    shadow_path: Array.isArray(source.shadow_path) ? source.shadow_path.filter((item): item is string => typeof item === "string") : undefined,
+    stable_key: typeof source.stable_key === "string" ? source.stable_key : undefined,
+    interactable: typeof source.interactable === "boolean" ? source.interactable : undefined,
+    computed_summary: source.computed_summary && typeof source.computed_summary === "object" && !Array.isArray(source.computed_summary)
+      ? (source.computed_summary as Record<string, unknown>)
+      : undefined,
+    href: typeof source.href === "string" ? source.href : undefined,
+    name: typeof source.name === "string" ? source.name : undefined,
+    input_type: typeof source.input_type === "string" ? source.input_type : undefined,
+    form_method: typeof source.form_method === "string" ? source.form_method : undefined,
+    form_action: typeof source.form_action === "string" ? source.form_action : undefined,
+    bounds,
+    visible: typeof source.visible === "boolean" ? source.visible : undefined,
+    color: typeof source.color === "string" ? source.color : undefined,
+    background: typeof source.background === "string" ? source.background : undefined,
+    font: typeof source.font === "string" ? source.font : undefined,
+  };
+}
+
+export function numericValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return undefined;
+}
+
+export function recordArray(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+    : [];
 }

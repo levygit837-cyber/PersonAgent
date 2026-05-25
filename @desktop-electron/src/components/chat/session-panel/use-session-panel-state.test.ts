@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import type { SessionUsage } from "../../../types/chat";
 import { emptySessionUsage } from "../../../types/chat";
-import { mergeUsage } from "./use-session-panel-state";
+import { mergeUsage } from "./hooks/use-session-panel-state";
 
 function makeUsage(overrides: Partial<Record<keyof SessionUsage, { value: number; estimated: boolean }>>): SessionUsage {
   return { ...emptySessionUsage(), ...overrides };

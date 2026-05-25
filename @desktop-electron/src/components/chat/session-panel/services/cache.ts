@@ -1,4 +1,4 @@
-import type { SessionPanelSnapshot } from "../../../types/chat";
+import type { SessionPanelSnapshot } from "../../../../types/chat";
 
 export const SESSION_PANEL_CACHE_STORAGE_KEY = "personagent_session_panel_cache_v1";
 

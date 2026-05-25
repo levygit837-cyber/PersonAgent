@@ -14,29 +14,27 @@ import {
   type SessionBrowserCooperationEvent,
   type SessionBrowserCooperationMode,
   type SessionBrowserViewport,
-} from "../../../api/client";
-import { cn } from "../../../lib/utils";
-import { useAppStore } from "../../../stores/app-store";
-import { Button } from "../../ui/button";
+} from "../../../../api/client";
+import { cn } from "../../../../lib/utils";
+import { useAppStore } from "../../../../stores/app-store";
+import { Button } from "../../../ui/button";
 import {
-  BROWSER_FORWARD_KEYS,
   browserAnnotationCounts,
   browserAnnotationEditorStyle,
-  browserCssBadgeClass,
-  browserCssLabel,
-  browserElementAtRenderedPoint,
-  browserRenderedElementStyle,
   browserToolEventAppliesToBrowser,
   browserToolEventIsPassive,
-  browserViewport,
-  browserVisualEventFromProposal,
-  browserVisualEventsFromRecords,
-  isBrowserViewportControlTarget,
-  normalizeBrowserElementMetadata,
   normalizeBrowserTextSelection,
-  recordArray,
-  selectedElementLabel,
-} from "./browser-helpers";
+} from "../helpers/browser-helpers";
+import { normalizeBrowserElementMetadata, recordArray } from "../helpers";
+import { browserCssBadgeClass, browserCssLabel, selectedElementLabel } from "../helpers/browser-normalization-helpers";
+import {
+  BROWSER_FORWARD_KEYS,
+  browserElementAtRenderedPoint,
+  browserRenderedElementStyle,
+  browserViewport,
+  isBrowserViewportControlTarget,
+} from "../helpers/browser-viewport-helpers";
+import { browserVisualEventFromProposal, browserVisualEventsFromRecords } from "../helpers/browser-visual-events";
 import { BrowserCooperationModeMenu, BrowserProposalOverlay } from "./browser-cooperation";
 import { BrowserModeButton, BrowserNavButton } from "./browser-controls";
 import { browserMirrorSrcDoc } from "./browser-mirror";
@@ -48,14 +46,14 @@ import type {
   BrowserTracingTab,
   BrowserVisualEvent,
   BrowserToolEvent,
-} from "./helpers";
+} from "../helpers";
 import {
   BROWSER_LOADING_MESSAGES,
   browserCooperationFromView,
   isBrowserCooperationEvent,
   recordValue,
   resolveBackendUrlPath,
-} from "./helpers";
+} from "../helpers";
 
 export function BrowserTabContent({
   browser,
@@ -152,7 +150,7 @@ export function BrowserTabContent({
   const pendingProposals = useMemo(
     () =>
       recordArray(cooperation?.pending_action_proposals).filter(
-        (proposal) => String(proposal.status ?? "awaiting_approval") === "awaiting_approval",
+        (proposal: Record<string, unknown>) => String(proposal.status ?? "awaiting_approval") === "awaiting_approval",
       ),
     [cooperation?.pending_action_proposals],
   );

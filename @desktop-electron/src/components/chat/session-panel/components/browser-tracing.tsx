@@ -1,8 +1,8 @@
 import { Activity, FilePenLine, GitCommit, X } from "lucide-react";
-import { cn } from "../../../lib/utils";
-import { formatNumber, formatValue, labelize } from "./browser-helpers";
+import { cn } from "../../../../lib/utils";
+import { formatNumber, formatValue, labelize } from "../helpers/browser-helpers";
 import { ProposalBody } from "./browser-cooperation";
-import type { BrowserTracingTab, BrowserVisualEvent } from "./helpers";
+import type { BrowserTracingTab, BrowserVisualEvent } from "../helpers";
 import { EmptyList, SectionTitle } from "./shared-ui";
 
 export function BrowserTracingPanel({
