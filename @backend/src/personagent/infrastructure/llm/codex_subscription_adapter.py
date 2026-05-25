@@ -9,7 +9,6 @@ import subprocess
 import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
-from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -25,6 +24,7 @@ from personagent.domain.models.inference_result import InferenceResult, StreamCh
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.infrastructure.llm.codex_auth import CodexAuthStore
 from personagent.infrastructure.llm.codex_payload import CodexPayloadBuilder
+from personagent.infrastructure.llm.codex_streaming import CodexStreamParser
 
 logger = structlog.get_logger(__name__)
 
@@ -38,20 +38,6 @@ DEFAULT_MODELS_CACHE_TTL_SECONDS = 300
 FALLBACK_CLIENT_VERSION = "0.124.0"
 STREAM_CONNECT_TIMEOUT_SECONDS = 30.0
 STREAM_POOL_TIMEOUT_SECONDS = 30.0
-
-@dataclass(slots=True)
-class _SseEvent:
-    event: str | None = None
-    data_lines: list[str] = field(default_factory=list)
-
-    def reset(self) -> None:
-        self.event = None
-        self.data_lines.clear()
-
-    @property
-    def data(self) -> str:
-        return "\n".join(self.data_lines).strip()
-
 
 class CodexSubscriptionAdapter(LLMBackendRepository):  # type: ignore[misc]
     """Direct Responses API adapter for Codex ChatGPT Subscription models."""
@@ -80,6 +66,7 @@ class CodexSubscriptionAdapter(LLMBackendRepository):  # type: ignore[misc]
         self.configured_client_version = client_version.strip()
         self.auth_store = CodexAuthStore(codex_home, codex_cli_path=codex_cli_path)
         self._payload_builder = CodexPayloadBuilder(default_model=self.default_model)
+        self._stream_parser = CodexStreamParser()
         self._client: httpx.AsyncClient | None = None
         self._client_version_cache: str | None = None
         self._remote_models_cache: dict[str, Any] | None = None
@@ -262,35 +249,7 @@ class CodexSubscriptionAdapter(LLMBackendRepository):  # type: ignore[misc]
                 await response.aread()
             response.raise_for_status()
             response.encoding = "utf-8"
-            async for chunk in self._iter_response_chunks(response, payload["model"]):
-                yield chunk
-
-    async def _iter_response_chunks(
-        self,
-        response: httpx.Response,
-        fallback_model: str,
-    ) -> AsyncIterator[StreamChunk]:
-        event = _SseEvent()
-        async for line in response.aiter_lines():
-            if not line:
-                chunk = self._parse_sse_event(event.event, event.data, fallback_model)
-                event.reset()
-                if chunk is not None:
-                    yield chunk
-                    if chunk.finish_reason == "tool_calls":
-                        return
-                continue
-            if line.startswith(":"):
-                continue
-            if line.startswith("event:"):
-                event.event = line.removeprefix("event:").strip()
-                continue
-            if line.startswith("data:"):
-                event.data_lines.append(line.removeprefix("data:").strip())
-
-        if event.data_lines:
-            chunk = self._parse_sse_event(event.event, event.data, fallback_model)
-            if chunk is not None:
+            async for chunk in self._stream_parser.iter_response_chunks(response, payload["model"]):
                 yield chunk
 
     def _parse_sse_event(
@@ -299,87 +258,7 @@ class CodexSubscriptionAdapter(LLMBackendRepository):  # type: ignore[misc]
         data_str: str,
         fallback_model: str,
     ) -> StreamChunk | None:
-        if not data_str or data_str == "[DONE]":
-            return None
-        try:
-            data = json.loads(data_str)
-        except json.JSONDecodeError:
-            return None
-
-        effective_type = str(data.get("type") or event_type or "")
-        metadata = {"provider": "codex", "model": str(data.get("model") or fallback_model)}
-
-        if effective_type in {"response.failed", "response.error", "error"} or data.get("error"):
-            raise LLMBackendError(f"Codex stream error: {self._safe_error_detail(data)}")
-
-        if effective_type == "response.output_text.delta":
-            text = str(data.get("delta") or "")
-            return StreamChunk(content=text, metadata=metadata) if text else None
-
-        if effective_type in {
-            "response.reasoning_text.delta",
-            "response.reasoning_summary_text.delta",
-        }:
-            text = str(data.get("delta") or "")
-            return (
-                StreamChunk(reasoning_content=text, is_thinking=True, metadata=metadata)
-                if text
-                else None
-            )
-
-        if effective_type == "response.output_item.done":
-            item = data.get("item") if isinstance(data.get("item"), dict) else data
-            if item.get("type") == "function_call":
-                return StreamChunk(
-                    finish_reason="tool_calls",
-                    tool_calls=[self._tool_call_from_response_item(item)],
-                    metadata=metadata,
-                )
-            return None
-
-        if effective_type == "response.completed":
-            response_data = data.get("response") if isinstance(data.get("response"), dict) else data
-            usage = self._normalize_usage(response_data.get("usage"))
-            model = str(response_data.get("model") or metadata["model"])
-            return StreamChunk(
-                finish_reason="stop",
-                usage=usage,
-                metadata={**metadata, "model": model},
-            )
-
-        return None
-
-    def _tool_call_from_response_item(self, item: dict[str, Any]) -> dict[str, Any]:
-        call_id = str(item.get("call_id") or item.get("id") or "")
-        name = str(item.get("name") or "")
-        arguments = item.get("arguments") or "{}"
-        if not isinstance(arguments, str):
-            arguments = json.dumps(arguments, ensure_ascii=False)
-        return {
-            "id": call_id,
-            "type": "function",
-            "function": {
-                "name": name,
-                "arguments": arguments,
-            },
-        }
-
-    def _normalize_usage(self, usage: Any) -> dict[str, Any] | None:
-        if not isinstance(usage, dict):
-            return None
-        input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
-        output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-        total_tokens = int(usage.get("total_tokens") or input_tokens + output_tokens)
-        normalized: dict[str, Any] = {
-            "prompt_tokens": input_tokens,
-            "completion_tokens": output_tokens,
-            "total_tokens": total_tokens,
-            **usage,
-        }
-        details = usage.get("output_tokens_details")
-        if isinstance(details, dict) and details.get("reasoning_tokens") is not None:
-            normalized["reasoning_tokens"] = details.get("reasoning_tokens")
-        return normalized
+        return self._stream_parser.parse_sse_event(event_type, data_str, fallback_model)
 
     async def _fetch_models_with_refresh(self) -> dict[str, Any]:
         retried = False
