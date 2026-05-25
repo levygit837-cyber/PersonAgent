@@ -33,26 +33,22 @@ import {
 } from "lucide-react";
 import { DiffCard } from "./diff/diff-card";
 import { DND_FILE_MIME, FileRailButton } from "./diff/file-rail-button";
+import { FilterSelect } from "./queue/filter-select";
+import { PullRequestCard } from "./queue/pull-request-card";
+import { QueueFilterButton } from "./queue/queue-filter-button";
+import { QueueState } from "./queue/queue-state";
+import { StatusPill } from "./shared/status-pill";
+import { clampValue, formatDateTime, prTotals, shortPath, statusText, uniqueBranches, uniqueProjects } from "./shared/pr-utils";
 import type {
-  GitBranchInfo,
   PullRequestComment,
   PullRequestCommentKind,
   PullRequestStatus,
   PullRequestSummary,
-  WorkspaceProject,
 } from "../../api/client";
 import { cn, workspaceName } from "../../lib/utils";
 import { useAppStore } from "../../stores/app-store";
 import { useGitBranches, useGitCreatePullRequestComment, useGitPullRequests, useWorkspaceProjects } from "../../stores/git-store";
 import { Button } from "../ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
 
 type ReviewMode = "queue" | "review";
 type QueueFilter = "all" | "mine" | "flagged";
@@ -595,34 +591,6 @@ function PullRequestCommentComposer({
   );
 }
 
-function QueueFilterButton({ children, active, bordered, onClick }: { children: ReactNode; active: boolean; bordered?: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      className={cn(
-        "px-3 py-2 hover:bg-glass/80 hover:text-foreground",
-        bordered && "border-l border-glass-border/25",
-        active && "bg-primary/10 text-foreground",
-      )}
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  );
-}
-
-function QueueState({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) {
-  return (
-    <div className="rounded-xl border border-glass-border/30 bg-background/35 p-3 text-xs leading-5 text-muted-foreground">
-      <div className="flex items-center gap-2 font-semibold text-foreground">
-        <span className="text-primary">{icon}</span>
-        {title}
-      </div>
-      {detail ? <p className="mt-1">{detail}</p> : null}
-    </div>
-  );
-}
-
 function ContextValue({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-glass-border/20 bg-background/30 px-3 py-2">
@@ -652,25 +620,6 @@ function CommentKindPill({ comment }: { comment: PullRequestComment }) {
     </span>
   );
 }
-
-function statusText(status: PullRequestStatus) {
-  if (status === "approved") return "Approved";
-  if (status === "merged") return "Merged";
-  if (status === "refused") return "Refused";
-  return "Needs review";
-}
-
-function formatDateTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
 
 function PullRequestReviewView({
   pullRequest,
@@ -791,88 +740,6 @@ function PullRequestReviewView({
 
       <ReviewAgentWindow pullRequest={pullRequest} activeFile={activeFile} />
     </>
-  );
-}
-
-function PullRequestCard({
-  pullRequest,
-  active,
-  onClick,
-}: {
-  pullRequest: PullRequestSummary;
-  active: boolean;
-  onClick: () => void;
-}) {
-  const totals = prTotals(pullRequest);
-  return (
-    <button
-      type="button"
-      className={cn(
-        "group w-full rounded-2xl border p-3 text-left transition-[background,border-color,box-shadow,transform] duration-200",
-        active
-          ? "border-primary/30 bg-accent/70 text-foreground shadow-soft"
-          : "border-transparent text-muted-foreground hover:border-glass-border/30 hover:bg-glass/70 hover:text-foreground",
-      )}
-      onClick={onClick}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <span className="font-mono text-[11px] font-semibold text-primary">#{pullRequest.number}</span>
-        <StatusPill status={pullRequest.status}>{pullRequest.statusLabel}</StatusPill>
-      </div>
-      <div className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-foreground">{pullRequest.title}</div>
-      <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{pullRequest.description}</p>
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-        <span className="grid h-5 w-5 place-items-center rounded-full border border-glass-border/35 bg-background/60 text-[10px] font-bold text-foreground">
-          {pullRequest.author}
-        </span>
-        <span>{pullRequest.updated}</span>
-        <span>{pullRequest.files.length} files</span>
-        <span className="font-mono text-success">+{totals.additions}</span>
-        <span className="font-mono text-destructive">-{totals.deletions}</span>
-      </div>
-    </button>
-  );
-}
-
-function FilterSelect({
-  label,
-  icon,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  icon: ReactNode;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-}) {
-  const selectedLabel = options.find((option) => option.value === value)?.label ?? options[0]?.label ?? label;
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={`${label}: ${selectedLabel}`}
-          className="group inline-flex h-9 min-w-[148px] max-w-[260px] items-center gap-2 rounded-xl border border-glass-border/25 bg-card/70 px-3 text-left text-xs text-muted-foreground shadow-soft transition-[background,border-color,box-shadow] duration-150 hover:border-glass-border/45 hover:bg-glass/80 hover:text-foreground data-[state=open]:border-primary/25 data-[state=open]:bg-accent/65 data-[state=open]:text-foreground"
-        >
-          <span className="shrink-0 text-primary/90">{icon}</span>
-          <span className="min-w-0 flex-1 truncate font-medium text-foreground">{selectedLabel}</span>
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 group-data-[state=open]:rotate-180" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" sideOffset={8} className="personagent-dropdown-fade w-[var(--radix-dropdown-menu-trigger-width)] min-w-48 rounded-xl p-1.5">
-        <DropdownMenuLabel className="px-2 py-1 text-[10px]">{label}</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={value} onValueChange={onChange}>
-          {options.map((option) => (
-            <DropdownMenuRadioItem key={option.value} value={option.value} className="min-w-0 gap-2 rounded-lg py-2 pr-2 text-[12px]">
-              <span className="min-w-0 truncate">{option.label}</span>
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 
@@ -1113,28 +980,6 @@ function MetricTile({
   );
 }
 
-function StatusPill({
-  status,
-  children,
-}: {
-  status: PullRequestStatus;
-  children: ReactNode;
-}) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-semibold",
-        status === "approved" && "border-success/30 bg-success/10 text-success",
-        status === "merged" && "border-success/30 bg-success/10 text-success",
-        status === "needs_review" && "border-warning/30 bg-warning/10 text-warning",
-        status === "refused" && "border-destructive/30 bg-destructive/10 text-destructive",
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
 function RiskPill({ risk }: { risk: PullRequestSummary["risk"] }) {
   return (
     <span
@@ -1162,68 +1007,4 @@ function AgentSuggestion({ children, onClick }: { children: ReactNode; onClick: 
   );
 }
 
-function prTotals(pullRequest: PullRequestSummary) {
-  return pullRequest.files.reduce(
-    (totals, file) => ({
-      additions: totals.additions + file.additions,
-      deletions: totals.deletions + file.deletions,
-    }),
-    { additions: 0, deletions: 0 },
-  );
-}
 
-function uniqueProjects(
-  pullRequests: PullRequestSummary[],
-  fallbackName?: string,
-  fallbackPath?: string,
-  recentWorkspaces: string[] = [],
-  backendProjects: WorkspaceProject[] = [],
-) {
-  const projects = new Map<string, string>();
-  for (const project of backendProjects) {
-    if (project.path && !projects.has(project.path)) {
-      projects.set(project.path, project.name || workspaceName(project.path));
-    }
-  }
-  for (const path of recentWorkspaces) {
-    if (path && !projects.has(path)) {
-      projects.set(path, workspaceName(path));
-    }
-  }
-  if (fallbackPath && !projects.has(fallbackPath)) {
-    projects.set(fallbackPath, fallbackName ?? workspaceName(fallbackPath));
-  }
-  for (const pullRequest of pullRequests) {
-    if (!projects.has(pullRequest.projectPath)) {
-      projects.set(pullRequest.projectPath, pullRequest.project);
-    }
-  }
-  if (projects.size === 0 && fallbackName) {
-    projects.set(fallbackName, fallbackPath ?? fallbackName);
-  }
-  return Array.from(projects, ([path, name]) => ({ name, path }));
-}
-
-function uniqueBranches(pullRequests: PullRequestSummary[], projectPath: string, gitBranches: GitBranchInfo[]) {
-  const branches = new Set<string>();
-  for (const branch of gitBranches) {
-    if (branch.name && !branch.name.endsWith("/HEAD")) {
-      branches.add(branch.name);
-    }
-  }
-  for (const pullRequest of pullRequests) {
-    if (pullRequest.projectPath === projectPath && pullRequest.branch) {
-      branches.add(pullRequest.branch);
-    }
-  }
-  return Array.from(branches).sort();
-}
-
-function shortPath(path: string) {
-  const pieces = path.split("/");
-  return pieces.slice(Math.max(0, pieces.length - 2)).join("/");
-}
-
-function clampValue(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
