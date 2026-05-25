@@ -8,6 +8,7 @@ from personagent.application.team_chat.blackboard_claim_graph import (
     ClaimGraphAnalyzer,
 )
 from personagent.application.team_chat.blackboard_json_parsing import (
+    _digest,
     _normalize_coverage_matrix,
     _turn_blackboard_payload,
 )
@@ -22,12 +23,6 @@ from personagent.application.team_chat.types import (
     CoordinatorGuidance,
     ExecutionContract,
     TurnResult,
-)
-
-from personagent.application.team_chat.blackboard.json_parsing import (
-    _digest,
-    _normalize_coverage_matrix,
-    _turn_blackboard_payload,
 )
 
 # Backward-compat aliases
