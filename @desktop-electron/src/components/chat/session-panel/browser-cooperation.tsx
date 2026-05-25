@@ -9,7 +9,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "../../ui/dropdown-menu";
-import { browserRenderedElementStyle, browserTraceBounds } from "./browser-helpers";
+import { browserRenderedElementStyle, browserTraceBounds } from "./browser-viewport-helpers";
 
 export function BrowserCooperationModeMenu({
   value,

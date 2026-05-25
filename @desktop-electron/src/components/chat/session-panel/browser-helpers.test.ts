@@ -9,14 +9,20 @@ import type { ToolBlockUi } from "../../../types/chat";
 import type { BrowserState, BrowserToolEvent } from "./helpers";
 import { createEmptyBrowserState } from "./helpers";
 import {
-  browserEffectFromToolAction,
-  browserHasMeaningfulPage,
-  browserMeaningfulToolUrl,
-  browserTabsFromBlocks,
-  browserToolEffect,
   browserToolEventAppliesToBrowser,
   browserToolEventIsAction,
   browserToolEventIsPassive,
+  browserVisualEventsFromBlocks,
+  formatNumber,
+  formatValue,
+  labelize,
+  normalizeBrowserUrl,
+} from "./browser-helpers";
+import { browserTabsFromBlocks } from "./browser-tab-helpers";
+import { browserEffectFromToolAction, browserToolEffect } from "./browser-visual-events";
+import {
+  browserHasMeaningfulPage,
+  browserMeaningfulToolUrl,
   browserToolEventUrl,
   browserToolShouldFetchRenderedView,
   browserToolShouldHydrateView,
@@ -24,15 +30,9 @@ import {
   browserToolShouldSyncDisplayedPage,
   browserToolUrlChanged,
   browserViewFromToolEvent,
-  browserVisualEventsFromBlocks,
-  formatNumber,
-  formatValue,
-  labelize,
-  normalizeBrowserUrl,
-  numericValue,
-  recordArray,
-  selectedElementLabel,
-} from "./browser-helpers";
+} from "./browser-view-helpers";
+import { selectedElementLabel } from "./browser-normalization-helpers";
+import { numericValue, recordArray } from "./helpers";
 
 function makeBlock(name: string, status: "running" | "completed" = "running", data: Record<string, unknown> = {}): ToolBlockUi {
   return { id: `b-${name}`, name, status, title: name, message: "", content: "", data, isCollapsed: true };

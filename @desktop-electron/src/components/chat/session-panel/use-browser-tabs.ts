@@ -24,14 +24,19 @@ import type { ProjectItem, ToolBlockUi } from "../../../types/chat";
 import type { SessionDetailView } from "../session-detail-window";
 import {
   browserAnnotationToComposerAnnotation,
-  browserHasMeaningfulPage,
-  browserMeaningfulToolUrl,
-  browserSnapshotViewFromToolEvent,
-  browserTabsFromBlocks,
   browserTextSelectionToComposerAnnotation,
   browserToolEventAppliesToBrowser,
   browserToolEventIsAction,
   browserToolEventIsPassive,
+  browserVisualEventsFromBlocks,
+  localBrowserAnnotation,
+  normalizeBrowserUrl,
+} from "./browser-helpers";
+import { browserTabsFromBlocks } from "./browser-tab-helpers";
+import {
+  browserHasMeaningfulPage,
+  browserMeaningfulToolUrl,
+  browserSnapshotViewFromToolEvent,
   browserToolEventUrl,
   browserToolShouldFetchRenderedView,
   browserToolShouldHydrateView,
@@ -39,11 +44,7 @@ import {
   browserToolShouldSyncDisplayedPage,
   browserToolUrlChanged,
   browserViewFromToolEvent,
-  browserVisualEventsFromBlocks,
-  localBrowserAnnotation,
-  normalizeBrowserUrl,
-  numericValue,
-} from "./browser-helpers";
+} from "./browser-view-helpers";
 import {
   type BrowserElementMetadata,
   type BrowserState,
@@ -60,7 +61,9 @@ import {
   isBrowserTab,
   isMeaningfulBrowserUrl,
   normalizeComparableUrl,
+  numericValue,
   readBrowserRenderCache,
+  recordArray,
   recordValue,
   rememberBrowserRenderView,
   summaryTab,
