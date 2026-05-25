@@ -14,7 +14,11 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from personagent.application.team_chat.blackboard_utils import _clamp_float, _string_list
+from personagent.application.team_chat.blackboard_json_parsing import (
+    _clamp_float,
+    _normalize_coverage_matrix,
+    _string_list,
+)
 
 __all__ = [
     "_coherency_score",
@@ -124,8 +128,6 @@ def _keyword_set(text: str) -> set[str]:
 
 
 def _compact_workspace_memory(snapshot: dict[str, Any]) -> dict[str, Any]:
-    from personagent.application.team_chat.blackboard_json_parsing import _normalize_coverage_matrix
-
     if not isinstance(snapshot, dict) or not snapshot:
         return {}
     claim_graph = snapshot.get("claim_graph") if isinstance(snapshot.get("claim_graph"), dict) else {}

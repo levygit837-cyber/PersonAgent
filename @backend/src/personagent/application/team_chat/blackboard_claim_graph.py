@@ -12,13 +12,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from personagent.application.team_chat.blackboard_json_parsing import _digest, _parse_json_object
+from personagent.application.team_chat.blackboard_json_parsing import (
+    _clamp_float,
+    _digest,
+    _parse_json_object,
+    _string_list,
+)
 from personagent.application.team_chat.blackboard_scoring import (
     _coherency_score,
     _keyword_set,
     _looks_mutating_text,
 )
-from personagent.application.team_chat.blackboard_utils import _clamp_float, _string_list
 
 __all__ = [
     "ClaimGraphAnalyzer",
@@ -35,21 +39,21 @@ class ClaimGraphAnalyzer:
     def __init__(
         self,
         *,
-        user_input: str,
-        execution_contract: dict[str, Any],
         claim_nodes: list[dict[str, Any]],
         claim_signatures: set[str],
         duplicates: list[dict[str, Any]],
         coverage_matrix: list[dict[str, Any]],
         agent_novelty_scores: dict[str, list[float]],
     ) -> None:
-        self._user_input = user_input
-        self._execution_contract = execution_contract
         self._claim_nodes = claim_nodes
         self._claim_signatures = claim_signatures
         self._duplicates = duplicates
         self._coverage_matrix = coverage_matrix
         self._agent_novelty_scores = agent_novelty_scores
+
+    def set_coverage_matrix(self, coverage_matrix: list[dict[str, Any]]) -> None:
+        """Update the coverage matrix reference after it is replaced externally."""
+        self._coverage_matrix = coverage_matrix
 
     # -- public entry point ---------------------------------------------------
 
@@ -57,6 +61,9 @@ class ClaimGraphAnalyzer:
         self,
         entry: Any,  # _BlackboardEntry
         turn: Any,  # _TurnResult
+        *,
+        user_input: str,
+        execution_contract: dict[str, Any],
     ) -> list[dict[str, Any]]:
         structured = _parse_json_object(turn.content) if turn.content.strip().startswith(("{", "```")) else {}
         nodes: list[dict[str, Any]] = []
@@ -68,6 +75,8 @@ class ClaimGraphAnalyzer:
                     claim_type=claim_type,
                     entry=entry,
                     turn=turn,
+                    user_input=user_input,
+                    execution_contract=execution_contract,
                 )
             )
         for result in turn.tool_results:
@@ -84,6 +93,8 @@ class ClaimGraphAnalyzer:
                         "tool_name": result.get("tool_name"),
                         "coverage": [str(item.get("id")) for item in self._coverage_matrix if item.get("id")],
                     },
+                    user_input=user_input,
+                    execution_contract=execution_contract,
                 )
             )
         for proposal in turn.tool_proposals:
@@ -95,6 +106,8 @@ class ClaimGraphAnalyzer:
                     text=str(proposal.get("summary") or proposal.get("tool_name") or "Mutating tool proposal"),
                     confidence=0.6,
                     extra={"mutating": True, "tool_call": proposal},
+                    user_input=user_input,
+                    execution_contract=execution_contract,
                 )
             )
         mutating_proposal_text = (
@@ -103,7 +116,7 @@ class ClaimGraphAnalyzer:
         )
         mutating_proposal_signature = _claim_signature(mutating_proposal_text)
         if (
-            _looks_mutating_text(self._user_input)
+            _looks_mutating_text(user_input)
             and not any(node.get("type") == "proposal" and node.get("mutating") for node in nodes)
             and (
                 not mutating_proposal_signature
@@ -119,8 +132,10 @@ class ClaimGraphAnalyzer:
                     confidence=0.65,
                     extra={
                         "mutating": True,
-                        "coverage": self._infer_coverage_for_claim(self._user_input, turn.agent.id),
+                        "coverage": self._infer_coverage_for_claim(user_input, turn.agent.id),
                     },
+                    user_input=user_input,
+                    execution_contract=execution_contract,
                 )
             )
         if not nodes and not (turn.blocker or turn.digest):
@@ -134,6 +149,8 @@ class ClaimGraphAnalyzer:
                     claim_type=fallback_type,
                     text=turn.blocker or turn.digest,
                     confidence=0.3 if turn.blocker else 0.55,
+                    user_input=user_input,
+                    execution_contract=execution_contract,
                 )
             )
         accepted: list[dict[str, Any]] = []
@@ -184,6 +201,8 @@ class ClaimGraphAnalyzer:
         claim_type: str,
         entry: Any,
         turn: Any,
+        user_input: str = "",
+        execution_contract: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         if raw_items is None:
             return []
@@ -242,6 +261,8 @@ class ClaimGraphAnalyzer:
                     text=text,
                     confidence=confidence,
                     extra=extra,
+                    user_input=user_input,
+                    execution_contract=execution_contract,
                 )
             )
         return nodes
@@ -255,9 +276,11 @@ class ClaimGraphAnalyzer:
         text: str,
         confidence: float,
         extra: dict[str, Any] | None = None,
+        user_input: str = "",
+        execution_contract: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         extra = extra or {}
-        coherency = _coherency_score(text, self._user_input, self._execution_contract)
+        coherency = _coherency_score(text, user_input, execution_contract or {})
         if turn.coherency_score > 0:
             coherency = max(coherency, turn.coherency_score * 0.6)
         if extra.get("coverage"):

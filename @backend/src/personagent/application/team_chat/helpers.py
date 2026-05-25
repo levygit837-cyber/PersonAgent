@@ -21,6 +21,7 @@ from personagent.application.team_chat.blackboard import (
     _Blackboard,
 )
 from personagent.application.team_chat.blackboard_json_parsing import (
+    _clamp_float,
     _digest,
     _parse_json_object,
 )
@@ -28,7 +29,6 @@ from personagent.application.team_chat.blackboard_scoring import (
     _coherency_score,
     _now_iso,
 )
-from personagent.application.team_chat.blackboard_utils import _clamp_float
 from personagent.application.team_chat.contracts import (
     TeamAgentConfig,
     TeamChatRequest,

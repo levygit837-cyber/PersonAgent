@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TypeAlias
+from typing import Any
 
 from personagent.application.team_chat.blackboard_claim_graph import (
     ClaimGraphAnalyzer,
@@ -24,12 +24,6 @@ from personagent.application.team_chat.types import (
     TurnResult,
 )
 
-# Backward-compat aliases
-_TurnResult: TypeAlias = TurnResult
-_CoordinatorGuidance: TypeAlias = CoordinatorGuidance
-_ExecutionContract: TypeAlias = ExecutionContract
-_BlackboardEntry: TypeAlias = BlackboardEntry
-
 INDEPENDENT_PHASE = "independent_round"
 BLACKBOARD_PHASE = "blackboard_publish"
 DEBATE_PHASE = "debate_round"
@@ -41,9 +35,6 @@ TOOL_PHASE_PLAN = "plan_tools"
 TOOL_PHASE_READ = "read_tools"
 TOOL_PHASE_MUTATING_PROPOSAL = "mutating_proposal"
 TOOL_PHASE_AUDIT = "tool_audit"
-
-CLAIM_TYPES = ("claim", "evidence", "assumption", "risk", "blocker", "proposal", "tool_result", "decision")
-MUTATING_TOOL_NAMES = {"Write", "Edit", "TodoWrite", "TaskCreate", "TaskUpdate", "TaskClose", "TaskAppendOutput"}
 
 
 class _Blackboard:
@@ -59,7 +50,7 @@ class _Blackboard:
         self._mode = mode
         self._user_input = user_input
         self._workspace_memory_snapshot = workspace_memory_snapshot or {}
-        self._entries: list[_BlackboardEntry] = []
+        self._entries: list[BlackboardEntry] = []
         self._claim_nodes: list[dict[str, Any]] = []
         self._claim_signatures: set[str] = set()
         self._duplicates: list[dict[str, Any]] = []
@@ -68,8 +59,6 @@ class _Blackboard:
         self._agent_novelty_scores: dict[str, list[float]] = {}
         self._next_sequence = 1
         self._claim_graph = ClaimGraphAnalyzer(
-            user_input=self._user_input,
-            execution_contract=self._execution_contract,
             claim_nodes=self._claim_nodes,
             claim_signatures=self._claim_signatures,
             duplicates=self._duplicates,
@@ -81,8 +70,8 @@ class _Blackboard:
         self,
         *,
         coordinator: TeamAgentConfig,
-        contract: _ExecutionContract,
-    ) -> _BlackboardEntry:
+        contract: ExecutionContract,
+    ) -> BlackboardEntry:
         payload = {
             "summary": contract.summary,
             "objective": contract.objective,
@@ -98,8 +87,7 @@ class _Blackboard:
             key: value for key, value in payload.items() if key not in {"duration_ms", "raw_content"}
         }
         self._coverage_matrix = _normalize_coverage_matrix(contract.coverage_matrix)
-        self._claim_graph._execution_contract = self._execution_contract
-        self._claim_graph._coverage_matrix = self._coverage_matrix
+        self._claim_graph.set_coverage_matrix(self._coverage_matrix)
         entry = self._new_entry(
             phase=EXECUTION_CONTRACT_PHASE,
             round_index=0,
@@ -109,7 +97,7 @@ class _Blackboard:
         )
         return entry
 
-    def publish_turn(self, turn: _TurnResult) -> _BlackboardEntry:
+    def publish_turn(self, turn: TurnResult) -> BlackboardEntry:
         payload = _turn_blackboard_payload(turn)
         entry = self._new_entry(
             phase=turn.phase,
@@ -118,7 +106,11 @@ class _Blackboard:
             event_type="agent_observation" if not turn.blocker else "agent_blocker",
             payload=payload,
         )
-        nodes = self._claim_graph.claim_nodes_from_turn(entry, turn)
+        nodes = self._claim_graph.claim_nodes_from_turn(
+            entry, turn,
+            user_input=self._user_input,
+            execution_contract=self._execution_contract,
+        )
         payload["claim_nodes"] = nodes
         payload["claim_node_count"] = len(nodes)
         self._claim_graph.update_coverage(nodes)
@@ -129,8 +121,8 @@ class _Blackboard:
         *,
         coordinator: TeamAgentConfig,
         round_index: int,
-        guidance: _CoordinatorGuidance,
-    ) -> _BlackboardEntry:
+        guidance: CoordinatorGuidance,
+    ) -> BlackboardEntry:
         payload = {
             "summary": guidance.summary,
             "focus_assignments": guidance.focus_assignments,
@@ -308,7 +300,7 @@ class _Blackboard:
             )
         return "\n".join(lines)
 
-    def claim_delta_for(self, entry: _BlackboardEntry) -> dict[str, Any]:
+    def claim_delta_for(self, entry: BlackboardEntry) -> dict[str, Any]:
         nodes = entry.payload.get("claim_nodes")
         if not isinstance(nodes, list):
             nodes = []
@@ -487,8 +479,8 @@ class _Blackboard:
         agent: TeamAgentConfig,
         event_type: str,
         payload: dict[str, Any],
-    ) -> _BlackboardEntry:
-        entry = _BlackboardEntry(
+    ) -> BlackboardEntry:
+        entry = BlackboardEntry(
             sequence=self._next_sequence,
             phase=phase,
             round_index=round_index,
