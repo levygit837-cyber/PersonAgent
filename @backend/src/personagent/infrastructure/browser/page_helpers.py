@@ -18,9 +18,55 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from personagent.infrastructure.browser.scripts import (
-    _STYLE_READY_SNAPSHOT_SCRIPT,
-)
+_STYLE_READY_SNAPSHOT_SCRIPT = r"""
+async () => {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve(true)));
+  const links = Array.from(document.querySelectorAll('link[rel~="stylesheet"], link[as="style"], link[href$=".css"]'));
+  const settleLink = (link) => new Promise((resolve) => {
+    try {
+      if (link.sheet || link.getAttribute('data-personagent-embedded-css') === 'true') {
+        resolve(true);
+        return;
+      }
+    } catch {
+      resolve(false);
+      return;
+    }
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    link.addEventListener('load', () => finish(true), { once: true });
+    link.addEventListener('error', () => finish(false), { once: true });
+    setTimeout(() => {
+      try {
+        finish(Boolean(link.sheet));
+      } catch {
+        finish(false);
+      }
+    }, 2600);
+  });
+  const fontsReady = document.fonts && document.fonts.ready
+    ? Promise.race([document.fonts.ready.then(() => true).catch(() => false), wait(2600).then(() => false)])
+    : Promise.resolve(true);
+  const results = await Promise.allSettled([...links.map(settleLink), fontsReady]);
+  await frame();
+  await frame();
+  const loaded = results.slice(0, links.length).filter((result) => result.status === 'fulfilled' && result.value !== false).length;
+  const fontReadyResult = results[links.length];
+  const fontsReadyValue = !fontReadyResult || (fontReadyResult.status === 'fulfilled' && fontReadyResult.value !== false);
+  return {
+    personagentStyleReadyProbe: true,
+    style_ready: (links.length === 0 || loaded >= links.length) && fontsReadyValue,
+    stylesheet_count: links.length,
+    stylesheet_loaded_count: loaded,
+    fonts_ready: fontsReadyValue
+  };
+}
+"""
 
 if TYPE_CHECKING:
     from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
