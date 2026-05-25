@@ -179,8 +179,6 @@ function shouldResetTeamMessageForRun(message: ChatMessageUi, event: TeamRunEven
   return !message.teamRun.runId || message.teamRun.runId !== event.run_id;
 }
 
-
-
 function applyTeamRunEvent(message: ChatMessageUi, event: TeamRunEvent): ChatMessageUi {
   let run = message.teamRun ? cloneTeamRun(message.teamRun) : createTeamRun(event);
   run = seedTeamAgents(run, event);
