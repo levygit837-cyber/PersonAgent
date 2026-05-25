@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import json
 import os
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -26,7 +26,6 @@ from personagent.infrastructure.browser.models import (
     BrowserConsoleEntry,
     BrowserError,
     BrowserOpenedPage,
-    BrowserSearchResult,
     BrowserSearchSnapshot,
     BrowserUnavailableError,
 )
@@ -111,6 +110,23 @@ class LightPandaBrowserWorker:
         auto_start_lightpanda: bool = True,
         connector: Connector | None = None,
     ) -> None:
+        # NOTE: Architecture debt — modules hold a reference to the full worker
+        # (self._w) and call each other through it. This was a pragmatic choice
+        # during the 17-slice incremental decomposition (5_735 → 674 lines) to
+        # minimise merge friction and signature churn across slices.
+        #
+        # Future opportunity ("Code Judo"): invert the dependency graph so each
+        # module receives only the specific collaborators it needs via constructor
+        # injection (e.g. BrowserActions gets SessionResolver + ViewportHelper +
+        # ConsoleInstaller instead of the whole worker). Benefits:
+        #   • Independently testable modules (no full-worker mocks)
+        #   • Explicit dependencies visible in __init__ signatures
+        #   • Worker becomes a thin orchestrator that wires collaborators
+        #   • Eliminates the implicit circular awareness (worker ↔ modules)
+        #
+        # Cost: refactoring all 15+ extracted modules and ~200 unit tests.
+        # Recommended as a separate, focused effort after this decomposition is
+        # stable in production.
         self.enabled = enabled
         self.cdp_url = cdp_url
         self.timeout_ms = max(1, int(timeout_ms))
@@ -170,16 +186,16 @@ class LightPandaBrowserWorker:
         except BrowserError as exc:
             logger.warning("lightpanda_warmup_failed", error=str(exc))
             return False
-        await self._release_browser(browser)
+        await self.session_manager.release_browser(browser)
         return True
 
     async def close(self) -> None:
         """Close pages, contexts, browser and Playwright runtime."""
 
         async with self._lock:
-            await self._close_sessions()
+            await self.session_manager.close_sessions()
             if self._playwright is not None:
-                await self._best_effort_resource_call(
+                await self.session_manager.best_effort_resource_call(
                     "playwright_stop",
                     self._playwright.stop,
                 )
@@ -307,245 +323,14 @@ class LightPandaBrowserWorker:
         return await self.lifecycle.switch_tab(**kwargs)
 
     # ------------------------------------------------------------------
-    # Backward-compat delegations → BrowserSnapshot (Slice 5)
+    # Core: page runtime helpers
     # ------------------------------------------------------------------
-
-    async def _browser_view_snapshot(
-        self,
-        browser_id: str,
-        session: Any,
-        *,
-        width: int,
-        height: int,
-        cache_mode: str = "prefer_live",
-        wait_for_styles: bool = True,
-    ) -> dict[str, Any]:
-        return await self.snapshot.browser_view_snapshot(
-            browser_id,
-            session,
-            width=width,
-            height=height,
-            cache_mode=cache_mode,
-            wait_for_styles=wait_for_styles,
-        )
-
-    def _enrich_browser_element_map(
-        self,
-        raw_map: list[dict[str, Any]],
-        *,
-        browser_id: str,
-        tab_id: str,
-    ) -> list[dict[str, Any]]:
-        return self.snapshot.enrich_browser_element_map(raw_map, browser_id=browser_id, tab_id=tab_id)
-
-    async def _browser_element_map(self, page: Any) -> list[dict[str, Any]]:
-        return await self.snapshot.browser_element_map(page)
-
-    async def _panel_session_tabs(
-        self,
-        *,
-        max_tabs: int,
-        exclude_conversation_id: str,
-    ) -> list[dict[str, Any]]:
-        return await self.snapshot.panel_session_tabs(
-            max_tabs=max_tabs,
-            exclude_conversation_id=exclude_conversation_id,
-        )
-
-    async def _html_with_embedded_stylesheet_fallbacks(
-        self,
-        html: str,
-        current_url: str,
-    ) -> tuple[str, dict[str, int]]:
-        return await self.snapshot.html_with_embedded_stylesheet_fallbacks(html, current_url)
-
-    async def _fetch_stylesheet_css(self, client: Any, href: str) -> tuple[str, bool]:
-        return await self.snapshot.fetch_stylesheet_css(client, href)
-
-    @staticmethod
-    def _stylesheet_hrefs(html: str, current_url: str, *, max_hrefs: int) -> list[str]:
-        return BrowserSnapshot.stylesheet_hrefs(html, current_url, max_hrefs=max_hrefs)
-
-    @staticmethod
-    def _html_attrs(tag: str) -> dict[str, str]:
-        return BrowserSnapshot.html_attrs(tag)
-
-    @staticmethod
-    def _rewrite_css_urls(css_text: str, stylesheet_url: str) -> str:
-        return BrowserSnapshot.rewrite_css_urls(css_text, stylesheet_url)
-
-    @staticmethod
-    def _css_fidelity(*, html: str, render_mode: str, embedded_stylesheet_count: int = 0) -> str:
-        return BrowserSnapshot.css_fidelity(
-            html=html, render_mode=render_mode, embedded_stylesheet_count=embedded_stylesheet_count
-        )
-
-    def search_url(self, query: str, *, max_results: int | None = None) -> str:
-        return self.search_module.search_url(query, max_results=max_results)
-
-    async def _wait_for_page_visual_ready(self, page: Any) -> dict[str, Any]:
-        return await self.page_helpers.wait_for_page_visual_ready(page)
-
-    async def _wait_for_page_load_complete(self, page: Any, *, timeout_ms: int | None = None) -> None:
-        await self.page_helpers.wait_for_page_load_complete(page, timeout_ms=timeout_ms)
-
-    def _element_selector(self, browser_id: str, node_id: str) -> str:
-        return self.element_helpers.element_selector(browser_id, node_id)
-
-    def _element_target(self, browser_id: str, node_id: str) -> dict[str, Any]:
-        return self.element_helpers.element_target(browser_id, node_id)
-
-    @staticmethod
-    def _browser_action_target_payload(
-        target: Mapping[str, Any],
-        *,
-        fallback_node_id: str = "",
-    ) -> dict[str, Any]:
-        return ElementHelpers.browser_action_target_payload(target, fallback_node_id=fallback_node_id)
-
-    async def _action_context_for_element(self, page: Any, target: dict[str, Any]) -> Any:
-        return await self.element_helpers.action_context_for_element(page, target)
-
-    async def _page_frames(self, page: Any) -> list[Any]:
-        return await self.element_helpers.page_frames(page)
-
-    def _main_frame(self, page: Any) -> Any:
-        return self.element_helpers.main_frame(page)
-
-    def _frame_id(self, frame: Any, index: int) -> str:
-        return self.element_helpers.frame_id(frame, index)
-
-    async def _frame_viewport_offset(self, frame: Any) -> tuple[float, float]:
-        return await self.element_helpers.frame_viewport_offset(frame)
-
-    async def _upload_files(self, page: Any, selector: str, files: list[str]) -> dict[str, Any]:
-        return await self.element_helpers.upload_files(page, selector, files)
-
-    async def _drag_between_elements(
-        self,
-        page: Any,
-        selector: str,
-        *,
-        target_selector: str,
-        x: float | None,
-        y: float | None,
-    ) -> dict[str, Any]:
-        return await self.element_helpers.drag_between_elements(
-            page, selector, target_selector=target_selector, x=x, y=y,
-        )
-
-    async def _set_page_viewport(self, page: Any, width: int, height: int) -> None:
-        await self.element_helpers.set_page_viewport(page, width, height)
-
-    async def _safe_user_agent(self, page: Any) -> str:
-        return await self.element_helpers.safe_user_agent(page)
-
-    async def _safe_html(self, page: Any) -> str:
-        return await self.element_helpers.safe_html(page)
-
-    async def _safe_scroll_state(self, page: Any) -> dict[str, int]:
-        return await self.element_helpers.safe_scroll_state(page)
-
-    async def _get_session(self, conversation_id: str) -> _BrowserSession:
-        return await self.session_manager.get_session(conversation_id)
-
-    async def _ensure_browser(self) -> Any:
-        """Open one CDP browser connection.
-
-        LightPanda currently does not behave like Chromium when many contexts are
-        created on the same Playwright CDP connection. The worker therefore keeps
-        the singleton at the worker level, but each conversation session owns its
-        own CDP connection.
-        """
-
-        return await self._connect_browser()
-
-    def _cached_usable_session(self, conversation_id: str) -> _BrowserSession | None:
-        return self.session_manager.cached_usable_session(conversation_id)
-
-    def _session_has_open_page(self, session: _BrowserSession) -> bool:
-        return self.session_manager.session_has_open_page(session)
-
-    def _preferred_session_page(self, session: _BrowserSession) -> Any:
-        return self.session_manager.preferred_session_page(session)
-
-    def _session_pages(self, session: _BrowserSession) -> list[Any]:
-        return self.session_manager.session_pages(session)
-
-    async def _cleanup_live_pages(
-        self,
-        conversation_id: str,
-        session: _BrowserSession,
-        *,
-        keep_page_id: str | None = None,
-        close_read_pages: bool = False,
-    ) -> None:
-        await self.session_manager.cleanup_live_pages(
-            conversation_id, session, keep_page_id=keep_page_id, close_read_pages=close_read_pages,
-        )
-
-    def _live_page_entries(self, session: _BrowserSession) -> list[tuple[set[str], Any]]:
-        return self.session_manager.live_page_entries(session)
-
-    def _ensure_session_page_alias(
-        self,
-        conversation_id: str,
-        session: _BrowserSession,
-        *,
-        page: Any | None = None,
-        page_id: str | None = None,
-    ) -> str:
-        return self.session_manager.ensure_session_page_alias(
-            conversation_id, session, page=page, page_id=page_id,
-        )
-
-    def _is_session_page_alias(
-        self,
-        conversation_id: str,
-        session: _BrowserSession | None,
-        page_id: str | None,
-    ) -> bool:
-        return self.session_manager.is_session_page_alias(conversation_id, session, page_id)
-
-    async def _resolve_live_page(
-        self,
-        conversation_id: str,
-        *,
-        page_id: str | None = None,
-        activate: bool = True,
-    ) -> tuple[_BrowserSession, Any, str]:
-        return await self.session_manager.resolve_live_page(
-            conversation_id, page_id=page_id, activate=activate,
-        )
-
-    def _page_is_open(self, page: Any) -> bool:
-        return self.session_manager.page_is_open(page)
-
-    def _attach_page_console_listeners(self, conversation_id: str, page_id: str, page: Any) -> None:
-        return self.console.attach_page_console_listeners(conversation_id, page_id, page)
-
-    def _console_message_attr(self, message: Any, name: str) -> Any:
-        return BrowserConsole.console_message_attr(message, name)
-
-    def _record_console_entry(
-        self,
-        conversation_id: str,
-        page_id: str,
-        *,
-        level: str,
-        text: str,
-        source: str,
-        url: str = "",
-    ) -> None:
-        return self.console.record_console_entry(
-            conversation_id, page_id, level=level, text=text, source=source, url=url,
-        )
 
     async def _page_runtime(self, page: Any) -> str:
         return "lightpanda" if await self._is_lightpanda_page(page) else "chrome_cdp"
 
     async def _is_lightpanda_page(self, page: Any) -> bool:
-        user_agent = await self._safe_user_agent(page)
+        user_agent = await self.element_helpers.safe_user_agent(page)
         return user_agent.lower().startswith("lightpanda/")
 
     def _bounded_script_result(self, value: Any) -> tuple[str, Any | None, bool]:
@@ -725,7 +510,7 @@ class LightPandaBrowserWorker:
         try:
             await self._goto_page(session.page, url, allow_partial=allow_partial, wait_for_styles=wait_for_styles)
         except Exception:
-            await self._close_session(conversation_id, session)
+            await self.session_manager.close_session(conversation_id, session)
             raise
 
     async def _goto_page(
@@ -744,8 +529,8 @@ class LightPandaBrowserWorker:
                 timeout=self.timeout_ms,
             )
             if wait_for_styles:
-                await self._wait_for_page_visual_ready(page)
-            await self._install_console_capture(page)
+                await self.page_helpers.wait_for_page_visual_ready(page)
+            await self.console.install_console_capture(page)
         except Exception as exc:
             page_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
             if allow_partial and page_url.startswith(("http://", "https://")):
@@ -756,7 +541,7 @@ class LightPandaBrowserWorker:
                     error=str(exc),
                 )
                 with suppress(Exception):
-                    await self._install_console_capture(page)
+                    await self.console.install_console_capture(page)
                 return
             if "RobotsBlocked" in str(exc):
                 raise BrowserBlockedError(
@@ -798,31 +583,6 @@ class LightPandaBrowserWorker:
         if last_error is not None:
             raise last_error
         return None
-
-    async def _install_console_capture(self, page: Any) -> None:
-        await self.console.install_console_capture(page)
-
-    async def _install_cooperation_capture(self, page: Any, browser_id: str, page_id: str) -> None:
-        await self.console.install_cooperation_capture(page, browser_id, page_id)
-
-    async def _drain_page_console_entries(
-        self,
-        page: Any,
-        conversation_id: str,
-        page_id: str,
-    ) -> None:
-        await self.console.drain_page_console_entries(page, conversation_id, page_id)
-
-    async def _drain_cooperation_events(
-        self,
-        page: Any,
-        browser_id: str,
-        page_id: str,
-    ) -> list[dict[str, Any]]:
-        return await self.console.drain_cooperation_events(page, browser_id, page_id)
-
-    def _record_cooperation_event(self, browser_id: str, page_id: str, event: Any) -> None:
-        self.console.record_cooperation_event(browser_id, page_id, event)
 
     async def _raw_runtime_evaluate_value(
         self,
@@ -927,205 +687,6 @@ class LightPandaBrowserWorker:
         if last_error is not None:
             raise last_error
         raise BrowserUnavailableError("LightPanda raw CDP command failed.")
-
-    async def _safe_title(self, page: Any) -> str:
-        return await self.page_helpers.safe_title(page)
-
-    async def _safe_title_for_url(self, url: str) -> str:
-        return await self.page_helpers.safe_title_for_url(url)
-
-    async def _raise_if_google_blocked(self, page: Any) -> None:
-        await self.block_detector.raise_if_google_blocked(page)
-
-    async def _raise_if_bing_blocked(self, page: Any) -> None:
-        await self.block_detector.raise_if_bing_blocked(page)
-
-    async def _raise_if_yahoo_blocked(self, page: Any) -> None:
-        await self.block_detector.raise_if_yahoo_blocked(page)
-
-    async def _raise_if_search_blocked(self, page: Any) -> None:
-        await self.block_detector.raise_if_search_blocked(page)
-
-    def _cache_search_results(
-        self,
-        *,
-        conversation_id: str,
-        query: str,
-        search_url: str,
-        results: list[BrowserSearchResult],
-    ) -> BrowserSearchSnapshot:
-        return self.search_result_cache.cache_search_results(
-            conversation_id=conversation_id, query=query,
-            search_url=search_url, results=results,
-        )
-
-    def _latest_cached_search_results(self, conversation_id: str) -> list[BrowserSearchResult]:
-        return self.search_result_cache.latest_cached_search_results(conversation_id)
-
-    def _copy_search_results(
-        self,
-        results: list[BrowserSearchResult],
-    ) -> list[BrowserSearchResult]:
-        return SearchResultCache.copy_search_results(results)
-
-    def _remember_current_url(self, conversation_id: str, url: str | None) -> None:
-        self.search_result_cache.remember_current_url(conversation_id, url)
-
-    def _cache_opened_page(
-        self,
-        *,
-        conversation_id: str,
-        url: str,
-        final_url: str,
-        title: str,
-        source_search_id: str | None,
-        opener_tool_call_id: str | None,
-    ) -> tuple[BrowserOpenedPage, bool]:
-        return self.opened_pages.cache_opened_page(
-            conversation_id=conversation_id, url=url, final_url=final_url,
-            title=title, source_search_id=source_search_id,
-            opener_tool_call_id=opener_tool_call_id,
-        )
-
-    def _browser_open_response(
-        self,
-        *,
-        conversation_id: str,
-        opened_page: BrowserOpenedPage,
-        requested_url: str,
-        title: str,
-        search_id: str | None,
-        reused_existing_page: bool,
-    ) -> dict[str, Any]:
-        return self.opened_pages.browser_open_response(
-            conversation_id=conversation_id, opened_page=opened_page,
-            requested_url=requested_url, title=title, search_id=search_id,
-            reused_existing_page=reused_existing_page,
-        )
-
-    def _opened_page_read_status(self, opened_page: BrowserOpenedPage) -> str:
-        return OpenedPageTracker.opened_page_read_status(opened_page)
-
-    def _opened_page_tab(
-        self,
-        page: BrowserOpenedPage,
-        *,
-        index: int,
-        current_url: str | None,
-        last_open_page_id: str | None,
-    ) -> dict[str, Any]:
-        return self.opened_pages.opened_page_tab(
-            page, index=index, current_url=current_url,
-            last_open_page_id=last_open_page_id,
-        )
-
-    def _opened_page(
-        self,
-        conversation_id: str,
-        page_id: str,
-    ) -> BrowserOpenedPage | None:
-        return self.opened_pages.opened_page(conversation_id, page_id)
-
-    def _opened_page_by_url(
-        self,
-        conversation_id: str,
-        url: str,
-    ) -> BrowserOpenedPage | None:
-        return self.opened_pages.opened_page_by_url(conversation_id, url)
-
-    def _target_title(self, conversation_id: str, page_id: str | None) -> str:
-        return self.opened_pages.target_title(conversation_id, page_id)
-
-    def _resolve_content_target(
-        self,
-        conversation_id: str,
-        session: _BrowserSession | None,
-        *,
-        url: str | None = None,
-        page_id: str | None = None,
-    ) -> tuple[str | None, str | None]:
-        return self.session_manager.resolve_content_target(
-            conversation_id, session, url=url, page_id=page_id,
-        )
-
-    def _next_unextracted_opened_page(self, conversation_id: str) -> BrowserOpenedPage | None:
-        return self.opened_pages.next_unextracted_opened_page(conversation_id)
-
-    def _should_navigate_for_content(self, session: _BrowserSession, target_url: str) -> bool:
-        return self.session_manager.should_navigate_for_content(session, target_url)
-
-    def _result_url(
-        self,
-        conversation_id: str,
-        session: _BrowserSession,
-        result_index: int,
-        *,
-        search_id: str | None = None,
-    ) -> tuple[str, str | None]:
-        return self.search_result_cache.result_url(
-            conversation_id, session, result_index, search_id=search_id,
-        )
-
-    def _result_title(
-        self,
-        conversation_id: str,
-        result_index: int,
-        *,
-        search_id: str | None = None,
-    ) -> str:
-        return self.search_result_cache.result_title(
-            conversation_id, result_index, search_id=search_id,
-        )
-
-    def _match_search_result_url(
-        self,
-        conversation_id: str,
-        url: str,
-        *,
-        search_id: str | None = None,
-    ) -> str | None:
-        return self.search_result_cache.match_search_result_url(
-            conversation_id, url, search_id=search_id,
-        )
-
-    def _match_search_result_title(
-        self,
-        conversation_id: str,
-        url: str,
-        *,
-        search_id: str | None = None,
-    ) -> str:
-        return self.search_result_cache.match_search_result_title(
-            conversation_id, url, search_id=search_id,
-        )
-
-    async def _cleanup_sessions(self) -> None:
-        await self.session_manager.cleanup_sessions()
-
-    def _cleanup_search_cache(self, now: float) -> None:
-        self.search_result_cache.cleanup_search_cache(now)
-
-    async def _enforce_session_limit(self) -> None:
-        await self.session_manager.enforce_session_limit()
-
-    async def _reset_browser(self) -> None:
-        await self.session_manager.reset_browser()
-
-    async def _close_sessions(self) -> None:
-        await self.session_manager.close_sessions()
-
-    async def _close_session(self, conversation_id: str, session: _BrowserSession) -> None:
-        await self.session_manager.close_session(conversation_id, session)
-
-    async def _release_browser(self, browser: Any) -> None:
-        await self.session_manager.release_browser(browser)
-
-    async def _best_effort_resource_call(
-        self,
-        label: str,
-        operation: Any,
-    ) -> None:
-        await self.session_manager.best_effort_resource_call(label, operation)
 
 
 from personagent.infrastructure.browser.cdp_client import CdpClient as _RawCdpClient  # noqa: E402

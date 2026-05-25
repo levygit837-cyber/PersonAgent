@@ -172,7 +172,7 @@ class TestBackwardCompatDelegations:
 
         worker = LightPandaBrowserWorker(enabled=False)
         page = MagicMock(spec=[])
-        _run(worker._wait_for_page_load_complete(page))
+        _run(worker.page_helpers.wait_for_page_load_complete(page))
 
     def test_worker_safe_title_delegates(self) -> None:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
@@ -180,5 +180,5 @@ class TestBackwardCompatDelegations:
         worker = LightPandaBrowserWorker(enabled=False)
         page = MagicMock()
         page.title = AsyncMock(return_value="Test")
-        result = _run(worker._safe_title(page))
+        result = _run(worker.page_helpers.safe_title(page))
         assert result == "Test"

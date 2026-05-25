@@ -48,7 +48,7 @@ class BlockDetector:
         page_url = str(getattr(page, "url", "") or "").lower()
         if "sorry/index" not in page_url and "google." not in page_url:
             return
-        raw_title = await self._w._safe_title(page)
+        raw_title = await self._w.page_helpers.safe_title(page)
         title = raw_title.lower()
         is_google_surface = "google." in page_url or "google" in title
         if "sorry/index" not in page_url and not is_google_surface:
@@ -86,7 +86,7 @@ class BlockDetector:
         page_url = str(getattr(page, "url", "") or "").lower()
         if "bing.com" not in page_url:
             return
-        raw_title = await self._w._safe_title(page)
+        raw_title = await self._w.page_helpers.safe_title(page)
         title = raw_title.lower()
         is_bing_surface = "bing.com" in page_url or "bing" in title
         if not is_bing_surface:
@@ -122,7 +122,7 @@ class BlockDetector:
         page_url = str(getattr(page, "url", "") or "").lower()
         if "search.yahoo.com" not in page_url:
             return
-        raw_title = await self._w._safe_title(page)
+        raw_title = await self._w.page_helpers.safe_title(page)
         title = raw_title.lower()
         is_yahoo_surface = (
             "search.yahoo.com" in page_url or "yahoo search" in title

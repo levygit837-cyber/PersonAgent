@@ -330,7 +330,7 @@ class TestBackwardCompatDelegations:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
         worker = LightPandaBrowserWorker(enabled=False)
-        page, reused = worker._cache_opened_page(
+        page, reused = worker.opened_pages.cache_opened_page(
             conversation_id="conv1",
             url="https://example.com",
             final_url="https://example.com",
@@ -345,7 +345,7 @@ class TestBackwardCompatDelegations:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
         worker = LightPandaBrowserWorker(enabled=False)
-        worker._cache_opened_page(
+        worker.opened_pages.cache_opened_page(
             conversation_id="conv1",
             url="https://example.com",
             final_url="https://example.com",
@@ -354,17 +354,17 @@ class TestBackwardCompatDelegations:
             opener_tool_call_id=None,
         )
         pages = worker._opened_pages_cache["conv1"]
-        result = worker._opened_page("conv1", pages[0].page_id)
+        result = worker.opened_pages.opened_page("conv1", pages[0].page_id)
         assert result is not None
 
     def test_worker_target_title_delegates(self) -> None:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
         worker = LightPandaBrowserWorker(enabled=False)
-        assert worker._target_title("conv1", None) == ""
+        assert worker.opened_pages.target_title("conv1", None) == ""
 
     def test_worker_next_unextracted_delegates(self) -> None:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
         worker = LightPandaBrowserWorker(enabled=False)
-        assert worker._next_unextracted_opened_page("conv1") is None
+        assert worker.opened_pages.next_unextracted_opened_page("conv1") is None

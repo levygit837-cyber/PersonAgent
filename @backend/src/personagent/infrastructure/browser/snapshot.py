@@ -62,7 +62,7 @@ class BrowserSnapshot:
     ) -> dict[str, Any]:
         """Return a real LightPanda-rendered screenshot for a session-panel browser."""
 
-        session = await self._w._get_session(browser_id)
+        session = await self._w.session_manager.get_session(browser_id)
         return await self.browser_view_snapshot(
             browser_id,
             session,
@@ -86,12 +86,12 @@ class BrowserSnapshot:
         cache_mode: str = "prefer_live",
         wait_for_styles: bool = True,
     ) -> dict[str, Any]:
-        page = self._w._preferred_session_page(session)
+        page = self._w.session_manager.preferred_session_page(session)
         session.page = page
-        active_tab_id = self._w._ensure_session_page_alias(browser_id, session, page=page)
+        active_tab_id = self._w.session_manager.ensure_session_page_alias(browser_id, session, page=page)
         viewport_width, viewport_height = _clamped_viewport(width, height)
-        await self._w._set_page_viewport(page, viewport_width, viewport_height)
-        await self._w._install_cooperation_capture(page, browser_id, active_tab_id)
+        await self._w.element_helpers.set_page_viewport(page, viewport_width, viewport_height)
+        await self._w.console.install_cooperation_capture(page, browser_id, active_tab_id)
         current_url = _clean_browser_url(str(getattr(page, "url", "") or "about:blank"))
         render_cache_key = SnapshotCache.cache_key(
             browser_id,
@@ -108,7 +108,7 @@ class BrowserSnapshot:
             if cached_snapshot is not None:
                 return cached_snapshot
         style_metrics = (
-            await self._w._wait_for_page_visual_ready(page)
+            await self._w.page_helpers.wait_for_page_visual_ready(page)
             if wait_for_styles
             else {
                 "style_ready": True,
@@ -123,11 +123,11 @@ class BrowserSnapshot:
             else asyncio.sleep(0, result=list(self._w._element_map_cache.get(browser_id, [])))
         )
         title, user_agent, raw_element_map, html, scroll_state = await asyncio.gather(
-            self._w._safe_title(page),
-            self._w._safe_user_agent(page),
+            self._w.page_helpers.safe_title(page),
+            self._w.element_helpers.safe_user_agent(page),
             element_map_source,
-            self._w._safe_html(page),
-            self._w._safe_scroll_state(page),
+            self._w.element_helpers.safe_html(page),
+            self._w.element_helpers.safe_scroll_state(page),
         )
         if wait_for_styles:
             element_map = self.enrich_browser_element_map(
@@ -140,12 +140,12 @@ class BrowserSnapshot:
             element_map = [dict(item) for item in raw_element_map if isinstance(item, Mapping)]
         html_from_fallback = False
         if not html.strip() and current_url.startswith(("http://", "https://")):
-            html, _html_method = await self._w._html_or_empty_page(page, fallback_url=current_url)
+            html, _html_method = await self._w.content_module._html_or_empty_page(page, fallback_url=current_url)
             html_from_fallback = True
         if not html.strip() and current_url.startswith(("http://", "https://")):
             html = _browser_empty_fallback_html(current_url, title)
             html_from_fallback = True
-        html, stylesheet_stats = await self._w._html_with_embedded_stylesheet_fallbacks(
+        html, stylesheet_stats = await self.html_with_embedded_stylesheet_fallbacks(
             html,
             current_url,
         )
@@ -183,7 +183,7 @@ class BrowserSnapshot:
 
         if current_url and current_url != "about:blank":
             session.current_url = current_url
-            self._w._remember_current_url(browser_id, current_url)
+            self._w.search_result_cache.remember_current_url(browser_id, current_url)
         session.touch()
         render_mode = "html_mirror" if is_lightpanda or not image_bytes else "pixel"
         runtime = "lightpanda" if is_lightpanda else "chrome_cdp"
@@ -222,7 +222,7 @@ class BrowserSnapshot:
             if wait_for_styles
             else [{"frame_id": "main", "url": current_url, "title": title, "parent_frame_id": ""}]
         )
-        cooperation_events = await self._w._drain_cooperation_events(page, browser_id, active_tab_id)
+        cooperation_events = await self._w.console.drain_cooperation_events(page, browser_id, active_tab_id)
         document_artifact = (
             store_text_artifact(
                 category="browser-documents",
@@ -378,16 +378,16 @@ class BrowserSnapshot:
     async def browser_iframe_element_map(self, page: Any) -> list[dict[str, Any]]:
         from personagent.infrastructure.browser.scripts import _BROWSER_ELEMENT_MAP_SCRIPT
 
-        frames = await self._w._page_frames(page)
+        frames = await self._w.element_helpers.page_frames(page)
         if len(frames) <= 1:
             return []
-        main_frame = self._w._main_frame(page)
+        main_frame = self._w.element_helpers.main_frame(page)
         mapped: list[dict[str, Any]] = []
         for index, frame in enumerate(frames):
             if frame is main_frame:
                 continue
-            frame_id = self._w._frame_id(frame, index)
-            offset = await self._w._frame_viewport_offset(frame)
+            frame_id = self._w.element_helpers.frame_id(frame, index)
+            offset = await self._w.element_helpers.frame_viewport_offset(frame)
             with suppress(Exception):
                 evaluate = getattr(frame, "evaluate", None)
                 if not callable(evaluate):
@@ -420,13 +420,13 @@ class BrowserSnapshot:
         current_url: str,
         title: str,
     ) -> list[dict[str, Any]]:
-        frames = await self._w._page_frames(page)
+        frames = await self._w.element_helpers.page_frames(page)
         if not frames:
             return [{"frame_id": "main", "url": current_url, "title": title, "parent_frame_id": ""}]
-        main_frame = self._w._main_frame(page)
+        main_frame = self._w.element_helpers.main_frame(page)
         tree: list[dict[str, Any]] = []
         for index, frame in enumerate(frames):
-            frame_id = "main" if frame is main_frame or index == 0 else self._w._frame_id(frame, index)
+            frame_id = "main" if frame is main_frame or index == 0 else self._w.element_helpers.frame_id(frame, index)
             parent_id = ""
             frame_url = str(getattr(frame, "url", "") or "")
             parent_frame = getattr(frame, "parent_frame", None)
@@ -435,7 +435,7 @@ class BrowserSnapshot:
                     parent = parent_frame()
                     if parent is not None and parent is not main_frame:
                         parent_index = frames.index(parent) if parent in frames else 0
-                        parent_id = self._w._frame_id(parent, parent_index)
+                        parent_id = self._w.element_helpers.frame_id(parent, parent_index)
                     elif parent is main_frame:
                         parent_id = "main"
             tree.append(
@@ -521,7 +521,7 @@ class BrowserSnapshot:
                 continue
             title = ""
             with suppress(Exception):
-                title = await self._w._safe_title(session.page)
+                title = await self._w.page_helpers.safe_title(session.page)
             page_id = session.current_page_id or session.last_open_page_id or browser_id
             parsed = urlparse(current_url)
             tabs.append(

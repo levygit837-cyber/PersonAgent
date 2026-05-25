@@ -66,6 +66,13 @@ class _StubWorker:
         self._opened_pages_cache: dict[str, list[Any]] = {}
         self._last_open_cache: dict[str, Any] = {}
         self._search_cache: dict[str, list[Any]] = {}
+        # Module stubs
+        self.session_manager = _StubSessionManager(self._session)
+        self.element_helpers = _StubElementHelpers()
+        self.page_helpers = _StubPageHelpers()
+        self.console = _StubConsole()
+        self.opened_pages = _StubOpenedPages()
+        self.search_result_cache = _StubSearchResultCache()
 
         self._get_session = AsyncMock(return_value=self._session)
         self._cached_usable_session = MagicMock(return_value=self._session)
@@ -84,6 +91,73 @@ class _StubWorker:
         self._opened_page = MagicMock(return_value=None)
         self._resolve_content_target = MagicMock(return_value=("https://example.com", None))
         self._target_title = MagicMock(return_value="Test Page")
+
+
+class _StubSessionManager:
+    def __init__(self, session: _StubSession) -> None:
+        self._session = session
+
+    async def get_session(self, conversation_id: str) -> _StubSession:
+        return self._session
+
+    def cached_usable_session(self, conversation_id: str) -> _StubSession | None:
+        return self._session
+
+    async def resolve_live_page(
+        self, conversation_id: str, *, page_id: str | None = None, activate: bool = True
+    ) -> tuple[_StubSession, _StubPage, str]:
+        return self._session, self._session.page, page_id or "p1"
+
+    async def cleanup_live_pages(
+        self, conversation_id: str, session: Any, keep_page_id: str | None = None, close_read_pages: bool = False
+    ) -> None:
+        pass
+
+
+class _StubElementHelpers:
+    async def safe_user_agent(self, page: Any) -> str:
+        return "Mozilla/5.0"
+
+
+class _StubPageHelpers:
+    async def wait_for_page_visual_ready(self, page: Any) -> None:
+        pass
+
+    async def safe_title(self, page: Any) -> str:
+        return "Test Page"
+
+
+class _StubConsole:
+    async def install_console_capture(self, page: Any) -> None:
+        pass
+
+    def attach_page_console_listeners(self, conversation_id: str, page_id: str, page: Any) -> None:
+        pass
+
+
+class _StubOpenedPages:
+    def __init__(self) -> None:
+        self._opened_page: Any = None
+
+    def opened_page(self, conversation_id: str, page_id: str) -> Any:
+        return self._opened_page
+
+    def next_unextracted_opened_page(self, conversation_id: str) -> Any:
+        return None
+
+    def target_title(self, conversation_id: str, page_id: str) -> str:
+        return "Test Page"
+
+
+class _StubSearchResultCache:
+    def latest_cached_search_results(self, conversation_id: str) -> list[Any]:
+        return []
+
+    def remember_current_url(self, conversation_id: str, url: str) -> None:
+        pass
+
+    def cleanup_search_cache(self, now: float) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +236,7 @@ class TestExtractContent:
             opened_at=time.monotonic(),
             extraction_count=0,
         )
-        worker._opened_page = MagicMock(return_value=opened)
+        worker.opened_pages._opened_page = opened
         worker._resolve_content_target = MagicMock(return_value=("https://example.com", "p1"))
         await bc.extract_content(
             conversation_id="c1",
@@ -345,5 +419,5 @@ class TestBackwardCompatDelegations:
 
         worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222")
         assert hasattr(worker, "content_module")
-        assert hasattr(worker, "extract_content")
-        assert hasattr(worker, "get_html")
+        assert hasattr(worker.content_module, "extract_content")
+        assert hasattr(worker.content_module, "get_html")

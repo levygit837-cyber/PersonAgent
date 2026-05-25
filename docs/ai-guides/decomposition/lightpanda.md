@@ -80,11 +80,10 @@ appropriate.
 | 12 — Extract element & frame helpers | ✅ Merged | — | 14 methods, 159 lines removed; `ElementHelpers` in `element_helpers.py`; 37 new tests |
 | 13 — Extract block detection | ✅ Merged | — | 4 methods, 113 lines removed; `BlockDetector` in `block_detection.py`; 18 new tests |
 | 14 — Extract page helpers | ✅ Merged | — | 4 methods, 44 lines removed; `PageHelpers` in `page_helpers.py`; 16 new tests |
+| 15 — Extract session management | ✅ Merged | #102 | 20 methods, 340 lines removed; `BrowserSessionManager` in `session_manager.py` |
+| 17 — Remove backward-compat stubs | ✅ Done | — | All delegation stubs removed; submodules call each other directly |
 
-**After Phase 2 (slices 9–14):** lightpanda.py actual: 1,469 lines. The original
-estimate of ~700 lines was too optimistic — many backward-compat delegation stubs
-(~550 lines) and session management (~340 lines) remain. Phase 3 below continues
-the decomposition to bring the file under 800 lines.
+**After Phase 3 (slices 15, 17):** lightpanda.py actual: 674 lines. Target achieved (−88% from original 5,735 lines).
 
 ## Phase 2 — Additional low-risk slices (9–14)
 
@@ -463,7 +462,7 @@ However, each function is individually simple.
 
 **Tests:** 10+ cases covering viewport, title, HTML, scroll, upload, drag.
 
-## Phase 3 — Session management & delegation cleanup (15–17)
+## Phase 3 — Session management & delegation cleanup (15–17) ✅ DONE ✅ DONE
 
 ### Line budget after Phase 2 (slices 9–14)
 
@@ -482,7 +481,9 @@ However, each function is individually simple.
 
 **Target after Phase 3:** ~700 lines (imports + init + facade + core runtime).
 
-### Slice 15 — Extract session management to `session_manager.py`
+**Actual after Phase 3:** 674 lines (target achieved).
+
+### Slice 15 — Extract session management to `session_manager.py` ✅ DONE
 
 **What moves out:**
 
@@ -541,7 +542,9 @@ but no behavior changes — pure delegation swap.
 **Tests:** 20+ cases covering session creation, reuse, cleanup, page resolution,
 live page management, content target resolution, alias handling.
 
-### Slice 16 — Extract CDP connection infrastructure to `connection.py`
+### Slice 16 — Extract CDP connection infrastructure to `connection.py` ⏳ SKIPPED
+
+**Note:** This slice was skipped as the CDP infrastructure methods are core to the worker's identity and are tightly coupled with the session management. The remaining CDP methods are now at an acceptable size within the worker.
 
 **What moves out:**
 
@@ -583,7 +586,7 @@ is clean — these methods only depend on Playwright and httpx.
 - `page_helpers.py` — `_evaluate_page`, `_raw_runtime_evaluate_value`
 - `block_detection.py` — `_evaluate_page`
 
-**Tests:** 15+ cases covering connection retry, container autostart,
+**Tests:** 15+ cases covering connection retry, container auto ✅ DONEstart,
 endpoint resolution, navigation success/failure, evaluate retry on
 context destruction.
 

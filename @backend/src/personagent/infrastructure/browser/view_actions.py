@@ -56,14 +56,14 @@ class BrowserViewActions:
     ) -> dict[str, Any]:
         """Navigate the session-panel browser and return the rendered view."""
 
-        session = await self._w._get_session(browser_id)
+        session = await self._w.session_manager.get_session(browser_id)
         target_url = _normalize_navigation_url(url)
         await self._w._goto(browser_id, session, target_url, allow_partial=True, wait_for_styles=wait_for_styles)
         final_url = _clean_browser_url(str(getattr(session.page, "url", target_url) or target_url))
         session.current_url = final_url
         session.last_open_url = final_url
-        self._w._ensure_session_page_alias(browser_id, session)
-        self._w._remember_current_url(browser_id, final_url)
+        self._w.session_manager.ensure_session_page_alias(browser_id, session)
+        self._w.search_result_cache.remember_current_url(browser_id, final_url)
         session.touch()
         return await self._w.snapshot.browser_view_snapshot(
             browser_id,
@@ -86,7 +86,7 @@ class BrowserViewActions:
     ) -> dict[str, Any]:
         """Move the session-panel browser back or forward in its real page history."""
 
-        session = await self._w._get_session(browser_id)
+        session = await self._w.session_manager.get_session(browser_id)
         page = self._w._preferred_session_page(session)
         session.page = page
         operation = getattr(page, "go_back" if direction < 0 else "go_forward", None)
@@ -98,12 +98,12 @@ class BrowserViewActions:
                 timeout=self._w.timeout_ms,
             )
         if wait_for_styles:
-            await self._w._wait_for_page_visual_ready(page)
+            await self._w.page_helpers.wait_for_page_visual_ready(page)
         final_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
         if final_url:
             session.current_url = final_url
             session.last_open_url = final_url
-            self._w._remember_current_url(browser_id, final_url)
+            self._w.search_result_cache.remember_current_url(browser_id, final_url)
         session.touch()
         return await self._w.snapshot.browser_view_snapshot(
             browser_id,
@@ -125,7 +125,7 @@ class BrowserViewActions:
     ) -> dict[str, Any]:
         """Reload the current session-panel browser page and return the rendered view."""
 
-        session = await self._w._get_session(browser_id)
+        session = await self._w.session_manager.get_session(browser_id)
         page = self._w._preferred_session_page(session)
         session.page = page
         current_url = _clean_browser_url(
@@ -149,7 +149,7 @@ class BrowserViewActions:
         else:
             raise BrowserUnavailableError("LightPanda reload is unavailable.")
         if wait_for_styles:
-            await self._w._wait_for_page_visual_ready(page)
+            await self._w.page_helpers.wait_for_page_visual_ready(page)
         session.touch()
         return await self._w.snapshot.browser_view_snapshot(
             browser_id,
@@ -172,7 +172,7 @@ class BrowserViewActions:
     ) -> dict[str, Any]:
         """Click within the rendered session-panel browser viewport."""
 
-        session = await self._w._get_session(browser_id)
+        session = await self._w.session_manager.get_session(browser_id)
         page = self._w._preferred_session_page(session)
         session.page = page
         viewport_width, viewport_height = _clamped_viewport(width, height)
@@ -208,7 +208,7 @@ class BrowserViewActions:
     ) -> dict[str, Any]:
         """Type or press a key in the focused session-panel browser page."""
 
-        session = await self._w._get_session(browser_id)
+        session = await self._w.session_manager.get_session(browser_id)
         page = self._w._preferred_session_page(session)
         session.page = page
         keyboard = getattr(page, "keyboard", None)
@@ -239,7 +239,7 @@ class BrowserViewActions:
     ) -> dict[str, Any]:
         """Scroll the real session-panel browser page."""
 
-        session = await self._w._get_session(browser_id)
+        session = await self._w.session_manager.get_session(browser_id)
         page = self._w._preferred_session_page(session)
         session.page = page
         mouse = getattr(page, "mouse", None)
@@ -297,7 +297,7 @@ class BrowserViewActions:
         }
         if normalized_action not in supported_actions:
             raise BrowserError(f"BrowserAct action must be one of: {', '.join(sorted(supported_actions))}.")
-        session = await self._w._get_session(browser_id)
+        session = await self._w.session_manager.get_session(browser_id)
         page = self._w._preferred_session_page(session)
         session.page = page
         viewport_width, viewport_height = _clamped_viewport(width, height)

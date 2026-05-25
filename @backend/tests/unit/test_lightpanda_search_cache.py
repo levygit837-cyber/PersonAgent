@@ -334,7 +334,7 @@ class TestBackwardCompatDelegations:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
         worker = LightPandaBrowserWorker(enabled=False)
-        snap = worker._cache_search_results(
+        snap = worker.search_result_cache.cache_search_results(
             conversation_id="c1", query="q", search_url="u", results=_make_results(1),
         )
         assert snap.search_id.startswith("search_")
@@ -343,11 +343,11 @@ class TestBackwardCompatDelegations:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
         worker = LightPandaBrowserWorker(enabled=False)
-        worker._remember_current_url("c1", "https://example.com")
+        worker.search_result_cache.remember_current_url("c1", "https://example.com")
         assert worker._current_url_cache["c1"] == "https://example.com"
 
     def test_worker_result_title_delegates(self) -> None:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
         worker = LightPandaBrowserWorker(enabled=False)
-        assert worker._result_title("c1", 99) == ""
+        assert worker.search_result_cache.result_title("c1", 99) == ""

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
+import asyncio
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -48,8 +49,14 @@ class _StubOpenedPage:
         self.final_url = final_url
         self.title = title
         self.source_search_id = source_search_id
-        self.window_id = window_id or page_id
+        self.window_id = window_id
         self.extraction_count = extraction_count
+
+
+class _StubSearchSnapshot:
+    def __init__(self, search_id: str, results: list[Any]) -> None:
+        self.search_id = search_id
+        self.results = results
 
 
 class _StubSession:
@@ -90,6 +97,19 @@ class _StubWorker:
         self._console_cache: dict[str, dict[str, Any]] = {}
         self._element_map_cache: dict[str, list[Any]] = {}
         self._search_cache: dict[str, Any] = {}
+        # Module stubs
+        self.session_manager = _StubSessionManager(self._session, self._page)
+        self.element_helpers = _StubElementHelpers()
+        self.page_helpers = _StubPageHelpers()
+        self.console = _StubConsole()
+        self.opened_pages = _StubOpenedPages()
+        self.opened_pages.set_cache(self._opened_pages_cache)
+        self.search_result_cache = _StubSearchResultCache()
+        self.snapshot = _StubSnapshot()
+        self.view_reload = AsyncMock(return_value={"url": "https://example.com"})
+        self.view_history = AsyncMock(return_value={"url": "https://example.com"})
+        self._goto_page = AsyncMock()
+        self.block_detector = _StubBlockDetector()
 
     async def _get_session(self, conversation_id: str) -> _StubSession:
         return self._session
@@ -103,79 +123,89 @@ class _StubWorker:
     async def _cleanup_sessions(self) -> None:
         pass
 
-    async def _new_session_page(self, session: Any) -> _StubPage | None:
+
+class _StubSessionManager:
+    def __init__(self, session: _StubSession, page: _StubPage) -> None:
+        self._session = session
+        self._page = page
+
+    async def get_session(self, conversation_id: str) -> _StubSession:
+        return self._session
+
+    async def resolve_live_page(
+        self, conversation_id: str, *, page_id: str | None = None, activate: bool = True
+    ) -> tuple[_StubSession, _StubPage, str]:
+        resolved_id = page_id or self._session.current_page_id or "p1"
+        return self._session, self._page, resolved_id
+
+    async def cleanup_sessions(self) -> None:
+        pass
+
+    async def new_session_page(self, session: Any) -> _StubPage | None:
         return _StubPage()
 
-    def _preferred_session_page(self, session: Any) -> _StubPage:
+    def preferred_session_page(self, session: Any) -> _StubPage:
         return self._page
 
-    async def _goto_page(self, page: Any, url: str, *, allow_partial: bool = False) -> None:
-        page.url = url
-
-    async def _raise_if_search_blocked(self, page: Any) -> None:
-        pass
-
-    async def _safe_title(self, page: Any) -> str:
-        return getattr(page, "_title", "")
-
-    def _remember_current_url(self, conversation_id: str, url: str) -> None:
-        self._current_url_cache[conversation_id] = url
-
-    def _attach_page_console_listeners(self, cid: str, pid: str, page: Any) -> None:
-        pass
-
-    async def _cleanup_live_pages(self, cid: str, session: Any, *, keep_page_id: str) -> None:
-        pass
-
-    async def _best_effort_resource_call(self, label: str, coro: Any) -> None:
-        with suppress(Exception):
-            await coro()
-
-    def _page_is_open(self, page: Any) -> bool:
+    def page_is_open(self, page: Any) -> bool:
         return not getattr(page, "_closed", False)
 
-    def _opened_page_by_url(self, conversation_id: str, url: str) -> _StubOpenedPage | None:
-        for p in self._opened_pages_cache.get(conversation_id, []):
+    async def best_effort_resource_call(self, label: str, operation: Any) -> None:
+        if asyncio.iscoroutinefunction(operation):
+            await operation()
+        elif callable(operation):
+            operation()
+
+    async def cleanup_live_pages(self, conversation_id: str, session: Any, *, keep_page_id: str) -> None:
+        pass
+
+    def ensure_session_page_alias(
+        self, conversation_id: str, session: Any, *, page: Any = None, page_id: str | None = None
+    ) -> str:
+        return page_id or session.current_page_id or conversation_id
+
+
+class _StubElementHelpers:
+    async def safe_user_agent(self, page: Any) -> str:
+        return "Mozilla/5.0"
+
+
+class _StubPageHelpers:
+    async def wait_for_page_visual_ready(self, page: Any) -> None:
+        pass
+
+    async def safe_title(self, page: Any) -> str:
+        return getattr(page, "_title", "")
+
+
+class _StubConsole:
+    async def install_console_capture(self, page: Any) -> None:
+        pass
+
+    def attach_page_console_listeners(self, conversation_id: str, page_id: str, page: Any) -> None:
+        pass
+
+
+class _StubOpenedPages:
+    def __init__(self) -> None:
+        self._cache: dict[str, list[Any]] = {}
+
+    def opened_page(self, conversation_id: str, page_id: str) -> Any:
+        return None
+
+    def next_unextracted_opened_page(self, conversation_id: str) -> Any:
+        return None
+
+    def opened_page_by_url(self, conversation_id: str, url: str) -> Any:
+        for p in self._cache.get(conversation_id, []):
             if p.final_url == url:
                 return p
         return None
 
-    def _result_url(self, cid: str, session: Any, idx: int, *, search_id: str | None) -> tuple[str, str | None]:
-        return f"https://result-{idx}.com", search_id
+    def set_cache(self, cache: dict[str, list[Any]]) -> None:
+        self._cache = cache
 
-    def _result_title(self, cid: str, idx: int, *, search_id: str | None) -> str:
-        return f"Result {idx}"
-
-    def _match_search_result_url(self, cid: str, url: str, *, search_id: str) -> str | None:
-        return None
-
-    def _match_search_result_title(self, cid: str, url: str, *, search_id: str) -> str:
-        return ""
-
-    def _cache_opened_page(
-        self, *, conversation_id: str, url: str, final_url: str, title: str,
-        source_search_id: str | None, opener_tool_call_id: str | None,
-    ) -> tuple[_StubOpenedPage, bool]:
-        opened = _StubOpenedPage(page_id="p_new", url=url, final_url=final_url, title=title)
-        self._opened_pages_cache.setdefault(conversation_id, []).append(opened)
-        return opened, False
-
-    def _browser_open_response(
-        self, *, conversation_id: str, opened_page: Any, requested_url: str,
-        title: str, search_id: str | None, reused_existing_page: bool,
-    ) -> dict[str, Any]:
-        return {
-            "type": "browser_open",
-            "page_id": opened_page.page_id,
-            "url": opened_page.final_url,
-            "title": title,
-            "reused_existing_page": reused_existing_page,
-        }
-
-    def _is_session_page_alias(self, cid: str, session: Any, page_id: str) -> bool:
-        return False
-
-    def _opened_page_tab(self, page: Any, *, index: int, current_url: str | None, last_open_page_id: str | None) -> dict[str, Any]:
+    def opened_page_tab(self, page: Any, index: int, current_url: str | None, last_open_page_id: str | None) -> dict[str, Any]:
         return {
             "index": index,
             "page_id": page.page_id,
@@ -183,16 +213,70 @@ class _StubWorker:
             "title": page.title,
         }
 
-    async def _panel_session_tabs(self, *, max_tabs: int, exclude_conversation_id: str) -> list[dict[str, Any]]:
+    def browser_open_response(self, **kwargs: Any) -> dict[str, Any]:
+        opened_page = kwargs.get("opened_page")
+        page_id = getattr(opened_page, "page_id", "") if opened_page else ""
+        return {
+            "type": "browser_open",
+            "page_id": page_id,
+            "url": kwargs.get("requested_url", ""),
+            "title": kwargs.get("title", ""),
+            "reused_existing_page": kwargs.get("reused_existing_page", False),
+        }
+
+    def cache_opened_page(self, **kwargs: Any) -> tuple[Any, bool]:
+        opened = _StubOpenedPage(
+            page_id="p_new",
+            url=kwargs.get("url", ""),
+            final_url=kwargs.get("final_url", ""),
+            title=kwargs.get("title", ""),
+        )
+        return opened, False
+
+
+class _StubSearchResultCache:
+    def latest_cached_search_results(self, conversation_id: str) -> list[Any]:
         return []
 
-    async def view_reload(self, *, browser_id: str, width: int = 1024, height: int = 720) -> dict[str, Any]:
-        return {"url": "https://example.com", "title": "Example"}
+    def remember_current_url(self, conversation_id: str, url: str) -> None:
+        pass
 
-    async def view_history(
-        self, *, browser_id: str, direction: int = -1, width: int = 1024, height: int = 720
-    ) -> dict[str, Any]:
-        return {"url": "https://example.com", "title": "Example"}
+    def cleanup_search_cache(self, now: float) -> None:
+        pass
+
+    def result_url(self, conversation_id: str, session: Any, result_index: int, *, search_id: str | None = None) -> tuple[str, str | None]:
+        return f"https://result-{result_index}.com", search_id
+
+    def result_title(self, conversation_id: str, result_index: int, *, search_id: str | None = None) -> str:
+        return f"Result {result_index}"
+
+    def match_search_result_url(self, conversation_id: str, url: str, *, search_id: str) -> str | None:
+        return None
+
+    def match_search_result_title(self, conversation_id: str, url: str, *, search_id: str) -> str:
+        return ""
+
+    def cache_search_results(self, **kwargs: Any) -> Any:
+        return _StubSearchSnapshot("search-001", [])
+
+
+class _StubSnapshot:
+    async def view_snapshot(self, **kwargs: Any) -> dict[str, Any]:
+        return {"snapshot": "test"}
+
+    view_reload = AsyncMock(return_value={"url": "https://example.com"})
+    view_history = AsyncMock(return_value={"url": "https://example.com"})
+
+    async def panel_session_tabs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    async def _new_session_page(self, session: Any) -> _StubPage | None:
+        return _StubPage()
+
+
+class _StubBlockDetector:
+    async def raise_if_search_blocked(self, page: Any) -> None:
+        pass
 
 
 def _make_lifecycle(

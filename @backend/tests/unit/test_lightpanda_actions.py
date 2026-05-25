@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -50,6 +51,9 @@ class _StubPage:
         self._wait_for_load_state_called.append((state, timeout))
 
     async def screenshot(self, **kwargs: Any) -> bytes:
+        # LightPanda has no graphical rendering, so raise error
+        if self._user_agent.lower().startswith("lightpanda/"):
+            raise BrowserUnavailableError("LightPanda has no graphical rendering engine; using DOM mirror.")
         return b"\x89PNG_fake"
 
 
@@ -126,12 +130,34 @@ class _StubWorker:
         self._element_map_cache: dict[str, list[Any]] = {}
         self._console_cache: dict[str, dict[str, deque[_ConsoleEntry]]] = {}
         self._last_open_cache: dict[str, Any] = {}
+        # Module stubs
+        self.session_manager = _StubSessionManager(self._session, self._page)
+        self.element_helpers = _StubElementHelpers()
+        self.page_helpers = _StubPageHelpers()
+        self.console = _StubConsole()
+        self.opened_pages = _StubOpenedPages()
+        self.search_result_cache = _StubSearchResultCache()
+        self.view_actions = _StubViewActions()
+        self.view_scroll = AsyncMock(return_value={"last_action": {}})
+        self.snapshot = _StubSnapshot()
 
     async def _resolve_live_page(
         self, conversation_id: str, *, page_id: str | None = None, activate: bool = True
     ) -> tuple[_StubSession, _StubPage, str]:
         resolved_id = page_id or self._session.current_page_id or "p1"
         return self._session, self._page, resolved_id
+
+    async def _cdp_command_for_page(self, page: Any, url: str, method: str, params: dict[str, Any]) -> Any:
+        return {"result": "ok"}
+
+    def _bounded_script_result(self, value: Any) -> tuple[str, Any, bool]:
+        return str(value), value, False
+
+    async def _evaluate_page(self, page: Any, script: str, args: Any | None) -> Any:
+        return eval(script) if args is None else None
+
+    async def view_act(self, **kwargs: Any) -> dict[str, Any]:
+        return await self.view_actions.view_act(**kwargs)
 
     async def _get_session(self, conversation_id: str) -> _StubSession:
         return self._session
@@ -165,6 +191,92 @@ class _StubWorker:
         ua = getattr(page, "_user_agent", "")
         return ua.lower().startswith("lightpanda/")
 
+
+class _StubSessionManager:
+    def __init__(self, session: _StubSession, page: _StubPage) -> None:
+        self._session = session
+        self._page = page
+
+    async def get_session(self, conversation_id: str) -> _StubSession:
+        return self._session
+
+    async def resolve_live_page(
+        self, conversation_id: str, *, page_id: str | None = None, activate: bool = True
+    ) -> tuple[_StubSession, _StubPage, str]:
+        resolved_id = page_id or self._session.current_page_id or "p1"
+        return self._session, self._page, resolved_id
+
+
+class _StubElementHelpers:
+    async def safe_user_agent(self, page: Any) -> str:
+        return "Mozilla/5.0"
+
+    async def set_page_viewport(self, page: Any, width: int, height: int) -> None:
+        pass
+
+    async def safe_html(self, page: Any) -> str:
+        return "<html></html>"
+
+    async def safe_scroll_state(self, page: Any) -> dict[str, Any]:
+        return {"scrollTop": 0, "scrollLeft": 0}
+
+
+class _StubPageHelpers:
+    async def wait_for_page_visual_ready(self, page: Any) -> None:
+        pass
+
+    async def wait_for_page_load_complete(self, page: Any, *, timeout_ms: int = 1_500) -> None:
+        pass
+
+    async def safe_title(self, page: Any) -> str:
+        return getattr(page, "_title", "")
+
+
+class _StubConsole:
+    async def install_console_capture(self, page: Any) -> None:
+        pass
+
+    def attach_page_console_listeners(self, conversation_id: str, page_id: str, page: Any) -> None:
+        pass
+
+
+class _StubOpenedPages:
+    def opened_page(self, conversation_id: str, page_id: str) -> Any:
+        return None
+
+    def next_unextracted_opened_page(self, conversation_id: str) -> Any:
+        return None
+
+
+class _StubSearchResultCache:
+    def latest_cached_search_results(self, conversation_id: str) -> list[Any]:
+        return []
+
+    def remember_current_url(self, conversation_id: str, url: str) -> None:
+        pass
+
+
+class _StubSnapshot:
+    async def view_snapshot(self, **kwargs: Any) -> dict[str, Any]:
+        return {"snapshot": "test"}
+
+    async def browser_view_snapshot(self, conversation_id: str, session: Any, width: int, height: int, **kwargs: Any) -> dict[str, Any]:
+        return {"snapshot": "test"}
+
+    async def browser_element_map(self, page: Any) -> list[Any]:
+        return []
+
+    def enrich_browser_element_map(self, raw: list[Any], browser_id: str, tab_id: str) -> list[Any]:
+        return raw
+
+    def cleanup_search_cache(self, now: float) -> None:
+        pass
+
+
+class _StubViewActions:
+    async def view_act(self, **kwargs: Any) -> dict[str, Any]:
+        return {"last_action": {}}
+
     def _enrich_browser_element_map(
         self, raw: list[Any], *, browser_id: str, tab_id: str
     ) -> list[Any]:
@@ -175,8 +287,8 @@ class _StubWorker:
     ) -> dict[str, Any]:
         return {"url": "https://example.com", "title": "Example", "html": "<html></html>"}
 
-    def _preferred_session_page(self, session: Any) -> _StubPage:
-        return self._page
+    def _preferred_session_page(self, session: Any) -> Any:
+        return None  # type: ignore[return-value]
 
     async def _drain_page_console_entries(self, page: Any, cid: str, pid: str) -> None:
         pass
@@ -214,7 +326,7 @@ def _make_actions(
     page: _StubPage | None = None,
 ) -> tuple[BrowserActions, _StubWorker]:
     worker = _StubWorker(session=session, page=page)
-    actions = BrowserActions(worker)  # type: ignore[arg-type]
+    actions = BrowserActions(worker)
     return actions, worker
 
 
@@ -337,10 +449,11 @@ class TestScreenshot:
 
     @pytest.mark.asyncio
     async def test_screenshot_invalid_format_defaults_to_png(self) -> None:
-        page = _StubPage(user_agent="lightpanda/1.0")
+        page = _StubPage(user_agent="chrome/1.0")  # Use non-LightPanda for this test
         actions, _ = _make_actions(page=page)
         result = await actions.screenshot(conversation_id="c1", image_format="bmp")
-        assert result["image_mime_type"] == ""  # no image captured for LP
+        assert result["image_mime_type"] == "image/png"  # format defaults to png
+        assert result["render_mode"] == "pixel"
 
 
 # ---------------------------------------------------------------------------
