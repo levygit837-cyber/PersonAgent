@@ -10,22 +10,20 @@ All behavior preserved verbatim — no changes intended.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from personagent.application.team_chat.blackboard_json_parsing import _digest, _parse_json_object
 from personagent.application.team_chat.blackboard_scoring import (
-    _clamp_float,
     _coherency_score,
     _keyword_set,
     _looks_mutating_text,
 )
+from personagent.application.team_chat.blackboard_utils import _clamp_float, _string_list
 
 __all__ = [
     "ClaimGraphAnalyzer",
     "_claim_signature",
     "_novelty_score",
-    "_string_list",
 ]
 
 CLAIM_TYPES = ("claim", "evidence", "assumption", "risk", "blocker", "proposal", "tool_result", "decision")
@@ -356,16 +354,3 @@ def _novelty_score(text: str, existing_nodes: list[dict[str, Any]]) -> float:
         overlap = len(terms & other_terms) / max(1, len(terms | other_terms))
         max_overlap = max(max_overlap, overlap)
     return _clamp_float(1.0 - max_overlap, 0.0, 1.0)
-
-
-def _string_list(value: Any) -> list[str]:
-    if isinstance(value, list):
-        values: list[str] = []
-        for item in value:
-            values.extend(_string_list(item))
-        return values
-    if isinstance(value, str) and value.strip():
-        if "," in value or ";" in value:
-            return [part.strip() for part in re.split(r"[,;]", value) if part.strip()]
-        return [value.strip()]
-    return []

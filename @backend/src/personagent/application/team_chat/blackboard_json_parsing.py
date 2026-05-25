@@ -14,7 +14,7 @@ import re
 from contextlib import suppress
 from typing import Any
 
-from personagent.application.team_chat.blackboard_scoring import _clamp_float
+from personagent.application.team_chat.blackboard_utils import _clamp_float, _string_list
 from personagent.application.team_chat.types import TurnResult
 
 __all__ = [
@@ -151,8 +151,6 @@ def _extract_complete_json_objects_from_array(text: str, key: str) -> list[dict[
 
 
 def _normalize_coverage_matrix(raw: Any) -> list[dict[str, Any]]:
-    from personagent.application.team_chat.blackboard_claim_graph import _string_list
-
     if not isinstance(raw, list):
         return []
     matrix: list[dict[str, Any]] = []

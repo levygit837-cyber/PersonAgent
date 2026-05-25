@@ -14,8 +14,9 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from personagent.application.team_chat.blackboard_utils import _clamp_float, _string_list
+
 __all__ = [
-    "_clamp_float",
     "_coherency_score",
     "_compact_workspace_memory",
     "_is_real_blocker_text",
@@ -26,8 +27,6 @@ __all__ = [
 
 
 def _coherency_score(text: str, user_input: str, execution_contract: Any) -> float:
-    from personagent.application.team_chat.blackboard_claim_graph import _string_list
-
     text_terms = _keyword_set(text)
     if not text_terms:
         return 0.0
@@ -125,7 +124,6 @@ def _keyword_set(text: str) -> set[str]:
 
 
 def _compact_workspace_memory(snapshot: dict[str, Any]) -> dict[str, Any]:
-    from personagent.application.team_chat.blackboard_claim_graph import _string_list
     from personagent.application.team_chat.blackboard_json_parsing import _normalize_coverage_matrix
 
     if not isinstance(snapshot, dict) or not snapshot:
@@ -158,12 +156,6 @@ def _compact_workspace_memory(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _clamp_float(value: Any, minimum: float, maximum: float) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return minimum
-    return max(minimum, min(maximum, number))
 
 
 def _now_iso() -> str:
