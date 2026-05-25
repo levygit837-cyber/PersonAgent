@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from hashlib import sha256
 from typing import Any
 from uuid import UUID
 
@@ -24,15 +21,21 @@ from personagent.application.services.session_titles._common import (
     _sanitize_title,
     _title_similarity,
 )
+from personagent.application.services.session_titles.cache import (
+    SESSION_TITLE_CACHE_KEY as SESSION_TITLE_CACHE_KEY,
+)
+from personagent.application.services.session_titles.cache import (
+    SESSION_TITLE_CACHE_VERSION as SESSION_TITLE_CACHE_VERSION,
+)
+from personagent.application.services.session_titles.cache import (
+    TitleCache,
+)
 from personagent.application.services.session_titles.llm_titles import TitleGenerator
 from personagent.domain.models.conversation import Conversation, Role
 from personagent.domain.repositories.conversation_repository import ConversationRepository
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
 logger = structlog.get_logger(__name__)
-
-SESSION_TITLE_CACHE_KEY = "session_title_analysis"
-SESSION_TITLE_CACHE_VERSION = 1
 DEFAULT_PRIMARY_PROVIDER = "nvidia"
 DEFAULT_PRIMARY_MODEL = "moonshotai/kimi-k2.6"
 DEFAULT_FALLBACK_PROVIDER = "llama"
@@ -168,6 +171,12 @@ class SessionTitleService:
             fallback_model=fallback_model,
             max_history_chars=self._max_history_chars,
         )
+        self._title_cache = TitleCache(
+            primary_provider=primary_provider,
+            primary_model=primary_model,
+            fallback_provider=fallback_provider,
+            fallback_model=fallback_model,
+        )
 
     async def refresh_title(
         self,
@@ -251,11 +260,11 @@ class SessionTitleService:
         pending: list[tuple[Conversation, str]] = []
 
         for conversation in conversations:
-            history_hash = self._history_hash(conversation)
-            cached_title = self._cached_title(conversation, history_hash)
+            history_hash = self._title_cache.history_hash(conversation)
+            cached_title = self._title_cache.cached_title(conversation, history_hash)
             if cached_title and not force:
                 unique_title = self._unique_title(cached_title, conversation, uniqueness)
-                title_result = await self._apply_title(
+                title_result = await self._title_cache.apply_title(
                     repo,
                     conversation,
                     unique_title,
@@ -268,7 +277,7 @@ class SessionTitleService:
                 continue
             if not conversation.messages:
                 unique_title = self._unique_title(self._fallback_title(conversation), conversation, uniqueness)
-                title_result = await self._apply_title(
+                title_result = await self._title_cache.apply_title(
                     repo,
                     conversation,
                     unique_title,
@@ -299,7 +308,7 @@ class SessionTitleService:
             else:
                 source_for_result = "llm_fallback" if source == "fallback" else "llm"
             unique_title = self._unique_title(candidate, conversation, uniqueness)
-            title_result = await self._apply_title(
+            title_result = await self._title_cache.apply_title(
                 repo,
                 conversation,
                 unique_title,
@@ -360,60 +369,6 @@ class SessionTitleService:
             )
             repaired.duplicate_groups = duplicate_groups
             return repaired
-
-    async def _apply_title(
-        self,
-        repo: ConversationRepository,
-        conversation: Conversation,
-        title: str,
-        *,
-        history_hash: str,
-        source: str,
-        dry_run: bool,
-        reason: str = "",
-    ) -> SessionTitleResult:
-        old_title = conversation.title
-        status = "cached" if source == "cache" else "updated"
-        if _normalize_title(old_title) == _normalize_title(title) and source == "cache":
-            status = "cached"
-        elif _normalize_title(old_title) == _normalize_title(title):
-            status = "skipped"
-
-        if not dry_run:
-            conversation.title = title
-            conversation.metadata[SESSION_TITLE_CACHE_KEY] = {
-                "version": SESSION_TITLE_CACHE_VERSION,
-                "history_hash": history_hash,
-                "title": title,
-                "source": source,
-                "provider": (
-                    self._primary_provider
-                    if source == "llm"
-                    else self._fallback_provider
-                    if source == "llm_fallback"
-                    else None
-                ),
-                "model": (
-                    self._primary_model
-                    if source == "llm"
-                    else self._fallback_model
-                    if source == "llm_fallback"
-                    else None
-                ),
-                "message_count": len(conversation.messages),
-                "updated_at": datetime.now(UTC).isoformat(),
-            }
-            await repo.update(conversation)
-
-        return SessionTitleResult(
-            conversation_id=str(conversation.id),
-            old_title=old_title,
-            new_title=title,
-            status=status,
-            source=source,
-            history_hash=history_hash,
-            reason=reason,
-        )
 
     async def _list_summaries(
         self,
@@ -482,19 +437,6 @@ class SessionTitleService:
             normalized_seen[normalized] = raw_id
         return duplicate_ids, groups
 
-    def _cached_title(self, conversation: Conversation, history_hash: str) -> str | None:
-        cache = conversation.metadata.get(SESSION_TITLE_CACHE_KEY)
-        if not isinstance(cache, dict):
-            return None
-        if cache.get("version") != SESSION_TITLE_CACHE_VERSION:
-            return None
-        if cache.get("history_hash") != history_hash:
-            return None
-        title = _sanitize_title(str(cache.get("title") or ""))
-        if _is_generic_title(title):
-            return None
-        return title
-
     def _unique_title(
         self,
         candidate: str,
@@ -552,19 +494,7 @@ class SessionTitleService:
         return ""
 
     def _history_hash(self, conversation: Conversation) -> str:
-        digest = sha256()
-        for message in conversation.messages:
-            digest.update(message.role.value.encode("utf-8"))
-            digest.update(b"\0")
-            digest.update(message.content.encode("utf-8", errors="replace"))
-            digest.update(b"\0")
-            if message.tool_calls:
-                digest.update(json.dumps(message.tool_calls, sort_keys=True).encode("utf-8"))
-            digest.update(b"\0")
-            if message.tool_call_id:
-                digest.update(message.tool_call_id.encode("utf-8"))
-            digest.update(b"\0")
-        return digest.hexdigest()
+        return self._title_cache.history_hash(conversation)
 
     def _new_batch_result(self) -> SessionTitleBatchResult:
         return SessionTitleBatchResult(
