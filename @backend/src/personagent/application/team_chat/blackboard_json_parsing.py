@@ -1,8 +1,8 @@
-"""JSON parsing helpers extracted from :mod:`personagent.application.team_chat.blackboard`.
+"""JSON parsing helpers and shared utilities extracted from ``blackboard.py``.
 
-Extracted from ``blackboard.py`` (Slice 1 of 3). These are pure, stateless functions
-that handle JSON extraction from LLM outputs, markdown fence stripping, partial claim
-graph parsing, and coverage matrix normalization.
+Contains JSON extraction, markdown fence stripping, partial claim graph parsing,
+coverage matrix normalization, plus zero-dependency shared helpers (_string_list,
+_clamp_float) used across the blackboard decomposition.
 
 All behavior preserved verbatim — no changes intended.
 """
@@ -14,15 +14,16 @@ import re
 from contextlib import suppress
 from typing import Any
 
-from personagent.application.team_chat.blackboard_utils import _clamp_float, _string_list
 from personagent.application.team_chat.types import TurnResult
 
 __all__ = [
+    "_clamp_float",
     "_digest",
     "_extract_complete_json_objects_from_array",
     "_normalize_coverage_matrix",
     "_parse_json_object",
     "_parse_partial_claim_graph",
+    "_string_list",
     "_strip_json_fence",
     "_turn_blackboard_payload",
 ]
@@ -183,3 +184,27 @@ def _normalize_coverage_matrix(raw: Any) -> list[dict[str, Any]]:
             }
         )
     return matrix
+
+
+# -- Shared utility functions ------------------------------------------------
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        values: list[str] = []
+        for item in value:
+            values.extend(_string_list(item))
+        return values
+    if isinstance(value, str) and value.strip():
+        if "," in value or ";" in value:
+            return [part.strip() for part in re.split(r"[,;]", value) if part.strip()]
+        return [value.strip()]
+    return []
+
+
+def _clamp_float(value: Any, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return minimum
+    return max(minimum, min(maximum, number))

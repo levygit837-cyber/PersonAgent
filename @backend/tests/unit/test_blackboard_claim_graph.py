@@ -96,8 +96,6 @@ def test_novelty_score_skips_duplicates() -> None:
 
 def _make_analyzer(**overrides: object) -> ClaimGraphAnalyzer:
     defaults: dict[str, object] = {
-        "user_input": "test input",
-        "execution_contract": {},
         "claim_nodes": [],
         "claim_signatures": set(),
         "duplicates": [],
@@ -154,9 +152,12 @@ def _make_entry(sequence: int = 1) -> object:
     )
 
 
+def _call_kwargs() -> dict[str, object]:
+    return {"user_input": "test input", "execution_contract": {}}
+
+
 def test_analyzer_construction() -> None:
-    analyzer = _make_analyzer(user_input="test", claim_nodes=[])
-    assert analyzer._user_input == "test"
+    analyzer = _make_analyzer(claim_nodes=[])
     assert analyzer._claim_nodes == []
 
 
@@ -164,7 +165,7 @@ def test_claim_nodes_from_turn_empty_when_no_digest_or_blocker() -> None:
     analyzer = _make_analyzer()
     turn = _make_turn(content="no json content here", digest="", blocker="")
     entry = _make_entry()
-    result = analyzer.claim_nodes_from_turn(entry, turn)
+    result = analyzer.claim_nodes_from_turn(entry, turn, **_call_kwargs())  # type: ignore[arg-type]
     assert result == []
 
 
@@ -172,7 +173,7 @@ def test_claim_nodes_from_turn_with_blocker_creates_fallback() -> None:
     analyzer = _make_analyzer()
     turn = _make_turn(content="nothing", blocker="Cannot proceed", digest="blocker summary")
     entry = _make_entry()
-    result = analyzer.claim_nodes_from_turn(entry, turn)
+    result = analyzer.claim_nodes_from_turn(entry, turn, **_call_kwargs())  # type: ignore[arg-type]
     assert len(result) == 1
     assert result[0]["type"] == "blocker"
 
@@ -183,7 +184,7 @@ def test_claim_nodes_from_turn_with_json_claims() -> None:
     )
     turn = _make_turn(content='{"claims": [{"text": "Use Python for the API"}]}')
     entry = _make_entry()
-    result = analyzer.claim_nodes_from_turn(entry, turn)
+    result = analyzer.claim_nodes_from_turn(entry, turn, **_call_kwargs())  # type: ignore[arg-type]
     assert len(result) >= 1
     assert any(node["type"] == "claim" for node in result)
 
@@ -192,7 +193,7 @@ def test_claim_nodes_tracks_novelty_scores() -> None:
     analyzer = _make_analyzer(agent_novelty_scores={})
     turn = _make_turn(content='{"claims": [{"text": "Use Python for the API"}]}')
     entry = _make_entry()
-    analyzer.claim_nodes_from_turn(entry, turn)
+    analyzer.claim_nodes_from_turn(entry, turn, **_call_kwargs())  # type: ignore[arg-type]
     assert "a1" in analyzer._agent_novelty_scores
     assert len(analyzer._agent_novelty_scores["a1"]) > 0
 
@@ -222,6 +223,6 @@ def test_deduplication_via_signature() -> None:
     )
     turn = _make_turn(content='{"claims": [{"text": "Use Python for the API"}]}')
     entry = _make_entry()
-    result = analyzer.claim_nodes_from_turn(entry, turn)
+    result = analyzer.claim_nodes_from_turn(entry, turn, **_call_kwargs())  # type: ignore[arg-type]
     duplicates = [n for n in result if n.get("status") == "duplicate"]
     assert len(duplicates) > 0
