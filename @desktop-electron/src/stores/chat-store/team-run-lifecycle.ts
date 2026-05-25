@@ -84,7 +84,7 @@ export function seedTeamAgents(run: TeamRunUi, event: TeamRunEvent): TeamRunUi {
           agentId: agent.id,
           agentName: agent.name,
           agentRole: agent.role,
-          status: "idle" as TeamCompactStatus,
+          status: "idle",
           thinking: "",
           output: "",
           logs: [],
