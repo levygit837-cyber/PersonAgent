@@ -27,6 +27,18 @@ import {
   queueTextChunk,
   applyLiveTokenUsage,
 } from "./chunk-handlers";
+import {
+  createTeamRun,
+  cloneTeamRun,
+  seedTeamAgents,
+  runStatusForEvent,
+  blackboardStatusForEvent,
+  isTerminalTeamEvent,
+  phaseForEvent,
+  phaseLabel,
+  toolPhaseLabel,
+  nextActionForEvent,
+} from "./team-run-lifecycle";
 
 type SetFn = (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void;
 
@@ -157,14 +169,7 @@ function shouldResetTeamMessageForRun(message: ChatMessageUi, event: TeamRunEven
   return !message.teamRun.runId || message.teamRun.runId !== event.run_id;
 }
 
-function isTerminalTeamEvent(event: TeamRunEvent) {
-  return (
-    event.event === "team_run_completed" ||
-    event.event === "team_consensus_failed" ||
-    event.event === "team_run_cancelled" ||
-    (event.event === "error" && !event.agent_id)
-  );
-}
+
 
 function applyTeamRunEvent(message: ChatMessageUi, event: TeamRunEvent): ChatMessageUi {
   let run = message.teamRun ? cloneTeamRun(message.teamRun) : createTeamRun(event);
@@ -358,93 +363,7 @@ function applyTeamRunEvent(message: ChatMessageUi, event: TeamRunEvent): ChatMes
   return { ...message, teamRun: run };
 }
 
-function createTeamRun(event: TeamRunEvent): TeamRunUi {
-  const status = runStatusForEvent(event, "running");
-  return {
-    runId: event.run_id,
-    title: event.team?.name ?? "Team Mode",
-    status,
-    round: event.round,
-    actualPhase: phaseLabel(event.phase) ?? phaseForEvent(event) ?? "starting",
-    agents: [],
-    blackboard: createBlackboardTrace(event, status),
-    votes: [],
-    startedAt: event.started_at,
-    completedAt: event.completed_at,
-  };
-}
 
-function createBlackboardTrace(event: TeamRunEvent, status: TeamCompactStatus): TeamBlackboardTraceUi {
-  return {
-    status,
-    actualPhase: phaseLabel(event.phase) ?? phaseForEvent(event) ?? "starting",
-    nextAction: nextActionForEvent(event),
-    claims: [],
-    evidence: [],
-    decisions: [],
-    blockers: [],
-    coverage: [],
-    tools: [],
-    updatedAt: event.created_at,
-  };
-}
-
-function cloneTeamRun(run: TeamRunUi): TeamRunUi {
-  return {
-    ...run,
-    agents: run.agents.map((agent) => ({
-      ...agent,
-      logs: [...(agent.logs ?? [])],
-      claims: [...agent.claims],
-      tools: agent.tools.map((tool) => cloneToolTrace(tool)),
-    })),
-    blackboard: {
-      ...run.blackboard,
-      claims: [...run.blackboard.claims],
-      evidence: [...run.blackboard.evidence],
-      decisions: [...run.blackboard.decisions],
-      blockers: [...run.blackboard.blockers],
-      coverage: [...run.blackboard.coverage],
-      tools: run.blackboard.tools.map((tool) => cloneToolTrace(tool)),
-    },
-    votes: [...run.votes],
-  };
-}
-
-function cloneToolTrace(tool: TeamToolTraceUi): TeamToolTraceUi {
-  return {
-    ...tool,
-    calls: [...tool.calls],
-    results: [...tool.results],
-    proposals: [...tool.proposals],
-  };
-}
-
-function seedTeamAgents(run: TeamRunUi, event: TeamRunEvent): TeamRunUi {
-  const configs = event.team?.agents ?? [];
-  let next = run;
-  for (const agent of configs) {
-    if (next.agents.some((item) => item.agentId === agent.id)) continue;
-    next = {
-      ...next,
-      agents: [
-        ...next.agents,
-        {
-          agentId: agent.id,
-          agentName: agent.name,
-          agentRole: agent.role,
-          status: "idle",
-          thinking: "",
-          output: "",
-          logs: [],
-          claims: [],
-          tools: [],
-        },
-      ],
-    };
-  }
-  return next;
-}
 
 type TeamAgentPatch = Partial<Omit<TeamAgentTraceUi, "claims" | "tools">> & {
   thinkingAppend?: string;
@@ -762,64 +681,7 @@ function upsertTeamVote(votes: TeamTraceEventUi[], event: TeamRunEvent): TeamTra
   return next;
 }
 
-function runStatusForEvent(event: TeamRunEvent, current: TeamCompactStatus): TeamCompactStatus {
-  if (event.event === "team_run_completed") return "completed";
-  if (event.event === "team_consensus_failed") return "failed";
-  if (event.event === "team_run_cancelled") return "cancelled";
-  if (event.event === "error" && !event.agent_id) return "failed";
-  if (event.event === "team_run_started") return "running";
-  return current === "idle" ? "running" : current;
-}
 
-function blackboardStatusForEvent(
-  event: TeamRunEvent,
-  runStatus: TeamCompactStatus,
-  current: TeamCompactStatus,
-): TeamCompactStatus {
-  if (runStatus === "completed" || runStatus === "failed" || runStatus === "cancelled") return runStatus;
-  if (
-    event.event === "blackboard_event" ||
-    event.event === "blackboard_snapshot" ||
-    event.event === "claim_graph_delta" ||
-    event.event === "coverage_matrix" ||
-    event.event === "coherency_score" ||
-    event.event === "tool_phase"
-  ) {
-    return "running";
-  }
-  return current === "idle" ? "running" : current;
-}
-
-function phaseForEvent(event: TeamRunEvent) {
-  if (event.event === "coordinator_started" || event.event === "coordinator_completed") return "coordinator";
-  if (event.event === "coordinator_planning_started" || event.event === "coordinator_planning_completed") return "coordinator planning";
-  if (event.event === "debate_started" || event.event === "debate_skipped") return "debate";
-  if (event.event === "adaptive_vote" || event.event === "vote_started" || event.event === "agent_vote") return "vote";
-  if (event.event === "blackboard_event" || event.event === "blackboard_snapshot" || event.event === "claim_graph_delta") return "blackboard";
-  return undefined;
-}
-
-function nextActionForEvent(event: TeamRunEvent) {
-  if (event.event === "execution_contract") return "Independent round";
-  if (event.event === "round_started") return phaseLabel(event.phase) ?? "Agent round";
-  if (event.event === "debate_started") return "Debate";
-  if (event.event === "debate_skipped") return "Vote or coordinator";
-  if (event.event === "adaptive_vote" || event.event === "vote_started") return "Vote";
-  if (event.event === "coordinator_started") return "Coordinator";
-  if (event.event === "team_run_completed") return "Completed";
-  if (event.event === "team_consensus_failed") return "Review blockers";
-  if (event.event === "team_run_cancelled") return "Cancelled";
-  return undefined;
-}
-
-function phaseLabel(phase?: string) {
-  if (!phase) return undefined;
-  return phase.replace(/_/g, " ");
-}
-
-function toolPhaseLabel(phase: string) {
-  return phase.replace(/_/g, " ");
-}
 
 function blockerTextFromEvent(event: TeamRunEvent): string[] {
   const payload = isRecord(event.payload) ? event.payload : {};
