@@ -26,9 +26,7 @@ __all__ = [
 
 
 def _coherency_score(text: str, user_input: str, execution_contract: Any) -> float:
-    from personagent.application.team_chat.blackboard import (
-        _string_list,  # temporary, Slice 3 will resolve
-    )
+    from personagent.application.team_chat.blackboard_claim_graph import _string_list
 
     text_terms = _keyword_set(text)
     if not text_terms:
@@ -127,9 +125,7 @@ def _keyword_set(text: str) -> set[str]:
 
 
 def _compact_workspace_memory(snapshot: dict[str, Any]) -> dict[str, Any]:
-    from personagent.application.team_chat.blackboard import (
-        _string_list,  # temporary, Slice 3 will resolve
-    )
+    from personagent.application.team_chat.blackboard_claim_graph import _string_list
     from personagent.application.team_chat.blackboard_json_parsing import _normalize_coverage_matrix
 
     if not isinstance(snapshot, dict) or not snapshot:

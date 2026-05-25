@@ -11,8 +11,8 @@ from typing import Any
 
 from personagent.application.team_chat.blackboard import (
     _Blackboard,
-    _string_list,
 )
+from personagent.application.team_chat.blackboard_claim_graph import _string_list
 from personagent.application.team_chat.blackboard_json_parsing import (
     _normalize_coverage_matrix,
     _parse_json_object,
