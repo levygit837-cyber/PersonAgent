@@ -50,7 +50,7 @@ class TestGoogleBlocked:
     def test_sorry_index_raises(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://www.google.com/sorry/index?continue=...")
-        worker._safe_title = AsyncMock(return_value="Google Sorry")
+        worker.page_helpers.safe_title = AsyncMock(return_value="Google Sorry")
         worker._evaluate_page = AsyncMock(return_value="unusual traffic from your computer")
         with pytest.raises(BrowserBlockedError, match="Google blocked"):
             _run(detector.raise_if_google_blocked(page))
@@ -58,7 +58,7 @@ class TestGoogleBlocked:
     def test_google_captcha_markers_raise(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://www.google.com/search?q=test")
-        worker._safe_title = AsyncMock(return_value="Google")
+        worker.page_helpers.safe_title = AsyncMock(return_value="Google")
         worker._evaluate_page = AsyncMock(return_value="Our systems have detected unusual traffic")
         with pytest.raises(BrowserBlockedError) as exc_info:
             _run(detector.raise_if_google_blocked(page))
@@ -68,14 +68,14 @@ class TestGoogleBlocked:
     def test_google_clean_page_passes(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://www.google.com/search?q=test")
-        worker._safe_title = AsyncMock(return_value="test - Google Search")
+        worker.page_helpers.safe_title = AsyncMock(return_value="test - Google Search")
         worker._evaluate_page = AsyncMock(return_value="Here are your search results")
         _run(detector.raise_if_google_blocked(page))
 
     def test_google_consent_marker_raises(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://consent.google.com/ml?continue=...")
-        worker._safe_title = AsyncMock(return_value="Before you continue to Google")
+        worker.page_helpers.safe_title = AsyncMock(return_value="Before you continue to Google")
         worker._evaluate_page = AsyncMock(return_value="Before you continue")
         with pytest.raises(BrowserBlockedError):
             _run(detector.raise_if_google_blocked(page))
@@ -94,7 +94,7 @@ class TestBingBlocked:
     def test_bing_captcha_raises(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://www.bing.com/search?q=test")
-        worker._safe_title = AsyncMock(return_value="Bing")
+        worker.page_helpers.safe_title = AsyncMock(return_value="Bing")
         worker._evaluate_page = AsyncMock(return_value="verify you are human")
         with pytest.raises(BrowserBlockedError) as exc_info:
             _run(detector.raise_if_bing_blocked(page))
@@ -104,14 +104,14 @@ class TestBingBlocked:
     def test_bing_clean_page_passes(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://www.bing.com/search?q=test")
-        worker._safe_title = AsyncMock(return_value="test - Bing")
+        worker.page_helpers.safe_title = AsyncMock(return_value="test - Bing")
         worker._evaluate_page = AsyncMock(return_value="Web results for test")
         _run(detector.raise_if_bing_blocked(page))
 
     def test_bing_robot_check_raises(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://www.bing.com/search?q=test")
-        worker._safe_title = AsyncMock(return_value="Bing")
+        worker.page_helpers.safe_title = AsyncMock(return_value="Bing")
         worker._evaluate_page = AsyncMock(return_value="are you a robot")
         with pytest.raises(BrowserBlockedError):
             _run(detector.raise_if_bing_blocked(page))
@@ -130,7 +130,7 @@ class TestYahooBlocked:
     def test_yahoo_captcha_raises(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://search.yahoo.com/search?p=test")
-        worker._safe_title = AsyncMock(return_value="Yahoo Search")
+        worker.page_helpers.safe_title = AsyncMock(return_value="Yahoo Search")
         worker._evaluate_page = AsyncMock(return_value="verify you are human")
         with pytest.raises(BrowserBlockedError) as exc_info:
             _run(detector.raise_if_yahoo_blocked(page))
@@ -140,14 +140,14 @@ class TestYahooBlocked:
     def test_yahoo_clean_page_passes(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://search.yahoo.com/search?p=test")
-        worker._safe_title = AsyncMock(return_value="test - Yahoo Search Results")
+        worker.page_helpers.safe_title = AsyncMock(return_value="test - Yahoo Search Results")
         worker._evaluate_page = AsyncMock(return_value="Web results for test")
         _run(detector.raise_if_yahoo_blocked(page))
 
     def test_yahoo_automated_request_raises(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://search.yahoo.com/search?p=test")
-        worker._safe_title = AsyncMock(return_value="Yahoo Search")
+        worker.page_helpers.safe_title = AsyncMock(return_value="Yahoo Search")
         worker._evaluate_page = AsyncMock(return_value="automated requests detected")
         with pytest.raises(BrowserBlockedError):
             _run(detector.raise_if_yahoo_blocked(page))
@@ -161,13 +161,13 @@ class TestSearchBlocked:
     def test_clean_page_passes(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://example.com")
-        worker._safe_title = AsyncMock(return_value="Example")
+        worker.page_helpers.safe_title = AsyncMock(return_value="Example")
         _run(detector.raise_if_search_blocked(page))
 
     def test_google_block_propagates(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://www.google.com/sorry/index")
-        worker._safe_title = AsyncMock(return_value="Google Sorry")
+        worker.page_helpers.safe_title = AsyncMock(return_value="Google Sorry")
         worker._evaluate_page = AsyncMock(return_value="unusual traffic")
         with pytest.raises(BrowserBlockedError, match="Google"):
             _run(detector.raise_if_search_blocked(page))
@@ -181,7 +181,7 @@ class TestBlockedErrorAttributes:
     def test_error_has_provider_and_reason(self) -> None:
         detector, worker = _make_detector()
         page = _make_page("https://www.bing.com/search?q=test")
-        worker._safe_title = AsyncMock(return_value="Bing")
+        worker.page_helpers.safe_title = AsyncMock(return_value="Bing")
         worker._evaluate_page = AsyncMock(return_value="please solve the challenge")
         with pytest.raises(BrowserBlockedError) as exc_info:
             _run(detector.raise_if_bing_blocked(page))
@@ -203,11 +203,11 @@ class TestBackwardCompatDelegations:
 
         worker = LightPandaBrowserWorker(enabled=False)
         page = _make_page("https://example.com")
-        _run(worker._raise_if_search_blocked(page))
+        _run(worker.block_detector.raise_if_search_blocked(page))
 
     def test_worker_raise_if_google_blocked_delegates(self) -> None:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
         worker = LightPandaBrowserWorker(enabled=False)
         page = _make_page("https://example.com")
-        _run(worker._raise_if_google_blocked(page))
+        _run(worker.block_detector.raise_if_google_blocked(page))

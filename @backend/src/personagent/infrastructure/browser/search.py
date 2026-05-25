@@ -287,14 +287,14 @@ class BrowserSearch:
     ) -> dict[str, Any]:
         """Search the configured search provider in the conversation browser session."""
 
-        session = await self._w._get_session(conversation_id)
+        session = await self._w.session_manager.get_session(conversation_id)
         search_url = self.search_url(query, max_results=max_results)
         resolved_search_url = search_url
-        search_page = await self._w._new_session_page(session)
+        search_page = await self._w.session_manager.new_session_page(session)
         if search_page is not None:
             try:
                 await self._w._goto_page(search_page, search_url)
-                await self._w._raise_if_search_blocked(search_page)
+                await self._w.block_detector.raise_if_search_blocked(search_page)
                 extracted = await self._w._evaluate_page(
                     search_page,
                     _search_results_script(self._w.search_provider),
@@ -303,7 +303,7 @@ class BrowserSearch:
                 resolved_search_url = str(getattr(search_page, "url", search_url) or search_url)
             finally:
                 if search_page is not session.page:
-                    await self._w._best_effort_resource_call(
+                    await self._w.session_manager.best_effort_resource_call(
                         "browser_search_page_close",
                         search_page.close,
                     )
@@ -330,15 +330,15 @@ class BrowserSearch:
             and item.get("title")
             and _clean_browser_url(str(item.get("url") or ""))
         ][:max_results]
-        snapshot = self._w._cache_search_results(
+        snapshot = self._w.search_result_cache.cache_search_results(
             conversation_id=conversation_id,
             query=query,
             search_url=resolved_search_url,
             results=results,
         )
-        session.search_results = self._w._copy_search_results(snapshot.results)
+        session.search_results = self._w.search_result_cache.copy_search_results(snapshot.results)
         session.current_url = resolved_search_url
-        self._w._remember_current_url(conversation_id, session.current_url)
+        self._w.search_result_cache.remember_current_url(conversation_id, session.current_url)
         session.touch()
         return {
             "type": "browser_search",

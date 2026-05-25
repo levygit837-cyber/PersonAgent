@@ -69,7 +69,7 @@ class BrowserActions:
     ) -> dict[str, Any]:
         """Click a mapped element or viewport coordinate on a live browser page."""
 
-        session, page, resolved_page_id = await self._w._resolve_live_page(
+        session, page, resolved_page_id = await self._w.session_manager.resolve_live_page(
             conversation_id,
             page_id=page_id,
             activate=True,
@@ -91,7 +91,7 @@ class BrowserActions:
         else:
             if x is None or y is None:
                 raise BrowserError("BrowserClick requires node_id or x/y coordinates.")
-            await self._w._set_page_viewport(page, viewport_width, viewport_height)
+            await self._w.element_helpers.set_page_viewport(page, viewport_width, viewport_height)
             mouse = getattr(page, "mouse", None)
             click = getattr(mouse, "click", None)
             if not callable(click):
@@ -134,12 +134,12 @@ class BrowserActions:
                         min(max(float(y), 0.0), float(viewport_height)),
                         **kwargs,
                     )
-            await self._w._wait_for_page_load_complete(page, timeout_ms=1_500)
+            await self._w.page_helpers.wait_for_page_load_complete(page, timeout_ms=1_500)
             if safe_wait_ms:
                 with suppress(Exception):
                     await page.wait_for_timeout(safe_wait_ms)
             session.touch()
-            view = await self._w._browser_view_snapshot(
+            view = await self._w.snapshot.browser_view_snapshot(
                 conversation_id,
                 session,
                 width=viewport_width,
@@ -189,7 +189,7 @@ class BrowserActions:
     ) -> dict[str, Any]:
         """Type, fill, or press keys on a live browser page."""
 
-        session, page, resolved_page_id = await self._w._resolve_live_page(
+        session, page, resolved_page_id = await self._w.session_manager.resolve_live_page(
             conversation_id,
             page_id=page_id,
             activate=True,
@@ -223,7 +223,7 @@ class BrowserActions:
             if isinstance(view.get("last_action"), Mapping):
                 action_details = view["last_action"]
         else:
-            await self._w._set_page_viewport(page, viewport_width, viewport_height)
+            await self._w.element_helpers.set_page_viewport(page, viewport_width, viewport_height)
             if node_id:
                 focus_view = await self._w.view_act(
                     browser_id=conversation_id,
@@ -262,9 +262,9 @@ class BrowserActions:
                 press_key = getattr(keyboard, "press", None)
                 if callable(press_key):
                     await press_key("Enter")
-            await self._w._wait_for_page_load_complete(page, timeout_ms=1_500)
+            await self._w.page_helpers.wait_for_page_load_complete(page, timeout_ms=1_500)
             session.touch()
-            view = await self._w._browser_view_snapshot(
+            view = await self._w.snapshot.browser_view_snapshot(
                 conversation_id,
                 session,
                 width=viewport_width,
@@ -277,8 +277,8 @@ class BrowserActions:
             if callable(press_key):
                 with suppress(Exception):
                     await press_key("Enter")
-                await self._w._wait_for_page_load_complete(session.page, timeout_ms=1_500)
-                view = await self._w._browser_view_snapshot(
+                await self._w.page_helpers.wait_for_page_load_complete(session.page, timeout_ms=1_500)
+                view = await self._w.snapshot.browser_view_snapshot(
                     conversation_id,
                     session,
                     width=viewport_width,
@@ -323,19 +323,19 @@ class BrowserActions:
     ) -> dict[str, Any]:
         """Capture a page screenshot or return the controlled DOM-mirror fallback."""
 
-        session, page, resolved_page_id = await self._w._resolve_live_page(
+        session, page, resolved_page_id = await self._w.session_manager.resolve_live_page(
             conversation_id,
             page_id=page_id,
             activate=True,
         )
         viewport_width, viewport_height = _clamped_viewport(width, height)
-        await self._w._set_page_viewport(page, viewport_width, viewport_height)
+        await self._w.element_helpers.set_page_viewport(page, viewport_width, viewport_height)
         title, user_agent, raw_element_map, html, scroll_state = await asyncio.gather(
-            self._w._safe_title(page),
-            self._w._safe_user_agent(page),
-            self._w._browser_element_map(page),
-            self._w._safe_html(page),
-            self._w._safe_scroll_state(page),
+            self._w.page_helpers.safe_title(page),
+            self._w.element_helpers.safe_user_agent(page),
+            self._w.snapshot.browser_element_map(page),
+            self._w.element_helpers.safe_html(page),
+            self._w.element_helpers.safe_scroll_state(page),
         )
         current_url = _clean_browser_url(str(getattr(page, "url", "") or "about:blank"))
         runtime = "lightpanda" if user_agent.lower().startswith("lightpanda/") else "chrome_cdp"
@@ -369,7 +369,7 @@ class BrowserActions:
             except Exception as exc:
                 image_error = str(exc)
                 logger.warning("browser_control_screenshot_failed", error=image_error)
-        element_map = self._w._enrich_browser_element_map(
+        element_map = self._w.snapshot.enrich_browser_element_map(
             raw_element_map,
             browser_id=conversation_id,
             tab_id=resolved_page_id,
@@ -418,14 +418,14 @@ class BrowserActions:
     ) -> dict[str, Any]:
         """Read a bounded ring buffer of captured console events for a browser page."""
 
-        session = await self._w._get_session(conversation_id)
+        session = await self._w.session_manager.get_session(conversation_id)
         target_page_id = str(page_id or session.current_page_id or session.last_open_page_id or "").strip()
         if not target_page_id:
             last_open = self._w._last_open_cache.get(conversation_id)
             target_page_id = last_open.page_id if last_open is not None else conversation_id
-        page = session.pages.get(target_page_id) or self._w._preferred_session_page(session)
+        page = session.pages.get(target_page_id) or self._w.session_manager.preferred_session_page(session)
         with suppress(Exception):
-            await self._w._drain_page_console_entries(page, conversation_id, target_page_id)
+            await self._w.console.drain_page_console_entries(page, conversation_id, target_page_id)
         allowed_levels = {str(level).lower() for level in levels or [] if str(level).strip()}
         page_entries = list(self._w._console_cache.get(conversation_id, {}).get(target_page_id, []))
         if since_id is not None:
@@ -441,7 +441,7 @@ class BrowserActions:
             "page_id": target_page_id,
             "window_id": target_page_id,
             "url": _clean_browser_url(str(getattr(page, "url", "") or session.current_url or "")),
-            "title": await self._w._safe_title(page),
+            "title": await self._w.page_helpers.safe_title(page),
             "runtime": await self._w._page_runtime(page),
             "render_mode": "html_mirror" if await self._w._is_lightpanda_page(page) else "pixel",
             "active_tab_id": session.current_page_id or target_page_id,
@@ -469,7 +469,7 @@ class BrowserActions:
     ) -> dict[str, Any]:
         """Run allowlisted page JS or selected CDP methods for advanced browser control."""
 
-        session, page, resolved_page_id = await self._w._resolve_live_page(
+        session, page, resolved_page_id = await self._w.session_manager.resolve_live_page(
             conversation_id,
             page_id=page_id,
             activate=True,
@@ -522,7 +522,7 @@ class BrowserActions:
             "page_id": resolved_page_id,
             "window_id": resolved_page_id,
             "url": current_url,
-            "title": await self._w._safe_title(page),
+            "title": await self._w.page_helpers.safe_title(page),
             "runtime": await self._w._page_runtime(page),
             "render_mode": "html_mirror" if await self._w._is_lightpanda_page(page) else "pixel",
             "active_tab_id": session.current_page_id or resolved_page_id,
@@ -548,7 +548,7 @@ class BrowserActions:
         width: int = 1024,
         height: int = 720,
     ) -> dict[str, Any]:
-        session, _page, resolved_page_id = await self._w._resolve_live_page(
+        session, _page, resolved_page_id = await self._w.session_manager.resolve_live_page(
             conversation_id,
             page_id=page_id,
             activate=True,
@@ -585,7 +585,7 @@ class BrowserActions:
         width: int = 1024,
         height: int = 720,
     ) -> dict[str, Any]:
-        session, page, resolved_page_id = await self._w._resolve_live_page(
+        session, page, resolved_page_id = await self._w.session_manager.resolve_live_page(
             conversation_id,
             page_id=page_id,
             activate=True,
@@ -600,7 +600,7 @@ class BrowserActions:
         else:
             with suppress(Exception):
                 await page.wait_for_timeout(safe_timeout_ms)
-        view = await self._w._browser_view_snapshot(conversation_id, session, width=width, height=height)
+        view = await self._w.snapshot.browser_view_snapshot(conversation_id, session, width=width, height=height)
         view.update(
             {
                 "type": "browser_wait",

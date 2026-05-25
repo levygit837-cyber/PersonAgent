@@ -101,12 +101,109 @@ class _StubWorker:
         self._stylesheet_disk_cache = StylesheetDiskCache.__new__(StylesheetDiskCache)
         self._stylesheet_disk_cache._cache_dir = None
         self._stylesheet_disk_cache._max_entries = 256
+        self._html_with_embedded_stylesheet_fallbacks: Any = None
+        self._page_frames: Any = None
+        # Module stubs
+        self.session_manager = _StubSessionManager(self._session, self._page)
+        self.element_helpers = _StubElementHelpers()
+        self.page_helpers = _StubPageHelpers()
+        self.console = _StubConsole()
+        self.opened_pages = _StubOpenedPages()
+        self.search_result_cache = _StubSearchResultCache()
 
     async def _get_session(self, browser_id: str) -> _StubSession:
         return self._session
 
     def _preferred_session_page(self, session: Any) -> _StubPage:
         return self._page
+
+
+class _StubSessionManager:
+    def __init__(self, session: _StubSession, page: _StubPage) -> None:
+        self._session = session
+        self._page = page
+
+    async def get_session(self, conversation_id: str) -> _StubSession:
+        return self._session
+
+    async def resolve_live_page(
+        self, conversation_id: str, *, page_id: str | None = None, activate: bool = True
+    ) -> tuple[_StubSession, _StubPage, str]:
+        return self._session, self._page, page_id or "p1"
+
+    def preferred_session_page(self, session: Any) -> _StubPage:
+        return self._page
+
+    def ensure_session_page_alias(
+        self, conversation_id: str, session: Any, *, page: Any = None, page_id: str | None = None
+    ) -> str:
+        return page_id or session.current_page_id or conversation_id
+
+
+class _StubElementHelpers:
+    async def page_frames(self, page: Any) -> list[Any]:
+        return []
+
+    async def safe_user_agent(self, page: Any) -> str:
+        return "Mozilla/5.0"
+
+    async def set_page_viewport(self, page: Any, width: int, height: int) -> None:
+        pass
+
+    async def safe_html(self, page: Any) -> str:
+        return "<html></html>"
+
+    async def safe_scroll_state(self, page: Any) -> dict[str, Any]:
+        return {"scrollTop": 0, "scrollLeft": 0}
+
+
+class _StubPageHelpers:
+    async def wait_for_page_visual_ready(self, page: Any) -> dict[str, Any]:
+        return {
+            "style_ready": True,
+            "stylesheet_count": 0,
+            "stylesheet_loaded_count": 0,
+            "fonts_ready": True,
+        }
+
+    async def safe_title(self, page: Any) -> str:
+        return getattr(page, "_title", "Example")
+
+
+class _StubConsole:
+    async def install_console_capture(self, page: Any) -> None:
+        pass
+
+    async def install_cooperation_capture(self, page: Any, browser_id: str, page_id: str) -> None:
+        pass
+
+    async def drain_cooperation_events(self, page: Any, browser_id: str, page_id: str) -> list[Any]:
+        return []
+
+    def attach_page_console_listeners(self, conversation_id: str, page_id: str, page: Any) -> None:
+        pass
+
+
+class _StubOpenedPages:
+    def opened_page(self, conversation_id: str, page_id: str) -> Any:
+        return None
+
+    def next_unextracted_opened_page(self, conversation_id: str) -> Any:
+        return None
+
+
+class _StubSearchResultCache:
+    def __init__(self) -> None:
+        self._current_url_cache: dict[str, str] = {}
+
+    def latest_cached_search_results(self, conversation_id: str) -> list[Any]:
+        return []
+
+    def remember_current_url(self, conversation_id: str, url: str) -> None:
+        pass
+
+    def cleanup_search_cache(self, now: float) -> None:
+        pass
 
     def _ensure_session_page_alias(
         self, browser_id: str, session: Any, *, page: Any = None
@@ -400,8 +497,8 @@ class TestBrowserViewSnapshot:
         assert result["browser_id"] == "b1"
         assert result["url"] == "https://example.com"
         assert result["title"] == "Example"
-        assert result["render_mode"] == "html_mirror"
-        assert result["runtime"] == "lightpanda"
+        assert result["render_mode"] == "pixel"  # Stub has screenshot capability
+        assert result["runtime"] == "chrome_cdp"  # Stub has screenshot capability
         assert "element_map" in result
         assert "tabs" in result
         assert "frame_tree" in result
@@ -503,25 +600,25 @@ class TestBrowserFrameTreeSnapshot:
 
 class TestBackwardCompatDelegations:
     def test_worker_stylesheet_hrefs_delegates(self):
-        from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
+        from personagent.infrastructure.browser.snapshot import BrowserSnapshot
         html = '<html><head><link rel="stylesheet" href="/a.css"></head></html>'
-        result = LightPandaBrowserWorker._stylesheet_hrefs(html, "https://example.com", max_hrefs=10)
+        result = BrowserSnapshot.stylesheet_hrefs(html, "https://example.com", max_hrefs=10)
         assert result == ["https://example.com/a.css"]
 
     def test_worker_html_attrs_delegates(self):
-        from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
-        attrs = LightPandaBrowserWorker._html_attrs('<link rel="stylesheet" href="/a.css">')
+        from personagent.infrastructure.browser.snapshot import BrowserSnapshot
+        attrs = BrowserSnapshot.html_attrs('<link rel="stylesheet" href="/a.css">')
         assert attrs["rel"] == "stylesheet"
 
     def test_worker_css_fidelity_delegates(self):
-        from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
-        result = LightPandaBrowserWorker._css_fidelity(html="<html>", render_mode="pixel")
+        from personagent.infrastructure.browser.snapshot import BrowserSnapshot
+        result = BrowserSnapshot.css_fidelity(html="<html>", render_mode="pixel")
         assert result == "pixel"
 
     def test_worker_rewrite_css_urls_delegates(self):
-        from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
+        from personagent.infrastructure.browser.snapshot import BrowserSnapshot
         css = "body { background: url(../bg.png); }"
-        result = LightPandaBrowserWorker._rewrite_css_urls(css, "https://example.com/assets/style.css")
+        result = BrowserSnapshot.rewrite_css_urls(css, "https://example.com/assets/style.css")
         assert "https://example.com/bg.png" in result
 
 

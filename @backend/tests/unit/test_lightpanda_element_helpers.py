@@ -330,25 +330,26 @@ class TestBackwardCompatDelegations:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
         worker = LightPandaBrowserWorker(enabled=False)
-        assert worker._element_selector("b1", "n1") == ""
+        assert worker.element_helpers.element_selector("b1", "n1") == ""
 
     def test_worker_element_target_delegates(self) -> None:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
         worker = LightPandaBrowserWorker(enabled=False)
-        assert worker._element_target("b1", "") == {}
+        assert worker.element_helpers.element_target("b1", "") == {}
 
     def test_worker_browser_action_target_payload_delegates(self) -> None:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
-        assert LightPandaBrowserWorker._browser_action_target_payload({}) == {}
+        worker = LightPandaBrowserWorker(enabled=False)
+        assert worker.element_helpers.browser_action_target_payload({}) == {}
 
     def test_worker_main_frame_delegates(self) -> None:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
         worker = LightPandaBrowserWorker(enabled=False)
         page = MagicMock(spec=[])
-        assert worker._main_frame(page) is page
+        assert worker.element_helpers.main_frame(page) is page
 
     def test_worker_frame_id_delegates(self) -> None:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
@@ -357,5 +358,5 @@ class TestBackwardCompatDelegations:
         frame = MagicMock()
         frame.url = "https://example.com"
         frame.name = "test"
-        result = worker._frame_id(frame, 0)
+        result = worker.element_helpers.frame_id(frame, 0)
         assert result.startswith("frame_")

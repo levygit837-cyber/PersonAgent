@@ -75,6 +75,13 @@ class _StubWorker:
         self.timeout_ms = 5_000
         self._element_map_cache: dict[str, Any] = {}
         self._goto_urls: list[str] = []
+        # Module stubs
+        self.session_manager = _StubSessionManager(self._session)
+        self.element_helpers = _StubElementHelpers()
+        self.page_helpers = _StubPageHelpers()
+        self.console = _StubConsole()
+        self.opened_pages = _StubOpenedPages()
+        self.search_result_cache = _StubSearchResultCache()
 
         self._get_session = AsyncMock(return_value=self._session)
         self._goto = AsyncMock()
@@ -90,6 +97,60 @@ class _StubWorker:
         self._action_context_for_element = AsyncMock(return_value=self._session.page)
         self._upload_files = AsyncMock(return_value={"ok": True})
         self._browser_action_target_payload = MagicMock(return_value={"node_id": "n1"})
+
+
+class _StubSessionManager:
+    def __init__(self, session: _StubSession) -> None:
+        self._session = session
+        self.ensure_session_page_alias = MagicMock(return_value="p1")
+
+    async def get_session(self, conversation_id: str) -> _StubSession:
+        return self._session
+
+    async def resolve_live_page(
+        self, conversation_id: str, *, page_id: str | None = None, activate: bool = True
+    ) -> tuple[_StubSession, _StubPage, str]:
+        return self._session, self._session.page, page_id or "p1"
+
+
+class _StubElementHelpers:
+    async def safe_user_agent(self, page: Any) -> str:
+        return "Mozilla/5.0"
+
+    async def set_page_viewport(self, page: Any, width: int, height: int) -> None:
+        pass
+
+
+class _StubPageHelpers:
+    async def wait_for_page_visual_ready(self, page: Any) -> None:
+        pass
+
+
+class _StubConsole:
+    async def install_console_capture(self, page: Any) -> None:
+        pass
+
+    def attach_page_console_listeners(self, conversation_id: str, page_id: str, page: Any) -> None:
+        pass
+
+
+class _StubOpenedPages:
+    def opened_page(self, conversation_id: str, page_id: str) -> Any:
+        return None
+
+    def next_unextracted_opened_page(self, conversation_id: str) -> Any:
+        return None
+
+
+class _StubSearchResultCache:
+    def __init__(self) -> None:
+        self.remember_current_url = MagicMock()
+
+    def latest_cached_search_results(self, conversation_id: str) -> list[Any]:
+        return []
+
+    def cleanup_search_cache(self, now: float) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +190,8 @@ class TestViewNavigate:
         await va.view_navigate(
             browser_id="b1", url="https://new.example.com", width=800, height=600
         )
-        worker._remember_current_url.assert_called_once()
-        worker._ensure_session_page_alias.assert_called_once()
+        worker.search_result_cache.remember_current_url.assert_called_once()
+        worker.session_manager.ensure_session_page_alias.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +278,7 @@ class TestViewClick:
     @pytest.mark.asyncio
     async def test_raises_if_no_mouse(self):
         va, worker = _make()
-        worker._session.page.mouse = None
+        worker._session.page.mouse = None  # type: ignore[assignment]
         with pytest.raises(BrowserUnavailableError, match="pointer interaction"):
             await va.view_click(browser_id="b1", x=10, y=10, width=800, height=600)
 
@@ -382,10 +443,10 @@ class TestBackwardCompatDelegations:
 
         worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222")
         assert hasattr(worker, "view_actions")
-        assert hasattr(worker, "view_navigate")
-        assert hasattr(worker, "view_history")
-        assert hasattr(worker, "view_reload")
-        assert hasattr(worker, "view_click")
-        assert hasattr(worker, "view_key")
-        assert hasattr(worker, "view_scroll")
-        assert hasattr(worker, "view_act")
+        assert hasattr(worker.view_actions, "view_navigate")
+        assert hasattr(worker.view_actions, "view_history")
+        assert hasattr(worker.view_actions, "view_reload")
+        assert hasattr(worker.view_actions, "view_click")
+        assert hasattr(worker.view_actions, "view_key")
+        assert hasattr(worker.view_actions, "view_scroll")
+        assert hasattr(worker.view_actions, "view_act")

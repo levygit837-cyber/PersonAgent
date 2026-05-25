@@ -18,7 +18,7 @@ A file qualifies as a god file if it meets **all three**:
 
 | # | File | Original | Current | Status | Playbook |
 |---|------|------:|------:|--------|----------|
-| 1 | `infrastructure/browser/lightpanda.py` | 5,735 | 1,469 | 🔄 Phase 3 — 14 slices done (−74%), further decomp needed | `lightpanda.md` |
+| 1 | `infrastructure/browser/lightpanda.py` | 5,735 | 674 | ✅ Done — 17 slices (−88%), target achieved | `lightpanda.md` |
 | 2 | `infrastructure/tools/browser_tools/factories.py` | 2,786 | 61 | ✅ Done — 4 slices (PRs #48, #57–#59), −98% | `browser_tools.md` |
 | 3 | `infrastructure/persistence/operational_memory_repository.py` | 1,938 | 251 | ✅ Done — 6 slices (merged to main), −87% | `operational_memory_repository.md` |
 | 4 | `interfaces/api/routes/chat/__init__.py` | 1,905 | 612 | 🔄 In progress — 6 slices merged, more pending | `routes_chat.md` |
@@ -41,7 +41,7 @@ A file qualifies as a god file if it meets **all three**:
 |------|------:|------:|--------|
 | `application/use_cases/chat_completion.py` | 2,742 | 483 | ✅ Done (−82%) |
 | `application/team_chat/orchestrator.py` | 3,097 | 127 | ✅ Done (−96%) |
-| `infrastructure/browser/lightpanda.py` | 5,735 | 1,469 | 🔄 Phase 3 — 14 slices done (−74%), further decomp needed |
+| `infrastructure/browser/lightpanda.py` | 5,735 | 674 | ✅ Done — 17 slices (−88%), target achieved |
 | `infrastructure/tools/browser_tools/` | 2,786 | 61 | ✅ Done — 4 slices (−98%) |
 | `infrastructure/persistence/operational_memory/` | 1,938 | 251 | ✅ Done — 6 slices (−87%) |
 | `infrastructure/llm/vertex_ai/` | 1,064 | 31 | ✅ Done — 3 slices (−97%) |
@@ -514,7 +514,7 @@ If a slice exceeds 2,500 lines changed, split it into two PRs.
 ## Execution Order (Recommended)
 
 ### Phase 1.5 — Complete lightpanda.py ✅ DONE
-- All 14 slices merged (PRs #37–#56): 5,735 → 1,469L (−74%)
+- All 17 slices merged (PRs #37–#56, #102, slice 17): 5,735 → 674L (−88%)
 
 ### Phase 2.0 — Browser ecosystem ✅ DONE
 - `browser_tools.py` → 4 slices (PRs #48, #57–#59): 2,786 → 61L (−98%)
@@ -580,7 +580,7 @@ If a slice exceeds 2,500 lines changed, split it into two PRs.
 | `chat-store.ts` | 3,307 | 121 | −96% |
 | `streaming-helpers.ts` | 2,033 | 30 | −99% |
 | `routes/chat/__init__.py` | 1,905 | 1,419 | −26% (in progress) |
-| **Total** | **28,567** | **4,164** | **−85%** |
+| **Total** | **28,567** | **3,369** | **−88%** |
 
 ---
 

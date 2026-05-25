@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 from personagent.application.team_chat.blackboard_claim_graph import (
     ClaimGraphAnalyzer,
@@ -24,6 +24,11 @@ from personagent.application.team_chat.types import (
     TurnResult,
 )
 
+# Backward-compat aliases
+_TurnResult: TypeAlias = TurnResult
+_CoordinatorGuidance: TypeAlias = CoordinatorGuidance
+_ExecutionContract: TypeAlias = ExecutionContract
+_BlackboardEntry: TypeAlias = BlackboardEntry
 INDEPENDENT_PHASE = "independent_round"
 BLACKBOARD_PHASE = "blackboard_publish"
 DEBATE_PHASE = "debate_round"

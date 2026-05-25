@@ -419,23 +419,22 @@ class TestBackwardCompatDelegations:
             handlers[event] = handler
 
         page.on = fake_on
-        worker._attach_page_console_listeners("conv1", "page1", page)
+        worker.console.attach_page_console_listeners("conv1", "page1", page)
         assert "console" in handlers
 
     def test_worker_record_delegates(self) -> None:
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
 
         worker = LightPandaBrowserWorker(enabled=False)
-        worker._record_console_entry(
+        worker.console.record_console_entry(
             "c", "p", level="log", text="hi", source="console",
         )
         assert len(worker._console_cache["c"]["p"]) == 1
 
     def test_worker_console_message_attr_delegates(self) -> None:
-        from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
+        from personagent.infrastructure.browser.console import BrowserConsole
 
-        worker = LightPandaBrowserWorker(enabled=False)
         msg = MagicMock()
         msg.type = "info"
-        result = worker._console_message_attr(msg, "type")
+        result = BrowserConsole.console_message_attr(msg, "type")
         assert result == "info"

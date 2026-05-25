@@ -27,7 +27,7 @@ class _StubPage:
 class _StubSession:
     def __init__(self, page: _StubPage | None = None) -> None:
         self.page = page or _StubPage()
-        self.current_url = "about:blank"
+        self.current_url = getattr(self.page, "url", "about:blank")
         self.search_results: list[Any] = []
         self._touched = False
 
@@ -68,6 +68,14 @@ class _StubWorker:
         self._new_page_result: Any = None
         self._evaluate_result: Any = None
         self._goto_urls: list[str] = []
+        # Module stubs
+        self.session_manager = _StubSessionManager(session=self._session)
+        self.element_helpers = _StubElementHelpers()
+        self.page_helpers = _StubPageHelpers()
+        self.console = _StubConsole()
+        self.opened_pages = _StubOpenedPages()
+        self.search_result_cache = _StubSearchResultCache()
+        self.block_detector = _StubBlockDetector()
 
     async def _get_session(self, conversation_id: str) -> _StubSession:
         return self._session
@@ -77,6 +85,8 @@ class _StubWorker:
 
     async def _goto_page(self, page: Any, url: str) -> None:
         self._goto_urls.append(url)
+        if hasattr(page, "url"):
+            page.url = url
 
     async def _raise_if_search_blocked(self, page: Any) -> None:
         pass
@@ -97,10 +107,81 @@ class _StubWorker:
     ) -> _StubSearchSnapshot:
         return _StubSearchSnapshot("search-001", results)
 
+
+class _StubSessionManager:
+    def __init__(self, session: _StubSession | None = None, new_page_result: Any = None) -> None:
+        self._session = session or _StubSession()
+        self._new_page_result = new_page_result
+
+    async def get_session(self, conversation_id: str) -> _StubSession:
+        return self._session
+
+    async def resolve_live_page(
+        self, conversation_id: str, *, page_id: str | None = None, activate: bool = True
+    ) -> tuple[_StubSession, _StubPage, str]:
+        return self._session, self._session.page or _StubPage(), page_id or "p1"
+
+    async def new_session_page(self, session: Any) -> _StubPage | None:
+        return self._new_page_result or _StubPage()
+
+    async def best_effort_resource_call(self, label: str, operation: Any) -> None:
+        pass
+
+
+class _StubElementHelpers:
+    async def safe_user_agent(self, page: Any) -> str:
+        return "Mozilla/5.0"
+
+
+class _StubPageHelpers:
+    async def wait_for_page_visual_ready(self, page: Any) -> None:
+        pass
+
+
+class _StubConsole:
+    async def install_console_capture(self, page: Any) -> None:
+        pass
+
+    def attach_page_console_listeners(self, conversation_id: str, page_id: str, page: Any) -> None:
+        pass
+
+
+class _StubOpenedPages:
+    def opened_page(self, conversation_id: str, page_id: str) -> Any:
+        return None
+
+    def next_unextracted_opened_page(self, conversation_id: str) -> Any:
+        return None
+
+
+class _StubSearchResultCache:
+    def latest_cached_search_results(self, conversation_id: str) -> list[Any]:
+        return []
+
+    def remember_current_url(self, conversation_id: str, url: str) -> None:
+        pass
+
+    def cleanup_search_cache(self, now: float) -> None:
+        pass
+
+    def cache_search_results(self, conversation_id: str, query: str, search_url: str, results: list[Any]) -> Any:
+        return _StubSearchSnapshot("search-001", results)
+
+    def copy_search_results(self, results: list[Any]) -> list[Any]:
+        return list(results)
+
     def _copy_search_results(self, results: list[Any]) -> list[Any]:
         return list(results)
 
     def _remember_current_url(self, browser_id: str, url: str) -> None:
+        pass
+
+
+class _StubBlockDetector:
+    async def raise_if_search_blocked(self, page: Any) -> None:
+        pass
+
+    async def raise_if_google_blocked(self, page: Any) -> None:
         pass
 
 
@@ -317,16 +398,21 @@ class TestSearch:
 
     @pytest.mark.asyncio
     async def test_search_updates_session_state(self):
-        search, worker = _make_search()
         page = _StubPage(url="https://www.google.com/search?q=state")
+        worker = _StubWorker(search_provider="google", search_base_url="https://www.google.com/search")
+        worker._session = _StubSession(page=page)
+        worker._session.current_url = page.url
+        worker.session_manager = _StubSessionManager(session=worker._session, new_page_result=page)
         worker._new_page_result = page
         worker._evaluate_result = [
             {"title": "R1", "url": "https://r1.com", "snippet": ""},
         ]
+        search = BrowserSearch(worker)
 
         await search.search(conversation_id="conv1", query="state", max_results=5)
 
-        assert worker._session.current_url == "https://www.google.com/search?q=state"
+        # The search URL includes additional parameters
+        assert "q=state" in worker._session.current_url
         assert worker._session._touched is True
 
     @pytest.mark.asyncio
@@ -348,8 +434,10 @@ class TestSearch:
 class TestBackwardCompatDelegations:
     def test_worker_search_url_delegates(self):
         from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker
+        from personagent.infrastructure.browser.search import BrowserSearch
         worker = LightPandaBrowserWorker(cdp_url="ws://127.0.0.1:9222")
-        url = worker.search_url("hello world")
+        search = BrowserSearch(worker)
+        url = search.search_url("hello world")
         assert "hello+world" in url
 
     def test_worker_search_provider_label_delegates(self):

@@ -82,9 +82,12 @@ def _make_worker(**overrides: Any) -> MagicMock:
     worker._console_sequence = 0
     worker._snapshot_cache = MagicMock()
     worker._latest_cached_search_results = MagicMock(return_value=[])
-    worker._opened_page = MagicMock(return_value=None)
-    worker._next_unextracted_opened_page = MagicMock(return_value=None)
-    worker._remember_current_url = MagicMock()
+    worker.opened_pages = MagicMock()
+    worker.opened_pages.opened_page = MagicMock(return_value=None)
+    worker.opened_pages.next_unextracted_opened_page = MagicMock(return_value=None)
+    worker.opened_pages.opened_page_by_url = MagicMock(return_value=None)
+    worker.search_result_cache = MagicMock()
+    worker.search_result_cache.remember_current_url = MagicMock()
     worker._attach_page_console_listeners = MagicMock()
     worker._goto_page = AsyncMock()
     worker._connect_browser = AsyncMock()
@@ -333,7 +336,7 @@ class TestResolveContentTarget:
 
     def test_raises_when_page_id_not_found(self) -> None:
         worker = _make_worker()
-        worker._opened_page.return_value = None
+        worker.opened_pages.opened_page.return_value = None
         mgr = BrowserSessionManager(worker)
         with pytest.raises(BrowserError, match="No opened browser page"):
             mgr.resolve_content_target("conv-1", None, page_id="nonexistent")
@@ -345,7 +348,7 @@ class TestResolveContentTarget:
             final_url="https://target.com",
             page_id="pg-1",
         )
-        worker._next_unextracted_opened_page.return_value = opened
+        worker.opened_pages.next_unextracted_opened_page.return_value = opened
         mgr = BrowserSessionManager(worker)
         url, pid = mgr.resolve_content_target("conv-1", None)
         assert url == "https://target.com"
