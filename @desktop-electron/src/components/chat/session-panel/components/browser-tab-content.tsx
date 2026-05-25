@@ -14,27 +14,27 @@ import {
   type SessionBrowserCooperationEvent,
   type SessionBrowserCooperationMode,
   type SessionBrowserViewport,
-} from "../../../api/client";
-import { cn } from "../../../lib/utils";
-import { useAppStore } from "../../../stores/app-store";
-import { Button } from "../../ui/button";
+} from "../../../../api/client";
+import { cn } from "../../../../lib/utils";
+import { useAppStore } from "../../../../stores/app-store";
+import { Button } from "../../../ui/button";
 import {
   browserAnnotationCounts,
   browserAnnotationEditorStyle,
   browserToolEventAppliesToBrowser,
   browserToolEventIsPassive,
   normalizeBrowserTextSelection,
-} from "./browser-helpers";
-import { normalizeBrowserElementMetadata, recordArray } from "./helpers";
-import { browserCssBadgeClass, browserCssLabel, selectedElementLabel } from "./browser-normalization-helpers";
+} from "../helpers/browser-helpers";
+import { normalizeBrowserElementMetadata, recordArray } from "../helpers";
+import { browserCssBadgeClass, browserCssLabel, selectedElementLabel } from "../helpers/browser-normalization-helpers";
 import {
   BROWSER_FORWARD_KEYS,
   browserElementAtRenderedPoint,
   browserRenderedElementStyle,
   browserViewport,
   isBrowserViewportControlTarget,
-} from "./browser-viewport-helpers";
-import { browserVisualEventFromProposal, browserVisualEventsFromRecords } from "./browser-visual-events";
+} from "../helpers/browser-viewport-helpers";
+import { browserVisualEventFromProposal, browserVisualEventsFromRecords } from "../helpers/browser-visual-events";
 import { BrowserCooperationModeMenu, BrowserProposalOverlay } from "./browser-cooperation";
 import { BrowserModeButton, BrowserNavButton } from "./browser-controls";
 import { browserMirrorSrcDoc } from "./browser-mirror";
@@ -46,14 +46,14 @@ import type {
   BrowserTracingTab,
   BrowserVisualEvent,
   BrowserToolEvent,
-} from "./helpers";
+} from "../helpers";
 import {
   BROWSER_LOADING_MESSAGES,
   browserCooperationFromView,
   isBrowserCooperationEvent,
   recordValue,
   resolveBackendUrlPath,
-} from "./helpers";
+} from "../helpers";
 
 export function BrowserTabContent({
   browser,

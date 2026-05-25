@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { BrowserVisualEventList, CommitsBlock, FilesBlock, MetadataBlock, MetricBand, TraceJson, TraceList, TraceRoleBadge } from "./browser-tracing";
+import { BrowserVisualEventList, CommitsBlock, FilesBlock, MetadataBlock, MetricBand, TraceJson, TraceList, TraceRoleBadge } from "./components/browser-tracing";
 import type { BrowserVisualEvent } from "./helpers";
 
 describe("TraceRoleBadge", () => {

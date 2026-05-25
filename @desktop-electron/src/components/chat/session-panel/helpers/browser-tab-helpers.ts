@@ -1,7 +1,7 @@
 import type {
   SessionBrowserView,
-} from "../../../api/client";
-import type { ToolBlockUi } from "../../../types/chat";
+} from "../../../../api/client";
+import type { ToolBlockUi } from "../../../../types/chat";
 import {
   type BrowserTab,
   browserPagePanelTabId,

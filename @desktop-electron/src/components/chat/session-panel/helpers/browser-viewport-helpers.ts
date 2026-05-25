@@ -3,7 +3,7 @@ import type {
   SessionBrowserElement,
   SessionBrowserViewport,
   SessionBrowserView,
-} from "../../../api/client";
+} from "../../../../api/client";
 import { numericValue, recordValue } from "./helpers";
 
 export const BROWSER_FORWARD_KEYS = new Set([

@@ -15,7 +15,6 @@ import type { ChatState } from "./internal";
 import {
   setConversationStatus,
   resetLiveTokenTotals,
-  numberValue,
 } from "./internal";
 import {
   isRecord,
@@ -26,17 +25,37 @@ import {
   applyLiveTokenUsage,
 } from "./chunk-handlers";
 import {
+  createTeamRun,
+  cloneTeamRun,
+  seedTeamAgents,
+  runStatusForEvent,
+  blackboardStatusForEvent,
+  isTerminalTeamEvent,
+  phaseForEvent,
+  phaseLabel,
+  nextActionForEvent,
+} from "./team-run-lifecycle";
+import {
   upsertTeamAgent,
-  mergeAgentLogs,
-  isStreamingAgentTextLog,
-  isEmptyStreamingAgentLog,
-  hasOpenStreamingAgentLog,
-  findMergeableAgentLogIndex,
-  isSameTeamTurnLog,
   teamAgentLogFromEvent,
   durationSummary,
-  type TeamAgentPatch,
 } from "./team-agent-manager";
+import {
+  upsertTeamTool,
+  toolTraceFromEvent,
+  updateBlackboardFromSnapshot,
+  updateBlackboardFromContract,
+  updateBlackboardFromCoherency,
+  updateBlackboardFromCoherencyObject,
+  blackboardClaimFromEvent,
+  claimsFromDelta,
+  mergeClaims,
+  coverageFromValue,
+  upsertTeamVote,
+  blockerTextFromEvent,
+  decisionTextFromEvent,
+  mergeTextItems,
+} from "./team-blackboard-manager";
 
 type SetFn = (partial: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void;
 
@@ -167,14 +186,7 @@ function shouldResetTeamMessageForRun(message: ChatMessageUi, event: TeamRunEven
   return !message.teamRun.runId || message.teamRun.runId !== event.run_id;
 }
 
-function isTerminalTeamEvent(event: TeamRunEvent) {
-  return (
-    event.event === "team_run_completed" ||
-    event.event === "team_consensus_failed" ||
-    event.event === "team_run_cancelled" ||
-    (event.event === "error" && !event.agent_id)
-  );
-}
+
 
 function applyTeamRunEvent(message: ChatMessageUi, event: TeamRunEvent): ChatMessageUi {
   let run = message.teamRun ? cloneTeamRun(message.teamRun) : createTeamRun(event);
@@ -368,372 +380,17 @@ function applyTeamRunEvent(message: ChatMessageUi, event: TeamRunEvent): ChatMes
   return { ...message, teamRun: run };
 }
 
-function createTeamRun(event: TeamRunEvent): TeamRunUi {
-  const status = runStatusForEvent(event, "running");
-  return {
-    runId: event.run_id,
-    title: event.team?.name ?? "Team Mode",
-    status,
-    round: event.round,
-    actualPhase: phaseLabel(event.phase) ?? phaseForEvent(event) ?? "starting",
-    agents: [],
-    blackboard: createBlackboardTrace(event, status),
-    votes: [],
-    startedAt: event.started_at,
-    completedAt: event.completed_at,
-  };
-}
-
-function createBlackboardTrace(event: TeamRunEvent, status: TeamCompactStatus): TeamBlackboardTraceUi {
-  return {
-    status,
-    actualPhase: phaseLabel(event.phase) ?? phaseForEvent(event) ?? "starting",
-    nextAction: nextActionForEvent(event),
-    claims: [],
-    evidence: [],
-    decisions: [],
-    blockers: [],
-    coverage: [],
-    tools: [],
-    updatedAt: event.created_at,
-  };
-}
-
-function cloneTeamRun(run: TeamRunUi): TeamRunUi {
-  return {
-    ...run,
-    agents: run.agents.map((agent) => ({
-      ...agent,
-      logs: [...(agent.logs ?? [])],
-      claims: [...agent.claims],
-      tools: agent.tools.map((tool) => cloneToolTrace(tool)),
-    })),
-    blackboard: {
-      ...run.blackboard,
-      claims: [...run.blackboard.claims],
-      evidence: [...run.blackboard.evidence],
-      decisions: [...run.blackboard.decisions],
-      blockers: [...run.blackboard.blockers],
-      coverage: [...run.blackboard.coverage],
-      tools: run.blackboard.tools.map((tool) => cloneToolTrace(tool)),
-    },
-    votes: [...run.votes],
-  };
-}
-
-function cloneToolTrace(tool: TeamToolTraceUi): TeamToolTraceUi {
-  return {
-    ...tool,
-    calls: [...tool.calls],
-    results: [...tool.results],
-    proposals: [...tool.proposals],
-  };
-}
-
-function seedTeamAgents(run: TeamRunUi, event: TeamRunEvent): TeamRunUi {
-  const configs = event.team?.agents ?? [];
-  let next = run;
-  for (const agent of configs) {
-    if (next.agents.some((item) => item.agentId === agent.id)) continue;
-    next = {
-      ...next,
-      agents: [
-        ...next.agents,
-        {
-          agentId: agent.id,
-          agentName: agent.name,
-          agentRole: agent.role,
-          status: "idle",
-          thinking: "",
-          output: "",
-          logs: [],
-          claims: [],
-          tools: [],
-        },
-      ],
-    };
-  }
-  return next;
-}
 
 
 
 
 
-function upsertTeamTool(tools: TeamToolTraceUi[], tool: TeamToolTraceUi): TeamToolTraceUi[] {
-  const index = tools.findIndex((item) => item.id === tool.id);
-  if (index < 0) return [...tools, tool];
-  const next = [...tools];
-  next[index] = {
-    ...next[index],
-    ...tool,
-    calls: tool.calls.length > 0 ? tool.calls : next[index].calls,
-    results: tool.results.length > 0 ? tool.results : next[index].results,
-    proposals: tool.proposals.length > 0 ? tool.proposals : next[index].proposals,
-  };
-  return next;
-}
 
-function toolTraceFromEvent(event: TeamRunEvent): TeamToolTraceUi {
-  const proposalCount = event.proposals?.length ?? 0;
-  const resultCount = event.results?.length ?? 0;
-  const callCount = event.calls?.length ?? 0;
-  const phase = event.tool_phase ?? event.phase ?? "tools";
-  return {
-    id: `${event.run_id ?? "team"}-tool-${event.round ?? "x"}-${event.agent_id ?? "blackboard"}-${phase}`,
-    phase,
-    title: toolPhaseLabel(phase),
-    status: proposalCount > 0 ? "blocked" : resultCount > 0 ? "completed" : callCount > 0 ? "running" : "completed",
-    summary:
-      proposalCount > 0
-        ? `${proposalCount} proposal${proposalCount === 1 ? "" : "s"} waiting for coordination`
-        : resultCount > 0
-          ? `${resultCount} result${resultCount === 1 ? "" : "s"} published`
-          : callCount > 0
-            ? `${callCount} call${callCount === 1 ? "" : "s"} running`
-            : undefined,
-    calls: event.calls ?? [],
-    results: event.results ?? [],
-    proposals: event.proposals ?? [],
-    createdAt: event.created_at,
-  };
-}
 
-function updateBlackboardFromSnapshot(blackboard: TeamBlackboardTraceUi, event: TeamRunEvent): TeamBlackboardTraceUi {
-  const snapshot = isRecord(event.snapshot) ? event.snapshot : {};
-  const claimGraph = isRecord(snapshot.claim_graph) ? snapshot.claim_graph : {};
-  const coherency = isRecord(snapshot.coherency) ? snapshot.coherency : undefined;
-  return updateBlackboardFromCoherencyObject(
-    {
-      ...blackboard,
-      snapshot,
-      entryCount: numberValue(snapshot.entry_count) ?? blackboard.entryCount,
-      latestSequence: numberValue(snapshot.latest_sequence) ?? blackboard.latestSequence,
-      claims: mergeClaims(blackboard.claims, claimsFromValue(claimGraph.nodes)),
-      evidence: mergeTextItems(blackboard.evidence, textListFromValue(snapshot.evidence)),
-      decisions: mergeTextItems(blackboard.decisions, textListFromValue(snapshot.decisions)),
-      blockers: mergeTextItems(blackboard.blockers, blockerListFromValue(snapshot.blockers)),
-      coverage: coverageFromValue(snapshot.coverage_matrix) ?? blackboard.coverage,
-    },
-    coherency,
-  );
-}
 
-function updateBlackboardFromContract(blackboard: TeamBlackboardTraceUi, event: TeamRunEvent): TeamBlackboardTraceUi {
-  const contract = isRecord(event.contract) ? event.contract : {};
-  const coverage = coverageFromValue(contract.coverage_matrix);
-  const objective = stringValue(contract.objective);
-  return {
-    ...blackboard,
-    claims: objective
-      ? mergeClaims(blackboard.claims, [
-          {
-            id: `${event.run_id ?? "team"}-execution-contract`,
-            type: "objective",
-            text: objective,
-            agentId: event.agent_id,
-            agentName: event.agent_name ?? "Coordinator",
-            status: "active",
-          },
-        ])
-      : blackboard.claims,
-    coverage: coverage ?? blackboard.coverage,
-    nextAction: "Independent round",
-  };
-}
 
-function updateBlackboardFromCoherency(blackboard: TeamBlackboardTraceUi, event: TeamRunEvent): TeamBlackboardTraceUi {
-  return updateBlackboardFromCoherencyObject(blackboard, event.coherency ?? { average: event.coherency_score });
-}
 
-function updateBlackboardFromCoherencyObject(
-  blackboard: TeamBlackboardTraceUi,
-  coherency: unknown,
-): TeamBlackboardTraceUi {
-  if (!isRecord(coherency)) return blackboard;
-  return {
-    ...blackboard,
-    coherencyScore: numberValue(coherency.average) ?? blackboard.coherencyScore,
-    lowCoherencyCount: numberValue(coherency.low_count) ?? blackboard.lowCoherencyCount,
-  };
-}
 
-function blackboardClaimFromEvent(event: TeamRunEvent): TeamClaimTraceUi | undefined {
-  const payload = isRecord(event.payload) ? event.payload : {};
-  const text =
-    stringValue(payload.summary) ??
-    stringValue(payload.blocker) ??
-    stringValue(payload.objective) ??
-    stringValue(payload.decision);
-  if (!text) return undefined;
-  return {
-    id: `${event.run_id ?? "team"}-blackboard-${event.sequence ?? event.created_at ?? text}`,
-    type: event.event_type ?? (payload.blocker ? "blocker" : "claim"),
-    text,
-    agentId: event.agent_id,
-    agentName: event.agent_name,
-    status: "active",
-  };
-}
-
-function claimsFromDelta(delta: unknown): TeamClaimTraceUi[] {
-  if (!isRecord(delta)) return [];
-  return claimsFromValue(delta.nodes);
-}
-
-function claimsFromValue(value: unknown): TeamClaimTraceUi[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter(isRecord).map((node, index) => ({
-    id: stringValue(node.id) ?? `claim-${index}`,
-    type: stringValue(node.type) ?? "claim",
-    text: stringValue(node.text) ?? stringValue(node.summary) ?? "",
-    agentId: stringValue(node.agent_id),
-    agentName: stringValue(node.agent_name),
-    status: stringValue(node.status),
-    confidence: numberValue(node.confidence),
-    coherencyScore: numberValue(node.coherency_score),
-    noveltyScore: numberValue(node.novelty_score),
-  })).filter((claim) => claim.text.trim().length > 0);
-}
-
-function mergeClaims(existing: TeamClaimTraceUi[], incoming: TeamClaimTraceUi[]): TeamClaimTraceUi[] {
-  if (incoming.length === 0) return existing;
-  const claims = [...existing];
-  for (const claim of incoming) {
-    const index = claims.findIndex((item) => item.id === claim.id);
-    if (index >= 0) claims[index] = { ...claims[index], ...claim };
-    else claims.push(claim);
-  }
-  return claims.slice(-24);
-}
-
-function coverageFromValue(value: unknown): TeamCoverageTraceUi[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return value.filter(isRecord).map((item, index) => ({
-    id: stringValue(item.id) ?? `coverage-${index}`,
-    title: stringValue(item.question) ?? stringValue(item.expected_output) ?? stringValue(item.id) ?? `Coverage ${index + 1}`,
-    detail: stringValue(item.status) ?? stringValue(item.owner_agent_id) ?? stringValue(item.owner),
-    ownerAgentId: stringValue(item.owner_agent_id) ?? stringValue(item.owner),
-    status: stringValue(item.status),
-  }));
-}
-
-function upsertTeamVote(votes: TeamTraceEventUi[], event: TeamRunEvent): TeamTraceEventUi[] {
-  const vote: TeamTraceEventUi = {
-    id: `${event.run_id}-vote-${event.round}-${event.agent_id}`,
-    kind: "vote",
-    title: `${event.agent_name ?? "Agent"} ${event.approve ? "approved" : "blocked"}`,
-    detail: event.blocker || event.final_points || `${Math.round((event.confidence ?? 0) * 100)}% confidence`,
-    round: event.round,
-    agentId: event.agent_id,
-    agentName: event.agent_name,
-    status: event.approve ? "approved" : "rejected",
-  };
-  const index = votes.findIndex((item) => item.id === vote.id);
-  if (index < 0) return [...votes, vote];
-  const next = [...votes];
-  next[index] = vote;
-  return next;
-}
-
-function runStatusForEvent(event: TeamRunEvent, current: TeamCompactStatus): TeamCompactStatus {
-  if (event.event === "team_run_completed") return "completed";
-  if (event.event === "team_consensus_failed") return "failed";
-  if (event.event === "team_run_cancelled") return "cancelled";
-  if (event.event === "error" && !event.agent_id) return "failed";
-  if (event.event === "team_run_started") return "running";
-  return current === "idle" ? "running" : current;
-}
-
-function blackboardStatusForEvent(
-  event: TeamRunEvent,
-  runStatus: TeamCompactStatus,
-  current: TeamCompactStatus,
-): TeamCompactStatus {
-  if (runStatus === "completed" || runStatus === "failed" || runStatus === "cancelled") return runStatus;
-  if (
-    event.event === "blackboard_event" ||
-    event.event === "blackboard_snapshot" ||
-    event.event === "claim_graph_delta" ||
-    event.event === "coverage_matrix" ||
-    event.event === "coherency_score" ||
-    event.event === "tool_phase"
-  ) {
-    return "running";
-  }
-  return current === "idle" ? "running" : current;
-}
-
-function phaseForEvent(event: TeamRunEvent) {
-  if (event.event === "coordinator_started" || event.event === "coordinator_completed") return "coordinator";
-  if (event.event === "coordinator_planning_started" || event.event === "coordinator_planning_completed") return "coordinator planning";
-  if (event.event === "debate_started" || event.event === "debate_skipped") return "debate";
-  if (event.event === "adaptive_vote" || event.event === "vote_started" || event.event === "agent_vote") return "vote";
-  if (event.event === "blackboard_event" || event.event === "blackboard_snapshot" || event.event === "claim_graph_delta") return "blackboard";
-  return undefined;
-}
-
-function nextActionForEvent(event: TeamRunEvent) {
-  if (event.event === "execution_contract") return "Independent round";
-  if (event.event === "round_started") return phaseLabel(event.phase) ?? "Agent round";
-  if (event.event === "debate_started") return "Debate";
-  if (event.event === "debate_skipped") return "Vote or coordinator";
-  if (event.event === "adaptive_vote" || event.event === "vote_started") return "Vote";
-  if (event.event === "coordinator_started") return "Coordinator";
-  if (event.event === "team_run_completed") return "Completed";
-  if (event.event === "team_consensus_failed") return "Review blockers";
-  if (event.event === "team_run_cancelled") return "Cancelled";
-  return undefined;
-}
-
-function phaseLabel(phase?: string) {
-  if (!phase) return undefined;
-  return phase.replace(/_/g, " ");
-}
-
-function toolPhaseLabel(phase: string) {
-  return phase.replace(/_/g, " ");
-}
-
-function blockerTextFromEvent(event: TeamRunEvent): string[] {
-  const payload = isRecord(event.payload) ? event.payload : {};
-  const blocker = stringValue(payload.blocker) ?? stringValue(event.blocker);
-  return blocker ? [blocker] : [];
-}
-
-function decisionTextFromEvent(event: TeamRunEvent): string[] {
-  const payload = isRecord(event.payload) ? event.payload : {};
-  const decision = stringValue(payload.decision);
-  return decision ? [decision] : [];
-}
-
-function blockerListFromValue(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => {
-      if (typeof item === "string") return item;
-      if (!isRecord(item)) return "";
-      const payload = isRecord(item.payload) ? item.payload : {};
-      return stringValue(payload.blocker) ?? stringValue(payload.summary) ?? stringValue(item.title) ?? "";
-    })
-    .filter((item) => item.trim().length > 0);
-}
-
-function textListFromValue(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => {
-      if (typeof item === "string") return item;
-      if (!isRecord(item)) return "";
-      return stringValue(item.text) ?? stringValue(item.summary) ?? "";
-    })
-    .filter((item) => item.trim().length > 0);
-}
-
-function mergeTextItems(existing: string[], incoming: string[]): string[] {
-  if (incoming.length === 0) return existing;
-  return Array.from(new Set([...existing, ...incoming])).slice(-16);
-}
 
 function applyTeamTraceEvent(message: ChatMessageUi, event: TeamRunEvent): ChatMessageUi {
   const events = [...message.teamEvents];

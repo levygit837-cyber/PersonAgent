@@ -1,7 +1,7 @@
 import type {
   SessionBrowserElement,
-} from "../../../api/client";
-import type { ToolBlockStatus, ToolBlockUi } from "../../../types/chat";
+} from "../../../../api/client";
+import type { ToolBlockStatus, ToolBlockUi } from "../../../../types/chat";
 import {
   type BrowserElementMetadata,
   type BrowserState,

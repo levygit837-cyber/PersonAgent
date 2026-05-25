@@ -1,13 +1,13 @@
 import { PanelRightClose } from "lucide-react";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { BrowserTabStrip } from "./session-panel/browser-tab-strip";
-import { DetailTabContent, SummaryContent } from "./session-panel/detail-sections";
-import { EmptyPanel, PanelSkeleton } from "./session-panel/shared-ui";
-import { useBrowserTabs } from "./session-panel/use-browser-tabs";
-import { useSessionPanelState } from "./session-panel/use-session-panel-state";
-export { SESSION_PANEL_CACHE_STORAGE_KEY } from "./session-panel/cache";
-export { browserMirrorSrcDoc, sanitizeBrowserMirrorHtml } from "./session-panel/browser-mirror";
+import { BrowserTabStrip } from "./session-panel/components/browser-tab-strip";
+import { DetailTabContent, SummaryContent } from "./session-panel/components/detail-sections";
+import { EmptyPanel, PanelSkeleton } from "./session-panel/components/shared-ui";
+import { useBrowserTabs } from "./session-panel/hooks/use-browser-tabs";
+import { useSessionPanelState } from "./session-panel/hooks/use-session-panel-state";
+export { SESSION_PANEL_CACHE_STORAGE_KEY } from "./session-panel/services/cache";
+export { browserMirrorSrcDoc, sanitizeBrowserMirrorHtml } from "./session-panel/components/browser-mirror";
 import { summaryTab, isBrowserTab } from "./session-panel/helpers";
 
 export function SessionPanel({

@@ -3,7 +3,7 @@ import type {
   SessionBrowserElement,
   SessionBrowserTimelineEvent,
   SessionBrowserView,
-} from "../../../api/client";
+} from "../../../../api/client";
 import {
   type BrowserState,
   type BrowserToolEvent,

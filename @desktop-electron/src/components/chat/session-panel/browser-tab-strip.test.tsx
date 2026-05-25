@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { BrowserTabStrip } from "./browser-tab-strip";
+import { BrowserTabStrip } from "./components/browser-tab-strip";
 import type { BrowserTab } from "./helpers";
 
 function makeTabs(): BrowserTab[] {

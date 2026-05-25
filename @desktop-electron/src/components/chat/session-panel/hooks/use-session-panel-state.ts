@@ -8,16 +8,16 @@
 
 import { useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getSessionPanel } from "../../../api/client";
-import { useAppStore } from "../../../stores/app-store";
-import { useChatStore } from "../../../stores/chat-store";
-import type { SessionUsage } from "../../../types/chat";
-import { emptySessionUsage } from "../../../types/chat";
-import { readSessionPanelCache, persistSessionPanelCache } from "./cache";
+import { getSessionPanel } from "../../../../api/client";
+import { useAppStore } from "../../../../stores/app-store";
+import { useChatStore } from "../../../../stores/chat-store";
+import type { SessionUsage } from "../../../../types/chat";
+import { emptySessionUsage } from "../../../../types/chat";
+import { readSessionPanelCache, persistSessionPanelCache } from "../services/cache";
 import {
   SESSION_PANEL_STREAMING_REFETCH_MS,
   SESSION_PANEL_STALE_MS,
-} from "./helpers";
+} from "../helpers/helpers";
 
 // ---------------------------------------------------------------------------
 // mergeUsage — combine persisted snapshot usage with live streaming usage

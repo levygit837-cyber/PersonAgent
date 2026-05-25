@@ -1,4 +1,4 @@
-import type { SessionBrowserElement } from "../../../api/client";
+import type { SessionBrowserElement } from "../../../../api/client";
 
 export function browserMirrorSrcDoc(
   html: string,

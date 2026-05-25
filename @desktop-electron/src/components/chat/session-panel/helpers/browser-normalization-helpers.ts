@@ -1,4 +1,4 @@
-import type { SessionBrowserElement } from "../../../api/client";
+import type { SessionBrowserElement } from "../../../../api/client";
 
 export function browserCssLabel(value?: string) {
   if (value === "pixel") return "Pixel render";

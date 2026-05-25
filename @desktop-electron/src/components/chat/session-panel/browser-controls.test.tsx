@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { BrowserModeButton, BrowserNavButton } from "./browser-controls";
+import { BrowserModeButton, BrowserNavButton } from "./components/browser-controls";
 
 describe("BrowserNavButton", () => {
   it("renders children and label", () => {

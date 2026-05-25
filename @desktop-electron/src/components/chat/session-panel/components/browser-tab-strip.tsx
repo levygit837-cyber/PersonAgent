@@ -1,13 +1,13 @@
 import { Globe2, Plus, X } from "lucide-react";
-import { cn } from "../../../lib/utils";
+import { cn } from "../../../../lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
-} from "../../ui/dropdown-menu";
-import type { BrowserTab } from "./helpers";
+} from "../../../ui/dropdown-menu";
+import type { BrowserTab } from "../helpers";
 
 export function BrowserTabStrip({
   tabs,

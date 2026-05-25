@@ -1,15 +1,15 @@
 import { Check, ChevronDown } from "lucide-react";
-import type { SessionBrowserCooperationMode, SessionBrowserElement, SessionBrowserView } from "../../../api/client";
-import { cn } from "../../../lib/utils";
-import { Button } from "../../ui/button";
+import type { SessionBrowserCooperationMode, SessionBrowserElement, SessionBrowserView } from "../../../../api/client";
+import { cn } from "../../../../lib/utils";
+import { Button } from "../../../ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
-} from "../../ui/dropdown-menu";
-import { browserRenderedElementStyle, browserTraceBounds } from "./browser-viewport-helpers";
+} from "../../../ui/dropdown-menu";
+import { browserRenderedElementStyle, browserTraceBounds } from "../helpers/browser-viewport-helpers";
 
 export function BrowserCooperationModeMenu({
   value,

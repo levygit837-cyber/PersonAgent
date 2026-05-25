@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { EmptyList, EmptyPanel, PanelSkeleton, SectionTitle } from "./shared-ui";
+import { EmptyList, EmptyPanel, PanelSkeleton, SectionTitle } from "./components/shared-ui";
 
 describe("SectionTitle", () => {
   it("renders icon and title", () => {

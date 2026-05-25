@@ -5,9 +5,9 @@ import type {
   SessionBrowserTimelineEvent,
   SessionBrowserView,
   SessionBrowserViewport,
-} from "../../../api/client";
-import type { ComposerAnnotation } from "../../../stores/chat-store";
-import type { ToolBlockStatus, ToolBlockUi } from "../../../types/chat";
+} from "../../../../api/client";
+import type { ComposerAnnotation } from "../../../../stores/chat-store";
+import type { ToolBlockStatus, ToolBlockUi } from "../../../../types/chat";
 import {
   type BrowserElementMetadata,
   type BrowserState,

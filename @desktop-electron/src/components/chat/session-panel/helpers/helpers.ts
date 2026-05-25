@@ -9,8 +9,8 @@ import type {
   SessionBrowserElement,
   SessionBrowserView,
   SessionBrowserViewport,
-} from "../../../api/client";
-import type { ToolBlockStatus } from "../../../types/chat";
+} from "../../../../api/client";
+import type { ToolBlockStatus } from "../../../../types/chat";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -21,7 +21,7 @@ export type BrowserTab = {
   title: string;
   subtitle?: string;
   closeable: boolean;
-  detail?: import("../session-detail-window").SessionDetailView;
+  detail?: import("../../session-detail-window").SessionDetailView;
   browser?: BrowserState;
 };
 

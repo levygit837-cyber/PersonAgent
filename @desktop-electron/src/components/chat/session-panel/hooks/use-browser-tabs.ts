@@ -18,10 +18,10 @@ import {
   type SessionBrowserCooperationWsEvent,
   type SessionBrowserView,
   type SessionBrowserViewport,
-} from "../../../api/client";
-import type { ComposerAnnotation } from "../../../stores/chat-store";
-import type { ProjectItem, ToolBlockUi } from "../../../types/chat";
-import type { SessionDetailView } from "../session-detail-window";
+} from "../../../../api/client";
+import type { ComposerAnnotation } from "../../../../stores/chat-store";
+import type { ProjectItem, ToolBlockUi } from "../../../../types/chat";
+import type { SessionDetailView } from "../../session-detail-window";
 import {
   browserAnnotationToComposerAnnotation,
   browserTextSelectionToComposerAnnotation,
@@ -31,8 +31,8 @@ import {
   browserVisualEventsFromBlocks,
   localBrowserAnnotation,
   normalizeBrowserUrl,
-} from "./browser-helpers";
-import { browserTabsFromBlocks } from "./browser-tab-helpers";
+} from "../helpers/browser-helpers";
+import { browserTabsFromBlocks } from "../helpers/browser-tab-helpers";
 import {
   browserHasMeaningfulPage,
   browserMeaningfulToolUrl,
@@ -44,7 +44,7 @@ import {
   browserToolShouldSyncDisplayedPage,
   browserToolUrlChanged,
   browserViewFromToolEvent,
-} from "./browser-view-helpers";
+} from "../helpers/browser-view-helpers";
 import {
   type BrowserElementMetadata,
   type BrowserState,
@@ -68,7 +68,7 @@ import {
   rememberBrowserRenderView,
   summaryTab,
   BROWSER_TOOL_VIEW_SETTLE_MS,
-} from "./helpers";
+} from "../helpers/helpers";
 
 export function useBrowserTabs(args: {
   browserToolBlocks: ToolBlockUi[];
