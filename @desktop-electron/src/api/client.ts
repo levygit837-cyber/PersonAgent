@@ -1,8 +1,8 @@
-import { requestJson } from "./client/http";
+import { requestJson, webSocketBaseUrl } from "./client/http";
 export { resolveBackendUrl, fetchBackendText } from "./client/http";
 import { createActionApproval } from "./client/chat-api";
+export type { ActionApprovalPayload } from "./client/chat-api";
 export {
-  ActionApprovalPayload,
   createActionApproval,
   listModels,
   getCodexAuthStatus,
