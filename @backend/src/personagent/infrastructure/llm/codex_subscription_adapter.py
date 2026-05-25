@@ -23,6 +23,7 @@ from personagent.domain.exceptions import (
 from personagent.domain.models.inference_result import InferenceResult, StreamChunk
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.infrastructure.llm.codex_auth import CodexAuthStore
+from personagent.infrastructure.llm.codex_models import CodexModelsCatalog
 from personagent.infrastructure.llm.codex_payload import CodexPayloadBuilder
 from personagent.infrastructure.llm.codex_streaming import CodexStreamParser
 
@@ -67,6 +68,12 @@ class CodexSubscriptionAdapter(LLMBackendRepository):  # type: ignore[misc]
         self.auth_store = CodexAuthStore(codex_home, codex_cli_path=codex_cli_path)
         self._payload_builder = CodexPayloadBuilder(default_model=self.default_model)
         self._stream_parser = CodexStreamParser()
+        self._models_catalog = CodexModelsCatalog(
+            auth_store=self.auth_store,
+            base_url=self.base_url,
+            context_window=self.context_window,
+            models_cache_ttl_seconds=self.models_cache_ttl_seconds,
+        )
         self._client: httpx.AsyncClient | None = None
         self._client_version_cache: str | None = None
         self._remote_models_cache: dict[str, Any] | None = None
@@ -274,7 +281,7 @@ class CodexSubscriptionAdapter(LLMBackendRepository):  # type: ignore[misc]
                 )
                 response.raise_for_status()
                 data = response.json()
-                return self._normalize_models_catalog(data, source="remote")
+                return self._models_catalog.normalize_models_catalog(data, source="remote")
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code != 401 or retried:
                     raise self._http_error(exc, "Codex") from exc
@@ -286,110 +293,19 @@ class CodexSubscriptionAdapter(LLMBackendRepository):  # type: ignore[misc]
                 raise LLMBackendTimeoutError(f"Timeout calling Codex ({self.timeout}s)") from exc
 
     def _read_local_models_cache(self, *, ignore_ttl: bool = False) -> dict[str, Any] | None:
-        path = self.auth_store.models_cache_path
-        if not path.exists():
-            return None
-        if not ignore_ttl and self.models_cache_ttl_seconds > 0:
-            age = time.time() - path.stat().st_mtime
-            if age > self.models_cache_ttl_seconds:
-                return None
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        return self._normalize_models_catalog(data, source="local_cache")
+        return self._models_catalog.read_local_models_cache(ignore_ttl=ignore_ttl)
 
     def _normalize_models_catalog(self, data: Any, *, source: str) -> dict[str, Any]:
-        raw_models = []
-        if isinstance(data, dict):
-            if isinstance(data.get("models"), list):
-                raw_models = data["models"]
-            elif isinstance(data.get("data"), list):
-                raw_models = data["data"]
-        elif isinstance(data, list):
-            raw_models = data
-
-        models = [
-            normalized
-            for item in raw_models
-            if isinstance(item, dict)
-            for normalized in [self._normalize_model(item, source=source)]
-            if normalized is not None
-        ]
-        self._ensure_core_models(models, source=source)
-        return {"object": "list", "provider": "codex", "data": models}
+        return self._models_catalog.normalize_models_catalog(data, source=source)
 
     def _normalize_model(self, item: dict[str, Any], *, source: str) -> dict[str, Any] | None:
-        if item.get("supported_in_api") is False:
-            return None
-        model_id = str(item.get("slug") or item.get("id") or item.get("name") or "").strip()
-        if not model_id:
-            return None
-        label = str(item.get("display_name") or item.get("label") or model_id)
-        context_length = self._int_or_default(item.get("context_window"), self.context_window)
-        capabilities = ["chat", "streaming", "tools", "reasoning_chat"]
-        if item.get("supports_parallel_tool_calls"):
-            capabilities.append("parallel_tool_calls")
-        if item.get("supports_reasoning_summaries"):
-            capabilities.append("reasoning_summaries")
-        if item.get("support_verbosity"):
-            capabilities.append("verbosity")
-        if "vision" in {str(value).lower() for value in item.get("input_modalities") or []}:
-            capabilities.append("image_input")
-
-        return {
-            "id": model_id,
-            "name": label,
-            "provider": "codex",
-            "label": label,
-            "owned_by": "openai",
-            "context_length": context_length,
-            "capabilities": capabilities,
-            "supports_streaming": True,
-            "supports_reasoning": True,
-            "supports_tools": True,
-            "supports_thinking_budget": True,
-            "supported_reasoning_levels": item.get("supported_reasoning_levels") or [
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-            ],
-            "raw": {**item, "source": source, "endpoint": f"{self.base_url}/responses"},
-        }
+        return self._models_catalog.normalize_model(item, source=source)
 
     def _ensure_core_models(self, models: list[dict[str, Any]], *, source: str) -> None:
-        existing = {str(item.get("id")) for item in models}
-        for model_id, label in {
-            "gpt-5.4-mini": "GPT-5.4-Mini",
-            "gpt-5.5": "GPT-5.5",
-        }.items():
-            if model_id in existing:
-                continue
-            models.append(
-                self._normalize_model(
-                    {
-                        "slug": model_id,
-                        "display_name": label,
-                        "context_window": self.context_window,
-                        "supported_in_api": True,
-                        "supported_reasoning_levels": ["low", "medium", "high", "xhigh"],
-                        "supports_reasoning_summaries": True,
-                        "supports_parallel_tool_calls": True,
-                    },
-                    source=f"{source}_fallback",
-                )
-            )
+        self._models_catalog.ensure_core_models(models, source=source)
 
     def _filter_models(self, catalog: dict[str, Any], capability: str | None) -> dict[str, Any]:
-        if not capability:
-            return catalog
-        models = [
-            item
-            for item in catalog.get("data", [])
-            if capability in (item.get("capabilities") or [])
-        ]
-        return {**catalog, "data": models}
+        return self._models_catalog.filter_models(catalog, capability)
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -468,14 +384,6 @@ class CodexSubscriptionAdapter(LLMBackendRepository):  # type: ignore[misc]
             detail=exc.response.text[:500] or exc.response.reason_phrase,
             retry_after=exc.response.headers.get("retry-after"),
         )
-
-    def _safe_error_detail(self, data: dict[str, Any]) -> str:
-        error = data.get("error")
-        if isinstance(error, dict):
-            return str(error.get("message") or error.get("type") or "unknown error")[:300]
-        if isinstance(error, str):
-            return error[:300]
-        return str(data.get("type") or "unknown error")
 
     @staticmethod
     def _int_or_default(value: Any, default: int) -> int:
