@@ -22,17 +22,17 @@ from personagent.infrastructure.browser.content_cleanup import (
 from personagent.infrastructure.browser.content_cleanup import (
     should_prefer_readable_dom as _should_prefer_readable_dom,
 )
+from personagent.infrastructure.browser.content_scripts import (
+    _INCREMENTAL_SCROLL_SCRIPT,
+    _POPUP_DISMISS_SCRIPT,
+    _READABLE_DOM_SCRIPT,
+)
 from personagent.infrastructure.browser.models import (
     BrowserError,
     BrowserOpenedPage,
 )
 from personagent.infrastructure.browser.models import (
     BrowserSession as _BrowserSession,
-)
-from personagent.infrastructure.browser.scripts import (
-    _INCREMENTAL_SCROLL_SCRIPT,
-    _POPUP_DISMISS_SCRIPT,
-    _READABLE_DOM_SCRIPT,
 )
 from personagent.infrastructure.browser.url_utils import (
     clean_browser_url as _clean_browser_url,
