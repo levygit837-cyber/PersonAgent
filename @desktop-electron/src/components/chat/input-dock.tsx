@@ -1,17 +1,15 @@
-import { ArrowUp, BookOpen, Command, FileText, Folder, Globe, ListChecks, Sparkles, Square, Terminal, X } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listBrowserTabMentions, listChatCommands, listSkills, listWorkspaceMentions } from "../../api/client";
 import { useAppStore } from "../../stores/app-store";
-import { useChatStore, type ComposerAnnotation } from "../../stores/chat-store";
-import { useTerminalStore, type TerminalSnippet } from "../../stores/terminal-store";
-import { type ChatCommandInfo } from "../../types/chat";
+import { useChatStore } from "../../stores/chat-store";
+import { useTerminalStore } from "../../stores/terminal-store";
 import { BranchSwitcherButton } from "../git/branch-switcher-button";
 import { Button } from "../ui/button";
 import { FeatureMenu, ModelReasoningSelector, ContextWindowIndicator } from "./input-dock/toolbar";
 import {
   type ComposerMention,
-  type ComposerMentionKind,
   type MentionSuggestion,
   mentionTriggerFromText,
   buildMentionSuggestions,
@@ -25,9 +23,15 @@ import {
   filterSlashCommands,
   buildComposerContextAttachments,
   attachmentOnlyMessage,
-  formatLineRange,
 } from "./input-dock/helpers";
 import { InputTodoDock } from "./input-dock/todo-dock";
+import { ComposerAssist } from "./input-dock/composer-assist";
+import {
+  TerminalSnippetTray,
+  ComposerPlanModeBanner,
+  ComposerAnnotationTray,
+  ComposerMentionTray,
+} from "./input-dock/composer-trays";
 
 export function InputDock({
   compact = false,
@@ -308,258 +312,4 @@ export function InputDock({
       </div>
     </div>
   );
-}
-
-function TerminalSnippetTray({
-  snippet,
-  onRemove,
-}: {
-  snippet: { id: string; content: string } | null;
-  onRemove: () => void;
-}) {
-  if (!snippet) return null;
-
-  return (
-    <div className="flex flex-col gap-1.5 overflow-y-auto border-b border-glass-border/20 px-3 py-2">
-      <div className="group flex min-w-0 items-center gap-2 rounded-xl border border-primary/25 bg-primary/10 px-2.5 py-2 text-left ring-1 ring-primary/10">
-        <span className="shrink-0 rounded-md bg-primary/20 px-2 py-1 font-mono text-[11px] font-semibold text-primary">
-          <Terminal className="inline h-3 w-3" />
-          {" "}@terminal:bash
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-          {snippet.content.slice(0, 120).replace(/\n/g, " ")}
-          {snippet.content.length > 120 ? "..." : ""}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="iconSm"
-          aria-label="Remover terminal snippet"
-          onClick={onRemove}
-          className="h-6 w-6 shrink-0 rounded-lg opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-        >
-          <X className="h-3 w-3" />
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function ComposerPlanModeBanner({ active, onDismiss }: { active: boolean; onDismiss: () => void }) {
-  if (!active) return null;
-
-  return (
-    <div className="flex items-center gap-2 border-b border-amber-400/20 bg-amber-400/10 px-3 py-2 text-amber-100" data-testid="composer-plan-mode">
-      <ListChecks className="h-4 w-4 shrink-0 text-amber-200" />
-      <span className="min-w-0 flex-1 text-xs font-medium">Plan Mode</span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="iconSm"
-        aria-label="Exit Plan Mode"
-        onClick={onDismiss}
-        className="h-6 w-6 shrink-0 rounded-lg text-amber-100 hover:bg-amber-400/15 hover:text-amber-50"
-      >
-        <X className="h-3.5 w-3.5" />
-      </Button>
-    </div>
-  );
-}
-
-function ComposerAnnotationTray({
-  annotations,
-  onRemove,
-}: {
-  annotations: ComposerAnnotation[];
-  onRemove: (id: number) => void;
-}) {
-  if (annotations.length === 0) return null;
-
-  return (
-    <div
-      data-testid="composer-annotations"
-      className="flex max-h-28 flex-col gap-1.5 overflow-y-auto border-b border-glass-border/20 px-3 py-2"
-    >
-      {annotations.map((annotation) => (
-        <div
-          key={annotation.id}
-          className="group flex min-w-0 items-center gap-2 rounded-xl border border-glass-border/35 bg-foreground/[0.045] px-2.5 py-2 text-left ring-1 ring-white/[0.035]"
-          title={annotation.filePath}
-        >
-          <span className="shrink-0 rounded-md bg-foreground/[0.08] px-2 py-1 font-mono text-[11px] font-semibold text-foreground">
-            @Annotation#{annotation.id}
-          </span>
-          <span className="min-w-0 truncate rounded-md bg-background/45 px-2 py-1 font-mono text-[11px] text-foreground/90">
-            {annotation.displayPath}
-          </span>
-          <span className="shrink-0 rounded-md bg-background/45 px-2 py-1 font-mono text-[11px] text-muted-foreground">
-            {annotation.source === "browser" ? "DOM" : `L${formatLineRange(annotation.startLine, annotation.endLine)}`}
-          </span>
-          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-            {annotation.text}
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="iconSm"
-            aria-label={`Remove @Annotation#${annotation.id}`}
-            onClick={() => onRemove(annotation.id)}
-            className="h-6 w-6 shrink-0 rounded-lg opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-          >
-            <X className="h-3 w-3" />
-          </Button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ComposerMentionTray({
-  mentions,
-  onRemove,
-}: {
-  mentions: ComposerMention[];
-  onRemove: (mention: ComposerMention) => void;
-}) {
-  if (mentions.length === 0) return null;
-
-  return (
-    <div
-      data-testid="composer-mentions"
-      className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto border-b border-glass-border/20 px-3 py-2"
-    >
-      {mentions.map((mention) => (
-        <div
-          key={mention.id}
-          className="group flex min-w-0 max-w-full items-center gap-2 rounded-xl border border-primary/25 bg-primary/10 px-2.5 py-1.5 text-left ring-1 ring-primary/10"
-          title={mention.displayPath}
-        >
-          <MentionSuggestionIcon type={mention.type} />
-          <span className="shrink-0 rounded-md bg-primary/15 px-2 py-1 font-mono text-[11px] font-semibold text-primary">
-            {mention.label}
-          </span>
-          <span className="min-w-0 truncate rounded-md bg-background/45 px-2 py-1 font-mono text-[11px] text-foreground/90">
-            {mention.displayPath}
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="iconSm"
-            aria-label={`Remove ${mention.label}`}
-            onClick={() => onRemove(mention)}
-            className="h-6 w-6 shrink-0 rounded-lg opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-          >
-            <X className="h-3 w-3" />
-          </Button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ComposerAssist({
-  disabled,
-  nextStepSuggestion,
-  slashToken,
-  commands,
-  mentionSuggestions,
-  selectedMentionIndex,
-  onPickSuggestion,
-  onPickCommand,
-  onPickMention,
-}: {
-  disabled: boolean;
-  nextStepSuggestion?: string;
-  slashToken: string | null;
-  commands: ChatCommandInfo[];
-  mentionSuggestions: MentionSuggestion[];
-  selectedMentionIndex: number;
-  onPickSuggestion: (value: string) => void;
-  onPickCommand: (command: ChatCommandInfo) => void;
-  onPickMention: (suggestion: MentionSuggestion) => void;
-}) {
-  if (disabled) return null;
-  if (mentionSuggestions.length > 0) {
-    return (
-      <div className="border-b border-glass-border/25 px-2 py-1.5">
-        <div className="max-h-52 overflow-y-auto rounded-xl bg-background/70 p-1 text-popover-foreground">
-          {mentionSuggestions.slice(0, 8).map((suggestion, index) => (
-            <button
-              key={suggestion.id}
-              type="button"
-              data-selected={index === selectedMentionIndex}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                onPickMention(suggestion);
-              }}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-glass/80 hover:text-accent-foreground data-[selected=true]:bg-glass/80 data-[selected=true]:text-accent-foreground"
-            >
-              <MentionSuggestionIcon type={suggestion.type} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">{suggestion.primary}</span>
-                <span className="block truncate text-muted-foreground">{suggestion.secondary}</span>
-              </span>
-              <span className="shrink-0 rounded-md border border-glass-border/35 bg-background/50 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                {suggestion.type}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
-  if (slashToken !== null) {
-    if (commands.length === 0) return null;
-    return (
-      <div className="border-b border-glass-border/25 px-2 py-1.5">
-        <div className="max-h-44 overflow-y-auto rounded-xl bg-background/70 p-1 text-popover-foreground">
-          {commands.slice(0, 6).map((command) => (
-            <button
-              key={`${command.source}:${command.slash_name}`}
-              type="button"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                onPickCommand(command);
-              }}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-glass/80 hover:text-accent-foreground"
-            >
-              <Command className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">{command.slash_name}</span>
-                <span className="block truncate text-muted-foreground">
-                  {command.argument_hint || command.description || command.source}
-                </span>
-              </span>
-              <span className="shrink-0 rounded-md border border-glass-border/35 bg-background/50 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                {command.should_query === false ? "local" : "model"}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
-  if (!nextStepSuggestion) return null;
-  return (
-    <div className="border-b border-glass-border/25 px-2 py-1.5">
-      <button
-        type="button"
-        onMouseDown={(event) => {
-          event.preventDefault();
-          onPickSuggestion(nextStepSuggestion);
-        }}
-        className="flex max-w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-glass/80 hover:text-accent-foreground"
-      >
-        <Sparkles className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">{nextStepSuggestion}</span>
-      </button>
-    </div>
-  );
-}
-
-function MentionSuggestionIcon({ type }: { type: ComposerMentionKind }) {
-  if (type === "directory") return <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
-  if (type === "skill") return <BookOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
-  if (type === "browser_tab") return <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
-  return <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
 }
