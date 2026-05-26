@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import subprocess
-import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,7 +33,7 @@ from personagent.application.qa.contracts import (
     TraceMode,
 )
 from personagent.application.qa.indexer import PythonCodeIndexer
-from personagent.application.qa.redaction import redact_mapping, redact_value
+from personagent.application.qa.redaction import redact_mapping
 from personagent.application.qa.runtime_tracer import PythonRuntimeTracer
 from personagent.domain.exceptions import InvalidRequestError
 from personagent.infrastructure.persistence.models import (
@@ -44,6 +42,23 @@ from personagent.infrastructure.persistence.models import (
     QARequestRunORM,
     QARuntimeEventORM,
     QASessionORM,
+)
+
+from ._mappers import (
+    _code_edge_data,
+    _code_node_data,
+    _request_run_data,
+    _runtime_event_data,
+    _session_data,
+)
+from ._utils import (
+    _GLOBAL_TRACER,
+    _create_worktree,
+    _git_output,
+    _request_payload,
+    _safe_env_profile,
+    _safe_response_text,
+    _source_root,
 )
 
 
@@ -375,155 +390,6 @@ class QASessionService:
             .limit(limit)
         )
         return [_request_run_data(orm) for orm in result.scalars().all()]
-
-
-def _session_data(orm: QASessionORM) -> QASessionData:
-    return QASessionData(
-        id=str(orm.id),
-        repo_root=str(orm.repo_root),
-        sandbox_path=str(orm.sandbox_path) if orm.sandbox_path else None,
-        base_commit=str(orm.base_commit) if orm.base_commit else None,
-        branch_name=str(orm.branch_name) if orm.branch_name else None,
-        branch_mode=str(orm.branch_mode),
-        env_profile=orm.env_profile,
-        trace_mode=TraceMode(str(orm.trace_mode or TraceMode.FUNCTION.value)),
-        agent_id=str(orm.agent_id) if orm.agent_id else None,
-        status=QASessionStatus(str(orm.status or QASessionStatus.ACTIVE.value)),
-        metadata=dict(orm.metadata_ or {}),
-        created_at=orm.created_at,
-        updated_at=orm.updated_at,
-    )
-
-
-def _code_node_data(orm: QACodeNodeORM) -> CodeNodeData:
-    return CodeNodeData(
-        id=str(orm.node_key),
-        kind=orm.kind,
-        name=str(orm.name),
-        file_path=str(orm.file_path) if orm.file_path else None,
-        start_line=orm.start_line,
-        end_line=orm.end_line,
-        metadata=dict(orm.metadata_ or {}),
-    )
-
-
-def _code_edge_data(orm: QACodeEdgeORM) -> CodeEdgeData:
-    return CodeEdgeData(
-        id=str(orm.edge_key),
-        kind=orm.kind,
-        source_id=str(orm.source_node_key),
-        target_id=str(orm.target_node_key),
-        metadata=dict(orm.metadata_ or {}),
-    )
-
-
-def _runtime_event_data(orm: QARuntimeEventORM) -> QARuntimeEventData:
-    return QARuntimeEventData(
-        id=str(orm.event_key),
-        session_id=str(orm.session_id),
-        request_id=str(orm.request_id) if orm.request_id else None,
-        sequence=int(orm.sequence or 0),
-        trace_id=str(orm.trace_id),
-        span_id=str(orm.span_id) if orm.span_id else None,
-        parent_id=str(orm.parent_id) if orm.parent_id else None,
-        event_type=orm.event_type,
-        function=str(orm.function) if orm.function else None,
-        file=str(orm.file_path) if orm.file_path else None,
-        line=orm.line,
-        duration_ms=float(orm.duration_ms) if orm.duration_ms is not None else None,
-        exception=str(orm.exception) if orm.exception else None,
-        sanitized_payload=dict(orm.sanitized_payload or {}),
-        created_at=orm.created_at,
-    )
-
-
-def _request_run_data(orm: QARequestRunORM) -> QARequestRunData:
-    return QARequestRunData(
-        id=str(orm.id),
-        session_id=str(orm.session_id),
-        method=str(orm.method),
-        path=str(orm.path),
-        status=QARequestRunStatus(str(orm.status)),
-        trace_id=str(orm.trace_id or ""),
-        status_code=orm.status_code,
-        duration_ms=float(orm.duration_ms) if orm.duration_ms is not None else None,
-        request=dict(orm.request_payload or {}),
-        response=dict(orm.response_payload or {}),
-        error=str(orm.error) if orm.error else None,
-        created_at=orm.created_at,
-        finished_at=orm.finished_at,
-    )
-
-
-def _request_payload(request: QARequestRunRequest) -> dict[str, Any]:
-    return {
-        "method": request.method.upper(),
-        "path": request.path,
-        "query": redact_mapping(request.query),
-        "headers": redact_mapping(request.headers),
-        "json": redact_value(request.json_body),
-        "body": redact_value(request.body),
-        "trace_mode": (request.trace_mode.value if request.trace_mode else None),
-    }
-
-
-def _safe_response_text(text: str) -> str:
-    return str(redact_value(text, max_string=8_000))
-
-
-def _safe_env_profile(env_profile: dict[str, str] | str | None) -> dict[str, Any] | str | None:
-    if isinstance(env_profile, dict):
-        return dict(redact_mapping(env_profile))
-    return env_profile
-
-
-def _source_root(repo_root: Path) -> Path:
-    for candidate in (
-        repo_root / "@backend" / "src" / "personagent",
-        repo_root / "src" / "personagent",
-        repo_root / "personagent",
-    ):
-        if candidate.exists():
-            return candidate
-    return repo_root
-
-
-def _git_output(cwd: Path, args: list[str]) -> str | None:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
-
-
-def _create_worktree(repo_root: Path, branch_name: str, base_commit: str, session_id: str) -> str:
-    sandbox_root = Path(tempfile.gettempdir()) / "personagent-qa-sessions" / session_id
-    sandbox_root.mkdir(parents=True, exist_ok=True)
-    worktree_path = sandbox_root / "worktree"
-    result = subprocess.run(
-        ["git", "worktree", "add", "-b", branch_name, str(worktree_path), base_commit],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise InvalidRequestError(
-            f"Could not create QA worktree: {result.stderr.strip() or result.stdout.strip()}",
-            code="qa.worktree_failed",
-            http_status=500,
-        )
-    return str(worktree_path)
-
-
-_GLOBAL_TRACER = PythonRuntimeTracer()
 
 
 __all__ = ["QASessionService"]
