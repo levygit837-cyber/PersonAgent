@@ -1,30 +1,22 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useState, type DragEvent } from "react";
 import { ChevronRight, FolderOpen, LayoutGrid, PanelRight, Terminal, X } from "lucide-react";
-import { type DirEntry } from "../../lib/workspace-files";
 import { InputDock } from "./input-dock";
-import { FileViewerPanel, type WorkspaceFileTab } from "./file-viewer-panel";
+import { FileViewerPanel } from "./file-viewer-panel";
 import { MessageFeed } from "./message-feed";
 import { SessionPanel } from "./session-panel";
 import { WorkspacePanel } from "./workspace-panel";
 import { cn, workspaceName } from "../../lib/utils";
 import { useAppStore } from "../../stores/app-store";
-import { ChatStoreProvider, createChatStore, getDefaultChatStore, useChatStore, type ChatStoreApi } from "../../stores/chat-store";
-import { CHAT_SESSION_DRAG_MIME, MAIN_CHAT_PANE_ID, useChatLayoutStore, type ChatPane } from "../../stores/chat-layout-store";
+import { ChatStoreProvider, getDefaultChatStore, useChatStore } from "../../stores/chat-store";
+import { CHAT_SESSION_DRAG_MIME, MAIN_CHAT_PANE_ID, useChatLayoutStore } from "../../stores/chat-layout-store";
 import { useTerminalStore } from "../../stores/terminal-store";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { TerminalPanel, TERMINAL_HEIGHT } from "../terminal/terminal-panel";
 import { GitActionButton } from "../git/git-action-button";
-
-const FILE_VIEWER_TRANSITION_MS = 300;
-const SESSION_PANEL_DEFAULT_WIDTH = 430;
-const SESSION_PANEL_MIN_WIDTH = 320;
-const SESSION_PANEL_MIN_CHAT_WIDTH = 360;
-function clampSessionPanelWidth(width: number) {
-  if (typeof window === "undefined") return width;
-  const maxWidth = Math.max(SESSION_PANEL_MIN_WIDTH, window.innerWidth - SESSION_PANEL_MIN_CHAT_WIDTH);
-  return Math.min(Math.max(width, SESSION_PANEL_MIN_WIDTH), maxWidth);
-}
+import { ManagedSplitPane } from "./chat-workspace/managed-split-pane";
+import { useFileTabs } from "./chat-workspace/use-file-tabs";
+import { useSessionPanelResize, SESSION_PANEL_MIN_WIDTH, SESSION_PANEL_MIN_CHAT_WIDTH } from "./chat-workspace/use-session-panel-resize";
 
 export function ChatWorkspace() {
   const splitPanes = useChatLayoutStore((state) => state.panes);
@@ -90,41 +82,6 @@ export function ChatWorkspace() {
   );
 }
 
-function ManagedSplitPane({ pane, active }: { pane: ChatPane; active: boolean }) {
-  const storeRef = useRef<ChatStoreApi | null>(null);
-  const closePane = useChatLayoutStore((state) => state.closePane);
-  const focusPane = useChatLayoutStore((state) => state.focusPane);
-
-  if (!storeRef.current) {
-    storeRef.current = createChatStore({
-      paneId: pane.id,
-      initialWorkspaceRoot: pane.workspaceRoot,
-      syncWorkspaceSelection: false,
-    });
-  }
-
-  useEffect(() => {
-    const store = storeRef.current;
-    if (!store) return;
-    store.getState().setWorkspaceRoot(pane.workspaceRoot);
-    if (pane.conversationId && store.getState().conversationId !== pane.conversationId) {
-      void store.getState().loadConversation(pane.conversationId, pane.workspaceRoot);
-    }
-  }, [pane.conversationId, pane.workspaceRoot]);
-
-  return (
-    <ChatStoreProvider store={storeRef.current}>
-      <ChatPaneSurface
-        paneId={pane.id}
-        split
-        active={active}
-        onFocus={() => focusPane(pane.id)}
-        onClose={() => closePane(pane.id)}
-      />
-    </ChatStoreProvider>
-  );
-}
-
 export function ChatPaneSurface({
   paneId = MAIN_CHAT_PANE_ID,
   split = false,
@@ -141,20 +98,11 @@ export function ChatPaneSurface({
   onClose?: () => void;
 }) {
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
-  const [sessionPanelWidth, setSessionPanelWidth] = useState(() => clampSessionPanelWidth(SESSION_PANEL_DEFAULT_WIDTH));
-  const [isSessionPanelResizing, setIsSessionPanelResizing] = useState(false);
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false);
-  const sessionPanelResizeCleanupRef = useRef<(() => void) | null>(null);
-  const sessionPanelResizeHandleRef = useRef<HTMLDivElement | null>(null);
-  const sessionPanelResizePointerIdRef = useRef<number | null>(null);
   const terminalOpen = useTerminalStore((state) => state.open);
   const toggleTerminal = useTerminalStore((state) => state.toggleOpen);
   const terminalAvailable = !split && !compact;
   const effectiveTerminalOpen = terminalAvailable && terminalOpen;
-  const [fileTabs, setFileTabs] = useState<WorkspaceFileTab[]>([]);
-  const [activeFilePath, setActiveFilePath] = useState<string | undefined>();
-  const [renderedFileTabs, setRenderedFileTabs] = useState<WorkspaceFileTab[]>([]);
-  const [renderedActiveFilePath, setRenderedActiveFilePath] = useState<string | undefined>();
   const globalSelectedWorkspace = useAppStore((state) => state.selectedWorkspace);
   const paneWorkspaceRoot = useChatStore((state) => state.workspaceRoot);
   const selectedWorkspace = (paneId === MAIN_CHAT_PANE_ID
@@ -163,92 +111,27 @@ export function ChatPaneSurface({
   const conversationTitle = useChatStore((state) => state.conversationTitle);
   const folderLabel = selectedWorkspace ? workspaceName(selectedWorkspace) : "Folder";
   const sessionLabel = conversationTitle || "Session Name";
-  const activeFilePaths = useMemo(() => new Set(fileTabs.map((tab) => tab.path)), [fileTabs]);
-  const fileViewerOpen = fileTabs.length > 0;
-  const fileViewerMounted = fileViewerOpen || renderedFileTabs.length > 0;
-  const visibleFileTabs = fileViewerOpen ? fileTabs : renderedFileTabs;
-  const visibleActiveFilePath = fileViewerOpen ? activeFilePath : renderedActiveFilePath;
 
-  const stopSessionPanelResize = () => {
-    sessionPanelResizeCleanupRef.current?.();
-    sessionPanelResizeCleanupRef.current = null;
-    const resizeHandle = sessionPanelResizeHandleRef.current;
-    const pointerId = sessionPanelResizePointerIdRef.current;
-    sessionPanelResizePointerIdRef.current = null;
-    if (resizeHandle && pointerId !== null) {
-      try {
-        resizeHandle.releasePointerCapture?.(pointerId);
-      } catch {
-        // Ignore browsers that already cleared capture or do not support it.
-      }
-    }
-    setIsSessionPanelResizing(false);
-    if (typeof document !== "undefined") {
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
-  };
+  const {
+    activeFilePaths,
+    fileViewerOpen,
+    fileViewerMounted,
+    visibleFileTabs,
+    visibleActiveFilePath,
+    openWorkspaceFile,
+    closeFileTab,
+    closeFileViewer,
+    resetFileTabs,
+    setActiveFilePath,
+  } = useFileTabs();
 
-  const beginSessionPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    stopSessionPanelResize();
-    setIsSessionPanelResizing(true);
-    if (typeof document !== "undefined") {
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-    }
-
-    const updateWidthFromPointer = (clientX: number) => {
-      setSessionPanelWidth(clampSessionPanelWidth(window.innerWidth - clientX));
-    };
-
-    const stopResize = () => {
-      stopSessionPanelResize();
-    };
-
-    const onPointerMove = (moveEvent: PointerEvent) => {
-      updateWidthFromPointer(moveEvent.clientX);
-    };
-
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", stopResize);
-    window.addEventListener("pointercancel", stopResize);
-    window.addEventListener("blur", stopResize);
-
-    sessionPanelResizeCleanupRef.current = () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", stopResize);
-      window.removeEventListener("pointercancel", stopResize);
-      window.removeEventListener("blur", stopResize);
-    };
-
-    sessionPanelResizePointerIdRef.current = event.pointerId;
-    try {
-      event.currentTarget.setPointerCapture?.(event.pointerId);
-    } catch {
-      // The window listeners still cover the resize interaction if capture fails.
-    }
-    updateWidthFromPointer(event.clientX);
-  };
-
-  const handleSessionPanelResizeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const step = event.shiftKey ? 48 : 24;
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      setSessionPanelWidth((current) => clampSessionPanelWidth(current - step));
-    } else if (event.key === "ArrowRight") {
-      event.preventDefault();
-      setSessionPanelWidth((current) => clampSessionPanelWidth(current + step));
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      setSessionPanelWidth(SESSION_PANEL_MIN_WIDTH);
-    } else if (event.key === "End") {
-      event.preventDefault();
-      setSessionPanelWidth(clampSessionPanelWidth(window.innerWidth));
-    }
-  };
+  const {
+    sessionPanelWidth,
+    isSessionPanelResizing,
+    sessionPanelResizeHandleRef,
+    beginSessionPanelResize,
+    handleSessionPanelResizeKeyDown,
+  } = useSessionPanelResize(sessionPanelOpen);
 
   useEffect(() => {
     if (paneId !== MAIN_CHAT_PANE_ID) return;
@@ -259,72 +142,8 @@ export function ChatPaneSurface({
     if (currentConvId && !appStore.conversationBelongsToWorkspace(currentConvId)) {
       chatStore.startNewConversation();
     }
-    setFileTabs([]);
-    setActiveFilePath(undefined);
-    setRenderedFileTabs([]);
-    setRenderedActiveFilePath(undefined);
-  }, [paneId, selectedWorkspace]);
-
-  useEffect(() => {
-    if (!sessionPanelOpen) {
-      stopSessionPanelResize();
-      return;
-    }
-    setSessionPanelWidth((current) => clampSessionPanelWidth(current));
-    const clampWidth = () => setSessionPanelWidth((current) => clampSessionPanelWidth(current));
-    window.addEventListener("resize", clampWidth);
-    return () => window.removeEventListener("resize", clampWidth);
-  }, [sessionPanelOpen]);
-
-  useEffect(() => {
-    return () => {
-      stopSessionPanelResize();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (fileTabs.length > 0) {
-      setRenderedFileTabs(fileTabs);
-      setRenderedActiveFilePath(activeFilePath ?? fileTabs[0]?.path);
-      return;
-    }
-
-    if (renderedFileTabs.length === 0) return;
-
-    const timeout = window.setTimeout(() => {
-      setRenderedFileTabs([]);
-      setRenderedActiveFilePath(undefined);
-    }, FILE_VIEWER_TRANSITION_MS);
-
-    return () => window.clearTimeout(timeout);
-  }, [activeFilePath, fileTabs, renderedFileTabs.length]);
-
-  const openWorkspaceFile = (entry: DirEntry) => {
-    if (entry.isDirectory) return;
-    setWorkspacePanelOpen(true);
-    setFileTabs((current) => {
-      if (current.some((tab) => tab.path === entry.path)) return current;
-      return [...current, { name: entry.name, path: entry.path }];
-    });
-    setActiveFilePath(entry.path);
-  };
-
-  const closeFileTab = (path: string) => {
-    setFileTabs((current) => {
-      const index = current.findIndex((tab) => tab.path === path);
-      if (index === -1) return current;
-      const next = current.filter((tab) => tab.path !== path);
-      if (activeFilePath === path) {
-        setActiveFilePath(next[Math.max(0, index - 1)]?.path ?? next[0]?.path);
-      }
-      return next;
-    });
-  };
-
-  const closeFileViewer = () => {
-    setFileTabs([]);
-    setActiveFilePath(undefined);
-  };
+    resetFileTabs();
+  }, [paneId, selectedWorkspace, resetFileTabs]);
 
   return (
     <section
