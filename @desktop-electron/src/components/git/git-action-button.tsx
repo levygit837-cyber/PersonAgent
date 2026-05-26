@@ -1,19 +1,15 @@
 import { type ChangeEvent, useState } from "react";
 import {
-  AlertCircle,
-  CheckCircle2,
   FolderX,
   GitBranch,
   GitBranchIcon,
   GitCommit,
   GitPullRequest,
-  History,
   Loader2,
   Sparkles,
   Upload,
 } from "lucide-react";
 import { errorMessage } from "../../api/errors";
-import type { GitRecentAction } from "../../api/client";
 import {
   useGitCommit,
   useGitGenerateCommitMessage,
@@ -31,12 +27,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
-
-type OperationFeedback = {
-  kind: "success" | "error";
-  title: string;
-  detail?: string;
-};
+import type { OperationFeedback } from "./git-action-button/types";
+import { GitStatusSummary } from "./git-action-button/git-status-summary";
+import { MenuFeedback, CommitFeedback } from "./git-action-button/feedback";
+import { RecentActionsSection } from "./git-action-button/recent-actions";
 
 export function GitActionButton({
   workspaceRoot: workspaceRootOverride,
@@ -425,207 +419,4 @@ export function GitActionButton({
       )}
     </>
   );
-}
-
-function GitStatusSummary({
-  hasWorkspace,
-  isLoading,
-  hasRepo,
-  branch,
-  modifiedCount,
-  untrackedCount,
-  hasAhead,
-  hasBehind,
-  status,
-  isDirty,
-}: {
-  hasWorkspace: boolean;
-  isLoading: boolean;
-  hasRepo: boolean;
-  branch: string;
-  modifiedCount: number;
-  untrackedCount: number;
-  hasAhead: boolean;
-  hasBehind: boolean;
-  status?: { ahead: number; behind: number };
-  isDirty: boolean;
-}) {
-  return (
-    <div className="space-y-1.5 px-2 py-2 text-[11px] text-muted-foreground">
-      {!hasWorkspace ? (
-        <div className="flex items-center gap-2 text-muted-foreground/70">
-          <FolderX className="h-3 w-3 shrink-0" />
-          <span>No workspace selected</span>
-        </div>
-      ) : isLoading ? (
-        <div className="flex items-center gap-2">
-          <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-          <span>Loading status...</span>
-        </div>
-      ) : !hasRepo ? (
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <GitBranchIcon className="h-3 w-3 shrink-0 opacity-50" />
-            <span className="font-medium text-foreground">No Git repository</span>
-          </div>
-          <p className="pl-5 text-[10px] leading-4 text-muted-foreground/70">
-            This directory is not a Git repository. Run "git init" or select another workspace.
-          </p>
-        </div>
-      ) : (
-        <>
-          <div className="flex items-center gap-2">
-            <GitBranch className="h-3 w-3 shrink-0" />
-            <span className="font-medium text-foreground">{branch}</span>
-          </div>
-          {(modifiedCount > 0 || untrackedCount > 0) && (
-            <div className="flex items-center gap-2">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warning" />
-              <span>
-                {modifiedCount} modified
-                {untrackedCount > 0 ? `, ${untrackedCount} untracked` : ""}
-              </span>
-            </div>
-          )}
-          {hasAhead && status && (
-            <div className="flex items-center gap-2">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warning" />
-              <span>{status.ahead} commit(s) ahead of remote</span>
-            </div>
-          )}
-          {hasBehind && status && (
-            <div className="flex items-center gap-2">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground" />
-              <span>{status.behind} commit(s) behind remote</span>
-            </div>
-          )}
-          {!isDirty && !hasAhead && !hasBehind && (
-            <div className="flex items-center gap-2">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/70" />
-              <span>Working tree clean</span>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-function MenuFeedback({ feedback }: { feedback: OperationFeedback }) {
-  const success = feedback.kind === "success";
-  return (
-    <div
-      className={[
-        "mx-2 my-2 flex items-start gap-2 rounded-lg border px-2 py-1.5 text-[11px] leading-4",
-        success
-          ? "border-success/30 bg-success/10 text-success"
-          : "border-destructive/30 bg-destructive/10 text-destructive",
-      ].join(" ")}
-    >
-      {success ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" /> : <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />}
-      <div className="min-w-0">
-        <div className="font-medium">{feedback.title}</div>
-        {feedback.detail ? <div className="truncate opacity-80">{feedback.detail}</div> : null}
-      </div>
-    </div>
-  );
-}
-
-function CommitFeedback({ feedback }: { feedback: OperationFeedback }) {
-  const success = feedback.kind === "success";
-  return (
-    <div
-      className={[
-        "mt-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-xs leading-5",
-        success
-          ? "border-success/30 bg-success/10 text-success"
-          : "border-destructive/30 bg-destructive/10 text-destructive",
-      ].join(" ")}
-    >
-      {success ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
-      <div className="min-w-0">
-        <div className="font-medium">{feedback.title}</div>
-        {feedback.detail ? <div className="break-words opacity-80">{feedback.detail}</div> : null}
-      </div>
-    </div>
-  );
-}
-
-function RecentActionsSection({
-  query,
-}: {
-  query: {
-    data?: { actions: GitRecentAction[]; errors?: string[] };
-    isLoading: boolean;
-    isFetching: boolean;
-  };
-}) {
-  const actions = query.data?.actions ?? [];
-  return (
-    <div className="px-2 py-2">
-      <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-        <History className="h-3 w-3" />
-        <span>Recent Actions</span>
-        {query.isFetching ? <Loader2 className="ml-auto h-3 w-3 animate-spin" /> : null}
-      </div>
-      {query.isLoading ? (
-        <div className="flex items-center gap-2 rounded-lg px-2 py-2 text-[11px] text-muted-foreground">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          <span>Loading recent actions...</span>
-        </div>
-      ) : actions.length === 0 ? (
-        <div className="rounded-lg px-2 py-2 text-[11px] text-muted-foreground/75">
-          No recent Git actions found.
-        </div>
-      ) : (
-        <div className="max-h-48 space-y-1 overflow-y-auto pr-1">
-          {actions.slice(0, 8).map((action) => (
-            <RecentActionItem key={`${action.type}:${action.id}`} action={action} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RecentActionItem({ action }: { action: GitRecentAction }) {
-  const content = (
-    <>
-      <RecentActionIcon type={action.type} />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[11px] font-medium text-foreground">{action.title}</div>
-        <div className="truncate text-[10px] text-muted-foreground">
-          {[action.subtitle, formatTimestamp(action.timestamp)].filter(Boolean).join(" · ")}
-        </div>
-      </div>
-    </>
-  );
-  const className =
-    "flex w-full min-w-0 items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-glass/60";
-  if (action.url) {
-    return (
-      <a href={action.url} target="_blank" rel="noreferrer" className={className}>
-        {content}
-      </a>
-    );
-  }
-  return <div className={className}>{content}</div>;
-}
-
-function RecentActionIcon({ type }: { type: string }) {
-  if (type === "push") return <Upload className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
-  if (type === "pr") return <GitPullRequest className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
-  return <GitCommit className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
-}
-
-function formatTimestamp(value?: string | null) {
-  if (!value) return "";
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return "";
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(timestamp));
 }
