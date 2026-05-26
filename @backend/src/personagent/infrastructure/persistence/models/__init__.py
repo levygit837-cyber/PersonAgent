@@ -4,6 +4,15 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from personagent.infrastructure.persistence.models.browser import (
+    BrowserAnnotationORM,
+    BrowserAutomationRunORM,
+    BrowserAutomationStepORM,
+    BrowserCooperationEventORM,
+    BrowserTabORM,
+    BrowserTimelineEventORM,
+    BrowserWorkspaceORM,
+)
 from personagent.infrastructure.persistence.models.core import (
     ConversationORM,
     MessageORM,
@@ -23,13 +32,6 @@ _legacy_spec.loader.exec_module(_legacy)
 
 # Re-export remaining ORM classes from the legacy module.
 # These will be moved into dedicated submodules in follow-up slices.
-BrowserAnnotationORM = _legacy.BrowserAnnotationORM
-BrowserAutomationRunORM = _legacy.BrowserAutomationRunORM
-BrowserAutomationStepORM = _legacy.BrowserAutomationStepORM
-BrowserCooperationEventORM = _legacy.BrowserCooperationEventORM
-BrowserTabORM = _legacy.BrowserTabORM
-BrowserTimelineEventORM = _legacy.BrowserTimelineEventORM
-BrowserWorkspaceORM = _legacy.BrowserWorkspaceORM
 MemoryConsolidationLockORM = _legacy.MemoryConsolidationLockORM
 MemoryDecisionORM = _legacy.MemoryDecisionORM
 MemoryEmbeddingORM = _legacy.MemoryEmbeddingORM
