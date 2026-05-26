@@ -18,6 +18,18 @@ from personagent.infrastructure.persistence.models.core import (
     MessageORM,
     TenantORM,
 )
+from personagent.infrastructure.persistence.models.team_qa import (
+    QAArtifactORM,
+    QACodeEdgeORM,
+    QACodeNodeORM,
+    QARequestRunORM,
+    QARuntimeEventORM,
+    QASessionORM,
+    TaskRecordORM,
+    TeamBlackboardEventORM,
+    TeamMemorySnapshotORM,
+    TeamRunORM,
+)
 
 # The legacy models.py module is shadowed by this package during normal
 # imports.  Load it explicitly so we can re-export classes that have not
@@ -42,17 +54,7 @@ MemoryRecallLogORM = _legacy.MemoryRecallLogORM
 MemorySessionORM = _legacy.MemorySessionORM
 OperationalMemoryChunkORM = _legacy.OperationalMemoryChunkORM
 OperationalMemoryEventORM = _legacy.OperationalMemoryEventORM
-QAArtifactORM = _legacy.QAArtifactORM
-QACodeEdgeORM = _legacy.QACodeEdgeORM
-QACodeNodeORM = _legacy.QACodeNodeORM
-QARequestRunORM = _legacy.QARequestRunORM
-QARuntimeEventORM = _legacy.QARuntimeEventORM
-QASessionORM = _legacy.QASessionORM
 StructuredMemoryItemORM = _legacy.StructuredMemoryItemORM
-TaskRecordORM = _legacy.TaskRecordORM
-TeamBlackboardEventORM = _legacy.TeamBlackboardEventORM
-TeamMemorySnapshotORM = _legacy.TeamMemorySnapshotORM
-TeamRunORM = _legacy.TeamRunORM
 
 __all__ = [
     "BrowserAnnotationORM",
