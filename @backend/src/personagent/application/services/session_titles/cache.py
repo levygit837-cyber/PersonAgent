@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import TYPE_CHECKING
 
+from personagent.application.services.session_titles import SessionTitleResult
 from personagent.application.services.session_titles._common import (
     _is_generic_title,
     _normalize_title,
@@ -14,9 +14,6 @@ from personagent.application.services.session_titles._common import (
 )
 from personagent.domain.conversation.models import Conversation
 from personagent.domain.conversation.repositories import ConversationRepository
-
-if TYPE_CHECKING:
-    from personagent.application.services.session_titles import SessionTitleResult
 
 SESSION_TITLE_CACHE_KEY = "session_title_analysis"
 SESSION_TITLE_CACHE_VERSION = 1

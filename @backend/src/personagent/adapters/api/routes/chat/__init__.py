@@ -48,7 +48,6 @@ from personagent.adapters.api.routes.chat.team_chat import (
 from personagent.adapters.api.routes.chat.team_chat import register_team_chat_routes
 from personagent.adapters.api.routes.chat.tool_approval import register_tool_approval_routes
 from personagent.adapters.composition import get_container as get_container
-from personagent.infrastructure.persistence.database import AsyncSessionLocal as AsyncSessionLocal
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = structlog.get_logger(__name__)
