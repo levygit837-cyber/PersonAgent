@@ -1,26 +1,21 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
-  BookOpen,
   ChevronDown,
   ChevronRight,
-  Code2,
-  Eye,
   File,
   FileCode,
   Folder,
   FolderOpen,
-  PencilLine,
   Plus,
   X,
+  PencilLine,
 } from "lucide-react";
-import hljs from "../../lib/highlight";
 import {
   isCurrentWorkspaceRequest,
   isHidden,
   isPathInside,
   normalizeDirectoryEntries,
-  normalizePath,
   readWorkspaceDirectory,
   readWorkspaceTextFile,
   updateTreeNode,
@@ -33,25 +28,26 @@ import { useAppStore } from "../../stores/app-store";
 import { useChatStore, type ComposerAnnotation } from "../../stores/chat-store";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { MarkdownContent } from "./agent-message";
+import { FileModeActions } from "./file-viewer-panel/file-mode-actions";
+import { HtmlPreview } from "./file-viewer-panel/html-preview";
+import { MarkdownPreview } from "./file-viewer-panel/markdown-preview";
+import { highlightContent, languageFromFilename, splitHighlightedLines } from "./file-viewer-panel/highlight-utils";
+import type { AnnotationDraft, FileLoadState, ViewMode } from "./file-viewer-panel/types";
+import {
+  compactWorkspacePath,
+  defaultViewMode,
+  filterRecord,
+  formatLineRange,
+  lineInRange,
+  normalizeLineRange,
+  rangesOverlap,
+  selectedLinesExcerpt,
+  splitLines,
+} from "./file-viewer-panel/utils";
 
 export interface WorkspaceFileTab {
   name: string;
   path: string;
-}
-
-type ViewMode = "code" | "html" | "markdown";
-
-interface FileLoadState {
-  content?: string;
-  error?: string;
-}
-
-interface AnnotationDraft {
-  id: string;
-  anchorLine: number;
-  focusLine?: number;
-  text: string;
 }
 
 export interface FileAnnotation {
@@ -73,90 +69,6 @@ interface FileViewerPanelProps {
   onCloseTab: (path: string) => void;
   onClose: () => void;
 }
-
-const MAX_HIGHLIGHT_CHARS = 80_000;
-const MAX_HIGHLIGHT_LINES = 1_500;
-
-const EXT_TO_HIGHLIGHT_LANG: Record<string, string> = {
-  bash: "bash",
-  c: "c",
-  cc: "cpp",
-  cjs: "javascript",
-  clj: "clojure",
-  cpp: "cpp",
-  cs: "csharp",
-  css: "css",
-  csv: "plaintext",
-  cxx: "cpp",
-  dart: "dart",
-  diff: "diff",
-  dockerfile: "dockerfile",
-  ex: "elixir",
-  exs: "elixir",
-  go: "go",
-  h: "c",
-  hpp: "cpp",
-  hs: "haskell",
-  htm: "xml",
-  html: "xml",
-  java: "java",
-  js: "javascript",
-  json: "json",
-  jsx: "javascript",
-  kt: "kotlin",
-  kts: "kotlin",
-  less: "less",
-  lua: "lua",
-  md: "markdown",
-  mjs: "javascript",
-  php: "php",
-  pl: "perl",
-  ps1: "powershell",
-  py: "python",
-  rb: "ruby",
-  rs: "rust",
-  sass: "scss",
-  scala: "scala",
-  scss: "scss",
-  sh: "bash",
-  sql: "sql",
-  svelte: "xml",
-  swift: "swift",
-  toml: "ini",
-  ts: "typescript",
-  tsx: "typescript",
-  txt: "plaintext",
-  vue: "xml",
-  xml: "xml",
-  yaml: "yaml",
-  yml: "yaml",
-  zsh: "bash",
-};
-
-const FILENAME_TO_HIGHLIGHT_LANG: Record<string, string> = {
-  ".dockerignore": "plaintext",
-  ".env": "ini",
-  ".eslintrc": "json",
-  ".gitattributes": "plaintext",
-  ".gitignore": "plaintext",
-  ".prettierrc": "json",
-  "cmakelists.txt": "cmake",
-  "dockerfile": "dockerfile",
-  "gemfile": "ruby",
-  "go.mod": "go",
-  "go.sum": "go",
-  "makefile": "makefile",
-  "package-lock.json": "json",
-  "package.json": "json",
-  "pipfile": "toml",
-  "pnpm-lock.yaml": "yaml",
-  "pyproject.toml": "toml",
-  "requirements.txt": "plaintext",
-  "tsconfig.json": "json",
-  "vite.config.js": "javascript",
-  "vite.config.ts": "typescript",
-  "yarn.lock": "yaml",
-};
 
 export function FileViewerPanel({
   tabs,
@@ -487,9 +399,7 @@ export function FileViewerPanel({
         ) : activeMode === "html" ? (
           <HtmlPreview content={activeContent} fileName={activeTab.name} />
         ) : activeMode === "markdown" ? (
-          <div className="h-full overflow-y-auto bg-card/95 px-5 py-4">
-            <MarkdownContent content={activeContent} />
-          </div>
+          <MarkdownPreview content={activeContent} />
         ) : (
           <FileCodeContent
             content={activeContent}
@@ -505,75 +415,6 @@ export function FileViewerPanel({
         )}
       </div>
     </aside>
-  );
-}
-
-function FileModeActions({
-  fileName,
-  mode,
-  onModeChange,
-}: {
-  fileName: string;
-  mode: ViewMode;
-  onModeChange: (mode: ViewMode) => void;
-}) {
-  const html = isHtmlFile(fileName);
-  const markdown = isMarkdownFile(fileName);
-
-  if (!html && !markdown) return null;
-
-  return (
-    <div className="flex shrink-0 items-center gap-1 border-l border-glass-border/25 pl-2">
-      {html ? (
-        <>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={mode === "html" ? "secondary" : "ghost"}
-                size="iconSm"
-                aria-label="Preview HTML"
-                onClick={() => onModeChange("html")}
-                className="rounded-xl"
-              >
-                <Eye className="h-3.5 w-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Preview HTML</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={mode === "code" ? "secondary" : "ghost"}
-                size="iconSm"
-                aria-label="View code"
-                onClick={() => onModeChange("code")}
-                className="rounded-xl"
-              >
-                <Code2 className="h-3.5 w-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>View code</TooltipContent>
-          </Tooltip>
-        </>
-      ) : null}
-
-      {markdown ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={mode === "markdown" ? "secondary" : "ghost"}
-              size="iconSm"
-              aria-label="Markdown preview"
-              onClick={() => onModeChange(mode === "markdown" ? "code" : "markdown")}
-              className="rounded-xl"
-            >
-              <BookOpen className="h-3.5 w-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Markdown preview</TooltipContent>
-        </Tooltip>
-      ) : null}
-    </div>
   );
 }
 
@@ -760,17 +601,6 @@ function FileCodeContent({
         </tbody>
       </table>
     </div>
-  );
-}
-
-function HtmlPreview({ content, fileName }: { content: string; fileName: string }) {
-  return (
-    <iframe
-      title={`Preview ${fileName}`}
-      srcDoc={content}
-      sandbox="allow-scripts"
-      className="h-full w-full border-0 bg-white"
-    />
   );
 }
 
@@ -962,118 +792,4 @@ function PickerEmpty({ text }: { text: string }) {
       {text}
     </div>
   );
-}
-
-function highlightContent(content: string, language: string) {
-  if (shouldSkipHighlight(content, language)) return escapeHtml(content);
-  try {
-    const lang = hljs.getLanguage(language) ? language : "plaintext";
-    return hljs.highlight(content, { language: lang }).value;
-  } catch {
-    return escapeHtml(content);
-  }
-}
-
-function shouldSkipHighlight(content: string, language: string) {
-  if (language === "plaintext") return true;
-  if (content.length > MAX_HIGHLIGHT_CHARS) return true;
-  if (splitLines(content).length > MAX_HIGHLIGHT_LINES) return true;
-  return false;
-}
-
-function splitHighlightedLines(html: string): string[] {
-  const raw = html.split("\n");
-  const result: string[] = [];
-  const openSpans: string[] = [];
-
-  for (const line of raw) {
-    const prefix = openSpans.join("");
-    const enriched = prefix + line;
-    const opens = line.match(/<span[^>]*>/g) || [];
-    const closes = line.match(/<\/span>/g) || [];
-
-    for (const tag of opens) openSpans.push(tag);
-    for (let index = 0; index < closes.length; index += 1) openSpans.pop();
-
-    result.push(enriched + "</span>".repeat(openSpans.length));
-  }
-
-  return result;
-}
-
-function splitLines(content: string) {
-  return content.length === 0 ? [""] : content.replace(/\r\n/g, "\n").split("\n");
-}
-
-function escapeHtml(text: string) {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function languageFromFilename(fileName: string) {
-  const lower = fileName.toLowerCase();
-  const known = FILENAME_TO_HIGHLIGHT_LANG[lower];
-  if (known) return hljs.getLanguage(known) ? known : "plaintext";
-  const ext = lower.split(".").pop();
-  const lang = ext ? EXT_TO_HIGHLIGHT_LANG[ext] : undefined;
-  return lang && hljs.getLanguage(lang) ? lang : "plaintext";
-}
-
-function isHtmlFile(fileName: string) {
-  const lower = fileName.toLowerCase();
-  return lower.endsWith(".html") || lower.endsWith(".htm");
-}
-
-function isMarkdownFile(fileName: string) {
-  const lower = fileName.toLowerCase();
-  return lower.endsWith(".md") || lower.endsWith(".mdx") || lower === "readme";
-}
-
-function normalizeLineRange(first: number, second: number) {
-  return {
-    start: Math.min(first, second),
-    end: Math.max(first, second),
-  };
-}
-
-function lineInRange(line: number, start: number, end: number) {
-  return line >= start && line <= end;
-}
-
-function rangesOverlap(first: { start: number; end: number }, second: { start: number; end: number }) {
-  return first.start <= second.end && second.start <= first.end;
-}
-
-function formatLineRange(start: number, end: number) {
-  return start === end ? String(start) : `${start}-${end}`;
-}
-
-function selectedLinesExcerpt(content: string, startLine: number, endLine: number) {
-  const lines = splitLines(content);
-  return lines
-    .slice(startLine - 1, endLine)
-    .map((line, index) => `${startLine + index}: ${line}`)
-    .join("\n");
-}
-
-function defaultViewMode(fileName: string): ViewMode {
-  return isHtmlFile(fileName) ? "html" : "code";
-}
-
-function compactWorkspacePath(path: string, workspaceRoot?: string) {
-  if (!workspaceRoot) return path;
-  const normalizedPath = normalizePath(path);
-  const normalizedRoot = normalizePath(workspaceRoot);
-  if (normalizedPath === normalizedRoot) return ".";
-  if (normalizedPath.startsWith(`${normalizedRoot}/`)) {
-    return normalizedPath.slice(normalizedRoot.length + 1);
-  }
-  return path;
-}
-
-function filterRecord<T>(record: Record<string, T>, allowed: Set<string>) {
-  const next: Record<string, T> = {};
-  for (const [key, value] of Object.entries(record)) {
-    if (allowed.has(key)) next[key] = value;
-  }
-  return next;
 }
