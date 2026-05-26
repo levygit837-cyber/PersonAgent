@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
-import base64
 import json
-import sys
-import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -25,11 +20,12 @@ from personagent.domain.exceptions import (
 )
 from personagent.domain.models.inference_result import InferenceResult, StreamChunk
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
+from personagent.infrastructure.llm.kimi_auth import KimiTokenManager
 
 logger = structlog.get_logger(__name__)
 
 DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1"
-TOKEN_SYNC_SCRIPT = Path(__file__).resolve().parent.parent.parent.parent.parent.parent / "scripts" / "kimi_token_sync.py"
+
 DEFAULT_MODEL = "kimi-for-coding"
 DEFAULT_OUTPUT_TOKENS = 32768
 DEFAULT_CONTEXT_WINDOW = 262144
@@ -74,7 +70,7 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
         anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key.strip()
+        self._token_manager = KimiTokenManager(api_key=api_key)
         self.timeout = timeout
         self.stream_read_timeout = self._normalize_stream_read_timeout(stream_read_timeout)
         self.default_model = default_model
@@ -82,7 +78,7 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
         self.context_window = context_window
         self.anthropic_version = anthropic_version
         self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {self._token_manager.api_key}",
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             "anthropic-version": self.anthropic_version,
@@ -90,62 +86,25 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
         self._client: httpx.AsyncClient | None = None
 
     async def _try_auto_refresh_token(self) -> bool:
-        """Run the external sync script to refresh the Kimi CLI token."""
-        if not TOKEN_SYNC_SCRIPT.exists():
-            logger.debug("kimi_token_sync.py not found, skipping auto-refresh")
-            return False
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable,
-                str(TOKEN_SYNC_SCRIPT),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=35)
-            if proc.returncode != 0:
-                logger.warning("kimi_token_sync failed", stderr=stderr.decode()[:200])
-                return False
-            # Re-read token from credentials file
-            creds_path = Path.home() / ".kimi" / "credentials" / "kimi-code.json"
-            if creds_path.exists():
-                with open(creds_path) as f:
-                    creds = json.load(f)
-                new_token = creds.get("access_token", "").strip()
-                if new_token and new_token != self.api_key:
-                    self.api_key = new_token
-                    self.headers["Authorization"] = f"Bearer {self.api_key}"
-                    # Reset client so it picks up new headers
-                    if self._client is not None and not self._client.is_closed:
-                        await self._client.aclose()
-                    self._client = None
-                    logger.info("kimi_token_sync refreshed access token")
-                    return True
-            return False
-        except Exception as exc:
-            logger.warning("kimi_token_sync exception", exc=exc)
-            return False
+        """Proxy to KimiTokenManager — preserves backward compatibility."""
+        refreshed = await self._token_manager.try_auto_refresh()
+        if refreshed:
+            self.headers["Authorization"] = f"Bearer {self._token_manager.api_key}"
+            if self._client is not None and not self._client.is_closed:
+                await self._client.aclose()
+            self._client = None
+        return refreshed
 
     def _is_token_expired(self) -> bool:
-        """Decode JWT exp claim without verification."""
-        if not self.api_key:
-            return True
-        try:
-            payload_b64 = self.api_key.split(".")[1]
-            padding = 4 - len(payload_b64) % 4
-            if padding != 4:
-                payload_b64 += "=" * padding
-            payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-            exp = payload.get("exp", 0)
-            return time.time() > (exp - 300)  # Refresh if expires in < 5 min
-        except Exception:
-            return True
+        """Proxy to KimiTokenManager — preserves backward compatibility."""
+        return self._token_manager.is_expired()
 
     async def _get_client(self) -> httpx.AsyncClient:
-        if not self.api_key:
+        if not self._token_manager.api_key:
             raise LLMBackendConnectionError("KIMI_API_KEY is not configured")
-        if self._is_token_expired():
+        if self._token_manager.is_expired():
             await self._try_auto_refresh_token()
-        if not self.api_key:
+        if not self._token_manager.api_key:
             raise LLMBackendConnectionError("KIMI_API_KEY is not configured and auto-refresh failed")
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
