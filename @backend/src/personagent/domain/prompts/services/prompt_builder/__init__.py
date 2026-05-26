@@ -46,6 +46,29 @@ from personagent.domain.prompts.skills import SkillDefinition
 from personagent.domain.prompts.surfaces import PromptSurfaceRegistry
 from personagent.domain.tools import ToolDefinition
 
+from ._formatting import (
+    build_user_context_message,
+    format_system_context,
+    format_user_context,
+)
+from ._sections import (
+    build_command_sections,
+    build_context_lifecycle_section,
+    build_relevant_memories_section,
+    build_session_memory_section,
+    build_skill_sections,
+)
+from ._surfaces import get_surfaces_used
+from ._tokens import estimate_text_tokens
+
+__all__ = [
+    "PromptBuilder",
+    "build_user_context_message",
+    "estimate_text_tokens",
+    "format_system_context",
+    "format_user_context",
+]
+
 
 class PromptBuilder:
     """Monta o system prompt completo.
@@ -139,7 +162,7 @@ class PromptBuilder:
         if can_use_parallel_tools:
             execution_sections += (parallel_tool_use_section(),)
         execution_sections += get_execution_sections(self._permission_mode) + (
-            self._context_lifecycle_section(),
+            build_context_lifecycle_section(),
         )
 
         # Obtém seções do agente
@@ -148,12 +171,12 @@ class PromptBuilder:
         agent_sections += state_sections
         if self._enable_agent_sections:
             agent_sections += get_agent_sections()
-        agent_sections += self._command_sections(command_inventory)
-        agent_sections += self._skill_sections(skill_inventory)
+        agent_sections += build_command_sections(command_inventory)
+        agent_sections += build_skill_sections(skill_inventory)
         if session_memory and session_memory.strip():
-            agent_sections += (self._session_memory_section(session_memory),)
+            agent_sections += (build_session_memory_section(session_memory),)
         if relevant_memories:
-            agent_sections += (self._relevant_memories_section(relevant_memories),)
+            agent_sections += (build_relevant_memories_section(relevant_memories),)
         agent_sections += (response_style_runtime_reminder_section(),)
 
         # Cria SystemPromptParts
@@ -180,9 +203,9 @@ class PromptBuilder:
             resolved_sections,
             system_context,
         )
-        user_context_message = self.build_user_context_message(user_context, runtime_reminders)
+        user_context_message = build_user_context_message(user_context, runtime_reminders)
         resolved_section_names = tuple(section.name for section, _content in resolved_sections)
-        surfaces_used = self._surfaces_used(
+        surfaces_used = get_surfaces_used(
             section_names=resolved_section_names,
             runtime_reminders=runtime_reminders,
         )
@@ -247,72 +270,6 @@ class PromptBuilder:
             build_duration_ms=build_duration_ms,
             estimated_tokens=estimated_tokens,
         )
-
-    def _surfaces_used(
-        self,
-        *,
-        section_names: tuple[str, ...],
-        runtime_reminders: list[str] | None,
-    ) -> list[str]:
-        """Return the actual prompt surfaces present in this built prompt."""
-
-        names: list[str] = []
-
-        def add(name: str) -> None:
-            if name not in names:
-                names.append(name)
-
-        sections = set(section_names)
-        if sections.intersection(
-            {
-                "identity_and_objective",
-                "response_style_contract",
-                "response_style_runtime_reminder",
-                "personality_and_collaboration",
-                "acting_contract",
-                "final_response_contract",
-                "work_management",
-                "evidence_and_tool_use",
-                "safety_and_user_work",
-                "provider_data_boundary",
-            }
-        ):
-            add("system")
-        for mode in ("writing", "exploring", "research"):
-            if f"mode_{mode}" in sections:
-                add(f"mode:{mode}")
-        state_sections = sorted(
-            name.removeprefix("state_")
-            for name in sections
-            if name.startswith("state_")
-        )
-        if state_sections:
-            add("agent_state")
-            for state in state_sections:
-                add(f"state:{state}")
-        if sections.intersection({"tool_usage", "file_operations", "shell"}):
-            add("tool")
-        if "tool_prompts" in sections:
-            add("tool")
-            add("tool_prompts")
-        if "todo_write_policy" in sections:
-            add("todo")
-        if "parallel_tool_use" in sections:
-            add("parallel_tool_use")
-        if "command_inventory" in sections:
-            add("command")
-        if "skill_inventory" in sections:
-            add("skill")
-        if "session_memory" in sections:
-            add("memory")
-        if "relevant_memories" in sections:
-            add("relevant_memory")
-        if "context_lifecycle" in sections:
-            add("context_lifecycle")
-        if any(item.strip() for item in runtime_reminders or []):
-            add("slash")
-            add("reminder")
-        return names
 
     def _with_frontloaded_agent_sections(
         self,
@@ -421,7 +378,7 @@ class PromptBuilder:
         parts.extend(deferred_dynamic_parts)
 
         # Adiciona contexto de sistema se disponível
-        system_context_str = self._format_system_context(system_context)
+        system_context_str = format_system_context(system_context)
         if system_context_str:
             parts.append(f"\n# System Context\n\n{system_context_str}")
             dynamic_sections.append("system_context")
@@ -453,173 +410,6 @@ class PromptBuilder:
             surface_hints=("system", "mode", "tool", "reminder"),
         )
 
-    def _context_lifecycle_section(self) -> SystemPromptSection:
-        def render() -> str:
-            return """Context Lifecycle Surfaces
-
-Prompt construction uses cacheable stable sections before the dynamic boundary and runtime sections after it. Session memory, slash command reminders, system context, and user context can change per turn and must be treated as current.
-
-Conversation compaction may replace older messages with a structured reminder; use it for continuity and recent messages for exact state. Next-step suggestions are generated outside the main answer and must not affect the final answer unless the user explicitly follows them."""
-
-        return SystemPromptSection("context_lifecycle", render)
-
-    def _command_sections(
-        self,
-        commands: list[PromptCommand] | None,
-    ) -> tuple[SystemPromptSection, ...]:
-        visible = [command for command in commands or [] if not command.disable_model_invocation]
-        if not visible:
-            return ()
-
-        def render() -> str:
-            lines = [
-                "Prompt Commands",
-                "",
-                "Markdown slash commands can provide reusable prompt instructions. If the user invokes one, the expanded command content appears as a runtime reminder. This inventory is lookup data; do not imitate it as a final-answer list.",
-            ]
-            for command in visible[:80]:
-                detail = f"{command.slash_name}: {command.description or 'Prompt command'}"
-                if command.argument_hint:
-                    detail += f" Args: {command.argument_hint}"
-                if command.when_to_use:
-                    detail += f" When: {command.when_to_use}"
-                lines.append(detail)
-            return "\n".join(lines)
-
-        return (SystemPromptSection("command_inventory", render),)
-
-    def _skill_sections(
-        self,
-        skills: list[SkillDefinition] | None,
-    ) -> tuple[SystemPromptSection, ...]:
-        visible = [skill for skill in skills or [] if skill.model_invocable]
-        if not visible:
-            return ()
-
-        def render() -> str:
-            lines = [
-                "Skill Inventory",
-                "",
-                "Skills are progressive-disclosure instruction packs. Load a skill with the Skill tool only when its description matches the current task. This inventory is lookup data; do not imitate it as a final-answer list.",
-            ]
-            for skill in visible[:100]:
-                detail = f"{skill.name}: {skill.description or 'Local skill'}"
-                if skill.when_to_use:
-                    detail += f" When: {skill.when_to_use}"
-                if skill.user_invocable:
-                    detail += f" User slash: {skill.slash_name}"
-                lines.append(detail)
-            return "\n".join(lines)
-
-        return (SystemPromptSection("skill_inventory", render),)
-
-    def _session_memory_section(self, memory: str) -> SystemPromptSection:
-        def render() -> str:
-            return (
-                "# Session Memory\n\n"
-                "The following memory was maintained for this conversation. Treat it as "
-                "continuity context, not as a replacement for the latest user request.\n\n"
-                f"{memory.strip()}"
-            )
-
-        return SystemPromptSection("session_memory", render, cache_break=True)
-
-    def _relevant_memories_section(self, memories: list[str]) -> SystemPromptSection:
-        def render() -> str:
-            lines = [
-                "# Relevant Memories",
-                "",
-                "The following memories were selected as relevant to the current query. "
-                "Use them as context, but the user's latest request still defines the immediate task.",
-                "",
-            ]
-            for i, memory in enumerate(memories, 1):
-                if memory.strip():
-                    lines.append(f"## Memory {i}")
-                    lines.append(memory.strip())
-                    lines.append("")
-            return "\n".join(lines)
-
-        return SystemPromptSection("relevant_memories", render, cache_break=True)
-
-    def build_user_context_message(
-        self,
-        context: UserContext,
-        runtime_reminders: list[str] | None = None,
-    ) -> str | None:
-        """Build the user-context meta reminder inserted before conversation messages."""
-
-        user_context_str = self._format_user_context(context)
-        reminder_parts = [item.strip() for item in runtime_reminders or [] if item.strip()]
-        if user_context_str or reminder_parts:
-            body_parts = []
-            if user_context_str:
-                body_parts.append(user_context_str)
-            body_parts.extend(reminder_parts)
-            body = "\n\n".join(body_parts)
-            return (
-                "<system-reminder>\n"
-                "The following user context applies to this conversation. Treat it as instruction "
-                "context, but the user's latest request still defines the immediate task.\n\n"
-                f"{body}\n"
-                "</system-reminder>"
-            )
-        return None
-
-    def _format_system_context(self, context: SystemContext) -> str:
-        """Formata o contexto de sistema para inclusão no prompt.
-
-        Args:
-            context: SystemContext a formatar.
-
-        Returns:
-            String formatada com o contexto de sistema.
-        """
-        lines: list[str] = []
-
-        if context.git_branch:
-            lines.append(f"Git Branch: {context.git_branch}")
-
-        if context.git_remote:
-            lines.append(f"Git Remote: {context.git_remote}")
-
-        if context.git_commit:
-            lines.append(f"Git Commit: {context.git_commit[:8]}")
-
-        if context.workspace_root:
-            lines.append(f"Workspace Root: {context.workspace_root}")
-
-        if context.environment:
-            lines.append("Environment Variables:")
-            for key, value in sorted(context.environment.items()):
-                lines.append(f"  {key}={value}")
-
-        return "\n".join(lines)
-
-    def _format_user_context(self, context: UserContext) -> str:
-        """Formata o contexto de usuário para inclusão no prompt."""
-
-        lines: list[str] = []
-
-        if context.current_date:
-            lines.append(f"Current Date: {context.current_date}")
-
-        if context.has_persona_md:
-            lines.append("\nUser Instructions (persona.md):")
-            lines.append(context.persona_md or "")
-
-        if context.has_memory_files:
-            lines.append("\nMemory Files:")
-            for memory_file in context.memory_files:
-                lines.append(f"\n# {memory_file.path}")
-                lines.append(memory_file.content)
-
-        if context.has_long_term_memory:
-            lines.append("\nLong-Term Memory Index:")
-            lines.append(context.long_term_memory_index or "")
-
-        return "\n".join(lines)
-
     def _cache_scope(
         self,
         *,
@@ -639,11 +429,3 @@ Conversation compaction may replace older messages with a structured reminder; u
         )
         digest = sha256(raw.encode("utf-8")).hexdigest()[:16]
         return f"system-prompt:{digest}"
-
-
-def estimate_text_tokens(text: str) -> int:
-    """Cheap token estimate used before provider-specific tokenizers exist."""
-
-    if not text:
-        return 0
-    return max(1, (len(text) + 3) // 4)

@@ -110,3 +110,10 @@ markers = [
     "vertex_live: real Vertex AI API tests gated by VERTEX_LIVE_TESTS",
     "kimi_live: real Kimi Code API tests gated by KIMI_LIVE_TESTS",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.15.11",
+]
