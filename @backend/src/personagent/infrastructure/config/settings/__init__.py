@@ -1,18 +1,24 @@
 """Configuração centralizada do sistema (.env + YAML)."""
 
-import json
-import os
-from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
-import yaml
-from dotenv import dotenv_values
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ._browser import SettingsBrowserMixin
+from ._core import get_project_root, get_settings, reset_settings
+from ._memory import SettingsMemoryMixin
+from ._properties import SettingsPropertiesMixin
+from ._yaml import SettingsYamlMixin
 
-class Settings(BaseSettings):
+
+class Settings(
+    BaseSettings,
+    SettingsBrowserMixin,
+    SettingsMemoryMixin,
+    SettingsPropertiesMixin,
+    SettingsYamlMixin,
+):
     """Configuração da aplicação com suporte a .env e YAML."""
 
     model_config = SettingsConfigDict(
@@ -360,283 +366,10 @@ class Settings(BaseSettings):
         alias="CHAT_SESSION_TITLE_SIMILARITY_THRESHOLD",
     )
 
-    # --- Sistema de Memória Inteligente ---
-    auto_memory_enabled: bool = Field(default=False, alias="AUTO_MEMORY_ENABLED")
-    memory_recall_enabled: bool = Field(default=True, alias="MEMORY_RECALL_ENABLED")
-    extract_memories_enabled: bool = Field(default=True, alias="EXTRACT_MEMORIES_ENABLED")
-    auto_dream_enabled: bool = Field(default=False, alias="AUTO_DREAM_ENABLED")
-    team_memory_enabled: bool = Field(default=False, alias="TEAM_MEMORY_ENABLED")
-    auto_memory_directory: str | None = Field(default=None, alias="AUTO_MEMORY_DIRECTORY")
-    extract_memories_throttle_turns: int = Field(default=1, alias="EXTRACT_MEMORIES_THROTTLE_TURNS")
-    auto_dream_min_hours: int = Field(default=24, alias="AUTO_DREAM_MIN_HOURS")
-    auto_dream_min_sessions: int = Field(default=5, alias="AUTO_DREAM_MIN_SESSIONS")
-    memory_max_files: int = Field(default=200, alias="MEMORY_MAX_FILES")
-    memory_max_lines_per_file: int = Field(default=200, alias="MEMORY_MAX_LINES_PER_FILE")
-    memory_max_bytes_per_file: int = Field(default=25_000, alias="MEMORY_MAX_BYTES_PER_FILE")
-    memory_max_recall_per_query: int = Field(default=5, alias="MEMORY_MAX_RECALL_PER_QUERY")
-    memory_recall_max_tokens: int = Field(default=256, alias="MEMORY_RECALL_MAX_TOKENS")
-    memory_extract_max_turns: int = Field(default=5, alias="MEMORY_EXTRACT_MAX_TURNS")
-    memory_extract_max_tokens: int = Field(default=2048, alias="MEMORY_EXTRACT_MAX_TOKENS")
-    operational_memory_enabled: bool = Field(default=True, alias="OPERATIONAL_MEMORY_ENABLED")
-    operational_memory_capture_tools_enabled: bool = Field(
-        default=True,
-        alias="OPERATIONAL_MEMORY_CAPTURE_TOOLS_ENABLED",
-    )
-    operational_memory_recall_enabled: bool = Field(
-        default=True,
-        alias="OPERATIONAL_MEMORY_RECALL_ENABLED",
-    )
-    operational_memory_embedding_enabled: bool = Field(
-        default=True,
-        alias="OPERATIONAL_MEMORY_EMBEDDING_ENABLED",
-    )
-    operational_memory_max_capture_chars: int = Field(
-        default=24_000,
-        alias="OPERATIONAL_MEMORY_MAX_CAPTURE_CHARS",
-    )
-    operational_memory_chunk_max_chars: int = Field(
-        default=4_000,
-        alias="OPERATIONAL_MEMORY_CHUNK_MAX_CHARS",
-    )
-    operational_memory_recall_top_k: int = Field(
-        default=6,
-        alias="OPERATIONAL_MEMORY_RECALL_TOP_K",
-    )
-    operational_memory_hot_cache_size: int = Field(
-        default=100,
-        alias="OPERATIONAL_MEMORY_HOT_CACHE_SIZE",
-    )
-    operational_memory_semantic_candidate_limit: int = Field(
-        default=80,
-        alias="OPERATIONAL_MEMORY_SEMANTIC_CANDIDATE_LIMIT",
-    )
-    operational_memory_recent_candidate_limit: int = Field(
-        default=40,
-        alias="OPERATIONAL_MEMORY_RECENT_CANDIDATE_LIMIT",
-    )
-    operational_memory_context_budget_tokens: int = Field(
-        default=0,
-        alias="OPERATIONAL_MEMORY_CONTEXT_BUDGET_TOKENS",
-    )
-    operational_memory_queue_enabled: bool = Field(
-        default=False,
-        alias="MEMORY_QUEUE_ENABLED",
-    )
-    operational_memory_queue_url: str = Field(
-        default="amqp://personagent:personagent_secret@127.0.0.1:5672/personagent",
-        alias="MEMORY_QUEUE_URL",
-    )
-    operational_memory_queue_exchange: str = Field(
-        default="personagent.memory",
-        alias="MEMORY_QUEUE_EXCHANGE",
-    )
-    operational_memory_queue_name: str = Field(
-        default="personagent.memory.operational.v1",
-        alias="MEMORY_QUEUE_NAME",
-    )
-    operational_memory_queue_prefetch: int = Field(
-        default=8,
-        alias="MEMORY_QUEUE_PREFETCH",
-    )
-    operational_memory_queue_fallback_sync: bool = Field(
-        default=True,
-        alias="MEMORY_QUEUE_FALLBACK_SYNC",
-    )
-    embedding_server_url: str = Field(
-        default="http://localhost:8081/v1",
-        alias="EMBEDDING_SERVER_URL",
-    )
-    embedding_server_api_key: str = Field(default="local", alias="EMBEDDING_SERVER_API_KEY")
-    embedding_model: str = Field(
-        default="Qwen3-Embedding-8B-Q4_K_M.gguf",
-        alias="EMBEDDING_MODEL",
-    )
-    embedding_model_path: str = Field(
-        default="/home/levybonito/.lmstudio/models/Qwen/Qwen3-Embedding-8B-GGUF",
-        alias="EMBEDDING_MODEL_PATH",
-    )
-    embedding_dimensions: int = Field(default=4096, alias="EMBEDDING_DIMENSIONS")
-    embedding_timeout_seconds: float = Field(default=60.0, alias="EMBEDDING_TIMEOUT_SECONDS")
-    embedding_auto_start: bool = Field(default=False, alias="EMBEDDING_AUTO_START")
-    embedding_host: str = Field(default="127.0.0.1", alias="EMBEDDING_HOST")
-    embedding_port: int = Field(default=8081, alias="EMBEDDING_PORT")
-    embedding_ctx_size: int = Field(default=32768, alias="EMBEDDING_CTX_SIZE")
-    embedding_n_gpu_layers: int = Field(default=999, alias="EMBEDDING_N_GPU_LAYERS")
-    embedding_threads: int = Field(default=6, alias="EMBEDDING_THREADS")
-    embedding_parallel: int = Field(default=1, alias="EMBEDDING_PARALLEL")
 
-    # --- LightPanda Browser ---
-    lightpanda_enabled: bool = Field(default=True, alias="LIGHTPANDA_ENABLED")
-    lightpanda_cdp_url: str = Field(
-        default="http://127.0.0.1:9222",
-        alias="LIGHTPANDA_CDP_URL",
-    )
-    browser_cdp_url: str | None = Field(default=None, alias="BROWSER_CDP_URL")
-    lightpanda_timeout_ms: int = Field(default=30_000, alias="LIGHTPANDA_TIMEOUT_MS")
-    lightpanda_search_base_url: str = Field(
-        default="https://search.yahoo.com/search",
-        alias="LIGHTPANDA_SEARCH_BASE_URL",
-    )
-    lightpanda_session_ttl_seconds: int = Field(
-        default=600,
-        alias="LIGHTPANDA_SESSION_TTL_SECONDS",
-    )
-    lightpanda_max_sessions: int = Field(default=12, alias="LIGHTPANDA_MAX_SESSIONS")
-    personagent_browser_page_cache_ttl_seconds: int = Field(
-        default=1_800,
-        alias="PERSONAGENT_BROWSER_PAGE_CACHE_TTL_SECONDS",
-    )
-    personagent_browser_page_cache_per_conversation: int = Field(
-        default=8,
-        alias="PERSONAGENT_BROWSER_PAGE_CACHE_PER_CONVERSATION",
-    )
-    personagent_browser_page_cache_global_entries: int = Field(
-        default=128,
-        alias="PERSONAGENT_BROWSER_PAGE_CACHE_GLOBAL_ENTRIES",
-    )
-    personagent_browser_render_cache_entries: int = Field(
-        default=16,
-        alias="PERSONAGENT_BROWSER_RENDER_CACHE_ENTRIES",
-    )
-    personagent_browser_render_cache_ttl_seconds: int = Field(
-        default=180,
-        alias="PERSONAGENT_BROWSER_RENDER_CACHE_TTL_SECONDS",
-    )
-    personagent_browser_css_cache_entries: int = Field(
-        default=256,
-        alias="PERSONAGENT_BROWSER_CSS_CACHE_ENTRIES",
-    )
-    personagent_browser_css_cache_ttl_seconds: int = Field(
-        default=900,
-        alias="PERSONAGENT_BROWSER_CSS_CACHE_TTL_SECONDS",
-    )
-
-    @property
-    def db_url(self) -> str:
-        """Retorna a URL de conexão com o banco de dados."""
-        if self.database_url:
-            return self.database_url
-        return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
-
-    @property
-    def tool_workspace_root_path(self) -> Path:
-        """Retorna o root padrão para ferramentas."""
-        if self.tools_workspace_root:
-            return Path(self.tools_workspace_root).expanduser()
-        return get_project_root()
-
-    @property
-    def tool_allowed_root_paths(self) -> list[Path]:
-        """Retorna roots permitidos para ferramentas."""
-        if not self.tools_allowed_roots:
-            return [self.tool_workspace_root_path]
-        return [
-            Path(item.strip()).expanduser()
-            for item in self.tools_allowed_roots.split(",")
-            if item.strip()
-        ]
-
-    @property
-    def tool_web_allowed_domain_list(self) -> list[str]:
-        return _split_csv(self.tools_web_allowed_domains)
-
-    @property
-    def tool_web_blocked_domain_list(self) -> list[str]:
-        return _split_csv(self.tools_web_blocked_domains)
-
-    @property
-    def tool_skill_root_paths(self) -> list[Path]:
-        return [Path(item).expanduser() for item in _split_csv(self.tools_skill_roots)]
-
-    @property
-    def prompt_command_root_paths(self) -> list[Path]:
-        return [Path(item).expanduser() for item in _split_csv(self.prompt_command_roots)]
-
-    @property
-    def tool_mcp_server_configs(self) -> list[dict[str, Any]]:
-        if not self.tools_mcp_servers_json:
-            return []
-        try:
-            raw = json.loads(self.tools_mcp_servers_json)
-        except json.JSONDecodeError:
-            return []
-        if isinstance(raw, dict):
-            raw = raw.get("servers", [])
-        if not isinstance(raw, list):
-            return []
-        return [item for item in raw if isinstance(item, dict)]
-
-    @classmethod
-    def from_yaml(cls, path: str | Path) -> "Settings":
-        """Carrega configuração de um arquivo YAML, mesclando com variáveis de ambiente."""
-        path = Path(path)
-        yaml_data: dict[str, Any] = {}
-
-        if path.exists():
-            with open(path, encoding="utf-8") as f:
-                yaml_data = yaml.safe_load(f) or {}
-
-        # Converte keys de env para lowercase para compatibilidade
-        flattened: dict[str, Any] = {}
-        for section, values in yaml_data.items():
-            if isinstance(values, dict):
-                for key, val in values.items():
-                    flattened[f"{section}_{key}".lower()] = val
-
-        process_env = cls._settings_values_from_env(os.environ)
-        project_env = cls._settings_values_from_env(dotenv_values(path.parent / ".env"))
-
-        # Mescla: defaults < YAML < ambiente herdado < .env do projeto.
-        # O .env local fica por último para evitar que uma variável global/stale
-        # como NVIDIA_API_KEY sobrescreva a credencial do projeto.
-        merged = {**flattened, **process_env, **project_env}
-        return cls(**merged, _env_file=None)
-
-    @classmethod
-    def _settings_values_from_env(cls, values: Mapping[str, Any]) -> dict[str, Any]:
-        """Converte aliases de ambiente para nomes de campos do Settings."""
-        alias_to_field = {
-            str(field.alias): name for name, field in cls.model_fields.items() if field.alias
-        }
-        result: dict[str, Any] = {}
-        for key, value in values.items():
-            if value is None or value == "":
-                continue
-            field_name = alias_to_field.get(str(key))
-            if field_name:
-                result[field_name] = value
-        return result
-
-
-def get_project_root() -> Path:
-    """Retorna o diretório raiz do projeto (onde está config.yaml)."""
-    return Path(__file__).parent.parent.parent.parent.parent.parent
-
-
-def _split_csv(value: str | None) -> list[str]:
-    if not value:
-        return []
-    return [item.strip() for item in value.split(",") if item.strip()]
-
-
-# Singleton global
-_settings: Settings | None = None
-
-
-def get_settings() -> Settings:
-    """Retorna a instância singleton de Settings."""
-    global _settings
-    if _settings is None:
-        # Tenta carregar de config.yaml primeiro, senão usa .env
-        config_path = get_project_root() / "config.yaml"
-        _settings = Settings.from_yaml(config_path) if config_path.exists() else Settings()
-    return _settings
-
-
-def reset_settings() -> None:
-    """Reseta o singleton (útil para testes)."""
-    global _settings
-    _settings = None
+__all__ = [
+    "Settings",
+    "get_project_root",
+    "get_settings",
+    "reset_settings",
+]
