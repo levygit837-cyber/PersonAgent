@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import suppress
-from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -21,12 +20,11 @@ from personagent.domain.exceptions import (
 from personagent.domain.models.inference_result import InferenceResult, StreamChunk
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 from personagent.infrastructure.llm.kimi_auth import KimiTokenManager
-from personagent.infrastructure.llm.kimi_history import (
-    anthropic_history_blocks,
-    attach_anthropic_history_blocks,
-    tool_call_from_anthropic_block,
-)
 from personagent.infrastructure.llm.kimi_payload import KimiPayloadBuilder
+from personagent.infrastructure.llm.kimi_stream import (
+    KimiStreamParser,
+    _AnthropicStreamState,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -51,14 +49,6 @@ REASONING_BUDGETS = {
     "xhigh": 16382,
     "max": 32768,
 }
-
-
-@dataclass(slots=True)
-class _AnthropicStreamState:
-    model: str
-    content_blocks: dict[int, dict[str, Any]] = field(default_factory=dict)
-    thinking_signatures: list[str] = field(default_factory=list)
-    finish_reason: str | None = None
 
 
 class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
@@ -94,6 +84,7 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
             default_model=self.default_model,
             default_max_tokens=self.default_max_tokens,
         )
+        self._stream_parser = KimiStreamParser()
 
     async def _try_auto_refresh_token(self) -> bool:
         """Proxy to KimiTokenManager — preserves backward compatibility."""
@@ -337,7 +328,7 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
         data: dict[str, Any],
         fallback_model: str,
     ) -> InferenceResult:
-        parsed = self._parse_content_blocks(data.get("content") or [])
+        parsed = self._stream_parser.parse_content_blocks(data.get("content") or [])
         model = str(data.get("model") or fallback_model)
         metadata: dict[str, Any] = {"provider": "kimi", "model": model}
         if parsed["thinking_signatures"]:
@@ -346,7 +337,9 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
         return InferenceResult(
             content=parsed["content"],
             reasoning_content=parsed["reasoning"],
-            finish_reason=self._finish_reason(data.get("stop_reason"), bool(parsed["tool_calls"])),
+            finish_reason=self._stream_parser._finish_reason(
+                data.get("stop_reason"), bool(parsed["tool_calls"])
+            ),
             usage=data.get("usage"),
             model=model,
             tool_calls=parsed["tool_calls"] or None,
@@ -358,205 +351,12 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
         data: dict[str, Any],
         state: _AnthropicStreamState,
     ) -> tuple[StreamChunk, bool]:
-        event_type = data.get("type")
-        metadata = {"provider": "kimi", "model": state.model}
-
-        if event_type == "error" or data.get("error"):
-            raise LLMBackendError(f"Kimi Code stream error: {data.get('error') or data}")
-
-        if event_type == "message_start":
-            message = data.get("message") or {}
-            if message.get("model"):
-                state.model = str(message["model"])
-            return StreamChunk(), False
-
-        if event_type == "content_block_start":
-            index = int(data.get("index", 0))
-            block = dict(data.get("content_block") or {})
-            block.setdefault("_partial_json", "")
-            state.content_blocks[index] = block
-            return StreamChunk(), False
-
-        if event_type == "content_block_delta":
-            index = int(data.get("index", 0))
-            block = state.content_blocks.setdefault(index, {})
-            delta = data.get("delta") or {}
-            delta_type = delta.get("type")
-
-            if delta_type == "text_delta":
-                text = str(delta.get("text") or "")
-                block["text"] = str(block.get("text") or "") + text
-                return StreamChunk(content=text, metadata=metadata), False
-            if delta_type == "thinking_delta":
-                thinking = str(delta.get("thinking") or "")
-                block["thinking"] = str(block.get("thinking") or "") + thinking
-                return StreamChunk(reasoning_content=thinking, is_thinking=True, metadata=metadata), False
-            if delta_type == "signature_delta":
-                signature = str(delta.get("signature") or "")
-                if signature:
-                    block["signature"] = signature
-                    state.thinking_signatures.append(signature)
-                    return StreamChunk(
-                        metadata={**metadata, "kimi_thinking_signatures": [signature]}
-                    ), False
-            if delta_type == "input_json_delta":
-                block["_partial_json"] = str(block.get("_partial_json") or "") + str(
-                    delta.get("partial_json") or ""
-                )
-            return StreamChunk(), False
-
-        if event_type == "content_block_stop":
-            return StreamChunk(), False
-
-        if event_type == "message_delta":
-            delta = data.get("delta") or {}
-            state.finish_reason = self._finish_reason(delta.get("stop_reason"), False)
-            if state.thinking_signatures:
-                metadata["kimi_thinking_signatures"] = list(state.thinking_signatures)
-            tool_calls = (
-                self._tool_calls_from_stream_state(state)
-                if state.finish_reason == "tool_calls"
-                else None
-            )
-            return (
-                StreamChunk(
-                    finish_reason=state.finish_reason,
-                    tool_calls=tool_calls,
-                    usage=data.get("usage"),
-                    metadata=metadata,
-                ),
-                False,
-            )
-
-        if event_type == "message_stop":
-            return StreamChunk(), True
-
-        return StreamChunk(), False
-
-    def _parse_content_blocks(self, blocks: list[Any]) -> dict[str, Any]:
-        content_parts: list[str] = []
-        reasoning_parts: list[str] = []
-        signatures: list[str] = []
-        tool_calls: list[dict[str, Any]] = []
-
-        for raw_block in blocks:
-            if not isinstance(raw_block, dict):
-                continue
-            block_type = raw_block.get("type")
-            if block_type == "text":
-                content_parts.append(str(raw_block.get("text") or ""))
-            elif block_type == "thinking":
-                thinking = raw_block.get("thinking")
-                if isinstance(thinking, str) and thinking:
-                    reasoning_parts.append(thinking)
-                signature = raw_block.get("signature")
-                if isinstance(signature, str) and signature:
-                    signatures.append(signature)
-            elif block_type == "tool_use":
-                tool_calls.append(tool_call_from_anthropic_block(raw_block))
-
-        history_blocks = anthropic_history_blocks(
-            {index: block for index, block in enumerate(blocks) if isinstance(block, dict)}
-        )
-        attach_anthropic_history_blocks(tool_calls, history_blocks)
-
-        return {
-            "content": "".join(content_parts),
-            "reasoning": "".join(reasoning_parts),
-            "thinking_signatures": signatures,
-            "tool_calls": tool_calls,
-        }
+        """Proxy to KimiStreamParser — preserves backward compatibility."""
+        return self._stream_parser.parse_stream_event(data, state)
 
     def _convert_messages(self, messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:
         """Proxy to KimiPayloadBuilder — preserves backward compatibility."""
         return self._payload_builder.convert_messages(messages)
-
-    def _tool_calls_from_stream_state(
-        self,
-        state: _AnthropicStreamState,
-    ) -> list[dict[str, Any]]:
-        history_blocks = anthropic_history_blocks(state.content_blocks)
-        tool_calls = [
-            tool_call_from_anthropic_block(block)
-            for _, block in sorted(state.content_blocks.items())
-            if block.get("type") == "tool_use"
-        ]
-        attach_anthropic_history_blocks(tool_calls, history_blocks)
-        return tool_calls
-
-    def _convert_tools(self, tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-        converted: list[dict[str, Any]] = []
-        for tool in tools or []:
-            function = tool.get("function") if isinstance(tool, dict) else None
-            if not isinstance(function, dict):
-                continue
-            name = function.get("name")
-            if not isinstance(name, str) or not name:
-                continue
-            converted.append(
-                {
-                    "name": name,
-                    "description": str(function.get("description") or ""),
-                    "input_schema": function.get("parameters")
-                    if isinstance(function.get("parameters"), dict)
-                    else {"type": "object", "properties": {}},
-                }
-            )
-        return converted
-
-    def _convert_tool_choice(self, tool_choice: str | dict[str, Any] | None) -> dict[str, Any] | None:
-        if tool_choice is None:
-            return {"type": "auto"}
-        if isinstance(tool_choice, str):
-            normalized = tool_choice.strip().lower()
-            if normalized in {"", "none"}:
-                return None
-            if normalized in {"required", "any"}:
-                return {"type": "any"}
-            return {"type": "auto"}
-        if isinstance(tool_choice, dict):
-            if tool_choice.get("type") == "function":
-                function = tool_choice.get("function") or {}
-                if function.get("name"):
-                    return {"type": "tool", "name": str(function["name"])}
-            if tool_choice.get("type") in {"auto", "any", "tool"}:
-                return tool_choice
-        return {"type": "auto"}
-
-    def _thinking_config(
-        self,
-        extra: dict[str, Any],
-        max_tokens: int,
-    ) -> dict[str, Any] | None:
-        raw_budget = extra.get("reasoning_budget_tokens")
-        if raw_budget is None and extra.get("reasoning_level"):
-            raw_budget = REASONING_BUDGETS.get(str(extra["reasoning_level"]).strip().lower())
-        if raw_budget is None:
-            return None
-
-        budget = int(raw_budget)
-        if budget <= 0:
-            return {"type": "disabled"}
-
-        budget = max(MIN_THINKING_BUDGET_TOKENS, budget)
-        budget = min(budget, MAX_THINKING_BUDGET_TOKENS, max_tokens - FINAL_RESPONSE_TOKEN_RESERVE)
-        if budget < MIN_THINKING_BUDGET_TOKENS:
-            return {"type": "disabled"}
-        return {"type": "enabled", "budget_tokens": budget}
-
-    def _resolve_effective_max_tokens(self, max_tokens: int) -> int:
-        if max_tokens > 0:
-            return min(max_tokens, self.default_max_tokens)
-        return self.default_max_tokens
-
-    def _finish_reason(self, raw: Any, has_tool_calls: bool) -> str | None:
-        if has_tool_calls or raw == "tool_use":
-            return "tool_calls"
-        if raw == "end_turn":
-            return "stop"
-        if raw == "max_tokens":
-            return "length"
-        return str(raw) if raw else None
 
     def _stream_timeout_config(self) -> httpx.Timeout:
         bounded_timeout = max(float(self.timeout), 1.0)
