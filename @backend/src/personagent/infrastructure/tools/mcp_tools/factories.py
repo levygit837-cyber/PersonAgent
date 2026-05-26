@@ -1,12 +1,8 @@
-"""Minimal MCP tools and config-backed dynamic MCP callables."""
+"""MCP tool factories."""
 
 from __future__ import annotations
 
-import asyncio
 import json
-import os
-import re
-from dataclasses import dataclass
 from typing import Any
 
 from personagent.domain.tools import (
@@ -14,32 +10,27 @@ from personagent.domain.tools import (
     ToolArguments,
     ToolCall,
     ToolDefinition,
-    ToolExecutionStatus,
     ToolGroup,
-    ToolPermissionBehavior,
     ToolPermissionResult,
     ToolResult,
     ToolUseContext,
     build_tool,
 )
-
-_NAME_RE = re.compile(r"[^a-zA-Z0-9_]")
-
-
-@dataclass(frozen=True, slots=True)
-class McpServerConfig:
-    """Normalized MCP server config used by tools."""
-
-    name: str
-    transport: str = "stdio"
-    command: str | None = None
-    args: tuple[str, ...] = ()
-    env: dict[str, str] | None = None
-    tools: tuple[dict[str, Any], ...] = ()
-    resources: tuple[dict[str, Any], ...] = ()
-    auth_url: str | None = None
-    requires_auth: bool = False
-    timeout_ms: int = 30_000
+from personagent.infrastructure.tools.mcp_tools.config import (
+    McpServerConfig,
+    _auth_payload,
+    _find_server,
+    _normalize_config,
+    _sanitize,
+    _static_resources,
+)
+from personagent.infrastructure.tools.mcp_tools.helpers import (
+    _allow,
+    _deny,
+    _error,
+    _mcp_permission,
+)
+from personagent.infrastructure.tools.mcp_tools.protocol import _mcp_request
 
 
 def create_mcp_tools(
@@ -362,189 +353,3 @@ def _create_dynamic_auth_tool(config: McpServerConfig, *, enabled: bool) -> Tool
         check_permissions=_allow,
         is_read_only=lambda _args: True,
     )
-
-
-async def _mcp_permission(
-    arguments: ToolArguments,
-    _context: ToolUseContext,
-) -> ToolPermissionResult:
-    return ToolPermissionResult(
-        behavior=ToolPermissionBehavior.ALLOW,
-        updated_input=arguments,
-    )
-
-
-async def _allow(arguments: ToolArguments, _context: ToolUseContext) -> ToolPermissionResult:
-    return ToolPermissionResult(
-        behavior=ToolPermissionBehavior.ALLOW,
-        updated_input=arguments,
-    )
-
-
-async def _mcp_request(
-    config: McpServerConfig,
-    method: str,
-    params: dict[str, Any],
-) -> dict[str, Any]:
-    if config.transport != "stdio":
-        raise RuntimeError(f"Unsupported MCP transport for {config.name}: {config.transport}")
-    if not config.command:
-        raise RuntimeError(f"MCP server {config.name} has no command configured.")
-
-    env = os.environ.copy()
-    if config.env:
-        env.update(config.env)
-    process = await asyncio.create_subprocess_exec(
-        config.command,
-        *config.args,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env,
-    )
-    assert process.stdin is not None
-    assert process.stdout is not None
-    try:
-        init = await _send_request(
-            process,
-            1,
-            "initialize",
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "PersonAgent", "version": "0.1.0"},
-            },
-            timeout_ms=config.timeout_ms,
-        )
-        if init.get("error"):
-            raise RuntimeError(str(init["error"]))
-        await _send_notification(process, "notifications/initialized", {})
-        response = await _send_request(
-            process,
-            2,
-            method,
-            params,
-            timeout_ms=config.timeout_ms,
-        )
-        if response.get("error"):
-            raise RuntimeError(str(response["error"]))
-        result = response.get("result")
-        return result if isinstance(result, dict) else {"content": result}
-    finally:
-        process.terminate()
-        try:
-            await asyncio.wait_for(process.wait(), timeout=1)
-        except TimeoutError:
-            process.kill()
-            await process.wait()
-
-
-async def _send_request(
-    process: asyncio.subprocess.Process,
-    request_id: int,
-    method: str,
-    params: dict[str, Any],
-    *,
-    timeout_ms: int,
-) -> dict[str, Any]:
-    await _write_json(
-        process,
-        {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
-    )
-    return await asyncio.wait_for(_read_response(process, request_id), timeout=timeout_ms / 1000)
-
-
-async def _send_notification(
-    process: asyncio.subprocess.Process,
-    method: str,
-    params: dict[str, Any],
-) -> None:
-    await _write_json(process, {"jsonrpc": "2.0", "method": method, "params": params})
-
-
-async def _write_json(process: asyncio.subprocess.Process, payload: dict[str, Any]) -> None:
-    assert process.stdin is not None
-    process.stdin.write(json.dumps(payload).encode("utf-8") + b"\n")
-    await process.stdin.drain()
-
-
-async def _read_response(
-    process: asyncio.subprocess.Process,
-    request_id: int,
-) -> dict[str, Any]:
-    assert process.stdout is not None
-    while True:
-        raw = await process.stdout.readline()
-        if not raw:
-            stderr = b""
-            if process.stderr is not None:
-                stderr = await process.stderr.read()
-            raise RuntimeError(stderr.decode("utf-8", errors="replace") or "MCP server exited.")
-        try:
-            payload = json.loads(raw.decode("utf-8"))
-        except json.JSONDecodeError:
-            continue
-        if payload.get("id") == request_id:
-            return payload
-
-
-def _normalize_config(raw: McpServerConfig | dict[str, Any]) -> McpServerConfig:
-    if isinstance(raw, McpServerConfig):
-        return raw
-    return McpServerConfig(
-        name=str(raw.get("name") or raw.get("id") or "server"),
-        transport=str(raw.get("transport") or "stdio"),
-        command=raw.get("command"),
-        args=tuple(str(item) for item in raw.get("args") or ()),
-        env={str(k): str(v) for k, v in dict(raw.get("env") or {}).items()} or None,
-        tools=tuple(item for item in raw.get("tools") or () if isinstance(item, dict)),
-        resources=tuple(item for item in raw.get("resources") or () if isinstance(item, dict)),
-        auth_url=raw.get("auth_url") or raw.get("oauth_url"),
-        requires_auth=bool(raw.get("requires_auth")),
-        timeout_ms=int(raw.get("timeout_ms") or 30_000),
-    )
-
-
-def _find_server(configs: list[McpServerConfig], name: str) -> McpServerConfig | None:
-    normalized = _sanitize(name)
-    return next((config for config in configs if config.name == name or _sanitize(config.name) == normalized), None)
-
-
-def _static_resources(config: McpServerConfig) -> list[dict[str, Any]]:
-    return [{"server": config.name, **resource} for resource in config.resources]
-
-
-def _auth_payload(config: McpServerConfig) -> dict[str, Any]:
-    message = (
-        f"Open {config.auth_url} to authenticate MCP server {config.name}."
-        if config.auth_url
-        else f"MCP server {config.name} requires authentication, but no OAuth URL is configured."
-    )
-    return {
-        "type": "mcp_auth",
-        "server": config.name,
-        "auth_url": config.auth_url,
-        "requires_auth": config.requires_auth,
-        "content": message,
-    }
-
-
-def _sanitize(value: str) -> str:
-    sanitized = _NAME_RE.sub("_", value.strip())
-    return sanitized.strip("_") or "server"
-
-
-def _error(call: ToolCall, tool_name: str, message: str) -> ToolResult:
-    data = {"type": "mcp_error", "content": message}
-    return ToolResult(
-        call.id,
-        tool_name,
-        json.dumps(data, ensure_ascii=False),
-        status=ToolExecutionStatus.ERROR,
-        is_error=True,
-        data=data,
-    )
-
-
-def _deny(message: str) -> ToolPermissionResult:
-    return ToolPermissionResult(behavior=ToolPermissionBehavior.DENY, message=message)
