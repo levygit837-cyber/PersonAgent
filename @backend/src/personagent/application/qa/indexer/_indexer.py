@@ -1,13 +1,10 @@
-"""Static code indexer for Python/FastAPI backends."""
+"""Main PythonCodeIndexer implementation."""
 
 from __future__ import annotations
 
 import ast
-import hashlib
 import inspect
 from collections import defaultdict
-from collections.abc import Iterable
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -21,27 +18,25 @@ from personagent.application.qa.contracts import (
     CodeNodeKind,
     QACodeGraph,
 )
-
-IGNORED_DIRS = {
-    ".git",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-    "__pycache__",
-    "build",
-    "dist",
-    "node_modules",
-}
-
-
-@dataclass
-class _ModuleInfo:
-    path: Path
-    rel_path: str
-    tree: ast.Module
-    imports: set[str] = field(default_factory=set)
-    imported_symbols: set[str] = field(default_factory=set)
+from personagent.application.qa.indexer._ast_helpers import (
+    _call_names,
+    _decorator_name,
+    _depends_calls,
+    _http_calls,
+    _queue_calls,
+    _route_decorators,
+    _router_prefix,
+    _sql_calls,
+)
+from personagent.application.qa.indexer._kinds import _class_kind, _function_kind
+from personagent.application.qa.indexer._utils import (
+    IGNORED_DIRS,
+    _edge_id,
+    _is_relative_to,
+    _ModuleInfo,
+    _node_id,
+    _safe_relative,
+)
 
 
 class PythonCodeIndexer:
@@ -224,6 +219,7 @@ class PythonCodeIndexer:
             self._add_edge(function_node.id, queue_node.id, CodeEdgeKind.DEPENDS_ON)
 
     def _class_node(self, module: _ModuleInfo, node: ast.ClassDef) -> CodeNodeData:
+        from personagent.application.qa.indexer._ast_helpers import _callable_name, _field_aliases
         bases = [_callable_name(base) for base in node.bases]
         kind = _class_kind(module.rel_path, bases)
         metadata = {"bases": bases}
@@ -392,187 +388,3 @@ class PythonCodeIndexer:
             metadata=metadata or {},
         )
         self._edges[edge.id] = edge
-
-
-def _router_prefix(tree: ast.Module) -> str:
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(isinstance(target, ast.Name) and target.id == "router" for target in node.targets):
-            continue
-        if not isinstance(node.value, ast.Call):
-            continue
-        for keyword in node.value.keywords:
-            if keyword.arg == "prefix" and isinstance(keyword.value, ast.Constant):
-                return str(keyword.value.value or "")
-    return ""
-
-
-def _route_decorators(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
-    router_prefix: str,
-) -> list[tuple[str, str]]:
-    routes: list[tuple[str, str]] = []
-    for decorator in node.decorator_list:
-        if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
-            continue
-        if not isinstance(decorator.func.value, ast.Name) or decorator.func.value.id != "router":
-            continue
-        method = decorator.func.attr.upper()
-        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "WEBSOCKET"}:
-            continue
-        path = ""
-        if decorator.args and isinstance(decorator.args[0], ast.Constant):
-            path = str(decorator.args[0].value or "")
-        routes.append((method, _join_paths(router_prefix, path)))
-    return routes
-
-
-def _join_paths(prefix: str, path: str) -> str:
-    if not prefix:
-        return path or "/"
-    if not path:
-        return prefix
-    return f"{prefix.rstrip('/')}/{path.lstrip('/')}"
-
-
-def _function_kind(rel_path: str, name: str, *, has_route: bool) -> CodeNodeKind:
-    normalized = rel_path.replace("\\", "/")
-    if has_route or "/interfaces/api/routes/" in f"/{normalized}":
-        return CodeNodeKind.CONTROLLER
-    if "middleware" in normalized:
-        return CodeNodeKind.MIDDLEWARE
-    if "repository" in normalized or "repositories" in normalized or "persistence" in normalized:
-        return CodeNodeKind.REPOSITORY
-    if "service" in normalized or "services" in normalized or "use_cases" in normalized:
-        return CodeNodeKind.SERVICE
-    if normalized.endswith(".py") and Path(normalized).name.startswith("test_"):
-        return CodeNodeKind.TEST
-    if name.startswith("test_"):
-        return CodeNodeKind.TEST
-    return CodeNodeKind.FUNCTION
-
-
-def _class_kind(rel_path: str, bases: Iterable[str]) -> CodeNodeKind:
-    normalized = rel_path.replace("\\", "/")
-    base_set = set(bases)
-    if "BaseModel" in base_set:
-        return CodeNodeKind.SCHEMA
-    if "BaseSettings" in base_set or normalized.endswith("settings.py"):
-        return CodeNodeKind.CONFIG
-    if normalized.endswith("models.py") or "/domain/models/" in f"/{normalized}":
-        return CodeNodeKind.MODEL
-    if "repository" in normalized or "repositories" in normalized or "persistence" in normalized:
-        return CodeNodeKind.REPOSITORY
-    if "service" in normalized or "services" in normalized:
-        return CodeNodeKind.SERVICE
-    return CodeNodeKind.FUNCTION
-
-
-def _call_names(node: ast.AST) -> set[str]:
-    names: set[str] = set()
-    for child in ast.walk(node):
-        if isinstance(child, ast.Call):
-            name = _callable_name(child.func)
-            if name:
-                names.add(name.split(".")[-1])
-    return names
-
-
-def _depends_calls(node: ast.AST) -> set[str]:
-    depends: set[str] = set()
-    for child in ast.walk(node):
-        if (
-            isinstance(child, ast.Call)
-            and _callable_name(child.func).endswith("Depends")
-            and child.args
-        ):
-            depends.add(_callable_name(child.args[0]))
-    return depends
-
-
-def _sql_calls(node: ast.AST) -> list[tuple[int, str]]:
-    calls: list[tuple[int, str]] = []
-    for child in ast.walk(node):
-        if isinstance(child, ast.Call):
-            name = _callable_name(child.func)
-            if name.split(".")[-1] in {"select", "text", "execute", "scalar", "scalars"}:
-                calls.append((getattr(child, "lineno", 0), name))
-    return calls
-
-
-def _http_calls(node: ast.AST) -> list[tuple[int, str]]:
-    calls: list[tuple[int, str]] = []
-    for child in ast.walk(node):
-        if isinstance(child, ast.Call):
-            name = _callable_name(child.func)
-            lower = name.lower()
-            if "httpx" in lower or lower.endswith((".get", ".post", ".put", ".patch", ".delete", ".stream")):
-                calls.append((getattr(child, "lineno", 0), name))
-    return calls
-
-
-def _queue_calls(node: ast.AST) -> list[tuple[int, str]]:
-    calls: list[tuple[int, str]] = []
-    for child in ast.walk(node):
-        if isinstance(child, ast.Call):
-            name = _callable_name(child.func)
-            lower = name.lower()
-            if any(fragment in lower for fragment in ("schedule", "enqueue", "publish", "register_handler")):
-                calls.append((getattr(child, "lineno", 0), name))
-    return calls
-
-
-def _field_aliases(node: ast.ClassDef) -> set[str]:
-    aliases: set[str] = set()
-    for child in ast.walk(node):
-        if not isinstance(child, ast.Call) or _callable_name(child.func).split(".")[-1] != "Field":
-            continue
-        for keyword in child.keywords:
-            if keyword.arg == "alias" and isinstance(keyword.value, ast.Constant):
-                aliases.add(str(keyword.value.value))
-    return aliases
-
-
-def _decorator_name(node: ast.AST) -> str:
-    if isinstance(node, ast.Call):
-        return _callable_name(node.func)
-    return _callable_name(node)
-
-
-def _callable_name(node: ast.AST) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        parent = _callable_name(node.value)
-        return f"{parent}.{node.attr}" if parent else node.attr
-    if isinstance(node, ast.Call):
-        return _callable_name(node.func)
-    if isinstance(node, ast.Constant):
-        return str(node.value)
-    return ""
-
-
-def _node_id(*parts: str) -> str:
-    raw = "|".join(parts)
-    return f"node:{hashlib.sha1(raw.encode('utf-8')).hexdigest()}"
-
-
-def _edge_id(source: str, target: str, kind: str, metadata: dict[str, Any]) -> str:
-    raw = "|".join([source, target, kind, repr(sorted(metadata.items()))])
-    return f"edge:{hashlib.sha1(raw.encode('utf-8')).hexdigest()}"
-
-
-def _safe_relative(path: Path, root: Path) -> str:
-    try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
-    except ValueError:
-        return path.resolve().as_posix()
-
-
-def _is_relative_to(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-        return True
-    except ValueError:
-        return False
