@@ -24,18 +24,12 @@ from typing import Any
 import structlog
 
 from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.plan_mode import (
-    auto_finalize_plan_mode,
-    plan_mode_event,
-)
 from personagent.application.tools import ToolOrchestrator
 from personagent.application.use_cases.chat.after_turn import AfterTurnCoordinator
 from personagent.application.use_cases.chat.assistant_pass import AssistantPassRunner
 from personagent.application.use_cases.chat.helpers import (
-    attach_plan_approval_artifact,
     context_after_turn_metadata,
     context_usage_metadata,
-    optional_int,
     set_session_status,
 )
 from personagent.application.use_cases.chat.media_policy import MediaPolicyHandler
@@ -67,12 +61,19 @@ from personagent.domain.models.inference_result import StreamChunk
 from personagent.domain.repositories.conversation_repository import (
     ConversationRepository,
 )
-from personagent.domain.tools import ToolExecutionStatus
+
+from ._assistant import StreamingTurnAssistantMixin
+from ._finalize import StreamingTurnFinalizeMixin
+from ._tools import StreamingTurnToolMixin
 
 logger = structlog.get_logger(__name__)
 
 
-class StreamingTurnExecutor:
+class StreamingTurnExecutor(
+    StreamingTurnAssistantMixin,
+    StreamingTurnToolMixin,
+    StreamingTurnFinalizeMixin,
+):
     """Executes one streaming turn end-to-end, emitting ``StreamChunk`` events.
 
     Parameters
@@ -232,71 +233,17 @@ class StreamingTurnExecutor:
                 ):
                     yield forwarded_chunk
 
-                if (
-                    turn_state.executed_tools
-                    and not assistant_state.has_visible_output
-                    and assistant_state.tool_calls is None
-                    and assistant_state.finish_reason in {None, "stop"}
+                assistant_holder: list[AssistantStreamState] = [assistant_state]
+                async for chunk in self._maybe_retry_empty_response(
+                    assistant_state=assistant_state,
+                    turn_state=turn_state,
+                    request=request,
+                    conversation=conversation,
+                    messages=messages,
+                    result_holder=assistant_holder,
                 ):
-                    retry_state = AssistantStreamState(
-                        reasoning_chunks=list(assistant_state.reasoning_chunks),
-                        model=assistant_state.model or request.model,
-                        provider=assistant_state.provider or request.provider,
-                    )
-                    yield StreamChunk(
-                        metadata={
-                            "event": "status",
-                            "status": "retrying_empty_tool_response",
-                            "provider": assistant_state.provider or request.provider,
-                            "model": assistant_state.model or request.model,
-                        }
-                    )
-                    async for forwarded_chunk in self._assistant_pass_runner.run(
-                        request=request,
-                        conversation_id=str(conversation.id),
-                        messages=self._message_preparer.with_final_answer_reminder(
-                            messages
-                        ),
-                        tools=[],
-                        seen_tool_call_ids=turn_state.seen_tool_call_ids,
-                        iteration=turn_state.iteration,
-                        state=retry_state,
-                    ):
-                        yield forwarded_chunk
-                    if retry_state.has_visible_output or retry_state.tool_calls:
-                        assistant_state = retry_state
-                    else:
-                        notice = self._stream_chunk_normalizer.empty_model_response_notice(
-                            provider=assistant_state.provider or request.provider,
-                            model=assistant_state.model or request.model,
-                        )
-                        assistant_state = AssistantStreamState(
-                            content_chunks=[notice],
-                            reasoning_chunks=list(retry_state.reasoning_chunks),
-                            finish_reason="empty_model_response",
-                            usage=retry_state.usage,
-                            model=retry_state.model
-                            or assistant_state.model
-                            or request.model,
-                            provider=retry_state.provider
-                            or assistant_state.provider
-                            or request.provider,
-                            metadata={
-                                **assistant_state.metadata,
-                                **retry_state.metadata,
-                                "empty_model_response": True,
-                            },
-                        )
-                        yield StreamChunk(
-                            content=notice,
-                            finish_reason="empty_model_response",
-                            usage=assistant_state.usage,
-                            metadata={
-                                "event": "empty_model_response",
-                                "provider": assistant_state.provider,
-                                "model": assistant_state.model,
-                            },
-                        )
+                    yield chunk
+                assistant_state = assistant_holder[0]
 
                 turn_state.final_finish_reason = (
                     assistant_state.finish_reason
@@ -342,90 +289,18 @@ class StreamingTurnExecutor:
                 if not tool_calls or not tool_context:
                     break
 
-                orchestrator = self._new_orchestrator()
-                results_by_id: dict[str, Any] = {}
-                waiting_for_plan_approval = False
-                waiting_for_tool_approval = False
-                async for event in orchestrator.execute(tool_calls, tool_context):
-                    if event.result is not None:
-                        results_by_id[event.call.id] = event.result
-                        await self._operational_memory.capture_tool_result(
-                            request,
-                            conversation,
-                            event.call,
-                            event.result,
-                            tool_context,
-                        )
-                    metadata = event.to_stream_metadata()
-                    if (
-                        event.result is not None
-                        and event.event == "permission_required"
-                    ):
-                        if self._tool_results.is_user_question(event.result):
-                            set_session_status(conversation, "pending")
-                            metadata.update(
-                                self._tool_results.record_pending_question(
-                                    conversation,
-                                    event.call,
-                                    event.result,
-                                    request,
-                                )
-                            )
-                            metadata["event"] = "ask_user_question"
-                            waiting_for_tool_approval = True
-                            turn_state.final_finish_reason = "user_input_required"
-                        else:
-                            set_session_status(conversation, "pending")
-                            metadata.update(
-                                self._tool_results.record_pending_approval(
-                                    conversation,
-                                    event.call,
-                                    event.result,
-                                    request,
-                                )
-                            )
-                            waiting_for_tool_approval = True
-                            turn_state.final_finish_reason = "permission_required"
-                    yield StreamChunk(metadata=metadata)
-                    if event.result is not None and self._tool_results.is_plan_approval(
-                        event.result
-                    ):
-                        self._tool_results.apply_state(event.result, conversation)
-                        state = self._tool_results.plan_state_from(
-                            event.result, conversation
-                        )
-                        attach_plan_approval_artifact(conversation, state)
-                        yield StreamChunk(
-                            metadata=plan_mode_event(
-                                str(conversation.id),
-                                state,
-                                event="plan_approval_requested",
-                            )
-                        )
-                        waiting_for_plan_approval = True
-                        turn_state.final_finish_reason = "plan_approval_requested"
-                    elif event.result is not None and self._tool_results.is_plan_mode(
-                        event.result
-                    ):
-                        self._tool_results.apply_state(event.result, conversation)
-                        state = self._tool_results.plan_state_from(
-                            event.result, conversation
-                        )
-                        yield StreamChunk(
-                            metadata=plan_mode_event(str(conversation.id), state)
-                        )
-
-                for call in tool_calls:
-                    result = results_by_id.get(call.id)
-                    if result is not None:
-                        self._tool_results.apply_state(result, conversation)
-                        if result.status != ToolExecutionStatus.PERMISSION_REQUIRED:
-                            conversation.add_message(
-                                self._tool_results.tool_message_from(result)
-                            )
-                            turn_state.executed_tools = True
+                break_holder: list[bool] = [False]
+                async for chunk in self._execute_tools(
+                    tool_calls=tool_calls,
+                    tool_context=tool_context,
+                    conversation=conversation,
+                    request=request,
+                    turn_state=turn_state,
+                    break_holder=break_holder,
+                ):
+                    yield chunk
                 turn_state.iteration += 1
-                if waiting_for_plan_approval or waiting_for_tool_approval:
+                if break_holder[0]:
                     break
 
         except LLMBackendError as exc:
@@ -457,91 +332,11 @@ class StreamingTurnExecutor:
             # conversation_saved with the final state, instead of leaving the
             # stream half-closed.
 
-        last_assistant = next(
-            (
-                message
-                for message in reversed(conversation.messages)
-                if message.role == Role.ASSISTANT
-            ),
-            None,
-        )
-        if last_assistant is not None:
-            await self._operational_memory.capture_assistant_text(
-                request,
-                conversation,
-                context_result,
-                content=last_assistant.content,
-                reasoning_content=last_assistant.metadata.get("reasoning_content"),
-                finish_reason=turn_state.final_finish_reason,
-                provider=turn_state.final_provider,
-                model=turn_state.final_model,
-            )
-            finalized_state = auto_finalize_plan_mode(
-                conversation.metadata, last_assistant.content
-            )
-            if finalized_state:
-                attach_plan_approval_artifact(conversation, finalized_state)
-                yield StreamChunk(
-                    metadata=plan_mode_event(
-                        str(conversation.id),
-                        finalized_state,
-                        event="plan_approval_requested",
-                    )
-                )
-                turn_state.final_finish_reason = "plan_approval_requested"
-
-        next_step_suggestion = await self._after_turn.run_services(
-            conversation,
-            request,
-            finish_reason=turn_state.final_finish_reason,
-        )
-        if next_step_suggestion:
-            yield StreamChunk(
-                metadata={
-                    "event": "next_step_suggestion",
-                    "next_step_suggestion": next_step_suggestion,
-                    "conversation_id": str(conversation.id),
-                }
-            )
-
-        set_session_status(conversation, "idle")
-        conversation.metadata.pop("last_request_error", None)
-        await self._conversation_repo.update(conversation)
-
-        # Trigger extração de memória em background
-        await self._operational_memory.trigger_memory_extraction(conversation, request)
-
-        await self._after_turn.refresh_session_title(
-            conversation, was_empty=was_empty
-        )
-
-        saved_context_metadata = context_usage_metadata(
-            turn_state.last_prompt_context_metadata
-        )
-        if last_assistant is not None:
-            saved_context_metadata.update(
-                context_usage_metadata(last_assistant.metadata or {})
-            )
-            after_turn_tokens = optional_int(
-                (last_assistant.metadata or {}).get(
-                    "context_tokens_after_turn_estimated"
-                )
-            )
-            if after_turn_tokens is not None:
-                saved_context_metadata["context_tokens_after_turn_estimated"] = (
-                    after_turn_tokens
-                )
-
-        yield StreamChunk(
-            metadata={
-                "event": "conversation_saved",
-                "conversation_id": str(conversation.id),
-                "title": conversation.title,
-                "finish_reason": turn_state.final_finish_reason,
-                "usage": turn_state.final_usage,
-                "model": turn_state.final_model,
-                "provider": turn_state.final_provider,
-                "next_step_suggestion": next_step_suggestion,
-                **saved_context_metadata,
-            }
-        )
+        async for chunk in self._finalize_turn(
+            conversation=conversation,
+            request=request,
+            context_result=context_result,
+            turn_state=turn_state,
+            was_empty=was_empty,
+        ):
+            yield chunk
