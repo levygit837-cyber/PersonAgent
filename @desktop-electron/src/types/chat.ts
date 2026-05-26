@@ -1,3 +1,8 @@
+export * from "./chat/messages";
+export * from "./chat/tools";
+
+import type { ChatRequestPayload, ContextAttachment } from "./chat/messages";
+
 export type ModelProvider = "llama" | "nvidia" | "deepseek" | "zenmux" | "vertex" | "kimi" | "codex";
 
 export type ReasoningPreset = "low" | "medium" | "high" | "xhigh" | "max";
@@ -59,176 +64,6 @@ export const localModel: LlmModel = {
   provider: "llama",
 };
 
-export interface ConversationSummary {
-  id: string;
-  title: string;
-  created_at: string;
-  updated_at: string;
-  message_count: number;
-  workspace_root?: string | null;
-  status?: ConversationStatus | null;
-}
-
-export type ConversationStatus = "idle" | "error" | "pending" | "running";
-
-export type PersistedMessageRole = "system" | "user" | "assistant" | "tool";
-
-export interface PersistedMessage {
-  id?: string;
-  role: PersistedMessageRole;
-  content: string;
-  reasoning_content?: string;
-  timestamp?: string;
-  tool_call_id?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface GeneratedImage {
-  mime_type: string;
-  data?: string;
-  alt?: string;
-  artifact_id?: string;
-  url?: string;
-  size_bytes?: number;
-  sha256?: string;
-}
-
-export interface ConversationDetail {
-  id: string;
-  title: string;
-  messages: PersistedMessage[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ChatRequestPayload {
-  conversation_id?: string;
-  message: string;
-  system_prompt?: string;
-  stream: true;
-  temperature: number;
-  max_tokens: number;
-  provider: ModelProvider;
-  model: string;
-  prompt_mode: PromptMode;
-  reasoning_level: ReasoningPreset;
-  reasoning_budget_tokens: number | null;
-  max_tool_iterations?: number | null;
-  workspace_root?: string;
-  tool_context?: {
-    workspace_root: string;
-    cwd: string;
-    allowed_roots: string[];
-    permission_mode?: string;
-  };
-  context_attachments?: ContextAttachment[];
-  plan_mode_requested?: boolean;
-}
-
-export type ContextAttachmentType =
-  | "file_range"
-  | "file"
-  | "directory"
-  | "skill"
-  | "mcp_resource"
-  | "terminal_output"
-  | "browser_annotation"
-  | "browser_tab"
-  | "viewer_annotation"
-  | "command_context";
-
-export interface ContextAttachment {
-  type: ContextAttachmentType;
-  id?: string | number;
-  label?: string;
-  file_name?: string;
-  file_path?: string;
-  display_path?: string;
-  start_line?: number;
-  end_line?: number;
-  language?: string;
-  text?: string;
-  shell?: string;
-  content?: string;
-  content_preview?: string;
-  content_char_count?: number;
-  url?: string;
-  title?: string;
-  node_id?: string;
-  selector?: string;
-  role?: string;
-  quote?: string;
-  browser_id?: string;
-  tab_id?: string;
-  page_id?: string;
-  window_id?: string;
-  active?: boolean;
-  is_active?: boolean;
-  runtime?: string;
-  scroll?: Record<string, unknown>;
-  viewport?: Record<string, unknown>;
-  selected_element?: Record<string, unknown>;
-  state?: Record<string, unknown>;
-  directory_path?: string;
-  entry_count?: number;
-  name?: string;
-  invocation_name?: string;
-  slash_name?: string;
-  description?: string;
-  path?: string;
-  source?: string;
-  server?: string;
-  uri?: string;
-  command?: string;
-  truncated?: boolean;
-  [key: string]: unknown;
-}
-
-export interface ChatCommandInfo {
-  name: string;
-  slash_name: string;
-  description: string;
-  argument_hint?: string | null;
-  source: "command" | "skill" | string;
-  path: string;
-  user_invocable: boolean;
-  should_query?: boolean;
-  ui_action?: string | null;
-}
-
-export interface SkillSummary {
-  name: string;
-  invocation_name: string;
-  slash_name: string;
-  description: string;
-  source: string;
-  path: string;
-  enabled: boolean;
-  user_invocable: boolean;
-  model_invocable: boolean;
-  allowed_tools: string[];
-  argument_hint?: string | null;
-  when_to_use?: string | null;
-  context: string;
-}
-
-export interface SkillDetail extends SkillSummary {
-  content: string;
-  frontmatter: Record<string, unknown>;
-}
-
-export interface SkillMarketplaceItem {
-  id: string;
-  name: string;
-  invocation_name: string;
-  slash_name: string;
-  description: string;
-  allowed_tools: string[];
-  argument_hint?: string | null;
-  when_to_use?: string | null;
-  installed: boolean;
-}
-
 export interface TeamAgent {
   id: string;
   name: string;
@@ -277,23 +112,23 @@ export interface TeamRunEvent {
     | "round_started"
     | "agent_turn_started"
     | "agent_delta"
-	    | "agent_turn_completed"
-	    | "execution_contract"
-	    | "blackboard_event"
-	    | "blackboard_snapshot"
-	    | "claim_graph_delta"
-	    | "coverage_matrix"
-	    | "coherency_score"
-	    | "tool_phase"
-	    | "debate_started"
-	    | "debate_skipped"
-	    | "adaptive_vote"
-	    | "vote_started"
-	    | "agent_vote"
-	    | "consensus_reached"
-	    | "coordinator_planning_started"
-	    | "coordinator_planning_completed"
-	    | "coordinator_redirect"
+    | "agent_turn_completed"
+    | "execution_contract"
+    | "blackboard_event"
+    | "blackboard_snapshot"
+    | "claim_graph_delta"
+    | "coverage_matrix"
+    | "coherency_score"
+    | "tool_phase"
+    | "debate_started"
+    | "debate_skipped"
+    | "adaptive_vote"
+    | "vote_started"
+    | "agent_vote"
+    | "consensus_reached"
+    | "coordinator_planning_started"
+    | "coordinator_planning_completed"
+    | "coordinator_redirect"
     | "coordinator_started"
     | "coordinator_completed"
     | "final_delta"
@@ -312,23 +147,23 @@ export interface TeamRunEvent {
   agent_role?: string;
   sequence?: number;
   event_type?: string;
-	  payload?: Record<string, unknown>;
-	  snapshot?: Record<string, unknown>;
-	  delta?: Record<string, unknown>;
-	  contract?: Record<string, unknown>;
-	  coverage_matrix?: Array<Record<string, unknown>>;
-	  coverage_complete?: number;
-	  coverage_total?: number;
-	  coherency_score?: number;
-	  coherency?: Record<string, unknown>;
-	  tool_phase?: string;
-	  calls?: Array<Record<string, unknown>>;
-	  results?: Array<Record<string, unknown>>;
-	  proposals?: Array<Record<string, unknown>>;
-	  triggers?: string[];
-	  redirect?: string;
-	  team_memory_snapshot?: Record<string, unknown>;
-	  blackboard_snapshot?: Record<string, unknown>;
+  payload?: Record<string, unknown>;
+  snapshot?: Record<string, unknown>;
+  delta?: Record<string, unknown>;
+  contract?: Record<string, unknown>;
+  coverage_matrix?: Array<Record<string, unknown>>;
+  coverage_complete?: number;
+  coverage_total?: number;
+  coherency_score?: number;
+  coherency?: Record<string, unknown>;
+  tool_phase?: string;
+  calls?: Array<Record<string, unknown>>;
+  results?: Array<Record<string, unknown>>;
+  proposals?: Array<Record<string, unknown>>;
+  triggers?: string[];
+  redirect?: string;
+  team_memory_snapshot?: Record<string, unknown>;
+  blackboard_snapshot?: Record<string, unknown>;
   content?: string;
   reasoning_content?: string;
   digest?: string;
@@ -356,9 +191,9 @@ export interface TeamTraceEventUi {
   kind:
     | "run"
     | "round"
-	    | "turn"
-	    | "tool"
-	    | "vote"
+    | "turn"
+    | "tool"
+    | "vote"
     | "consensus"
     | "blackboard"
     | "debate"
@@ -474,50 +309,6 @@ export interface TeamRunUi {
   votes: TeamTraceEventUi[];
   startedAt?: string;
   completedAt?: string;
-}
-
-export interface StreamChunk {
-  event?: string;
-  conversation_id?: string;
-  title?: string;
-  approval_id?: string;
-  args_hash?: string;
-  plan_id?: string;
-  plan_content?: string;
-  plan_status?: string;
-  plan_active?: boolean;
-  feedback?: string | null;
-  cancelled?: boolean;
-  content?: string;
-  reasoning_content?: string;
-  finish_reason?: string;
-  model?: string;
-  provider?: string;
-  usage?: Record<string, unknown>;
-  context_tokens_estimated?: number;
-  context_tokens_after_turn_estimated?: number;
-  context_window_tokens?: number;
-  context_compacted?: boolean;
-  prompt_tokens_estimated?: number;
-  memory_trace?: MemoryTrace;
-  images?: GeneratedImage[];
-  is_thinking?: boolean;
-  error?: string;
-  error_detail?: ApiErrorEnvelope;
-  status?: number;
-  tool_call_id?: string;
-  tool_name?: string;
-  tool_status?: string;
-  tool_message?: string;
-  tool_result?: string;
-  tool_error?: string;
-  metadata?: Record<string, unknown>;
-  tool_input?: Record<string, unknown>;
-  tool_data?: Record<string, unknown>;
-  tool_approval?: ToolApprovalPayload;
-  tool_calls?: unknown;
-  tool_iterations?: number;
-  next_step_suggestion?: string | null;
 }
 
 export interface MemoryTraceClassicItem {
@@ -672,111 +463,6 @@ export interface SessionPanelSnapshot {
   project: SessionProjectSnapshot;
 }
 
-export interface PlanApprovalUi {
-  conversationId: string;
-  approvalId: string;
-  planId: string;
-  planContent: string;
-  planStatus: string;
-  feedback?: string | null;
-}
-
-export interface PlanDecisionResponse {
-  event?: string;
-  conversation_id: string;
-  approval_id?: string | null;
-  plan_id?: string | null;
-  plan_content?: string;
-  plan_status?: string;
-  plan_active?: boolean;
-  feedback?: string | null;
-  cancelled?: boolean;
-  injected_message?: string;
-  suggested_message?: string;
-}
-
-export interface ToolApprovalPayload {
-  approval_id: string;
-  args_hash?: string;
-  status: string;
-  tool_call_id: string;
-  tool_name: string;
-  arguments?: Record<string, unknown>;
-  message?: string;
-}
-
-export interface ToolApprovalUi {
-  conversationId: string;
-  approvalId: string;
-  argsHash?: string;
-  toolCallId: string;
-  toolName: string;
-  toolInput?: Record<string, unknown>;
-  message?: string;
-}
-
-export type MessageRoleUi = "user" | "agent" | "tool";
-export type ToolBlockStatus = "queued" | "running" | "completed" | "error" | "permission_required";
-export type ChatMessagePartKind = "reasoning" | "content" | "tool" | "image";
-
-export interface ChatTodoItemUi {
-  id: string;
-  content: string;
-  status: "pending" | "in_progress" | "completed";
-}
-
-export interface TodoDockSnapshotUi {
-  key: string;
-  toolName: string;
-  updateCount: number;
-  status: ToolBlockStatus;
-  todos: ChatTodoItemUi[];
-}
-
-export interface ChatMessagePartUi {
-  kind: ChatMessagePartKind;
-  id: string;
-  content?: string;
-  image?: GeneratedImage;
-  reasoningBlockId?: string;
-  toolBlockId?: string;
-}
-
-export interface ReasoningBlockUi {
-  id: string;
-  content: string;
-  isStreaming: boolean;
-  userExpanded?: boolean;
-}
-
-export interface ToolBlockUi {
-  id: string;
-  name: string;
-  status: ToolBlockStatus;
-  title: string;
-  message: string;
-  content: string;
-  path?: string;
-  data?: Record<string, unknown>;
-  isCollapsed: boolean;
-}
-
-export interface ChatMessageUi {
-  id: string;
-  role: MessageRoleUi;
-  label: string;
-  content: string;
-  reasoning: string;
-  reasoningBlocks: ReasoningBlockUi[];
-  toolBlocks: ToolBlockUi[];
-  teamEvents: TeamTraceEventUi[];
-  teamRun?: TeamRunUi;
-  parts: ChatMessagePartUi[];
-  isStreaming: boolean;
-  isReasoningStreaming: boolean;
-  metadata?: Record<string, unknown>;
-}
-
 export function emptySessionUsage(): SessionUsage {
   return {
     context_tokens: { value: 0, estimated: false },
@@ -860,28 +546,4 @@ export function buildTeamRunStart(input: {
     team_id: input.teamId ?? "default-4",
     team_config: input.teamConfig,
   };
-}
-
-export function isToolEvent(chunk: StreamChunk) {
-  return (
-    chunk.event === "tool_call_started" ||
-    chunk.event === "tool_progress" ||
-    chunk.event === "tool_result" ||
-    chunk.event === "tool_error" ||
-    chunk.event === "permission_required" ||
-    chunk.event === "tool_group_started" ||
-    chunk.event === "tool_group_finished"
-  );
-}
-
-export function isToolGroupEvent(chunk: StreamChunk) {
-  return chunk.event === "tool_group_started" || chunk.event === "tool_group_finished";
-}
-
-export function parseToolStatus(value?: string): ToolBlockStatus {
-  if (value === "completed") return "completed";
-  if (value === "error") return "error";
-  if (value === "permission_required") return "permission_required";
-  if (value === "running") return "running";
-  return "queued";
 }
