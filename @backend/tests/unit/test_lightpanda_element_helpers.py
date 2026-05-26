@@ -6,7 +6,7 @@ import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from personagent.infrastructure.browser.element_helpers import ElementHelpers
+from personagent.infrastructure.browser.cdp.element_helpers import ElementHelpers
 
 # ---------------------------------------------------------------------------
 # Helpers

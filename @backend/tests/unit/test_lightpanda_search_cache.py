@@ -12,7 +12,7 @@ from personagent.infrastructure.browser.models import (
     BrowserSearchResult,
     BrowserSearchSnapshot,
 )
-from personagent.infrastructure.browser.search_cache import SearchResultCache
+from personagent.infrastructure.browser.search.cache import SearchResultCache
 
 # ---------------------------------------------------------------------------
 # Helpers

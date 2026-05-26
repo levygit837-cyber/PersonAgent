@@ -25,8 +25,8 @@ from personagent.application.use_cases.chat.helpers import (
     set_session_status,
     usage_int,
 )
-from personagent.application.use_cases.chat.state import AssistantStreamState
-from personagent.domain.models.conversation import Conversation, Message, Role
+from personagent.application.use_cases.chat.messaging.state import AssistantStreamState
+from personagent.domain.conversation.models import Conversation, Message, Role
 
 # ---------------------------------------------------------------------------
 # Browser target helpers

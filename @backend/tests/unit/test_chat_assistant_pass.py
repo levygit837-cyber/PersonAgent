@@ -21,15 +21,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.use_cases.chat.assistant_pass import AssistantPassRunner
-from personagent.application.use_cases.chat.media_policy import MediaPolicyHandler
-from personagent.application.use_cases.chat.state import AssistantStreamState
-from personagent.application.use_cases.chat.stream_normalization import (
+from personagent.application.dto import ChatRequestDTO
+from personagent.application.use_cases.chat.lifecycle.assistant_pass import AssistantPassRunner
+from personagent.application.use_cases.chat.messaging.media_policy import MediaPolicyHandler
+from personagent.application.use_cases.chat.messaging.state import AssistantStreamState
+from personagent.application.use_cases.chat.streaming.normalization import (
     StreamChunkNormalizer,
 )
-from personagent.application.use_cases.chat.tool_results import ToolResultHandler
-from personagent.domain.models.inference_result import GeneratedImage, StreamChunk
+from personagent.application.use_cases.chat.tooling.tool_results import ToolResultHandler
+from personagent.domain.llm_backend.models import GeneratedImage, StreamChunk
 
 
 async def _aiter(chunks: list[StreamChunk]) -> AsyncIterator[StreamChunk]:

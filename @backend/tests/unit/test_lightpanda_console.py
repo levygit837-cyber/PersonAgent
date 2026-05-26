@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from personagent.infrastructure.browser.console import BrowserConsole
+from personagent.infrastructure.browser.cdp.console import BrowserConsole
 from personagent.infrastructure.browser.models import BrowserConsoleEntry
 
 # ---------------------------------------------------------------------------
@@ -432,7 +432,7 @@ class TestBackwardCompatDelegations:
         assert len(worker._console_cache["c"]["p"]) == 1
 
     def test_worker_console_message_attr_delegates(self) -> None:
-        from personagent.infrastructure.browser.console import BrowserConsole
+        from personagent.infrastructure.browser.cdp.console import BrowserConsole
 
         msg = MagicMock()
         msg.type = "info"

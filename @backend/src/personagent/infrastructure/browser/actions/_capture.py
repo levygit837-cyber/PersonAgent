@@ -7,10 +7,10 @@ from typing import Any
 import structlog
 
 from personagent.infrastructure.browser.models import BrowserUnavailableError
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     clamped_viewport as _clamped_viewport,
 )
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     clean_browser_url as _clean_browser_url,
 )
 

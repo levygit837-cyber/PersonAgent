@@ -13,11 +13,11 @@ from typing import Any
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.use_cases.chat.compaction import ConversationCompactor
-from personagent.domain.models.conversation import Conversation, Message, Role
-from personagent.domain.models.inference_result import InferenceResult, StreamChunk
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
+from personagent.application.dto import ChatRequestDTO
+from personagent.application.use_cases.chat.lifecycle.compaction import ConversationCompactor
+from personagent.domain.conversation.models import Conversation, Message, Role
+from personagent.domain.llm_backend.models import InferenceResult, StreamChunk
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 
 
 class _StubLLM(LLMBackendRepository):

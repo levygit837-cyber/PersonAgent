@@ -13,7 +13,7 @@ from personagent.domain.tools import (
     ToolPermissionBehavior,
     ToolUseContext,
 )
-from personagent.infrastructure.tools.browser_tools.helpers import (
+from personagent.infrastructure.tools.browser.building import (
     _browser_action_permission,
     _browser_height,
     _browser_result_max_chars,

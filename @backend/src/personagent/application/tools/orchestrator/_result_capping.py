@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from personagent.domain.tools import ToolResult, ToolUseContext
-from personagent.infrastructure.artifacts import DEFAULT_ARTIFACT_ROOT, safe_segment
+from personagent.infrastructure.persistence.artifacts import DEFAULT_ARTIFACT_ROOT, safe_segment
 
 DEFAULT_TOOL_RESULT_MAX_CHARS = 60_000
 

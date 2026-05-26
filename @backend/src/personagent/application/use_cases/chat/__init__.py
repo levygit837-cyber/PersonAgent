@@ -14,8 +14,8 @@ need internals should keep importing
 
 from __future__ import annotations
 
-from personagent.application.use_cases.chat import helpers, state
-from personagent.application.use_cases.chat.state import (
+from personagent.application.use_cases.chat import helpers
+from personagent.application.use_cases.chat.messaging.state import (
     AssistantStreamState,
     MemoryRecallResult,
     PromptPackage,
@@ -28,5 +28,4 @@ __all__ = [
     "PromptPackage",
     "PromptPreparation",
     "helpers",
-    "state",
 ]

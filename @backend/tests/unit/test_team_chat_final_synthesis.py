@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from personagent.application.team_chat.final_synthesis import FinalSynthesis
+from personagent.application.team_chat.phases.final_synthesis import FinalSynthesis
 from personagent.application.team_chat.types import Vote
 
 # ---------------------------------------------------------------------------
@@ -115,7 +115,7 @@ def test_final_messages_contains_system_and_user() -> None:
     phase = FinalSynthesis(_LLMBackendStub())
     team = _team()
     request = _request()
-    from personagent.application.team_chat.blackboard import _Blackboard
+    from personagent.application.team_chat.blackboard.core import _Blackboard
 
     blackboard = _Blackboard("full", user_input=request.message)
     votes = [_vote()]
@@ -144,8 +144,8 @@ async def test_synthesize_final_yields_final_delta_events() -> None:
     phase = FinalSynthesis(stub)
     team = _team()
     request = _request()
-    from personagent.application.team_chat.blackboard import _Blackboard
-    from personagent.domain.models.conversation import Conversation
+    from personagent.application.team_chat.blackboard.core import _Blackboard
+    from personagent.domain.conversation.models import Conversation
 
     blackboard = _Blackboard("full", user_input=request.message)
     conversation = Conversation(title="Test")
@@ -187,8 +187,8 @@ async def test_synthesize_final_skips_empty_chunks() -> None:
     phase = FinalSynthesis(stub)
     team = _team()
     request = _request()
-    from personagent.application.team_chat.blackboard import _Blackboard
-    from personagent.domain.models.conversation import Conversation
+    from personagent.application.team_chat.blackboard.core import _Blackboard
+    from personagent.domain.conversation.models import Conversation
 
     blackboard = _Blackboard("full", user_input=request.message)
     conversation = Conversation(title="Test")
@@ -224,8 +224,8 @@ async def test_synthesize_final_respects_cancel_event() -> None:
     phase = FinalSynthesis(stub)
     team = _team()
     request = _request()
-    from personagent.application.team_chat.blackboard import _Blackboard
-    from personagent.domain.models.conversation import Conversation
+    from personagent.application.team_chat.blackboard.core import _Blackboard
+    from personagent.domain.conversation.models import Conversation
 
     blackboard = _Blackboard("full", user_input=request.message)
     conversation = Conversation(title="Test")
@@ -255,8 +255,8 @@ async def test_synthesize_final_passes_correct_max_tokens() -> None:
     phase = FinalSynthesis(stub)
     team = _team()
     request = _request(max_tokens=500)
-    from personagent.application.team_chat.blackboard import _Blackboard
-    from personagent.domain.models.conversation import Conversation
+    from personagent.application.team_chat.blackboard.core import _Blackboard
+    from personagent.domain.conversation.models import Conversation
 
     blackboard = _Blackboard("full", user_input=request.message)
     conversation = Conversation(title="Test")
@@ -285,8 +285,8 @@ async def test_synthesize_final_uses_coordinator_max_tokens_when_request_none() 
     phase = FinalSynthesis(stub)
     team = _team()
     request = _request(max_tokens=-1)
-    from personagent.application.team_chat.blackboard import _Blackboard
-    from personagent.domain.models.conversation import Conversation
+    from personagent.application.team_chat.blackboard.core import _Blackboard
+    from personagent.domain.conversation.models import Conversation
 
     blackboard = _Blackboard("full", user_input=request.message)
     conversation = Conversation(title="Test")

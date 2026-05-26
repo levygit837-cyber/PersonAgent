@@ -22,8 +22,8 @@ from unittest.mock import patch
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.use_cases.chat.prompt_surfaces import (
+from personagent.application.dto import ChatRequestDTO
+from personagent.application.use_cases.chat.prompt.prompt_surfaces import (
     PromptSurfacePreparer,
 )
 from personagent.domain.context.models import (
@@ -260,10 +260,10 @@ def test_prepare_routes_user_invocable_skill_with_overrides() -> None:
     preparer, service = _preparer()
 
     with patch(
-        "personagent.application.use_cases.chat.prompt_surfaces.find_skill",
+        "personagent.application.use_cases.chat.prompt.prompt_surfaces.find_skill",
         return_value=skill,
     ), patch(
-        "personagent.application.use_cases.chat.prompt_surfaces.is_skill_enabled",
+        "personagent.application.use_cases.chat.prompt.prompt_surfaces.is_skill_enabled",
         return_value=True,
     ):
         preparation = preparer.prepare(_request("/review src/"), _context())
@@ -283,10 +283,10 @@ def test_prepare_raises_for_disabled_skill() -> None:
     preparer, _ = _preparer()
 
     with patch(
-        "personagent.application.use_cases.chat.prompt_surfaces.find_skill",
+        "personagent.application.use_cases.chat.prompt.prompt_surfaces.find_skill",
         return_value=skill,
     ), patch(
-        "personagent.application.use_cases.chat.prompt_surfaces.is_skill_enabled",
+        "personagent.application.use_cases.chat.prompt.prompt_surfaces.is_skill_enabled",
         return_value=False,
     ), pytest.raises(ValueError, match="Skill is disabled"):
         preparer.prepare(_request("/review"), _context())
@@ -299,10 +299,10 @@ def test_prepare_falls_through_to_builtin_when_skill_is_not_user_invocable() -> 
     preparer, service = _preparer(builtin_resolution=resolution)
 
     with patch(
-        "personagent.application.use_cases.chat.prompt_surfaces.find_skill",
+        "personagent.application.use_cases.chat.prompt.prompt_surfaces.find_skill",
         return_value=skill,
     ), patch(
-        "personagent.application.use_cases.chat.prompt_surfaces.is_skill_enabled",
+        "personagent.application.use_cases.chat.prompt.prompt_surfaces.is_skill_enabled",
         return_value=True,
     ):
         preparation = preparer.prepare(_request("/autodebug"), _context())
@@ -327,7 +327,7 @@ def test_prepare_routes_builtin_when_no_prompt_or_skill_match() -> None:
     preparer, _ = _preparer(builtin_resolution=resolution)
 
     with patch(
-        "personagent.application.use_cases.chat.prompt_surfaces.find_skill",
+        "personagent.application.use_cases.chat.prompt.prompt_surfaces.find_skill",
         return_value=None,
     ):
         preparation = preparer.prepare(_request("/compact"), _context())
@@ -343,7 +343,7 @@ def test_prepare_raises_for_unknown_slash_command() -> None:
     preparer, _ = _preparer()
 
     with patch(
-        "personagent.application.use_cases.chat.prompt_surfaces.find_skill",
+        "personagent.application.use_cases.chat.prompt.prompt_surfaces.find_skill",
         return_value=None,
     ), pytest.raises(ValueError, match="Unknown slash command"):
         preparer.prepare(_request("/nope"), _context())

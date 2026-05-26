@@ -1,4 +1,4 @@
-from personagent.infrastructure.llm.codex_payload import CodexPayloadBuilder
+from personagent.infrastructure.llm.codex.payload import CodexPayloadBuilder
 
 
 def test_build_payload_uses_default_model_when_not_specified():

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from personagent.interfaces.api import action_approvals
+from personagent.adapters.api import action_approvals
 
 
 class _ApprovalSettings:

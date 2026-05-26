@@ -1,0 +1,10 @@
+# codedb-specific exclusions (supplements .gitignore)
+# These are paths codedb should NOT index even if not in .gitignore
+
+# Snapshot cache (codedb manages this itself)
+codedb.snapshot
+
+# AI assistant dirs
+.commandcode/
+.kimi-code/
+.aidesigner/

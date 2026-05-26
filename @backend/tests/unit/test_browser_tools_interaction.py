@@ -1,10 +1,10 @@
-"""Unit tests for personagent.infrastructure.tools.browser_tools.interaction (Slice 3)."""
+"""Unit tests for personagent.infrastructure.tools.browser.interaction (Slice 3)."""
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from personagent.infrastructure.tools.browser_tools.interaction import (
+from personagent.infrastructure.tools.browser.interaction import (
     create_browser_act_tool,
     create_browser_click_tool,
     create_browser_read_console_tool,
@@ -215,25 +215,25 @@ class TestBrowserActTool:
 
 class TestBackwardCompatExports:
     def test_factories_reexports_click(self) -> None:
-        from personagent.infrastructure.tools.browser_tools.factories import (
+        from personagent.infrastructure.tools.browser.factories import (
             create_browser_click_tool as from_factories,
         )
-        from personagent.infrastructure.tools.browser_tools.interaction import (
+        from personagent.infrastructure.tools.browser.interaction import (
             create_browser_click_tool as from_interaction,
         )
         assert from_factories is from_interaction
 
     def test_factories_reexports_act(self) -> None:
-        from personagent.infrastructure.tools.browser_tools.factories import (
+        from personagent.infrastructure.tools.browser.factories import (
             create_browser_act_tool as from_factories,
         )
-        from personagent.infrastructure.tools.browser_tools.interaction import (
+        from personagent.infrastructure.tools.browser.interaction import (
             create_browser_act_tool as from_interaction,
         )
         assert from_factories is from_interaction
 
     def test_init_reexports_all_eight(self) -> None:
-        from personagent.infrastructure.tools.browser_tools import (
+        from personagent.infrastructure.tools.browser import (
             create_browser_act_tool,
             create_browser_click_tool,
             create_browser_read_console_tool,
@@ -261,7 +261,7 @@ class TestBackwardCompatExports:
 
 class TestCreateBrowserToolsIntegrity:
     def test_returns_19_tools(self) -> None:
-        from personagent.infrastructure.tools.browser_tools import create_browser_tools
+        from personagent.infrastructure.tools.browser import create_browser_tools
 
         worker = _make_worker()
         worker.search_url = MagicMock(return_value="https://search.yahoo.com/search?q=test")
@@ -270,7 +270,7 @@ class TestCreateBrowserToolsIntegrity:
         assert len(tools) == 19
 
     def test_interaction_tool_names_present(self) -> None:
-        from personagent.infrastructure.tools.browser_tools import create_browser_tools
+        from personagent.infrastructure.tools.browser import create_browser_tools
 
         worker = _make_worker()
         worker.search_url = MagicMock(return_value="https://search.yahoo.com/search?q=test")

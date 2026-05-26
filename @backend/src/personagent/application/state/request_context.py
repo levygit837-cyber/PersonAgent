@@ -34,7 +34,7 @@ from personagent.domain.context.models import (
     SystemContext,
     UserContext,
 )
-from personagent.domain.models.tenancy import DEFAULT_TENANT_ID
+from personagent.domain.conversation.tenancy import DEFAULT_TENANT_ID
 
 PermissionMode = str
 """Symbolic alias for the allowed permission strings (``auto`` / ``manual`` /

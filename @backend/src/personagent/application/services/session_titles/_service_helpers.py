@@ -25,8 +25,8 @@ from personagent.application.services.session_titles._models import (
     SessionTitleResult,
 )
 from personagent.application.services.session_titles._uniqueness import _TitleUniqueness
-from personagent.domain.models.conversation import Conversation, Role
-from personagent.domain.repositories.conversation_repository import ConversationRepository
+from personagent.domain.conversation.models import Conversation, Role
+from personagent.domain.conversation.repositories import ConversationRepository
 
 
 class _SessionTitleServiceHelpersMixin:

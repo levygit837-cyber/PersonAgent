@@ -6,10 +6,10 @@ from typing import Any
 import structlog
 
 from personagent.infrastructure.browser.models import BrowserUnavailableError
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     clean_browser_url as _clean_browser_url,
 )
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     normalize_navigation_url as _normalize_navigation_url,
 )
 

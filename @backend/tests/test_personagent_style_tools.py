@@ -9,7 +9,7 @@ from uuid import UUID
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
+from personagent.application.dto import ChatRequestDTO
 from personagent.application.tools import (
     InMemoryTaskStore,
     ToolOrchestrator,
@@ -17,10 +17,10 @@ from personagent.application.tools import (
     ToolRuntimeConfig,
 )
 from personagent.application.use_cases.chat_completion import ChatCompletionUseCase
-from personagent.domain.models.conversation import Conversation
-from personagent.domain.models.inference_result import InferenceResult, StreamChunk
-from personagent.domain.repositories.conversation_repository import ConversationRepository
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
+from personagent.domain.conversation.models import Conversation
+from personagent.domain.conversation.repositories import ConversationRepository
+from personagent.domain.llm_backend.models import InferenceResult, StreamChunk
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 from personagent.domain.tools import (
     ToolCall,
     ToolDefinition,

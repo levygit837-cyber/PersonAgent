@@ -14,12 +14,15 @@ from personagent.application.team_chat import (
     default_team_config,
     parse_team_config,
 )
-from personagent.application.team_chat.orchestrator import _parse_json_object, _parse_vote_payload
+from personagent.application.team_chat.orchestration.orchestrator import (
+    _parse_json_object,
+    _parse_vote_payload,
+)
 from personagent.application.tools import ToolRegistry, ToolRuntimeConfig
-from personagent.domain.models.conversation import Conversation
-from personagent.domain.models.inference_result import InferenceResult, StreamChunk
-from personagent.domain.repositories.conversation_repository import ConversationRepository
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
+from personagent.domain.conversation.models import Conversation
+from personagent.domain.conversation.repositories import ConversationRepository
+from personagent.domain.llm_backend.models import InferenceResult, StreamChunk
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 from personagent.infrastructure.tools import create_read_file_tool, create_write_file_tool
 
 

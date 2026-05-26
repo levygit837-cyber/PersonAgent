@@ -9,8 +9,8 @@ import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
-from personagent.domain.models.conversation import Conversation
-from personagent.interfaces.api.routes.chat.plan_approval import register_plan_approval_routes
+from personagent.adapters.api.routes.chat.plan_approval import register_plan_approval_routes
+from personagent.domain.conversation.models import Conversation
 
 # ---------------------------------------------------------------------------
 # Stubs
@@ -64,7 +64,7 @@ def chat_module():
 
 @pytest.fixture
 def app(monkeypatch, chat_module):
-    import personagent.interfaces.api.routes.chat as chat_pkg
+    import personagent.adapters.api.routes.chat as chat_pkg
 
     monkeypatch.setattr(chat_pkg, "_load_conversation_for_decision", chat_module._load_conversation_for_decision)
 
@@ -117,7 +117,7 @@ class TestApprovePlan:
             conv.metadata["plan_mode"]["plan_content"] = ""
             return conv, _StubConversationRepo(conv)
 
-        import personagent.interfaces.api.routes.chat as chat_pkg
+        import personagent.adapters.api.routes.chat as chat_pkg
 
         monkeypatch.setattr(chat_pkg, "_load_conversation_for_decision", _empty_plan_load)
         response = client.post(

@@ -12,12 +12,12 @@ from typing import Any
 
 import pytest
 
-from personagent.application.team_chat.agent_turn_runner import AgentTurnRunner
-from personagent.application.team_chat.blackboard import _Blackboard
+from personagent.application.team_chat.blackboard.core import _Blackboard
 from personagent.application.team_chat.contracts import TeamAgentConfig, TeamConfig
+from personagent.application.team_chat.orchestration.agent_turn_runner import AgentTurnRunner
 from personagent.application.team_chat.types import TurnResult
-from personagent.domain.models.conversation import Conversation
-from personagent.domain.models.inference_result import StreamChunk
+from personagent.domain.conversation.models import Conversation
+from personagent.domain.llm_backend.models import StreamChunk
 
 # ---------------------------------------------------------------------------
 # Stubs

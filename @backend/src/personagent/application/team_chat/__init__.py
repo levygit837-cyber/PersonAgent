@@ -1,6 +1,5 @@
 """Team chat orchestration primitives."""
 
-from personagent.application.team_chat.consensus_phase import ConsensusPhase
 from personagent.application.team_chat.contracts import (
     DEFAULT_TEAM_ID,
     TeamAgentConfig,
@@ -11,9 +10,10 @@ from personagent.application.team_chat.contracts import (
     parse_team_config,
     serialize_team_config,
 )
-from personagent.application.team_chat.coordinator_phase import CoordinatorPhase
-from personagent.application.team_chat.final_synthesis import FinalSynthesis
-from personagent.application.team_chat.orchestrator import TeamChatOrchestrator
+from personagent.application.team_chat.orchestration.orchestrator import TeamChatOrchestrator
+from personagent.application.team_chat.phases.consensus import ConsensusPhase
+from personagent.application.team_chat.phases.coordinator import CoordinatorPhase
+from personagent.application.team_chat.phases.final_synthesis import FinalSynthesis
 from personagent.application.team_chat.types import (
     BlackboardEntry,
     CoordinatorGuidance,

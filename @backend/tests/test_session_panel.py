@@ -4,15 +4,15 @@ from uuid import UUID
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-
-from personagent.application.services import session_panel
-from personagent.application.services.session_panel import SessionPanelService
-from personagent.domain.models.conversation import Conversation, Message, Role
-from personagent.domain.repositories.conversation_repository import ConversationRepository
 from personagent.infrastructure.artifacts import store_bytes_artifact, store_text_artifact
-from personagent.infrastructure.config.settings import reset_settings
-from personagent.interfaces.api.routes import artifacts, sessions
-from personagent.interfaces.api.workspace_grants import register_workspace_grant
+
+from personagent.adapters.api.routes import artifacts, sessions
+from personagent.adapters.api.routes.workspace_grants import register_workspace_grant
+from personagent.application.services import session_panel
+from personagent.application.services.session.session_panel import SessionPanelService
+from personagent.domain.conversation.models import Conversation, Message, Role
+from personagent.domain.conversation.repositories import ConversationRepository
+from personagent.infrastructure.settings.settings import reset_settings
 
 
 class MemoryConversationRepository(ConversationRepository):

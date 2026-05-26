@@ -1,4 +1,4 @@
-"""Unit tests for personagent.infrastructure.tools.browser_tools.navigation (Slice 2)."""
+"""Unit tests for personagent.infrastructure.tools.browser.navigation (Slice 2)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from personagent.infrastructure.tools.browser_tools.navigation import (
+from personagent.infrastructure.tools.browser.navigation import (
     create_browser_extract_content_tool,
     create_browser_get_element_map_tool,
     create_browser_get_html_tool,
@@ -206,25 +206,25 @@ class TestBrowserGetElementMapTool:
 
 class TestBackwardCompatExports:
     def test_factories_reexports_search(self) -> None:
-        from personagent.infrastructure.tools.browser_tools.factories import (
+        from personagent.infrastructure.tools.browser.factories import (
             create_browser_search_tool as from_factories,
         )
-        from personagent.infrastructure.tools.browser_tools.navigation import (
+        from personagent.infrastructure.tools.browser.navigation import (
             create_browser_search_tool as from_navigation,
         )
         assert from_factories is from_navigation
 
     def test_factories_reexports_open(self) -> None:
-        from personagent.infrastructure.tools.browser_tools.factories import (
+        from personagent.infrastructure.tools.browser.factories import (
             create_browser_open_tool as from_factories,
         )
-        from personagent.infrastructure.tools.browser_tools.navigation import (
+        from personagent.infrastructure.tools.browser.navigation import (
             create_browser_open_tool as from_navigation,
         )
         assert from_factories is from_navigation
 
     def test_init_reexports_all_six(self) -> None:
-        from personagent.infrastructure.tools.browser_tools import (
+        from personagent.infrastructure.tools.browser import (
             create_browser_extract_content_tool,
             create_browser_get_element_map_tool,
             create_browser_get_html_tool,
@@ -248,14 +248,14 @@ class TestBackwardCompatExports:
 
 class TestCreateBrowserToolsIntegrity:
     def test_returns_19_tools(self) -> None:
-        from personagent.infrastructure.tools.browser_tools import create_browser_tools
+        from personagent.infrastructure.tools.browser import create_browser_tools
 
         worker = _make_worker()
         tools = create_browser_tools(worker)
         assert len(tools) == 19
 
     def test_all_tool_names_present(self) -> None:
-        from personagent.infrastructure.tools.browser_tools import create_browser_tools
+        from personagent.infrastructure.tools.browser import create_browser_tools
 
         worker = _make_worker()
         tools = create_browser_tools(worker)

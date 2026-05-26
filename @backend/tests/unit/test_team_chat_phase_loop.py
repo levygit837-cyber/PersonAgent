@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from personagent.application.team_chat.contracts import TeamAgentConfig, TeamChatRequest, TeamConfig
-from personagent.application.team_chat.phase_loop import TeamChatPhaseLoop
-from personagent.domain.models.conversation import Conversation
+from personagent.application.team_chat.phases.loop import TeamChatPhaseLoop
+from personagent.domain.conversation.models import Conversation
 
 
 @pytest.fixture

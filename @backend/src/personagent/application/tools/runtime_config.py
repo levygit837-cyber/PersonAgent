@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from personagent.infrastructure.artifacts import DEFAULT_ARTIFACT_ROOT
+from personagent.infrastructure.persistence.artifacts import DEFAULT_ARTIFACT_ROOT
 
 DEFAULT_MAX_TOOL_ITERATIONS: int | None = None
 """Default operator-imposed tool iteration limit.

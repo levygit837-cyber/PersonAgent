@@ -37,7 +37,7 @@ from personagent.application.team_chat.helpers import (
 )
 from personagent.application.team_chat.types import BlackboardEntry, TurnResult
 from personagent.application.tools import ToolRuntimeConfig
-from personagent.domain.models.conversation import Conversation
+from personagent.domain.conversation.models import Conversation
 from personagent.domain.tools import ToolExecutionStatus, ToolResult
 
 

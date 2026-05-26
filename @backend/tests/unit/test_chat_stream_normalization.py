@@ -11,12 +11,12 @@ Two purely-functional transforms covered branch-by-branch:
 """
 from __future__ import annotations
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.use_cases.chat.state import AssistantStreamState
-from personagent.application.use_cases.chat.stream_normalization import (
+from personagent.application.dto import ChatRequestDTO
+from personagent.application.use_cases.chat.messaging.state import AssistantStreamState
+from personagent.application.use_cases.chat.streaming.normalization import (
     StreamChunkNormalizer,
 )
-from personagent.domain.models.inference_result import GeneratedImage, StreamChunk
+from personagent.domain.llm_backend.models import GeneratedImage, StreamChunk
 
 
 def _state(*, content: str = "") -> AssistantStreamState:

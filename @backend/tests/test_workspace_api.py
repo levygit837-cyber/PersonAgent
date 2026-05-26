@@ -9,8 +9,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from personagent.interfaces.api.action_approvals import create_action_approval
-from personagent.interfaces.api.routes import workspace
+from personagent.adapters.api.routes import workspace
+from personagent.adapters.api.routes.action_approvals import create_action_approval
 
 
 class FakeSettings:

@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from personagent.domain.conversation.models import Conversation
 from personagent.domain.memory.models.memory_file import MemoryFile
 from personagent.domain.memory.services.memory_extractor import MemoryExtractor
-from personagent.domain.models.conversation import Conversation
 
 
 class ExtractMemoryUseCase:

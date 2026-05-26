@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from personagent.domain.exceptions import LLMBackendConnectionError
-from personagent.infrastructure.llm.vertex_ai_adapter import VERTEX_MODELS, VertexAiAdapter
+from personagent.infrastructure.llm.vertex_ai import VERTEX_MODELS, VertexAiAdapter
 
 
 def test_vertex_catalog_contains_curated_gemini_models_without_deprecated_pro():

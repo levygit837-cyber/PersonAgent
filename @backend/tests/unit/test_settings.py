@@ -1,4 +1,4 @@
-from personagent.infrastructure.config.settings import Settings
+from personagent.infrastructure.settings.settings import Settings
 
 
 def test_project_env_overrides_inherited_nvidia_api_key(tmp_path, monkeypatch):

@@ -8,11 +8,11 @@ from uuid import UUID
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from personagent.domain.models.conversation import Conversation
-from personagent.domain.models.inference_result import InferenceResult, StreamChunk
-from personagent.domain.repositories.conversation_repository import ConversationRepository
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
-from personagent.interfaces.api.routes import chat
+from personagent.adapters.api.routes import chat
+from personagent.domain.conversation.models import Conversation
+from personagent.domain.conversation.repositories import ConversationRepository
+from personagent.domain.llm_backend.models import InferenceResult, StreamChunk
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 
 
 def test_team_websocket_streams_run_and_persists(monkeypatch):

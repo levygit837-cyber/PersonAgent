@@ -5,9 +5,9 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from personagent.domain.models.conversation import Conversation
-from personagent.domain.repositories.conversation_repository import ConversationRepository
-from personagent.interfaces.api.routes import chat
+from personagent.adapters.api.routes import chat
+from personagent.domain.conversation.models import Conversation
+from personagent.domain.conversation.repositories import ConversationRepository
 
 
 class FakeNvidiaBackend:

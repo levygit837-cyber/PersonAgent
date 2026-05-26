@@ -9,7 +9,7 @@ from personagent.infrastructure.browser.actions._constants import (
     _MAX_BROWSER_SCRIPT_CHARS,
 )
 from personagent.infrastructure.browser.models import BrowserError
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     clean_browser_url as _clean_browser_url,
 )
 

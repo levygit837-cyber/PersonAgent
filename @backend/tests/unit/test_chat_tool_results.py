@@ -21,14 +21,14 @@ from uuid import uuid4
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
+from personagent.application.dto import ChatRequestDTO
 from personagent.application.plan_mode import (
     PENDING_TOOL_APPROVAL_KEY,
     PENDING_USER_QUESTION_KEY,
 )
-from personagent.application.use_cases.chat.tool_results import ToolResultHandler
-from personagent.domain.models.conversation import Conversation, Role
-from personagent.domain.models.inference_result import StreamChunk
+from personagent.application.use_cases.chat.tooling.tool_results import ToolResultHandler
+from personagent.domain.conversation.models import Conversation, Role
+from personagent.domain.llm_backend.models import StreamChunk
 from personagent.domain.tools import (
     ToolCall,
     ToolExecutionStatus,

@@ -29,8 +29,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from personagent.application.use_cases.chat.state import AssistantStreamState
-from personagent.domain.models.conversation import Conversation, Role
+from personagent.application.use_cases.chat.messaging.state import AssistantStreamState
+from personagent.domain.conversation.models import Conversation, Role
 from personagent.domain.prompts.services.prompt_builder import estimate_text_tokens
 
 

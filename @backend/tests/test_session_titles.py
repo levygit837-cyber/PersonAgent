@@ -10,10 +10,10 @@ from personagent.application.services.session_titles import (
     SESSION_TITLE_CACHE_KEY,
     SessionTitleService,
 )
-from personagent.domain.models.conversation import Conversation, Message, Role
-from personagent.domain.models.inference_result import InferenceResult, StreamChunk
-from personagent.domain.repositories.conversation_repository import ConversationRepository
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
+from personagent.domain.conversation.models import Conversation, Message, Role
+from personagent.domain.conversation.repositories import ConversationRepository
+from personagent.domain.llm_backend.models import InferenceResult, StreamChunk
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 
 
 @pytest.mark.asyncio

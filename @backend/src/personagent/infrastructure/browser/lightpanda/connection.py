@@ -11,10 +11,10 @@ import httpx
 import structlog
 
 from personagent.infrastructure.browser.models import BrowserUnavailableError
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     is_local_lightpanda_endpoint as _is_local_lightpanda_endpoint,
 )
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     normalize_lightpanda_cdp_endpoint,
 )
 

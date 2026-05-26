@@ -21,7 +21,7 @@ from personagent.domain.tools import (
     ToolUseContext,
     build_tool,
 )
-from personagent.infrastructure.tools.path_safety import resolve_within_allowed_roots
+from personagent.infrastructure.tools.dev.path_safety import resolve_within_allowed_roots
 from personagent.infrastructure.tools.shell_tool.classify import (
     _READ_ONLY_MODES,
     _WRITE_ALLOWED_MODES,

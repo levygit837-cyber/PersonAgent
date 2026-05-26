@@ -10,8 +10,9 @@ from typing import Any
 
 import pytest
 
-from personagent.application.team_chat.blackboard import _Blackboard
-from personagent.application.team_chat.consensus_phase import (
+from personagent.application.team_chat.blackboard.core import _Blackboard
+from personagent.application.team_chat.contracts import TeamAgentConfig, TeamConfig
+from personagent.application.team_chat.phases.consensus import (
     ConsensusPhase,
     _consensus_snapshot,
     _fast_vote,
@@ -24,7 +25,6 @@ from personagent.application.team_chat.consensus_phase import (
     _vote_event,
     _votes_text,
 )
-from personagent.application.team_chat.contracts import TeamAgentConfig, TeamConfig
 from personagent.application.team_chat.types import Vote
 
 # ---------------------------------------------------------------------------

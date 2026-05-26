@@ -4,14 +4,14 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from personagent.adapters.api.main import app as personagent_app
+from personagent.adapters.api.routes import workspace
 from personagent.application.qa.contracts import RuntimeEventType, TraceMode
 from personagent.application.qa.indexer import PythonCodeIndexer
 from personagent.application.qa.redaction import redact_mapping
 from personagent.application.qa.runtime_tracer import PythonRuntimeTracer
 from personagent.infrastructure.persistence import models as _models  # noqa: F401
 from personagent.infrastructure.persistence.database import Base
-from personagent.interfaces.api.main import app as personagent_app
-from personagent.interfaces.api.routes import workspace
 
 
 class FakeSettings:
@@ -50,7 +50,7 @@ async def create_transfer(payload: TransferDTO, db=Depends(get_db)):
     tests_dir = tmp_path / "@backend" / "tests"
     tests_dir.mkdir(parents=True)
     (tests_dir / "test_transfers.py").write_text(
-        "from personagent.interfaces.api.routes import transfers\n\n"
+        "from personagent.adapters.api.routes import transfers\n\n"
         "def test_create_transfer():\n"
         "    assert transfers.router\n",
         encoding="utf-8",

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import time
 
-from personagent.infrastructure.browser.content_cleanup import (
+from personagent.infrastructure.browser.models import BrowserOpenedPage
+from personagent.infrastructure.browser.scripts.content_cleanup import (
     MARKDOWN_LINK_PATTERN as _MARKDOWN_LINK_PATTERN,
 )
-from personagent.infrastructure.browser.models import BrowserOpenedPage
 
 
 class _LinkExtractionMixin:

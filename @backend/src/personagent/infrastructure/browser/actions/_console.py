@@ -6,7 +6,7 @@ from typing import Any
 from personagent.infrastructure.browser.actions._constants import (
     _MAX_CONSOLE_ENTRIES_PER_PAGE,
 )
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     clean_browser_url as _clean_browser_url,
 )
 

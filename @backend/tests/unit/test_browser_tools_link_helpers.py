@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from personagent.infrastructure.tools.browser_tools.link_helpers import (
+from personagent.infrastructure.tools.browser.link_helpers import (
     _LINK_SUPPRESSION_THRESHOLD,
     _LOW_QUALITY_LINK_TEXT,
     _LOW_QUALITY_PATH_MARKERS,

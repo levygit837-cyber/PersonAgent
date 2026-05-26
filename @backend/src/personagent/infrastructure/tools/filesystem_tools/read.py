@@ -17,6 +17,7 @@ from personagent.domain.tools import (
     ToolUseContext,
     build_tool,
 )
+from personagent.infrastructure.tools.dev.path_safety import resolve_within_allowed_roots
 from personagent.infrastructure.tools.filesystem_tools.helpers import (
     _deny,
     _display_path,
@@ -24,7 +25,6 @@ from personagent.infrastructure.tools.filesystem_tools.helpers import (
     _file_output_schema,
     _positive_int,
 )
-from personagent.infrastructure.tools.path_safety import resolve_within_allowed_roots
 
 
 def create_read_file_tool() -> Tool:

@@ -6,7 +6,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from personagent.application.services import project_snapshot, session_panel
+from personagent.application.services.insights import project_snapshot
+from personagent.application.services.session import session_panel
 
 
 def _run_result(returncode: int = 0, stdout: str = "", stderr: str = ""):

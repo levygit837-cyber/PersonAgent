@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from personagent.application.state import RequestContext
-from personagent.application.use_cases.context import BuildContextUseCase
+from personagent.application.use_cases.build_context import BuildContextUseCase
 from personagent.infrastructure.persistence.context import InMemoryContextRepository
 
 

@@ -6,19 +6,19 @@ import asyncio
 from contextlib import suppress
 from typing import Any
 
-from personagent.infrastructure.browser.content_cleanup import (
-    clean_extracted_content as _clean_extracted_content,
-)
-from personagent.infrastructure.browser.content_cleanup import (
-    should_prefer_readable_dom as _should_prefer_readable_dom,
-)
-from personagent.infrastructure.browser.content_scripts import (
-    _READABLE_DOM_SCRIPT,
-)
 from personagent.infrastructure.browser.models import (
     BrowserSession as _BrowserSession,
 )
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.scripts.content import (
+    _READABLE_DOM_SCRIPT,
+)
+from personagent.infrastructure.browser.scripts.content_cleanup import (
+    clean_extracted_content as _clean_extracted_content,
+)
+from personagent.infrastructure.browser.scripts.content_cleanup import (
+    should_prefer_readable_dom as _should_prefer_readable_dom,
+)
+from personagent.infrastructure.browser.search.url_utils import (
     clean_browser_url as _clean_browser_url,
 )
 

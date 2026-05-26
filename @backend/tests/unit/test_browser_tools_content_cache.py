@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from personagent.infrastructure.tools.browser_tools.content_cache import (
+from personagent.infrastructure.tools.browser.content_cache import (
     _DEFAULT_CHUNK_SIZE,
     _EXTRACT_INLINE_CONTENT_CHARS,
     _MAX_CHUNK_COUNT,
@@ -168,14 +168,14 @@ class TestPrepareExtractedContentResponse:
 
 
 class TestResolveCacheKey:
-    @patch("personagent.infrastructure.tools.browser_tools.content_cache._PAGE_CACHE")
+    @patch("personagent.infrastructure.tools.browser.content_cache._PAGE_CACHE")
     def test_delegates_to_page_cache(self, mock_cache: MagicMock) -> None:
         mock_cache.resolve_key.return_value = "resolved-key"
         result = _resolve_cache_key("conv-1", "raw-key")
         mock_cache.resolve_key.assert_called_once_with("conv-1", "raw-key")
         assert result == "resolved-key"
 
-    @patch("personagent.infrastructure.tools.browser_tools.content_cache._PAGE_CACHE")
+    @patch("personagent.infrastructure.tools.browser.content_cache._PAGE_CACHE")
     def test_returns_none_for_invalid(self, mock_cache: MagicMock) -> None:
         mock_cache.resolve_key.return_value = None
         result = _resolve_cache_key("conv-1", None)

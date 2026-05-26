@@ -10,9 +10,9 @@ from typing import Any
 
 import structlog
 
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 from personagent.domain.prompts.models import ConcretePromptMode, PromptMode, PromptProfile
 from personagent.domain.prompts.prompt import normalize_prompt_mode
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
 logger = structlog.get_logger(__name__)
 

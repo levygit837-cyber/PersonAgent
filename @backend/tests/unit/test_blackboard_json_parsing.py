@@ -6,7 +6,7 @@ functions so future slices can rely on stable behavior.
 
 from __future__ import annotations
 
-from personagent.application.team_chat.blackboard_json_parsing import (
+from personagent.application.team_chat.blackboard.json_parsing import (
     _digest,
     _extract_complete_json_objects_from_array,
     _normalize_coverage_matrix,

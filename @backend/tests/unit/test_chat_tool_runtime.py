@@ -22,10 +22,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
+from personagent.application.dto import ChatRequestDTO
 from personagent.application.tools import ToolRuntimeConfig
-from personagent.application.use_cases.chat.tool_runtime import ToolRuntime
-from personagent.domain.models.conversation import Conversation
+from personagent.application.use_cases.chat.tooling.tool_runtime import ToolRuntime
+from personagent.domain.conversation.models import Conversation
 
 
 def _request(**overrides: Any) -> ChatRequestDTO:

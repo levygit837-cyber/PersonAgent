@@ -12,12 +12,12 @@ from typing import Any
 
 import structlog
 
+from personagent.domain.conversation.models import Conversation
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 from personagent.domain.memory.models.memory_file import MemoryFile
 from personagent.domain.memory.models.memory_types import MemoryScope, MemoryType
 from personagent.domain.memory.repositories.memory_repository import MemoryRepository
 from personagent.domain.memory.services.memory_scanner import MemoryScanner
-from personagent.domain.models.conversation import Conversation
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
 logger = structlog.get_logger(__name__)
 

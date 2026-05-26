@@ -29,10 +29,10 @@ from personagent.domain.memory.services.operational_memory import (
 from personagent.domain.tools import ToolCall, ToolExecutionStatus, ToolResult, ToolUseContext
 
 if TYPE_CHECKING:
-    from personagent.application.services.operational_memory_queue import (
+    from personagent.application.services.session.operational_memory_queue import (
         OperationalMemoryQueue,
     )
-    from personagent.infrastructure.llm.embedding_adapter import (
+    from personagent.infrastructure.llm.shared.embedding_adapter import (
         OpenAICompatibleEmbeddingAdapter,
     )
     from personagent.infrastructure.persistence.operational_memory_repository import (

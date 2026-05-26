@@ -6,6 +6,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from personagent.adapters.api.errors import install_error_handlers
 from personagent.application.retry import RetryPolicy
 from personagent.application.tools import ToolOrchestrator, ToolRegistry, ToolRuntimeConfig
 from personagent.domain.exceptions import (
@@ -15,7 +16,6 @@ from personagent.domain.exceptions import (
     provider_http_error,
 )
 from personagent.domain.tools import ToolCall, ToolExecutionStatus, ToolUseContext
-from personagent.interfaces.api.errors import install_error_handlers
 
 
 def test_personagent_error_serializes_stable_envelope() -> None:

@@ -16,6 +16,7 @@ from personagent.domain.tools import (
     ToolUseContext,
     build_tool,
 )
+from personagent.infrastructure.tools.dev.path_safety import resolve_within_allowed_roots
 from personagent.infrastructure.tools.filesystem_tools.helpers import (
     _deny,
     _diff,
@@ -25,7 +26,6 @@ from personagent.infrastructure.tools.filesystem_tools.helpers import (
     _line_count,
     _mutation_output_schema,
 )
-from personagent.infrastructure.tools.path_safety import resolve_within_allowed_roots
 
 
 def create_write_file_tool() -> Tool:

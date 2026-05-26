@@ -9,11 +9,11 @@ from uuid import UUID
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
+from personagent.application.dto import ChatRequestDTO
 from personagent.application.tools import ToolRegistry, ToolRuntimeConfig
 from personagent.application.use_cases.chat_completion import ChatCompletionUseCase
-from personagent.domain.models.conversation import Conversation
-from personagent.domain.repositories.conversation_repository import ConversationRepository
+from personagent.domain.conversation.models import Conversation
+from personagent.domain.conversation.repositories import ConversationRepository
 from personagent.infrastructure.browser import LightPandaBrowserWorker
 from personagent.infrastructure.llm.nvidia_nim_adapter import NvidiaNimAdapter
 from personagent.infrastructure.tools import create_browser_tools

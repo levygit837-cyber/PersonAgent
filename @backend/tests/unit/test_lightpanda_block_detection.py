@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from personagent.infrastructure.browser.block_detection import BlockDetector
 from personagent.infrastructure.browser.models import BrowserBlockedError
+from personagent.infrastructure.browser.snapshot.block_detection import BlockDetector
 
 # ---------------------------------------------------------------------------
 # Helpers

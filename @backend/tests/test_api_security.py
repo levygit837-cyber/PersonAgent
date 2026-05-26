@@ -3,14 +3,14 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from personagent.infrastructure.config.settings import get_settings
-from personagent.interfaces.api.main import create_app
-from personagent.interfaces.api.routes import security as security_routes
-from personagent.interfaces.api.security import (
+from personagent.adapters.api.main import create_app
+from personagent.adapters.api.middleware.auth import (
     install_local_auth,
     read_or_create_local_token,
     validate_startup_security,
 )
+from personagent.adapters.api.routes import security as security_routes
+from personagent.infrastructure.settings.settings import get_settings
 
 
 @pytest.mark.asyncio

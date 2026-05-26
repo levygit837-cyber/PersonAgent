@@ -12,7 +12,7 @@ from personagent.domain.exceptions import (
     LLMBackendTimeoutError,
     provider_http_error,
 )
-from personagent.domain.models.inference_result import InferenceResult, StreamChunk
+from personagent.domain.llm_backend.models import InferenceResult, StreamChunk
 from personagent.infrastructure.llm.nvidia_nim_adapter import (
     DEFAULT_OUTPUT_TOKENS,
     FINAL_RESPONSE_TOKEN_RESERVE,
@@ -20,7 +20,7 @@ from personagent.infrastructure.llm.nvidia_nim_adapter import (
     NvidiaNimAdapter,
     _response_error_text,
 )
-from personagent.infrastructure.llm.openai_compatible_parser import (
+from personagent.infrastructure.llm.shared.openai_compatible_parser import (
     ThinkingTagState,
     extract_reasoning_field,
     normalize_message_content,

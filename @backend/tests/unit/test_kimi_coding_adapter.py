@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from personagent.infrastructure.llm.kimi_coding_adapter import (
+from personagent.infrastructure.llm.kimi.coding_adapter import (
     DEFAULT_MODEL,
     KimiCodingAdapter,
     _AnthropicStreamState,

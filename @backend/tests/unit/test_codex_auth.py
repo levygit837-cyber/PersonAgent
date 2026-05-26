@@ -4,7 +4,7 @@ import json
 import pytest
 
 from personagent.domain.exceptions import LLMBackendConnectionError
-from personagent.infrastructure.llm.codex_auth import CodexAuthSnapshot, CodexAuthStore
+from personagent.infrastructure.llm.codex.auth import CodexAuthSnapshot, CodexAuthStore
 
 
 def _jwt(claims: dict) -> str:

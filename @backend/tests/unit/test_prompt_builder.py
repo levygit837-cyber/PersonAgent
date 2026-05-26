@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from personagent.domain.context.models import SystemContext, UserContext
-from personagent.domain.models.inference_result import InferenceResult, StreamChunk
+from personagent.domain.llm_backend.models import InferenceResult, StreamChunk
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 from personagent.domain.prompts import infer_prompt_mode
 from personagent.domain.prompts.models import AgentStateProfile, PromptProfile, SystemPromptSection
 from personagent.domain.prompts.prompt import PROMPT_DYNAMIC_BOUNDARY, get_mode_prompt_section
@@ -21,7 +22,6 @@ from personagent.domain.prompts.services import (
     PromptContextAnalyzer,
 )
 from personagent.domain.prompts.skills import discover_skills
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
 
 class TestPromptBuilder:

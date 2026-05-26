@@ -5,7 +5,7 @@ Pins the observable contract of ClaimGraphAnalyzer and the 3 module-level helper
 
 from __future__ import annotations
 
-from personagent.application.team_chat.blackboard_claim_graph import (
+from personagent.application.team_chat.blackboard.claim_graph import (
     ClaimGraphAnalyzer,
     _claim_signature,
     _novelty_score,

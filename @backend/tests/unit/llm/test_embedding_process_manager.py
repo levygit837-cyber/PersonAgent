@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from personagent.infrastructure.llm.process_manager import (
+from personagent.infrastructure.llm.shared.process_manager import (
     EmbeddingServerProcessManager,
     LlamaServerProcessManager,
 )
@@ -49,7 +49,7 @@ async def test_embedding_process_manager_start_uses_ctx_fallback(monkeypatch: py
     manager = _FallbackManager()
 
     monkeypatch.setattr(
-        "personagent.infrastructure.llm.process_manager.subprocess.Popen",
+        "personagent.infrastructure.llm.shared.process_manager.subprocess.Popen",
         lambda *_args, **_kwargs: _FakeProcess(),
     )
 

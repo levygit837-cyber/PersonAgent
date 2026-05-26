@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from personagent.infrastructure.browser.models import BrowserError
-from personagent.infrastructure.browser.page_lifecycle import BrowserPageLifecycle
+from personagent.infrastructure.browser.page.lifecycle import BrowserPageLifecycle
 
 # ---------------------------------------------------------------------------
 # Stubs

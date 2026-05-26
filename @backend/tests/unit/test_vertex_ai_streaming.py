@@ -2,7 +2,7 @@
 
 import pytest
 
-from personagent.domain.models.inference_result import GeneratedImage
+from personagent.domain.llm_backend.models import GeneratedImage
 from personagent.infrastructure.llm.vertex_ai.streaming import VertexStreamingHandler
 
 

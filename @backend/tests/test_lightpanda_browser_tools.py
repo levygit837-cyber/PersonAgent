@@ -5,27 +5,27 @@ import time
 from pathlib import Path
 
 import pytest
+from personagent.infrastructure.artifacts import load_artifact
 
+from personagent.adapters.composition import DIContainer
 from personagent.application.tools import ToolOrchestrator, ToolRegistry, ToolRuntimeConfig
 from personagent.domain.tools import ToolCall, ToolExecutionStatus, ToolUseContext
-from personagent.infrastructure.artifacts import load_artifact
 from personagent.infrastructure.browser import (
     BrowserSearchResult,
     BrowserUnavailableError,
     LightPandaBrowserWorker,
     normalize_lightpanda_cdp_endpoint,
 )
-from personagent.infrastructure.browser.content_cleanup import (
-    clean_extracted_content as _clean_extracted_content,
-)
 from personagent.infrastructure.browser.lightpanda import (
     _BrowserSession,
     _clean_browser_url,
 )
-from personagent.infrastructure.browser.page_cache import BrowserPageCache
+from personagent.infrastructure.browser.page.cache import BrowserPageCache
+from personagent.infrastructure.browser.scripts.content_cleanup import (
+    clean_extracted_content as _clean_extracted_content,
+)
 from personagent.infrastructure.tools import create_browser_tools
-from personagent.infrastructure.tools.browser_tools import _summarize_element_map
-from personagent.interfaces.config.di_container import DIContainer
+from personagent.infrastructure.tools.browser import _summarize_element_map
 
 
 def test_normalize_lightpanda_cdp_endpoint_prefers_json_version_websocket():

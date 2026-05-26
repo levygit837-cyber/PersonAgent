@@ -17,15 +17,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-from personagent.application.team_chat.blackboard import (
+from personagent.application.team_chat.blackboard.core import (
     _Blackboard,
 )
-from personagent.application.team_chat.blackboard_json_parsing import (
+from personagent.application.team_chat.blackboard.json_parsing import (
     _clamp_float,
     _digest,
     _parse_json_object,
 )
-from personagent.application.team_chat.blackboard_scoring import (
+from personagent.application.team_chat.blackboard.scoring import (
     _coherency_score,
     _now_iso,
 )
@@ -39,7 +39,7 @@ from personagent.application.team_chat.types import (
     TurnResult,
 )
 from personagent.application.tools import ToolRuntimeConfig
-from personagent.domain.models.conversation import Conversation
+from personagent.domain.conversation.models import Conversation
 from personagent.domain.prompts.prompt import shared_runtime_policy_overlay
 from personagent.domain.prompts.sections.states import render_agent_state_policy
 from personagent.domain.tools import ToolExecutionStatus, ToolResult, ToolUseContext

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from personagent.application.use_cases.chat.state import StreamingTurnState
+from personagent.application.use_cases.chat.messaging.state import StreamingTurnState
 
 
 def test_defaults_are_none_or_empty_collections() -> None:
