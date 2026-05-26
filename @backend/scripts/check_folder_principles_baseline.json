@@ -1,0 +1,12 @@
+{
+  "violations": [
+    "[P1] src/personagent/adapters/api/middleware: single-file folder: only 'auth.py' here; flatten to parent",
+    "[P1] src/personagent/domain/context/repositories: single-file folder: only 'context_repository.py' here; flatten to parent",
+    "[P1] src/personagent/domain/memory/repositories: single-file folder: only 'memory_repository.py' here; flatten to parent",
+    "[P1] src/personagent/domain/security: single-file folder: only 'value_objects.py' here; flatten to parent",
+    "[P3] src/personagent/adapters/api/routes/action_approvals.py: loose endpoint file; create a sub-folder or move to an existing group",
+    "[P3] src/personagent/adapters/api/routes/artifacts.py: loose endpoint file; create a sub-folder or move to an existing group",
+    "[P3] src/personagent/adapters/api/routes/state_events.py: loose endpoint file; create a sub-folder or move to an existing group",
+    "[P3] src/personagent/adapters/api/routes/workspace_grants.py: loose endpoint file; create a sub-folder or move to an existing group"
+  ]
+}

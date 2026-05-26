@@ -39,6 +39,13 @@ repos:
   # files via its own config in `@backend/pyproject.toml`.
   - repo: local
     hooks:
+      - id: folder-principles
+        name: adr-0022 folder principles
+        entry: bash -c 'cd @backend && python3 scripts/check_folder_principles.py'
+        language: system
+        pass_filenames: false
+        files: ^@backend/src/personagent/.*\.py$
+
       - id: ruff
         name: ruff (backend lint)
         entry: bash -c 'cd @backend && uv run ruff check --fix --exit-non-zero-on-fix src/ tests/'
