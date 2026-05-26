@@ -50,13 +50,13 @@ from personagent.application.use_cases.chat.operational_memory import (
 )
 from personagent.domain.models.conversation import Conversation, Message, Role
 from personagent.domain.models.inference_result import StreamChunk
+from personagent.domain.security import canonical_args_hash
 from personagent.domain.tools import (
     ToolCall,
     ToolExecutionStatus,
     ToolResult,
     ToolUseContext,
 )
-from personagent.interfaces.api.action_approvals import canonical_args_hash
 
 
 class ToolResultHandler:

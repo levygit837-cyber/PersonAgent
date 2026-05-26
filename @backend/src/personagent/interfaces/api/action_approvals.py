@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hmac
-import json
 import secrets
 import time
 from hashlib import sha256
@@ -12,6 +11,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from personagent.domain.security import canonical_args_hash
 from personagent.infrastructure.config.settings import get_settings
 
 APPROVABLE_ACTION_KINDS = frozenset(
@@ -25,15 +25,6 @@ APPROVABLE_ACTION_KINDS = frozenset(
     }
 )
 _CONSUMED_APPROVALS: dict[str, float] = {}
-
-
-def canonical_args_hash(action_kind: str, arguments: dict[str, Any]) -> str:
-    payload = {
-        "action_kind": action_kind,
-        "arguments": arguments,
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str, ensure_ascii=False)
-    return sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def create_action_approval(action_kind: str, arguments: dict[str, Any]) -> dict[str, Any]:

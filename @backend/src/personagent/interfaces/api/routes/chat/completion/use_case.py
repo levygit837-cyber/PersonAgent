@@ -17,8 +17,8 @@ from personagent.application.plan_mode import (
 from personagent.application.use_cases.chat_completion import ChatCompletionUseCase
 from personagent.domain.models.conversation import Message, Role
 from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
+from personagent.domain.security import canonical_args_hash
 from personagent.domain.tools import ToolCall, ToolExecutionStatus
-from personagent.interfaces.api.action_approvals import canonical_args_hash
 from personagent.interfaces.api.routes.chat.completion.resolvers import (
     resolve_context_window_tokens,
     resolve_context_workspace_root_from_tool_context,
