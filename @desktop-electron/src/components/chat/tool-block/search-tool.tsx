@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { ToolBlockUi } from "../../../types/chat";
+import { shellLabel } from "./browser-output";
 import { searchHasOutput, searchMetadata, searchOutputPreview, searchOutputRows, searchOutputText, searchSummary, type SearchOutputRow } from "./search-output";
 import { isRunning, statusTextClass, stringValue } from "./shared";
 import { StatusDot, ArtifactNotice } from "./shared";
@@ -119,7 +120,7 @@ function searchEventText(block: ToolBlockUi, summary?: string) {
 
 function searchStaticLabel(block: ToolBlockUi) {
   if (block.name === "Glob") return globLabel(block);
-  if (block.name === "shell") return shellLabelFromBlock(block);
+  if (block.name === "shell") return shellLabel(block);
   return searchLabel(block);
 }
 
@@ -141,7 +142,4 @@ export function webFetchLabel(block: ToolBlockUi) {
   return url ? `Fetch ${url}` : "WebFetch";
 }
 
-function shellLabelFromBlock(block: ToolBlockUi) {
-  const command = stringValue(block.data?.command);
-  return command || block.title.trim() || "Shell command";
-}
+

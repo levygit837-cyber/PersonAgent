@@ -1,6 +1,6 @@
 import type { ToolBlockUi } from "../../types/chat";
-import { browserImageDataUrl, browserInlineText, isBrowserToolName, normalizedToolOutput, shellLabel } from "./tool-block/browser-output";
-import { searchHasOutput, searchOutputPreview, searchOutputRows, searchSummary, type SearchOutputRow } from "./tool-block/search-output";
+import { isBrowserToolName, normalizedToolOutput } from "./tool-block/browser-output";
+import { searchHasOutput } from "./tool-block/search-output";
 import { todoItems, type TodoItem } from "./tool-block/todo";
 import { useToolOutputCollapsed } from "./tool-block/visibility";
 import { GenericToolEvent, compactGenericToolLabel } from "./tool-block/generic-tool";
@@ -8,8 +8,8 @@ import { ReadToolEvent, readCollapsedLabel, readRunningLabel } from "./tool-bloc
 import { SearchToolEvent, searchCollapsedLabel, searchRunningLabel } from "./tool-block/search-tool";
 import { ShellToolEvent } from "./tool-block/shell-tool";
 import { TodoToolEvent, TodoToolGroupBlock } from "./tool-block/todo-tool";
-import { WriteToolEvent, writeHasOutput, type WriteOutputRow } from "./tool-block/write-tool";
-import { isRunning, isError, stringValue, isTodoTool, isFileMutationTool, isSearchTool, isSearchShellCommand } from "./tool-block/shared";
+import { WriteToolEvent, writeHasOutput } from "./tool-block/write-tool";
+import { isRunning, isTodoTool, isFileMutationTool, isSearchTool, isSearchShellCommand } from "./tool-block/shared";
 import { StatusDot } from "./tool-block/shared";
 export { isBrowserToolName } from "./tool-block/browser-output";
 export { todoItems, type TodoItem } from "./tool-block/todo";
