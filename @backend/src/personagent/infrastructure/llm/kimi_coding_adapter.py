@@ -23,11 +23,10 @@ from personagent.domain.repositories.llm_backend_repository import LLMBackendRep
 from personagent.infrastructure.llm.kimi_auth import KimiTokenManager
 from personagent.infrastructure.llm.kimi_history import (
     anthropic_history_blocks,
-    anthropic_history_blocks_from_tool_calls,
     attach_anthropic_history_blocks,
-    parse_tool_arguments,
     tool_call_from_anthropic_block,
 )
+from personagent.infrastructure.llm.kimi_payload import KimiPayloadBuilder
 
 logger = structlog.get_logger(__name__)
 
@@ -91,6 +90,10 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
             "anthropic-version": self.anthropic_version,
         }
         self._client: httpx.AsyncClient | None = None
+        self._payload_builder = KimiPayloadBuilder(
+            default_model=self.default_model,
+            default_max_tokens=self.default_max_tokens,
+        )
 
     async def _try_auto_refresh_token(self) -> bool:
         """Proxy to KimiTokenManager — preserves backward compatibility."""
@@ -319,32 +322,15 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        del temperature
-        requested_model = str(extra.get("model") or "").strip()
-        model = self.default_model if requested_model in {"", "local-model"} else requested_model
-        effective_max_tokens = self._resolve_effective_max_tokens(max_tokens)
-        system, anthropic_messages = self._convert_messages(messages)
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": anthropic_messages,
-            "max_tokens": effective_max_tokens,
-            "stream": stream,
-        }
-        if system:
-            payload["system"] = system
-
-        thinking = self._thinking_config(extra, effective_max_tokens)
-        if thinking is not None:
-            payload["thinking"] = thinking
-
-        anthropic_tools = self._convert_tools(tools)
-        if anthropic_tools:
-            payload["tools"] = anthropic_tools
-            converted_tool_choice = self._convert_tool_choice(tool_choice)
-            if converted_tool_choice:
-                payload["tool_choice"] = converted_tool_choice
-
-        return payload
+        return self._payload_builder.build_payload(
+            messages,
+            temperature,
+            max_tokens,
+            stream,
+            extra,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
 
     def _parse_message_response(
         self,
@@ -482,62 +468,8 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
         }
 
     def _convert_messages(self, messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:
-        system_parts: list[str] = []
-        converted: list[dict[str, Any]] = []
-
-        for message in messages:
-            role = str(message.get("role") or "user")
-            if role == "system":
-                text = self._coerce_text(message.get("content"))
-                if text:
-                    system_parts.append(text)
-                continue
-
-            if role == "assistant":
-                blocks = self._assistant_blocks(message)
-                self._append_message(converted, "assistant", blocks)
-                continue
-
-            if role == "tool":
-                self._append_message(
-                    converted,
-                    "user",
-                    [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": str(message.get("tool_call_id") or ""),
-                            "content": self._coerce_text(message.get("content")),
-                        }
-                    ],
-                )
-                continue
-
-            self._append_message(converted, "user", self._text_blocks(message.get("content")))
-
-        if not converted:
-            converted.append({"role": "user", "content": [{"type": "text", "text": ""}]})
-
-        return "\n\n".join(system_parts) if system_parts else None, converted
-
-    def _assistant_blocks(self, message: dict[str, Any]) -> list[dict[str, Any]]:
-        tool_calls = message.get("tool_calls") or []
-        replay_blocks = anthropic_history_blocks_from_tool_calls(tool_calls)
-        if replay_blocks:
-            return replay_blocks
-
-        blocks = self._text_blocks(message.get("content"))
-        for tool_call in tool_calls:
-            function = tool_call.get("function") or {}
-            arguments = function.get("arguments") or {}
-            blocks.append(
-                {
-                    "type": "tool_use",
-                    "id": str(tool_call.get("id") or ""),
-                    "name": str(function.get("name") or tool_call.get("name") or ""),
-                    "input": parse_tool_arguments(arguments),
-                }
-            )
-        return blocks or [{"type": "text", "text": ""}]
+        """Proxy to KimiPayloadBuilder — preserves backward compatibility."""
+        return self._payload_builder.convert_messages(messages)
 
     def _tool_calls_from_stream_state(
         self,
@@ -551,36 +483,6 @@ class KimiCodingAdapter(LLMBackendRepository):  # type: ignore[misc]
         ]
         attach_anthropic_history_blocks(tool_calls, history_blocks)
         return tool_calls
-
-    def _append_message(
-        self,
-        messages: list[dict[str, Any]],
-        role: str,
-        content: list[dict[str, Any]],
-    ) -> None:
-        if messages and messages[-1]["role"] == role:
-            messages[-1]["content"].extend(content)
-            return
-        messages.append({"role": role, "content": content})
-
-    def _text_blocks(self, content: Any) -> list[dict[str, Any]]:
-        text = self._coerce_text(content)
-        return [{"type": "text", "text": text}] if text else []
-
-    def _coerce_text(self, content: Any) -> str:
-        if content is None:
-            return ""
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for item in content:
-                if isinstance(item, dict) and isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-                elif isinstance(item, str):
-                    parts.append(item)
-            return "".join(parts)
-        return str(content)
 
     def _convert_tools(self, tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
         converted: list[dict[str, Any]] = []
