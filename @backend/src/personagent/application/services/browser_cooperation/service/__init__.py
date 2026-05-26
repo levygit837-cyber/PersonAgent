@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from personagent.application.services.browser_cooperation.event_processing import (
@@ -16,11 +15,11 @@ from personagent.application.services.browser_cooperation.event_processing impor
     _trace_effect_for_kind,
 )
 from personagent.application.services.browser_cooperation.helpers import (
-    DEFAULT_COOPERATION_POLICY,
     MAX_AGENT_EVENTS,
     MAX_INGEST_EVENTS,
     MAX_NOTIFICATIONS,
     MAX_PENDING_PROPOSALS,
+    MAX_RAW_EVENTS_PREVIEW,
     MAX_RECENT_ACTIONS,
     MAX_USEFUL_TIMELINE,
     _coerce_dict,
@@ -30,119 +29,21 @@ from personagent.application.services.browser_cooperation.helpers import (
     _now_iso,
     _parse_timestamp,
     _policy_from_state,
-)
-from personagent.infrastructure.persistence.models import (
-    BrowserCooperationEventORM,
-    BrowserWorkspaceORM,
-)
-
-
-def _cooperation_state_from_workspace(workspace: BrowserWorkspaceORM, browser_id: str) -> dict[str, Any]:
-    state = _coerce_dict(workspace.state)
-    cooperation = _coerce_dict(state.get("cooperation"))
-    return {
-        "enabled": bool(cooperation.get("enabled", False)),
-        "mode": _normalize_mode(cooperation.get("mode")),
-        "agent_control": _normalize_mode(cooperation.get("agent_control") or cooperation.get("mode")),
-        "browser_id": str(cooperation.get("browser_id") or browser_id),
-        "url": str(cooperation.get("url") or workspace.current_url or ""),
-        "title": str(cooperation.get("title") or workspace.current_title or ""),
-        "page_state": _coerce_dict(cooperation.get("page_state")),
-        "recent_actions": _coerce_list(cooperation.get("recent_actions"))[-MAX_RECENT_ACTIONS:],
-        "useful_timeline": _coerce_list(cooperation.get("useful_timeline"))[-MAX_USEFUL_TIMELINE:],
-        "recent_user_events": _coerce_list(cooperation.get("recent_user_events"))[-MAX_RECENT_ACTIONS:],
-        "recent_agent_events": _coerce_list(cooperation.get("recent_agent_events"))[-MAX_AGENT_EVENTS:],
-        "notifications": _coerce_list(cooperation.get("notifications"))[-MAX_NOTIFICATIONS:],
-        "pending_action_proposals": _coerce_list(cooperation.get("pending_action_proposals"))[:MAX_PENDING_PROPOSALS],
-        "policy": _policy_from_state(cooperation),
-        "last_user_activity_at": cooperation.get("last_user_activity_at"),
-        "updated_at": cooperation.get("updated_at"),
-    }
-
-
-def _mirror_browser_cooperation(conversation, browser_id: str, cooperation: Mapping[str, Any]) -> None:
-    metadata = getattr(conversation, "metadata", None)
-    if not isinstance(metadata, dict):
-        return
-    root = metadata.get("browser_cooperation")
-    if not isinstance(root, dict):
-        root = {}
-        metadata["browser_cooperation"] = root
-    root[browser_id] = {
-        "enabled": bool(cooperation.get("enabled")),
-        "mode": _normalize_mode(cooperation.get("mode")),
-        "agent_control": _normalize_mode(cooperation.get("agent_control") or cooperation.get("mode")),
-        "browser_id": browser_id,
-        "url": str(cooperation.get("url") or ""),
-        "title": str(cooperation.get("title") or ""),
-        "page_state": _coerce_dict(cooperation.get("page_state")),
-        "recent_actions": _coerce_list(cooperation.get("recent_actions"))[-MAX_RECENT_ACTIONS:],
-        "useful_timeline": _coerce_list(cooperation.get("useful_timeline"))[-MAX_USEFUL_TIMELINE:],
-        "recent_user_events": _coerce_list(cooperation.get("recent_user_events"))[-MAX_RECENT_ACTIONS:],
-        "recent_agent_events": _coerce_list(cooperation.get("recent_agent_events"))[-MAX_AGENT_EVENTS:],
-        "notifications": _coerce_list(cooperation.get("notifications"))[-MAX_NOTIFICATIONS:],
-        "pending_action_proposals": _coerce_list(cooperation.get("pending_action_proposals"))[:MAX_PENDING_PROPOSALS],
-        "policy": _policy_from_state(cooperation),
-        "last_user_activity_at": cooperation.get("last_user_activity_at"),
-        "updated_at": cooperation.get("updated_at"),
-    }
-
-
-def _merge_metadata_cooperation(
-    cooperation: Mapping[str, Any],
-    conversation,
-    browser_id: str,
-) -> dict[str, Any]:
-    metadata = getattr(conversation, "metadata", None)
-    if not isinstance(metadata, Mapping):
-        return dict(cooperation)
-    root = _coerce_dict(metadata.get("browser_cooperation"))
-    mirrored = _coerce_dict(root.get(browser_id))
-    if not mirrored:
-        return dict(cooperation)
-    page_state = {
-        **_coerce_dict(cooperation.get("page_state")),
-        **_coerce_dict(mirrored.get("page_state")),
-    }
-    return {
-        **dict(cooperation),
-        **mirrored,
-        "page_state": page_state,
-        "policy": _policy_from_state({**dict(cooperation), **mirrored}),
-    }
-
-
-def _orm_event_to_dict(event: BrowserCooperationEventORM) -> dict[str, Any]:
-    return {
-        "event_id": event.event_id,
-        "sequence": event.sequence,
-        "conversation_id": str(event.conversation_id),
-        "browser_id": event.browser_id,
-        "tab_id": event.tab_id,
-        "page_id": event.page_id,
-        "source": event.source,
-        "channel": getattr(event, "channel", "event"),
-        "trace_role": getattr(event, "trace_role", event.source),
-        "visibility": getattr(event, "visibility", "raw"),
-        "raw_kind": getattr(event, "raw_kind", None),
-        "kind": event.kind,
-        "timestamp": event.occurred_at.isoformat() if event.occurred_at else None,
-        "url": event.url or "",
-        "target": _coerce_dict(event.target),
-        "payload": _coerce_dict(event.payload),
-        "coordinates": _coerce_dict(getattr(event, "coordinates", {})),
-        "duration_ms": getattr(event, "duration_ms", None),
-        "trace_effect": getattr(event, "trace_effect", None),
-        "correlation_id": getattr(event, "correlation_id", None),
-        "importance": event.importance,
-        "semantic_label": event.semantic_label or "",
-    }
-
-
-
-from personagent.application.services.browser_cooperation.helpers import (  # noqa: E402
-    MAX_RAW_EVENTS_PREVIEW,
     build_browser_agent_context,
+)
+from personagent.infrastructure.persistence.models import BrowserCooperationEventORM
+
+from ._queries import (
+    _enforce_retention,
+    _existing_event_ids,
+    _get_or_create_workspace,
+    _latest_raw_events,
+    _next_cooperation_sequence,
+)
+from ._state import (
+    _cooperation_state_from_workspace,
+    _merge_metadata_cooperation,
+    _mirror_browser_cooperation,
 )
 
 
@@ -162,7 +63,7 @@ class BrowserCooperationService:
     ) -> dict[str, Any]:
         """Enable/disable cooperation and store the current control mode."""
 
-        workspace = await self._get_or_create_workspace(conversation, browser_id)
+        workspace = await _get_or_create_workspace(self._session, conversation, browser_id)
         state = _coerce_dict(workspace.state)
         current = _cooperation_state_from_workspace(workspace, browser_id)
         next_mode = _normalize_mode(mode or current.get("mode") or "observe_only")
@@ -194,7 +95,7 @@ class BrowserCooperationService:
     ) -> dict[str, Any]:
         """Normalize, redact, persist, and summarize Browser -> Agent events."""
 
-        workspace = await self._get_or_create_workspace(conversation, browser_id)
+        workspace = await _get_or_create_workspace(self._session, conversation, browser_id)
         state = _coerce_dict(workspace.state)
         cooperation = _cooperation_state_from_workspace(workspace, browser_id)
         if not cooperation.get("enabled"):
@@ -221,7 +122,8 @@ class BrowserCooperationService:
         normalized_inputs = [
             event for event in events[:MAX_INGEST_EVENTS] if isinstance(event, Mapping)
         ]
-        existing_ids = await self._existing_event_ids(
+        existing_ids = await _existing_event_ids(
+            self._session,
             workspace,
             [
                 str(event.get("event_id") or event.get("id") or "").strip()
@@ -229,7 +131,7 @@ class BrowserCooperationService:
                 if str(event.get("event_id") or event.get("id") or "").strip()
             ],
         )
-        next_sequence = await self._next_cooperation_sequence(workspace)
+        next_sequence = await _next_cooperation_sequence(self._session, workspace)
         accepted: list[Any] = []
         dropped = len(events) - len(normalized_inputs)
         seen_batch_keys: set[tuple[str, str, str, str, int]] = set()
@@ -293,7 +195,7 @@ class BrowserCooperationService:
         }
         state["cooperation"] = cooperation
         workspace.state = state
-        await self._enforce_retention(workspace, cooperation)
+        await _enforce_retention(self._session, workspace, cooperation)
         await self._session.commit()
         _mirror_browser_cooperation(conversation, browser_id, cooperation)
         return {
@@ -318,7 +220,7 @@ class BrowserCooperationService:
     ) -> dict[str, Any] | None:
         """Record a backend-originated browser event when cooperation is enabled."""
 
-        workspace = await self._get_or_create_workspace(conversation, browser_id)
+        workspace = await _get_or_create_workspace(self._session, conversation, browser_id)
         cooperation = _merge_metadata_cooperation(
             _cooperation_state_from_workspace(workspace, browser_id),
             conversation,
@@ -359,13 +261,13 @@ class BrowserCooperationService:
     ) -> dict[str, Any]:
         """Return the current realtime cooperation snapshot for the Browser UI."""
 
-        workspace = await self._get_or_create_workspace(conversation, browser_id)
+        workspace = await _get_or_create_workspace(self._session, conversation, browser_id)
         cooperation = _merge_metadata_cooperation(
             _cooperation_state_from_workspace(workspace, browser_id),
             conversation,
             browser_id,
         )
-        raw_events = await self._latest_raw_events(workspace, limit=raw_limit)
+        raw_events = await _latest_raw_events(self._session, workspace, limit=raw_limit)
         return {
             "type": "snapshot",
             "cooperation": cooperation,
@@ -388,7 +290,7 @@ class BrowserCooperationService:
     ) -> dict[str, Any]:
         """Mark a persisted Browser Arbiter proposal as approved, denied, or dismissed."""
 
-        workspace = await self._get_or_create_workspace(conversation, browser_id)
+        workspace = await _get_or_create_workspace(self._session, conversation, browser_id)
         state = _coerce_dict(workspace.state)
         cooperation = _merge_metadata_cooperation(
             _cooperation_state_from_workspace(workspace, browser_id),
@@ -427,93 +329,5 @@ class BrowserCooperationService:
             "state_patch": {"cooperation": cooperation},
         }
 
-    async def _get_or_create_workspace(self, conversation, browser_id: str) -> BrowserWorkspaceORM:
-        conversation_id = _conversation_uuid(conversation)
-        result = await self._session.execute(
-            select(BrowserWorkspaceORM).where(
-                BrowserWorkspaceORM.conversation_id == conversation_id,
-                BrowserWorkspaceORM.browser_id == browser_id,
-            )
-        )
-        workspace = result.scalar_one_or_none()
-        if workspace is not None:
-            return workspace
-        workspace = BrowserWorkspaceORM(
-            conversation_id=conversation_id,
-            browser_id=browser_id,
-            workspace_id=str(_coerce_dict(getattr(conversation, "metadata", {})).get("workspace_id") or ""),
-            active_runtime="lightpanda",
-            active_tab_id=browser_id,
-            state={},
-        )
-        self._session.add(workspace)
-        await self._session.flush()
-        return workspace
 
-    async def _next_cooperation_sequence(self, workspace: BrowserWorkspaceORM) -> int:
-        result = await self._session.execute(
-            select(func.max(BrowserCooperationEventORM.sequence)).where(
-                BrowserCooperationEventORM.browser_workspace_id == workspace.id
-            )
-        )
-        value = result.scalar_one_or_none()
-        return int(value or 0) + 1
-
-    async def _existing_event_ids(
-        self,
-        workspace: BrowserWorkspaceORM,
-        event_ids: list[str],
-    ) -> set[str]:
-        if not event_ids:
-            return set()
-        result = await self._session.execute(
-            select(BrowserCooperationEventORM.event_id).where(
-                BrowserCooperationEventORM.browser_workspace_id == workspace.id,
-                BrowserCooperationEventORM.event_id.in_(event_ids),
-            )
-        )
-        return {str(item) for item in result.scalars().all()}
-
-    async def _latest_raw_events(
-        self,
-        workspace: BrowserWorkspaceORM,
-        *,
-        limit: int,
-    ) -> list[dict[str, Any]]:
-        result = await self._session.execute(
-            select(BrowserCooperationEventORM)
-            .where(BrowserCooperationEventORM.browser_workspace_id == workspace.id)
-            .order_by(BrowserCooperationEventORM.sequence.desc())
-            .limit(max(1, min(limit, 200)))
-        )
-        events = [
-            _orm_event_to_dict(event)
-            for event in reversed(result.scalars().all())
-        ]
-        return events
-
-    async def _enforce_retention(
-        self,
-        workspace: BrowserWorkspaceORM,
-        cooperation: Mapping[str, Any],
-    ) -> None:
-        policy = _policy_from_state(cooperation)
-        limit = int(policy.get("raw_event_retention_limit") or DEFAULT_COOPERATION_POLICY["raw_event_retention_limit"])
-        if limit <= 0:
-            return
-        cutoff_result = await self._session.execute(
-            select(BrowserCooperationEventORM.sequence)
-            .where(BrowserCooperationEventORM.browser_workspace_id == workspace.id)
-            .order_by(BrowserCooperationEventORM.sequence.desc())
-            .offset(limit)
-            .limit(1)
-        )
-        cutoff = cutoff_result.scalar_one_or_none()
-        if cutoff is None:
-            return
-        await self._session.execute(
-            delete(BrowserCooperationEventORM).where(
-                BrowserCooperationEventORM.browser_workspace_id == workspace.id,
-                BrowserCooperationEventORM.sequence <= int(cutoff),
-            )
-        )
+__all__ = ["BrowserCooperationService"]
