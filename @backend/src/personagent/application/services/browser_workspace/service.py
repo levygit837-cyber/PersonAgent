@@ -9,11 +9,25 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from personagent.application.services.browser_workspace.helpers import (
+    _coerce_dict,
+    _coerce_list,
+    _compact_element_map,
+    _conversation_uuid,
+    _runtime_from_user_agent,
+    _safe_event_source,
+)
+from personagent.application.services.browser_workspace.serializers import (
+    _annotation_to_dict,
+    _mirror_compact_browser_workspace,
+    _tab_to_dict,
+    _timeline_event_to_dict,
+)
 from personagent.infrastructure.persistence.models import (
     BrowserAnnotationORM,
     BrowserTabORM,
@@ -437,140 +451,3 @@ class BrowserWorkspaceService:
         state["legacy_metadata_migrated"] = True
         workspace.state = state
         await self._session.commit()
-
-
-def _conversation_uuid(conversation) -> UUID:
-    value = getattr(conversation, "id", None)
-    if isinstance(value, UUID):
-        return value
-    return UUID(str(value))
-
-
-def _runtime_from_user_agent(user_agent: Any) -> str:
-    agent = str(user_agent or "").lower()
-    if agent.startswith("lightpanda/"):
-        return "lightpanda"
-    if agent:
-        return "chrome_cdp"
-    return ""
-
-
-def _compact_element_map(raw_map: Any) -> list[dict[str, Any]]:
-    compact: list[dict[str, Any]] = []
-    for item in _coerce_list(raw_map):
-        if not isinstance(item, dict):
-            continue
-        node_id = str(item.get("node_id") or "").strip()
-        if not node_id:
-            continue
-        compact.append(
-            {
-                "node_id": node_id,
-                "tab_id": str(item.get("tab_id") or ""),
-                "frame_id": str(item.get("frame_id") or "main"),
-                "frame_url": str(item.get("frame_url") or ""),
-                "role": str(item.get("role") or ""),
-                "tag": str(item.get("tag") or ""),
-                "text": str(item.get("text") or "")[:240],
-                "href": str(item.get("href") or ""),
-                "selector": str(item.get("selector") or ""),
-                "selector_chain": _coerce_list(item.get("selector_chain")),
-                "shadow_path": _coerce_list(item.get("shadow_path")),
-                "stable_key": str(item.get("stable_key") or ""),
-                "interactable": bool(item.get("interactable")),
-            }
-        )
-        if len(compact) >= 220:
-            break
-    return compact
-
-
-def _coerce_list(value: Any) -> list[Any]:
-    return value if isinstance(value, list) else []
-
-
-def _coerce_dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _safe_event_source(value: str) -> str:
-    return value if value in {"user", "agent", "system"} else "user"
-
-
-def _iso(value: Any) -> str:
-    if isinstance(value, datetime):
-        return value.astimezone(UTC).isoformat()
-    return datetime.now(UTC).isoformat()
-
-
-def _tab_to_dict(tab: BrowserTabORM) -> dict[str, Any]:
-    return {
-        "tab_id": tab.tab_id,
-        "id": tab.tab_id,
-        "url": tab.url or "",
-        "title": tab.title or "",
-        "runtime": tab.runtime or "lightpanda",
-        "active": bool(tab.is_active),
-        "is_active": bool(tab.is_active),
-        "history": _coerce_list(tab.history),
-        "state": _coerce_dict(tab.state),
-        "created_at": _iso(tab.created_at),
-        "updated_at": _iso(tab.updated_at),
-    }
-
-
-def _mirror_compact_browser_workspace(
-    conversation,
-    *,
-    browser_id: str,
-    payload: dict[str, Any],
-) -> None:
-    metadata = _coerce_dict(getattr(conversation, "metadata", {}))
-    if getattr(conversation, "metadata", None) is not metadata:
-        conversation.metadata = metadata
-    workspace_state = _coerce_dict(payload.get("workspace_state"))
-    compact = {
-        "active_browser_id": str(workspace_state.get("active_browser_id") or browser_id),
-        "active_tab_id": str(payload.get("active_tab_id") or workspace_state.get("active_tab_id") or browser_id),
-        "current_url": str(workspace_state.get("current_url") or ""),
-        "current_title": str(workspace_state.get("current_title") or ""),
-        "last_element_map": _coerce_list(workspace_state.get("last_element_map"))[:220],
-        "tabs": _coerce_list(payload.get("tabs"))[:50],
-        "updated_at": datetime.now(UTC).isoformat(),
-    }
-    metadata["browser_workspace"] = compact
-
-
-def _annotation_to_dict(annotation: BrowserAnnotationORM, browser_id: str) -> dict[str, Any]:
-    return {
-        "id": annotation.annotation_id,
-        "browser_id": browser_id,
-        "tab_id": annotation.tab_id or "",
-        "node_id": annotation.node_id,
-        "body": annotation.body,
-        "quote": annotation.quote or "",
-        "url": annotation.url or "",
-        "title": annotation.title or "",
-        "selector": annotation.selector or "",
-        "frame_id": annotation.frame_id or "main",
-        "selector_chain": _coerce_list(annotation.selector_chain),
-        "shadow_path": _coerce_list(annotation.shadow_path),
-        "metadata": _coerce_dict(annotation.metadata_),
-        "created_at": _iso(annotation.created_at),
-        "updated_at": _iso(annotation.updated_at),
-    }
-
-
-def _timeline_event_to_dict(event: BrowserTimelineEventORM, browser_id: str) -> dict[str, Any]:
-    return {
-        "id": event.event_id,
-        "browser_id": browser_id,
-        "tab_id": event.tab_id or "",
-        "source": _safe_event_source(event.source),
-        "event_type": event.event_type,
-        "label": event.label,
-        "payload": _coerce_dict(event.payload),
-        "sequence": int(event.sequence or 0),
-        "automation_run_id": event.automation_run_id or "",
-        "created_at": _iso(event.created_at),
-    }
