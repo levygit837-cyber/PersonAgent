@@ -1,5 +1,5 @@
-import type { ModelProvider, ReasoningPreset, PromptMode } from "../chat";
-import type { TeamTraceEventUi, TeamRunUi } from "../chat";
+import type { ModelProvider, ReasoningPreset, PromptMode } from "./models";
+import type { TeamTraceEventUi, TeamRunUi } from "./teams";
 import type { ToolBlockStatus, ToolBlockUi } from "./tools";
 
 export type PersistedMessageRole = "system" | "user" | "assistant" | "tool";

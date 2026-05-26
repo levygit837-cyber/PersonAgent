@@ -1,5 +1,6 @@
 import type { GeneratedImage } from "./messages";
-import type { ApiErrorEnvelope, MemoryTrace } from "../chat";
+import type { ApiErrorEnvelope } from "./models";
+import type { MemoryTrace } from "./memory";
 
 export type ToolBlockStatus = "queued" | "running" | "completed" | "error" | "permission_required";
 
