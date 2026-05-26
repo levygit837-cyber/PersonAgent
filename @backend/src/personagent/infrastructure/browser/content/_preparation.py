@@ -8,7 +8,7 @@ from typing import Any
 
 import structlog
 
-from personagent.infrastructure.browser.content_scripts import (
+from personagent.infrastructure.browser.scripts.content import (
     _INCREMENTAL_SCROLL_SCRIPT,
     _POPUP_DISMISS_SCRIPT,
 )

@@ -6,12 +6,12 @@ from typing import Any
 
 import httpx
 
-from personagent.domain.models.inference_result import StreamChunk
+from personagent.domain.llm_backend.models import StreamChunk
 from personagent.infrastructure.llm.nvidia_nim_adapter.constants import (
     STREAM_CONNECT_TIMEOUT_SECONDS,
     STREAM_POOL_TIMEOUT_SECONDS,
 )
-from personagent.infrastructure.llm.openai_compatible_parser import (
+from personagent.infrastructure.llm.shared.openai_compatible_parser import (
     ThinkingTagState,
     accumulate_tool_call_delta,
     extract_reasoning_field,

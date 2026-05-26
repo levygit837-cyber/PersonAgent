@@ -23,14 +23,14 @@ from uuid import uuid4
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
+from personagent.application.dto import ChatRequestDTO
 from personagent.application.tools.runtime_config import ToolRuntimeConfig
-from personagent.application.use_cases.chat.state import PromptPreparation
-from personagent.application.use_cases.chat.tool_context_builder import (
+from personagent.application.use_cases.chat.messaging.state import PromptPreparation
+from personagent.application.use_cases.chat.tooling.tool_context_builder import (
     VALID_PERMISSION_MODES,
     ToolContextBuilder,
 )
-from personagent.domain.models.conversation import Conversation
+from personagent.domain.conversation.models import Conversation
 
 # ---------------------------------------------------------------------------
 # Fixtures

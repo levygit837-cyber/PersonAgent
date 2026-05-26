@@ -10,10 +10,10 @@ from personagent.infrastructure.browser.models import (
 from personagent.infrastructure.browser.models import (
     BrowserSession as _BrowserSession,
 )
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     clean_browser_url as _clean_browser_url,
 )
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     urls_equivalent as _urls_equivalent,
 )
 

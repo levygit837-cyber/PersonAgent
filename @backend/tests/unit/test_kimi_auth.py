@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from personagent.infrastructure.llm.kimi_auth import KimiTokenManager
+from personagent.infrastructure.llm.kimi.auth import KimiTokenManager
 
 
 class TestKimiTokenManager:
@@ -48,7 +48,7 @@ class TestKimiTokenManager:
     async def test_try_auto_refresh_skips_when_script_missing(self) -> None:
         manager = KimiTokenManager(api_key="old")
         with patch(
-            "personagent.infrastructure.llm.kimi_auth.TOKEN_SYNC_SCRIPT"
+            "personagent.infrastructure.llm.kimi.auth.TOKEN_SYNC_SCRIPT"
         ) as mock_path:
             mock_path.exists.return_value = False
             result = await manager.try_auto_refresh()
@@ -62,7 +62,7 @@ class TestKimiTokenManager:
 
         with (
             patch(
-                "personagent.infrastructure.llm.kimi_auth.TOKEN_SYNC_SCRIPT"
+                "personagent.infrastructure.llm.kimi.auth.TOKEN_SYNC_SCRIPT"
             ) as mock_script,
             patch("asyncio.create_subprocess_exec") as mock_exec,
             patch("pathlib.Path.exists", return_value=True),
@@ -87,7 +87,7 @@ class TestKimiTokenManager:
 
         with (
             patch(
-                "personagent.infrastructure.llm.kimi_auth.TOKEN_SYNC_SCRIPT"
+                "personagent.infrastructure.llm.kimi.auth.TOKEN_SYNC_SCRIPT"
             ) as mock_script,
             patch("asyncio.create_subprocess_exec") as mock_exec,
             patch("pathlib.Path.exists", return_value=True),

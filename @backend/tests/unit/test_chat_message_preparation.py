@@ -24,10 +24,10 @@ from uuid import uuid4
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.use_cases.chat.message_preparation import MessagePreparer
-from personagent.application.use_cases.chat.state import PromptPackage
-from personagent.domain.models.conversation import Conversation, Message, Role
+from personagent.application.dto import ChatRequestDTO
+from personagent.application.use_cases.chat.messaging.message_preparation import MessagePreparer
+from personagent.application.use_cases.chat.messaging.state import PromptPackage
+from personagent.domain.conversation.models import Conversation, Message, Role
 
 # ---------------------------------------------------------------------------
 # Doubles

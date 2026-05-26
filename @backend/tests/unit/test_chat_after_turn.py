@@ -17,9 +17,9 @@ from uuid import uuid4
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.use_cases.chat.after_turn import AfterTurnCoordinator
-from personagent.domain.models.conversation import Conversation, Message, Role
+from personagent.application.dto import ChatRequestDTO
+from personagent.application.use_cases.chat.lifecycle.after_turn import AfterTurnCoordinator
+from personagent.domain.conversation.models import Conversation, Message, Role
 
 
 class _RepoStub:

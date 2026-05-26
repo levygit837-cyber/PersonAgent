@@ -7,7 +7,7 @@ from typing import Any
 
 import structlog
 
-from personagent.application.dto.chat_dto import ChatRequestDTO, ChatResponseDTO
+from personagent.application.dto import ChatRequestDTO, ChatResponseDTO
 from personagent.application.jobs.memory_job_scheduler import MemoryJobScheduler
 from personagent.application.plan_mode import (
     activate_plan_mode_if_requested,
@@ -24,59 +24,59 @@ from personagent.application.tools import (
     ToolRegistry,
     ToolRuntimeConfig,
 )
-from personagent.application.use_cases.chat.after_turn import AfterTurnCoordinator
-from personagent.application.use_cases.chat.assistant_pass import AssistantPassRunner
-from personagent.application.use_cases.chat.background_tasks import schedule_background
-from personagent.application.use_cases.chat.compaction import ConversationCompactor
-from personagent.application.use_cases.chat.conversation_lifecycle import (
-    ConversationLifecycleHandler,
-)
+from personagent.application.use_cases.build_context import BuildContextUseCase
 from personagent.application.use_cases.chat.helpers import (
     attach_plan_approval_artifact as _attach_plan_approval_artifact,
 )
 from personagent.application.use_cases.chat.helpers import (
     set_session_status as _set_session_status,
 )
-from personagent.application.use_cases.chat.media_policy import MediaPolicyHandler
-from personagent.application.use_cases.chat.memory_recall import MemoryRecallCoordinator
-from personagent.application.use_cases.chat.message_preparation import MessagePreparer
-from personagent.application.use_cases.chat.operational_memory import (
+from personagent.application.use_cases.chat.lifecycle.after_turn import AfterTurnCoordinator
+from personagent.application.use_cases.chat.lifecycle.assistant_pass import AssistantPassRunner
+from personagent.application.use_cases.chat.lifecycle.background_tasks import schedule_background
+from personagent.application.use_cases.chat.lifecycle.compaction import ConversationCompactor
+from personagent.application.use_cases.chat.lifecycle.conversation_lifecycle import (
+    ConversationLifecycleHandler,
+)
+from personagent.application.use_cases.chat.memory.memory_recall import MemoryRecallCoordinator
+from personagent.application.use_cases.chat.memory.operational_memory import (
     OperationalMemoryCapture,
 )
-from personagent.application.use_cases.chat.prompt_package import (
+from personagent.application.use_cases.chat.messaging.media_policy import MediaPolicyHandler
+from personagent.application.use_cases.chat.messaging.message_preparation import MessagePreparer
+from personagent.application.use_cases.chat.messaging.turn_context import TurnContextResolver
+from personagent.application.use_cases.chat.prompt.prompt_package import (
     PromptPackageBuilder,
 )
-from personagent.application.use_cases.chat.prompt_surfaces import (
+from personagent.application.use_cases.chat.prompt.prompt_surfaces import (
     PromptSurfacePreparer,
 )
-from personagent.application.use_cases.chat.stream_normalization import (
+from personagent.application.use_cases.chat.streaming import StreamingTurnExecutor
+from personagent.application.use_cases.chat.streaming.normalization import (
     StreamChunkNormalizer,
 )
-from personagent.application.use_cases.chat.streaming_turn import StreamingTurnExecutor
-from personagent.application.use_cases.chat.tool_context_builder import (
+from personagent.application.use_cases.chat.tooling.tool_context_builder import (
     ToolContextBuilder,
 )
-from personagent.application.use_cases.chat.tool_results import ToolResultHandler
-from personagent.application.use_cases.chat.tool_runtime import ToolRuntime
-from personagent.application.use_cases.chat.turn_context import TurnContextResolver
-from personagent.application.use_cases.context import BuildContextUseCase
+from personagent.application.use_cases.chat.tooling.tool_results import ToolResultHandler
+from personagent.application.use_cases.chat.tooling.tool_runtime import ToolRuntime
 from personagent.application.use_cases.memory.recall_memory import RecallMemoryUseCase
+from personagent.domain.conversation.models import Conversation, Message, Role
+from personagent.domain.conversation.repositories import ConversationRepository
 from personagent.domain.exceptions import (
     ConversationNotFoundError,
     LLMBackendError,
     ToolLoopLimitExceededError,
 )
+from personagent.domain.llm_backend.models import InferenceResult, StreamChunk
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 from personagent.domain.memory.repositories.memory_repository import MemoryRepository
-from personagent.domain.models.conversation import Conversation, Message, Role
-from personagent.domain.models.inference_result import InferenceResult, StreamChunk
 from personagent.domain.prompts.commands import (
     CommandRegistry,
     CommandService,
 )
 from personagent.domain.prompts.services import PromptBuilder, PromptContextAnalyzer
 from personagent.domain.prompts.services.agent_state_resolver import AgentStateResolver
-from personagent.domain.repositories.conversation_repository import ConversationRepository
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
 logger = structlog.get_logger(__name__)
 

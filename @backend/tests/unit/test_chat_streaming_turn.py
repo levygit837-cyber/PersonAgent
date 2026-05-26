@@ -24,24 +24,24 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.use_cases.chat.state import (
+from personagent.application.dto import ChatRequestDTO
+from personagent.application.use_cases.chat.messaging.state import (
     MemoryRecallResult,
     PromptPackage,
     PromptPreparation,
 )
-from personagent.application.use_cases.chat.streaming_turn import StreamingTurnExecutor
+from personagent.application.use_cases.chat.streaming import StreamingTurnExecutor
 from personagent.domain.context.models import (
     ContextBuildResult,
     SystemContext,
     UserContext,
 )
+from personagent.domain.conversation.models import Conversation, Message, Role
 from personagent.domain.exceptions import (
     LLMBackendError,
     ToolLoopLimitExceededError,
 )
-from personagent.domain.models.conversation import Conversation, Message, Role
-from personagent.domain.models.inference_result import StreamChunk
+from personagent.domain.llm_backend.models import StreamChunk
 from personagent.domain.tools import ToolCall, ToolExecutionStatus, ToolResult
 
 # -- helpers --------------------------------------------------------------

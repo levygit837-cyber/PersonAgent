@@ -56,7 +56,7 @@ def _resolve_database_url() -> str:
     if url := config.get_main_option("sqlalchemy.url"):
         return url
 
-    from personagent.infrastructure.config.settings import get_settings
+    from personagent.infrastructure.settings.settings import get_settings
 
     return str(get_settings().db_url)
 

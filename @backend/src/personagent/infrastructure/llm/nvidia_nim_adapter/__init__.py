@@ -22,8 +22,8 @@ from personagent.domain.exceptions import (
     LLMBackendTimeoutError,
     provider_http_error,
 )
-from personagent.domain.models.inference_result import InferenceResult, StreamChunk
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
+from personagent.domain.llm_backend.models import InferenceResult, StreamChunk
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 from personagent.infrastructure.llm.nvidia_nim_adapter.constants import (
     DEFAULT_OUTPUT_TOKENS,
     DEFAULT_STREAM_READ_TIMEOUT_SECONDS,
@@ -59,7 +59,7 @@ from personagent.infrastructure.llm.nvidia_nim_adapter.streaming import (
     _stream_timeout_config,
     _stream_timeout_label,
 )
-from personagent.infrastructure.llm.openai_compatible_parser import (
+from personagent.infrastructure.llm.shared.openai_compatible_parser import (
     ThinkingTagState,
     normalize_message_content,
 )

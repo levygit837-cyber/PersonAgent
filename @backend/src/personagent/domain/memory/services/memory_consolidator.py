@@ -16,9 +16,9 @@ from typing import Any
 
 import structlog
 
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 from personagent.domain.memory.models.memory_file import MemoryFile, MemoryHeader
 from personagent.domain.memory.repositories.memory_repository import MemoryRepository
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
 logger = structlog.get_logger(__name__)
 

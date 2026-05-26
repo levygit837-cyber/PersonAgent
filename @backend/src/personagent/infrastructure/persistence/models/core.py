@@ -13,7 +13,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
-from personagent.domain.models.tenancy import DEFAULT_TENANT_ID
+from personagent.domain.conversation.tenancy import DEFAULT_TENANT_ID
 from personagent.infrastructure.persistence.database import Base
 
 

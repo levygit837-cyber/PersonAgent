@@ -11,7 +11,7 @@ import structlog
 from personagent.infrastructure.browser.models import (
     BrowserSession as _BrowserSession,
 )
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     is_target_already_loaded_error as _is_target_already_loaded_error,
 )
 

@@ -14,12 +14,12 @@ import json
 import re
 from pathlib import Path
 
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 from personagent.domain.memory.models.memory_file import MemoryHeader
 from personagent.domain.memory.models.relevant_memory import RelevantMemory
 from personagent.domain.memory.repositories.memory_repository import MemoryRepository
 from personagent.domain.memory.services.memory_age_tracker import MemoryAgeTracker
 from personagent.domain.memory.services.memory_scanner import MemoryScanner
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
 
 # Prompt do selector (adaptado do PersonAgent)
 _SELECTOR_SYSTEM_PROMPT = (

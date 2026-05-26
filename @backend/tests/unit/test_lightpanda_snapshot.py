@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from personagent.infrastructure.browser.snapshot import BrowserSnapshot
+from personagent.infrastructure.browser.snapshot.snapshot import BrowserSnapshot
 
 # ---------------------------------------------------------------------------
 # Stubs
@@ -487,8 +487,8 @@ class TestBrowserViewSnapshot:
 
         worker._html_with_embedded_stylesheet_fallbacks = _mock_html_embed
 
-        with patch("personagent.infrastructure.browser.snapshot.store_text_artifact", return_value=_StubArtifact()), \
-             patch("personagent.infrastructure.browser.snapshot.store_bytes_artifact", return_value=None):
+        with patch("personagent.infrastructure.browser.snapshot.snapshot.store_text_artifact", return_value=_StubArtifact()), \
+             patch("personagent.infrastructure.browser.snapshot.snapshot.store_bytes_artifact", return_value=None):
             result = await snap.browser_view_snapshot(
                 "b1", session, width=800, height=600
             )
@@ -600,23 +600,23 @@ class TestBrowserFrameTreeSnapshot:
 
 class TestBackwardCompatDelegations:
     def test_worker_stylesheet_hrefs_delegates(self):
-        from personagent.infrastructure.browser.snapshot import BrowserSnapshot
+        from personagent.infrastructure.browser.snapshot.snapshot import BrowserSnapshot
         html = '<html><head><link rel="stylesheet" href="/a.css"></head></html>'
         result = BrowserSnapshot.stylesheet_hrefs(html, "https://example.com", max_hrefs=10)
         assert result == ["https://example.com/a.css"]
 
     def test_worker_html_attrs_delegates(self):
-        from personagent.infrastructure.browser.snapshot import BrowserSnapshot
+        from personagent.infrastructure.browser.snapshot.snapshot import BrowserSnapshot
         attrs = BrowserSnapshot.html_attrs('<link rel="stylesheet" href="/a.css">')
         assert attrs["rel"] == "stylesheet"
 
     def test_worker_css_fidelity_delegates(self):
-        from personagent.infrastructure.browser.snapshot import BrowserSnapshot
+        from personagent.infrastructure.browser.snapshot.snapshot import BrowserSnapshot
         result = BrowserSnapshot.css_fidelity(html="<html>", render_mode="pixel")
         assert result == "pixel"
 
     def test_worker_rewrite_css_urls_delegates(self):
-        from personagent.infrastructure.browser.snapshot import BrowserSnapshot
+        from personagent.infrastructure.browser.snapshot.snapshot import BrowserSnapshot
         css = "body { background: url(../bg.png); }"
         result = BrowserSnapshot.rewrite_css_urls(css, "https://example.com/assets/style.css")
         assert "https://example.com/bg.png" in result

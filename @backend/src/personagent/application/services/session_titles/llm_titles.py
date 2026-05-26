@@ -8,8 +8,8 @@ from typing import Any
 import structlog
 
 from personagent.application.services.session_titles._common import _sanitize_title
-from personagent.domain.models.conversation import Conversation, Message
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
+from personagent.domain.conversation.models import Conversation, Message
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 
 logger = structlog.get_logger(__name__)
 

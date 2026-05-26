@@ -6,9 +6,9 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from personagent.domain.models.conversation import Conversation, Message, Role
-from personagent.domain.models.tenancy import DEFAULT_TENANT_ID
-from personagent.domain.repositories.conversation_repository import ConversationRepository
+from personagent.domain.conversation.models import Conversation, Message, Role
+from personagent.domain.conversation.repositories import ConversationRepository
+from personagent.domain.conversation.tenancy import DEFAULT_TENANT_ID
 from personagent.infrastructure.persistence.models import ConversationORM, MessageORM
 
 

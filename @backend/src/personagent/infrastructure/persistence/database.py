@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import declarative_base
 
-from personagent.infrastructure.config.settings import get_settings
+from personagent.infrastructure.settings.settings import get_settings
 
 Base = declarative_base()
 logger = structlog.get_logger(__name__)

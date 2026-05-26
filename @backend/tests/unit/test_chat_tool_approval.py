@@ -8,7 +8,7 @@ import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
-from personagent.interfaces.api.routes.chat.tool_approval import register_tool_approval_routes
+from personagent.adapters.api.routes.chat.tool_approval import register_tool_approval_routes
 
 # ---------------------------------------------------------------------------
 # Stubs
@@ -72,7 +72,7 @@ def _stub_get_container() -> Any:
 
 @pytest.fixture
 def app(monkeypatch):
-    import personagent.interfaces.api.routes.chat as chat_pkg
+    import personagent.adapters.api.routes.chat as chat_pkg
 
     monkeypatch.setattr(chat_pkg, "_load_conversation_for_decision", _stub_load_conversation_for_decision)
     monkeypatch.setattr(chat_pkg, "_approve_pending_tool_call", _stub_approve_pending_tool_call)
@@ -131,7 +131,7 @@ class TestRejectTool:
         assert body["resume_available"] is False
 
     def test_reject_with_wrong_approval_id_returns_409(self, monkeypatch, client):
-        import personagent.interfaces.api.routes.chat as chat_pkg
+        import personagent.adapters.api.routes.chat as chat_pkg
 
         async def _load_mismatched(conversation_id: str, session: Any) -> tuple[Any, Any]:
             conv = _StubConversation()

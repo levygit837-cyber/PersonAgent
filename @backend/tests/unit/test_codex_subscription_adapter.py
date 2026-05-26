@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 
-from personagent.infrastructure.llm.codex_subscription_adapter import (
+from personagent.infrastructure.llm.codex.subscription_adapter import (
     CodexAuthStore,
     CodexSubscriptionAdapter,
 )

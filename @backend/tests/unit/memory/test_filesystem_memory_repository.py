@@ -8,7 +8,7 @@ import pytest
 
 from personagent.domain.memory.models.memory_file import MemoryFile
 from personagent.domain.memory.models.memory_types import MemoryScope, MemoryType
-from personagent.infrastructure.persistence.memory.filesystem_memory_repository import (
+from personagent.infrastructure.persistence.memory import (
     FileSystemMemoryRepository,
 )
 

@@ -20,17 +20,17 @@ from unittest.mock import patch
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.use_cases.chat.prompt_package import (
+from personagent.application.dto import ChatRequestDTO
+from personagent.application.use_cases.chat.messaging.state import PromptPreparation
+from personagent.application.use_cases.chat.prompt.prompt_package import (
     PromptPackageBuilder,
 )
-from personagent.application.use_cases.chat.state import PromptPreparation
 from personagent.domain.context.models import (
     ContextBuildResult,
     SystemContext,
     UserContext,
 )
-from personagent.domain.models.conversation import Conversation, Message, Role
+from personagent.domain.conversation.models import Conversation, Message, Role
 from personagent.domain.prompts.models import (
     AgentStateProfile,
     BuiltSystemPrompt,
@@ -256,7 +256,7 @@ def _builder(
 
 def _patch_skills(skills: list[SkillDefinition] | None = None) -> Any:
     return patch(
-        "personagent.application.use_cases.chat.prompt_package.discover_enabled_skills",
+        "personagent.application.use_cases.chat.prompt.prompt_package.discover_enabled_skills",
         return_value=skills or [],
     )
 
@@ -515,12 +515,12 @@ async def test_browser_cooperation_reminders_appended_from_metadata() -> None:
     with (
         _patch_skills(),
         patch(
-            "personagent.application.use_cases.chat.prompt_package."
+            "personagent.application.use_cases.chat.prompt.prompt_package."
             "browser_agent_context_reminder",
             return_value="AGENT-CTX",
         ),
         patch(
-            "personagent.application.use_cases.chat.prompt_package."
+            "personagent.application.use_cases.chat.prompt.prompt_package."
             "shared_browser_workspace_reminder",
             return_value="SHARED-CTX",
         ),

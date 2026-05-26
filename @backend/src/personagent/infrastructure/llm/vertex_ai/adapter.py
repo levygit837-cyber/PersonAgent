@@ -20,8 +20,8 @@ from personagent.domain.exceptions import (
     LLMBackendTimeoutError,
     provider_http_error,
 )
-from personagent.domain.models.inference_result import InferenceResult, StreamChunk
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
+from personagent.domain.llm_backend.models import InferenceResult, StreamChunk
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 from personagent.infrastructure.llm.vertex_ai.content_builder import VertexContentBuilder
 from personagent.infrastructure.llm.vertex_ai.models import (
     DEFAULT_OUTPUT_TOKENS,

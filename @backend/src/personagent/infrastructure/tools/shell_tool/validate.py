@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shlex
 
-from personagent.infrastructure.tools.path_safety import resolve_within_allowed_roots
+from personagent.infrastructure.tools.dev.path_safety import resolve_within_allowed_roots
 from personagent.infrastructure.tools.shell_tool.classify import (
     _has_unquoted_control_operator,
     _has_unquoted_pipe,

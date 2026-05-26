@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
-from personagent.application.services.browser_action_arbiter import BrowserActionArbiter
+from personagent.adapters.api.routes import sessions
 from personagent.application.services.browser_cooperation import (
     BROWSER_COOPERATION_METADATA_KEY,
     _normalize_event,
@@ -15,10 +15,10 @@ from personagent.application.services.browser_cooperation import (
     browser_agent_context_reminder,
     shared_browser_workspace_reminder,
 )
-from personagent.domain.models.conversation import Conversation
-from personagent.domain.repositories.conversation_repository import ConversationRepository
+from personagent.application.services.insights.browser_action_arbiter import BrowserActionArbiter
+from personagent.domain.conversation.models import Conversation
+from personagent.domain.conversation.repositories import ConversationRepository
 from personagent.domain.tools import ToolPermissionBehavior, ToolUseContext
-from personagent.interfaces.api.routes import sessions
 
 
 class MemoryConversationRepository(ConversationRepository):

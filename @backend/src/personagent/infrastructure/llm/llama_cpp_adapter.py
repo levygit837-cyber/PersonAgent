@@ -18,9 +18,9 @@ from personagent.domain.exceptions import (
     LLMBackendTimeoutError,
     provider_http_error,
 )
-from personagent.domain.models.inference_result import InferenceResult, StreamChunk
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
-from personagent.infrastructure.llm.openai_compatible_parser import (
+from personagent.domain.llm_backend.models import InferenceResult, StreamChunk
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
+from personagent.infrastructure.llm.shared.openai_compatible_parser import (
     ThinkingTagState,
     accumulate_tool_call_delta,
     extract_reasoning_field,

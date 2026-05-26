@@ -1,7 +1,7 @@
 import json
 
-from personagent.infrastructure.llm.codex_auth import CodexAuthStore
-from personagent.infrastructure.llm.codex_models import CodexModelsCatalog
+from personagent.infrastructure.llm.codex.auth import CodexAuthStore
+from personagent.infrastructure.llm.codex.models import CodexModelsCatalog
 
 
 def test_normalize_model_filters_unsupported():

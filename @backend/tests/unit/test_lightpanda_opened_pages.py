@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from personagent.infrastructure.browser.models import BrowserOpenedPage
-from personagent.infrastructure.browser.opened_pages import OpenedPageTracker
+from personagent.infrastructure.browser.page.opened_pages import OpenedPageTracker
 
 # ---------------------------------------------------------------------------
 # Helpers

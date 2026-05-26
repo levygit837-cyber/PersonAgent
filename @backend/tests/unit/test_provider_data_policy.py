@@ -1,7 +1,7 @@
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.security.provider_data_policy import enforce_provider_data_policy
+from personagent.application.dto import ChatRequestDTO
+from personagent.application.security import enforce_provider_data_policy
 from personagent.domain.exceptions import InvalidRequestError
 
 

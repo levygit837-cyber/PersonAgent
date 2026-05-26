@@ -1,10 +1,10 @@
-"""Unit tests for personagent.infrastructure.tools.browser_tools.tab_management (Slice 4)."""
+"""Unit tests for personagent.infrastructure.tools.browser.tab_management (Slice 4)."""
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from personagent.infrastructure.tools.browser_tools.tab_management import (
+from personagent.infrastructure.tools.browser.tab_management import (
     create_browser_close_tab_tool,
     create_browser_history_tool,
     create_browser_list_tabs_tool,
@@ -133,25 +133,25 @@ class TestBrowserSwitchTabTool:
 
 class TestBackwardCompatExports:
     def test_factories_reexports_list_tabs(self) -> None:
-        from personagent.infrastructure.tools.browser_tools.factories import (
+        from personagent.infrastructure.tools.browser.factories import (
             create_browser_list_tabs_tool as from_factories,
         )
-        from personagent.infrastructure.tools.browser_tools.tab_management import (
+        from personagent.infrastructure.tools.browser.tab_management import (
             create_browser_list_tabs_tool as from_tab_mgmt,
         )
         assert from_factories is from_tab_mgmt
 
     def test_factories_reexports_close_tab(self) -> None:
-        from personagent.infrastructure.tools.browser_tools.factories import (
+        from personagent.infrastructure.tools.browser.factories import (
             create_browser_close_tab_tool as from_factories,
         )
-        from personagent.infrastructure.tools.browser_tools.tab_management import (
+        from personagent.infrastructure.tools.browser.tab_management import (
             create_browser_close_tab_tool as from_tab_mgmt,
         )
         assert from_factories is from_tab_mgmt
 
     def test_init_reexports_all_five(self) -> None:
-        from personagent.infrastructure.tools.browser_tools import (
+        from personagent.infrastructure.tools.browser import (
             create_browser_close_tab_tool,
             create_browser_history_tool,
             create_browser_list_tabs_tool,
@@ -173,7 +173,7 @@ class TestBackwardCompatExports:
 
 class TestCreateBrowserToolsIntegrity:
     def test_returns_19_tools(self) -> None:
-        from personagent.infrastructure.tools.browser_tools import create_browser_tools
+        from personagent.infrastructure.tools.browser import create_browser_tools
 
         worker = _make_worker()
         worker.search_url = MagicMock(return_value="https://search.yahoo.com/search?q=test")
@@ -182,7 +182,7 @@ class TestCreateBrowserToolsIntegrity:
         assert len(tools) == 19
 
     def test_tab_management_tool_names_present(self) -> None:
-        from personagent.infrastructure.tools.browser_tools import create_browser_tools
+        from personagent.infrastructure.tools.browser import create_browser_tools
 
         worker = _make_worker()
         worker.search_url = MagicMock(return_value="https://search.yahoo.com/search?q=test")
@@ -199,7 +199,7 @@ class TestCreateBrowserToolsIntegrity:
         """factories.py should now only contain create_browser_tools + imports."""
         import inspect
 
-        from personagent.infrastructure.tools.browser_tools import factories
+        from personagent.infrastructure.tools.browser import factories
 
         source = inspect.getsource(factories)
         lines = [line for line in source.splitlines() if line.strip()]

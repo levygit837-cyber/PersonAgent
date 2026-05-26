@@ -24,8 +24,8 @@ from uuid import uuid4
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.use_cases.chat.memory_recall import (
+from personagent.application.dto import ChatRequestDTO
+from personagent.application.use_cases.chat.memory.memory_recall import (
     MemoryRecallCoordinator,
 )
 from personagent.domain.context.models import (
@@ -33,9 +33,9 @@ from personagent.domain.context.models import (
     SystemContext,
     UserContext,
 )
+from personagent.domain.conversation.models import Conversation
 from personagent.domain.memory.models.operational import StructuredMemoryPackage
 from personagent.domain.memory.models.relevant_memory import RelevantMemory
-from personagent.domain.models.conversation import Conversation
 
 # ---------------------------------------------------------------------------
 # Collaborator doubles

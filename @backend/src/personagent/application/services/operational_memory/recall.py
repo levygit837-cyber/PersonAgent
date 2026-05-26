@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from personagent.domain.memory.services.operational_memory import (
         OperationalMemoryRedactor,
     )
-    from personagent.infrastructure.llm.embedding_adapter import (
+    from personagent.infrastructure.llm.shared.embedding_adapter import (
         OpenAICompatibleEmbeddingAdapter,
     )
     from personagent.infrastructure.persistence.operational_memory_repository import (

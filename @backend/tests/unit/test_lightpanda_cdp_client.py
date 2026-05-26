@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from personagent.infrastructure.browser.cdp_client import CdpClient
+from personagent.infrastructure.browser.cdp.client import CdpClient
 from personagent.infrastructure.browser.models import BrowserUnavailableError
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ import re
 from collections.abc import Iterable
 from difflib import SequenceMatcher
 
-from personagent.domain.models.conversation import Conversation
+from personagent.domain.conversation.models import Conversation
 
 MAX_TITLE_CHARS = 72
 MAX_TITLE_WORDS = 9

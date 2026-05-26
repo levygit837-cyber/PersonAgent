@@ -25,8 +25,8 @@ from personagent.application.state import (
 from personagent.application.state import (
     DEFAULT_TENANT_SLUG as APP_DEFAULT_TENANT_SLUG,
 )
-from personagent.domain.models.conversation import Conversation
-from personagent.domain.models.tenancy import (
+from personagent.domain.conversation.models import Conversation
+from personagent.domain.conversation.tenancy import (
     DEFAULT_TENANT_ID,
     DEFAULT_TENANT_SLUG,
 )
@@ -39,7 +39,7 @@ def test_default_tenant_id_is_stable_uuid() -> None:
     assert str(DEFAULT_TENANT_ID) == "00000000-0000-0000-0000-000000000001"
 
     # Re-importing must not regenerate the value.
-    reloaded = importlib.import_module("personagent.domain.models.tenancy")
+    reloaded = importlib.import_module("personagent.domain.conversation.tenancy")
     assert reloaded.DEFAULT_TENANT_ID == DEFAULT_TENANT_ID
 
 

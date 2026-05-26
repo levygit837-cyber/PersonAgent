@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from personagent.application.team_chat.blackboard import _Blackboard
+from personagent.application.team_chat.blackboard.core import _Blackboard
 from personagent.application.team_chat.contracts import TeamAgentConfig, TeamConfig
 from personagent.application.team_chat.types import (
     CoordinatorGuidance,

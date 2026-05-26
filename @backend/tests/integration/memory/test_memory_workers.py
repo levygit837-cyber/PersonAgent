@@ -14,12 +14,12 @@ import pytest
 from personagent.application.jobs.memory_job import JobType, MemoryJob
 from personagent.application.jobs.workers.consolidate_memory_worker import ConsolidateMemoryWorker
 from personagent.application.jobs.workers.extract_memory_worker import ExtractMemoryWorker
+from personagent.domain.conversation.models import Conversation, Message, Role
 from personagent.domain.memory.models.memory_file import MemoryFile
 from personagent.domain.memory.models.memory_types import MemoryScope, MemoryType
 from personagent.domain.memory.services.memory_consolidator import MemoryConsolidator
 from personagent.domain.memory.services.memory_extractor import MemoryExtractor
-from personagent.domain.models.conversation import Conversation, Message, Role
-from personagent.infrastructure.persistence.memory.filesystem_memory_repository import (
+from personagent.infrastructure.persistence.memory import (
     FileSystemMemoryRepository,
 )
 

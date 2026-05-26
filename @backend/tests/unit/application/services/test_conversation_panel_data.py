@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from personagent.application.services import conversation_panel_data as cpd
-from personagent.application.services import session_panel
-from personagent.domain.models.conversation import Conversation, Message, Role
+from personagent.application.services.session import conversation_panel_data as cpd
+from personagent.application.services.session import session_panel
+from personagent.domain.conversation.models import Conversation, Message, Role
 
 
 def _run_result(returncode: int = 0, stdout: str = "", stderr: str = ""):

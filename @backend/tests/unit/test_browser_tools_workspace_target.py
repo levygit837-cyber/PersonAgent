@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from personagent.domain.tools import ToolUseContext
-from personagent.infrastructure.tools.browser_tools.workspace_target import (
+from personagent.infrastructure.tools.browser.workspace_target import (
     _browser_session_id,
     _browser_target,
     _browser_target_page_id,

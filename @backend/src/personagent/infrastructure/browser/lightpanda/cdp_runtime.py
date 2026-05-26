@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from personagent.infrastructure.browser.models import BrowserUnavailableError
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     is_retryable_raw_cdp_error as _is_retryable_raw_cdp_error,
 )
 
@@ -90,7 +90,7 @@ class BrowserCdpRuntime:
                     close_timeout=min(timeout_seconds, 5),
                     max_size=8 * 1024 * 1024,
                 ) as websocket:
-                    from personagent.infrastructure.browser.cdp_client import (
+                    from personagent.infrastructure.browser.cdp.client import (
                         CdpClient as _RawCdpClient,
                     )
 

@@ -16,13 +16,13 @@ from uuid import uuid4
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.use_cases.chat.conversation_lifecycle import (
+from personagent.application.dto import ChatRequestDTO
+from personagent.application.use_cases.chat.lifecycle.conversation_lifecycle import (
     ConversationLifecycleHandler,
 )
+from personagent.domain.conversation.models import Conversation, Message, Role
 from personagent.domain.exceptions import ConversationNotFoundError
-from personagent.domain.models.conversation import Conversation, Message, Role
-from personagent.domain.models.inference_result import GeneratedImage, InferenceResult
+from personagent.domain.llm_backend.models import GeneratedImage, InferenceResult
 
 
 class _RepoStub:

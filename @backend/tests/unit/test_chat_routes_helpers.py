@@ -8,8 +8,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from personagent.domain.models.conversation import Role
-from personagent.interfaces.api.routes.chat.helpers import (
+from personagent.adapters.api.routes.chat.helpers import (
     REASONING_BUDGETS,
     ChatRequest,
     PlanDecisionRequest,
@@ -29,6 +28,7 @@ from personagent.interfaces.api.routes.chat.helpers import (
     resolve_team_workspace_id,
     resolve_tool_context,
 )
+from personagent.domain.conversation.models import Role
 
 # ---------------------------------------------------------------------------
 # Stubs
@@ -184,7 +184,7 @@ class TestResolveToolContext:
         assert result == {"cwd": "/tmp"}
 
     def test_raises_403_when_workspace_root_resolution_fails(self, monkeypatch):
-        import personagent.interfaces.api.routes.chat.helpers as helpers_module
+        import personagent.adapters.api.routes.chat.helpers as helpers_module
 
         def _failing_resolve(*, workspace_id, workspace_root):
             raise ValueError("denied")

@@ -12,8 +12,8 @@ from personagent.application.services.session_titles._common import (
     _normalize_title,
     _sanitize_title,
 )
-from personagent.domain.models.conversation import Conversation
-from personagent.domain.repositories.conversation_repository import ConversationRepository
+from personagent.domain.conversation.models import Conversation
+from personagent.domain.conversation.repositories import ConversationRepository
 
 if TYPE_CHECKING:
     from personagent.application.services.session_titles import SessionTitleResult

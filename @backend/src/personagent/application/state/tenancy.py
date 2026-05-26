@@ -11,7 +11,7 @@ other state primitives (:class:`RequestContext`, :class:`AppState`).
 
 from __future__ import annotations
 
-from personagent.domain.models.tenancy import (
+from personagent.domain.conversation.tenancy import (
     DEFAULT_TENANT_ID,
     DEFAULT_TENANT_SLUG,
 )

@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from personagent.infrastructure.browser.url_utils import clean_browser_url as _clean_browser_url
+from personagent.infrastructure.browser.search.url_utils import (
+    clean_browser_url as _clean_browser_url,
+)
 
 if TYPE_CHECKING:
     from personagent.infrastructure.browser.lightpanda import LightPandaBrowserWorker

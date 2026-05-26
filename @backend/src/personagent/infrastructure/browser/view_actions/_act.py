@@ -4,10 +4,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from personagent.infrastructure.browser.models import BrowserError
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     clamped_viewport as _clamped_viewport,
 )
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     clean_browser_url as _clean_browser_url,
 )
 from personagent.infrastructure.browser.view_actions._script import (

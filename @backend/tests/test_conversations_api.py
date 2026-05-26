@@ -4,8 +4,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from personagent.domain.models.conversation import Conversation, Message, Role
-from personagent.interfaces.api.routes import conversations
+from personagent.adapters.api.routes import conversations
+from personagent.domain.conversation.models import Conversation, Message, Role
 
 
 class FakeConversationRepo:

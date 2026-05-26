@@ -5,7 +5,7 @@ Pins the observable contract of the 7 extracted scoring/metric utility functions
 
 from __future__ import annotations
 
-from personagent.application.team_chat.blackboard_scoring import (
+from personagent.application.team_chat.blackboard.scoring import (
     _clamp_float,
     _coherency_score,
     _compact_workspace_memory,

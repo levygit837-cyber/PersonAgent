@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from personagent.application.team_chat.contracts import TeamAgentConfig, TeamConfig
-from personagent.application.team_chat.coordinator_phase import (
+from personagent.application.team_chat.phases.coordinator import (
     CoordinatorPhase,
     _coordinator_focus_assignments,
     _coordinator_redirects,
@@ -92,7 +92,7 @@ def test_execution_contract_messages_contains_system_and_user() -> None:
     phase = CoordinatorPhase(_LLMBackendStub())
     team = _team(_agent("a1", "One"), _agent("a2", "Two"))
     request = _request()
-    from personagent.application.team_chat.blackboard import _Blackboard
+    from personagent.application.team_chat.blackboard.core import _Blackboard
 
     blackboard = _Blackboard("full", user_input=request.message)
     msgs = phase.execution_contract_messages(request, team, blackboard)
@@ -110,7 +110,7 @@ def test_coordinator_planning_messages_contains_round_and_blackboard() -> None:
     phase = CoordinatorPhase(_LLMBackendStub())
     team = _team(_agent("a1", "One"), _agent("a2", "Two"))
     request = _request()
-    from personagent.application.team_chat.blackboard import _Blackboard
+    from personagent.application.team_chat.blackboard.core import _Blackboard
 
     blackboard = _Blackboard("full", user_input=request.message)
     msgs = phase.coordinator_planning_messages(request, team, 2, blackboard)
@@ -134,7 +134,7 @@ async def test_run_execution_contract_parses_json() -> None:
     phase = CoordinatorPhase(stub)
     team = _team(_agent("a1", "One"), _agent("a2", "Two"))
     request = _request()
-    from personagent.application.team_chat.blackboard import _Blackboard
+    from personagent.application.team_chat.blackboard.core import _Blackboard
 
     blackboard = _Blackboard("full", user_input=request.message)
     contract = await phase.run_execution_contract(
@@ -155,7 +155,7 @@ async def test_run_execution_contract_uses_defaults_when_keys_missing() -> None:
     phase = CoordinatorPhase(stub)
     team = _team(_agent("a1", "One"))
     request = _request(message="Solve this")
-    from personagent.application.team_chat.blackboard import _Blackboard
+    from personagent.application.team_chat.blackboard.core import _Blackboard
 
     blackboard = _Blackboard("full", user_input=request.message)
     contract = await phase.run_execution_contract(
@@ -173,7 +173,7 @@ async def test_run_execution_contract_records_duration_and_usage() -> None:
     phase = CoordinatorPhase(stub)
     team = _team(_agent("a1", "One"))
     request = _request()
-    from personagent.application.team_chat.blackboard import _Blackboard
+    from personagent.application.team_chat.blackboard.core import _Blackboard
 
     blackboard = _Blackboard("full", user_input=request.message)
     contract = await phase.run_execution_contract(
@@ -188,7 +188,7 @@ async def test_run_execution_contract_llm_failure_raises() -> None:
     phase = CoordinatorPhase(stub)
     team = _team(_agent("a1", "One"))
     request = _request()
-    from personagent.application.team_chat.blackboard import _Blackboard
+    from personagent.application.team_chat.blackboard.core import _Blackboard
 
     blackboard = _Blackboard("full", user_input=request.message)
     with pytest.raises(RuntimeError):
@@ -211,7 +211,7 @@ async def test_run_coordinator_planning_parses_json() -> None:
     phase = CoordinatorPhase(stub)
     team = _team(_agent("a1", "One"), _agent("a2", "Two"))
     request = _request()
-    from personagent.application.team_chat.blackboard import _Blackboard
+    from personagent.application.team_chat.blackboard.core import _Blackboard
 
     blackboard = _Blackboard("full", user_input=request.message)
     guidance = await phase.run_coordinator_planning(
@@ -231,7 +231,7 @@ async def test_run_coordinator_planning_uses_defaults() -> None:
     phase = CoordinatorPhase(stub)
     team = _team(_agent("a1", "One"))
     request = _request()
-    from personagent.application.team_chat.blackboard import _Blackboard
+    from personagent.application.team_chat.blackboard.core import _Blackboard
 
     blackboard = _Blackboard("full", user_input=request.message)
     guidance = await phase.run_coordinator_planning(

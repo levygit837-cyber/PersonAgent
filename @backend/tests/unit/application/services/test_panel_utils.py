@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from personagent.application.services.panel_utils import (
+from personagent.application.services.session.panel_utils import (
     _add,
     _compact_memory_label,
     _diff_stats,
@@ -20,7 +20,7 @@ from personagent.application.services.panel_utils import (
     _sources_from_tool_data,
     _tool_data,
 )
-from personagent.domain.models.conversation import Message, Role
+from personagent.domain.conversation.models import Message, Role
 
 
 class TestMetric:

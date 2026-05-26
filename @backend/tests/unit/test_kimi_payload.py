@@ -1,6 +1,6 @@
 """Tests for Kimi payload building."""
 
-from personagent.infrastructure.llm.kimi_payload import KimiPayloadBuilder
+from personagent.infrastructure.llm.kimi.payload import KimiPayloadBuilder
 
 
 class TestKimiPayloadBuilder:

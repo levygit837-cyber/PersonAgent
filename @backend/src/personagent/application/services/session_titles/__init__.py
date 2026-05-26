@@ -33,9 +33,9 @@ from personagent.application.services.session_titles._service_helpers import (
 )
 from personagent.application.services.session_titles._uniqueness import _TitleUniqueness
 from personagent.application.services.session_titles.llm_titles import TitleGenerator
-from personagent.domain.models.conversation import Conversation
-from personagent.domain.repositories.conversation_repository import ConversationRepository
-from personagent.domain.repositories.llm_backend_repository import LLMBackendRepository
+from personagent.domain.conversation.models import Conversation
+from personagent.domain.conversation.repositories import ConversationRepository
+from personagent.domain.llm_backend.repositories import LLMBackendRepository
 
 logger = structlog.get_logger(__name__)
 

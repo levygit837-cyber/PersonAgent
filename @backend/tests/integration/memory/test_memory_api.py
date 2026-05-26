@@ -10,11 +10,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from personagent.infrastructure.config.settings import get_settings
-from personagent.interfaces.api.action_approvals import create_action_approval
-from personagent.interfaces.api.main import create_app
-from personagent.interfaces.api.routes.memory import MemoryCreateRequest, MemoryUpdateRequest
-from personagent.interfaces.api.security import read_or_create_local_token
+from personagent.adapters.api.main import create_app
+from personagent.adapters.api.middleware.auth import read_or_create_local_token
+from personagent.adapters.api.routes.action_approvals import create_action_approval
+from personagent.adapters.api.routes.memory import MemoryCreateRequest, MemoryUpdateRequest
+from personagent.infrastructure.settings.settings import get_settings
 
 
 class TestMemoryAPI:

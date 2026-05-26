@@ -17,7 +17,7 @@ from personagent.infrastructure.browser.content._target import _ContentTargetMix
 from personagent.infrastructure.browser.models import (
     BrowserError,
 )
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     clean_browser_url as _clean_browser_url,
 )
 

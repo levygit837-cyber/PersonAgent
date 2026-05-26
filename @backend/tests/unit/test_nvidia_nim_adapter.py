@@ -1,7 +1,7 @@
 import json
 
 from personagent.infrastructure.llm.nvidia_nim_adapter import NvidiaNimAdapter
-from personagent.infrastructure.llm.openai_compatible_parser import (
+from personagent.infrastructure.llm.shared.openai_compatible_parser import (
     ThinkingTagState,
     normalize_message_content,
 )

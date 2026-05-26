@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from personagent.domain.conversation.models import Conversation, Message, Role
 from personagent.domain.memory.models.memory_file import MemoryFile
 from personagent.domain.memory.models.memory_types import MemoryScope, MemoryType
 from personagent.domain.memory.models.relevant_memory import RelevantMemory
@@ -24,8 +25,7 @@ from personagent.domain.memory.services.memory_consolidator import MemoryConsoli
 from personagent.domain.memory.services.memory_extractor import MemoryExtractor
 from personagent.domain.memory.services.memory_formatter import MemoryFormatter
 from personagent.domain.memory.services.memory_recall_selector import MemoryRecallSelector
-from personagent.domain.models.conversation import Conversation, Message, Role
-from personagent.infrastructure.persistence.memory.filesystem_memory_repository import (
+from personagent.infrastructure.persistence.memory import (
     FileSystemMemoryRepository,
 )
 

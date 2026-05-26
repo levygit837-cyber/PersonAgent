@@ -3,7 +3,7 @@ import json
 import pytest
 
 from personagent.domain.exceptions import LLMBackendError
-from personagent.infrastructure.llm.codex_streaming import CodexStreamParser
+from personagent.infrastructure.llm.codex.streaming import CodexStreamParser
 
 
 def test_parse_sse_event_returns_none_for_empty_or_done():

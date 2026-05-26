@@ -13,10 +13,10 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.application.use_cases.chat.media_policy import MediaPolicyHandler
-from personagent.application.use_cases.chat.state import PromptPackage
-from personagent.domain.models.inference_result import GeneratedImage
+from personagent.application.dto import ChatRequestDTO
+from personagent.application.use_cases.chat.messaging.media_policy import MediaPolicyHandler
+from personagent.application.use_cases.chat.messaging.state import PromptPackage
+from personagent.domain.llm_backend.models import GeneratedImage
 
 
 def _prompt_package(

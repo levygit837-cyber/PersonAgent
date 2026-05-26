@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from personagent.domain.models.inference_result import GeneratedImage, InferenceResult, StreamChunk
+from personagent.domain.llm_backend.models import GeneratedImage, InferenceResult, StreamChunk
 from personagent.infrastructure.llm.vertex_ai.models import (
     DEFAULT_STREAM_CONNECT_TIMEOUT_SECONDS,
     DEFAULT_STREAM_POOL_TIMEOUT_SECONDS,

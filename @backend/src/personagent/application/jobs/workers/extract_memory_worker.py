@@ -18,10 +18,10 @@ from uuid import UUID
 import structlog
 
 from personagent.application.jobs.memory_job import MemoryJob
+from personagent.domain.conversation.repositories import ConversationRepository
 from personagent.domain.memory.models.memory_types import MemoryScope
 from personagent.domain.memory.repositories.memory_repository import MemoryRepository
 from personagent.domain.memory.services.memory_extractor import MemoryExtractor
-from personagent.domain.repositories.conversation_repository import ConversationRepository
 
 logger = structlog.get_logger(__name__)
 

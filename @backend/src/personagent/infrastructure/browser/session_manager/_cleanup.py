@@ -12,7 +12,7 @@ import structlog
 from personagent.infrastructure.browser.models import (
     BrowserSession as _BrowserSession,
 )
-from personagent.infrastructure.browser.page_cache import get_browser_page_cache
+from personagent.infrastructure.browser.page.cache import get_browser_page_cache
 
 logger = structlog.get_logger(__name__)
 

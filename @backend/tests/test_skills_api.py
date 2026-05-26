@@ -5,8 +5,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from personagent.adapters.api.routes import chat, skills
 from personagent.domain.prompts.skills import set_skill_activation
-from personagent.interfaces.api.routes import chat, skills
 
 
 class FakeCommandRegistry:

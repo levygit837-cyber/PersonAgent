@@ -1,6 +1,6 @@
 """Tests for Kimi history block handling."""
 
-from personagent.infrastructure.llm.kimi_history import (
+from personagent.infrastructure.llm.kimi.history import (
     anthropic_history_blocks,
     anthropic_history_blocks_from_tool_calls,
     attach_anthropic_history_blocks,

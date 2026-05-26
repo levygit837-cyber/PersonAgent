@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from personagent.application.use_cases.chat.background_tasks import (
+from personagent.application.use_cases.chat.lifecycle.background_tasks import (
     schedule_background,
 )
 

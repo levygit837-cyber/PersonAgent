@@ -8,8 +8,8 @@ import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
-from personagent.interfaces.api.routes.chat.models_listing import register_model_listing_routes
+from personagent.adapters.api.routes.chat.models_listing import register_model_listing_routes
+from personagent.application.dto import ChatRequestDTO
 
 # ---------------------------------------------------------------------------
 # Stubs
@@ -175,7 +175,7 @@ def chat_module(container, llm_backend):
 @pytest.fixture
 def app_with_routes(monkeypatch, chat_module):
     """Create a FastAPI app with the model listing routes registered."""
-    import personagent.interfaces.api.routes.chat as chat_pkg
+    import personagent.adapters.api.routes.chat as chat_pkg
 
     monkeypatch.setattr(chat_pkg, "get_container", chat_module.get_container)
     monkeypatch.setattr(chat_pkg, "resolve_model", chat_module.resolve_model)
@@ -260,7 +260,7 @@ class TestRouteRegistration:
 
     def test_dynamic_lookup_uses_monkeypatched_functions(self, app_with_routes, monkeypatch):
         """Verify that the dynamic _chat() lookup picks up patched values."""
-        import personagent.interfaces.api.routes.chat as chat_pkg
+        import personagent.adapters.api.routes.chat as chat_pkg
 
         call_count = 0
 

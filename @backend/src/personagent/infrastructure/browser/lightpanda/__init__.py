@@ -11,12 +11,11 @@ from typing import Any
 import structlog
 
 from personagent.infrastructure.browser.actions import BrowserActions
-from personagent.infrastructure.browser.block_detection import BlockDetector
 from personagent.infrastructure.browser.cache import SnapshotCache, StylesheetDiskCache
-from personagent.infrastructure.browser.cdp_client import CdpClient as _RawCdpClient  # noqa: F401
-from personagent.infrastructure.browser.console import BrowserConsole
+from personagent.infrastructure.browser.cdp.client import CdpClient as _RawCdpClient  # noqa: F401
+from personagent.infrastructure.browser.cdp.console import BrowserConsole
+from personagent.infrastructure.browser.cdp.element_helpers import ElementHelpers
 from personagent.infrastructure.browser.content import BrowserContent
-from personagent.infrastructure.browser.element_helpers import ElementHelpers
 from personagent.infrastructure.browser.lightpanda.cdp_runtime import BrowserCdpRuntime
 from personagent.infrastructure.browser.lightpanda.connection import BrowserConnection
 from personagent.infrastructure.browser.lightpanda.markdown import BrowserMarkdown
@@ -37,22 +36,23 @@ from personagent.infrastructure.browser.models import (
 from personagent.infrastructure.browser.models import (
     BrowserUnavailableError as BrowserUnavailableError,
 )
-from personagent.infrastructure.browser.opened_pages import OpenedPageTracker
-from personagent.infrastructure.browser.page_helpers import PageHelpers
-from personagent.infrastructure.browser.page_lifecycle import BrowserPageLifecycle
-from personagent.infrastructure.browser.search import BrowserSearch
-from personagent.infrastructure.browser.search_cache import SearchResultCache
-from personagent.infrastructure.browser.session_manager import BrowserSessionManager
-from personagent.infrastructure.browser.snapshot import BrowserSnapshot
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.page.helpers import PageHelpers
+from personagent.infrastructure.browser.page.lifecycle import BrowserPageLifecycle
+from personagent.infrastructure.browser.page.opened_pages import OpenedPageTracker
+from personagent.infrastructure.browser.page.search import BrowserSearch
+from personagent.infrastructure.browser.search.cache import SearchResultCache
+from personagent.infrastructure.browser.search.url_utils import (
     clean_browser_url as _clean_browser_url,  # noqa: F401
 )
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     infer_search_provider as _infer_search_provider,
 )
-from personagent.infrastructure.browser.url_utils import (
+from personagent.infrastructure.browser.search.url_utils import (
     normalize_lightpanda_cdp_endpoint as normalize_lightpanda_cdp_endpoint,
 )
+from personagent.infrastructure.browser.session_manager import BrowserSessionManager
+from personagent.infrastructure.browser.snapshot.block_detection import BlockDetector
+from personagent.infrastructure.browser.snapshot.snapshot import BrowserSnapshot
 from personagent.infrastructure.browser.view_actions import BrowserViewActions
 
 logger = structlog.get_logger(__name__)

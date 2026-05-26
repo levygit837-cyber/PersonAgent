@@ -10,19 +10,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from personagent.application.dto.chat_dto import ChatRequestDTO
+from personagent.application.dto import ChatRequestDTO
 from personagent.application.jobs.memory_job_scheduler import MemoryJobScheduler
 from personagent.application.services.operational_memory import (
     project_slug_from_workspace,
 )
 from personagent.application.use_cases.chat_completion import ChatCompletionUseCase
 from personagent.application.use_cases.memory.recall_memory import RecallMemoryUseCase
+from personagent.domain.conversation.models import Conversation, Role
 from personagent.domain.memory.models.memory_file import MemoryFile
 from personagent.domain.memory.models.memory_types import MemoryScope, MemoryType
 from personagent.domain.memory.models.operational import StructuredMemoryItem, StructuredMemoryType
 from personagent.domain.memory.services.memory_recall_selector import MemoryRecallSelector
-from personagent.domain.models.conversation import Conversation, Role
-from personagent.infrastructure.persistence.memory.filesystem_memory_repository import (
+from personagent.infrastructure.persistence.memory import (
     FileSystemMemoryRepository,
 )
 
@@ -52,11 +52,11 @@ class MockLLMBackend:
 
     async def chat_completion(self, **kwargs):
         self.calls.append(kwargs)
-        from personagent.domain.models.inference_result import InferenceResult
+        from personagent.domain.llm_backend.models import InferenceResult
         return InferenceResult(content=self._response)
 
     async def chat_completion_stream(self, **kwargs):
-        from personagent.domain.models.inference_result import StreamChunk
+        from personagent.domain.llm_backend.models import StreamChunk
         yield StreamChunk(content=self._response, finish_reason="stop")
 
     async def health_check(self):
