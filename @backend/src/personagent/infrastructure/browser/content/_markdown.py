@@ -53,7 +53,7 @@ class _MarkdownExtractionMixin:
             )
         value: Any = None
         with suppress(Exception):
-            value = await self._w._evaluate_page(page, _READABLE_DOM_SCRIPT)
+            value = await self._w._browser_runtime.evaluate_page(page, _READABLE_DOM_SCRIPT)
         if isinstance(value, dict):
             content = value.get("content")
             if isinstance(content, str):
@@ -76,7 +76,7 @@ class _MarkdownExtractionMixin:
 
         text = ""
         with suppress(Exception):
-            value = await self._w._evaluate_page(
+            value = await self._w._browser_runtime.evaluate_page(
                 page,
                 "() => ((document.body && (document.body.innerText || document.body.textContent)) "
                 "|| document.documentElement.textContent || '')",
@@ -105,7 +105,7 @@ class _MarkdownExtractionMixin:
         return await self._markdown_or_text_url(url)
 
     async def _markdown_or_text_url(self, url: str) -> tuple[str, str, dict[str, Any]]:
-        markdown = await self._w._lightpanda_markdown_url(url)
+        markdown = await self._w._markdown.lightpanda_markdown_url(url)
         if markdown:
             cleaned_markdown, stats = _clean_extracted_content(markdown)
             if _should_prefer_readable_dom(cleaned_markdown, stats):
@@ -129,7 +129,7 @@ class _MarkdownExtractionMixin:
         readable = await self._readable_dom_content_url(url)
         if readable:
             return readable, "readable_dom_text", {}
-        text = await self._w._raw_runtime_evaluate_value(
+        text = await self._w._cdp_runtime.raw_runtime_evaluate_value(
             url,
             "(document.body && (document.body.innerText || document.body.textContent)) "
             "|| document.documentElement.textContent || ''",
@@ -142,7 +142,7 @@ class _MarkdownExtractionMixin:
         return cleaned_text, "dom_text", stats
 
     async def _readable_dom_content_url(self, url: str) -> str:
-        value = await self._w._raw_runtime_evaluate_value(
+        value = await self._w._cdp_runtime.raw_runtime_evaluate_value(
             url,
             _READABLE_DOM_SCRIPT,
             label="readable_dom",

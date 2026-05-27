@@ -48,7 +48,7 @@ class _HtmlExtractionMixin:
 
     async def _html_or_empty_url(self, url: str) -> tuple[str, str]:
         url = _clean_browser_url(url)
-        value = await self._w._raw_runtime_evaluate_value(
+        value = await self._w._cdp_runtime.raw_runtime_evaluate_value(
             url,
             "document.documentElement ? document.documentElement.outerHTML : ''",
             label="html",

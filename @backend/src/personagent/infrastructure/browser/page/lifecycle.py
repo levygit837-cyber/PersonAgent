@@ -100,7 +100,7 @@ class BrowserPageLifecycle:
         if page is None:
             page = self._w.session_manager.preferred_session_page(session)
         try:
-            await self._w._goto_page(page, target_url, allow_partial=True)
+            await self._w._navigation.goto_page(page, target_url, allow_partial=True)
             await self._w.block_detector.raise_if_search_blocked(page)
         except Exception:
             if close_failed_page:
@@ -280,7 +280,7 @@ class BrowserPageLifecycle:
         if not target_page_id:
             raise BrowserError("No browser page selected. Run BrowserOpen first.")
         live_page = session.pages.pop(target_page_id, None)
-        if live_page is None and self._w._is_session_page_alias(conversation_id, session, target_page_id):
+        if live_page is None and self._w.session_manager.is_session_page_alias(conversation_id, session, target_page_id):
             live_page = self._w.session_manager.preferred_session_page(session)
         closed = False
         if live_page is not None:

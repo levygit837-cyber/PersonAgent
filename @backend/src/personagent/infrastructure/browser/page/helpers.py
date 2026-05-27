@@ -98,7 +98,7 @@ class PageHelpers:
         }
         with suppress(Exception):
             value = await asyncio.wait_for(
-                self._w._evaluate_page(
+                self._w._browser_runtime.evaluate_page(
                     page, _STYLE_READY_SNAPSHOT_SCRIPT
                 ),
                 timeout=min(
@@ -162,7 +162,7 @@ class PageHelpers:
             return ""
 
     async def safe_title_for_url(self, url: str) -> str:
-        value = await self._w._raw_runtime_evaluate_value(
+        value = await self._w._cdp_runtime.raw_runtime_evaluate_value(
             url,
             "document.title || ''",
             label="title",

@@ -28,7 +28,7 @@ class _SessionAcquisitionMixin:
                         browser_connected = bool(is_connected())
                     if browser_connected and self.session_has_open_page(session):
                         session.page = self.preferred_session_page(session)
-                        cached_results = self._w.d
+                        cached_results = self._w.search_result_cache.latest_cached_search_results(conversation_id)
                         if cached_results:
                             session.search_results = cached_results
                         else:
@@ -50,7 +50,7 @@ class _SessionAcquisitionMixin:
                 if session is not None:
                     await self.close_session(conversation_id, session)
 
-            browser = await self._w._connect_browser()
+            browser = await self._w._connection.connect_browser()
             try:
                 context = await browser.new_context()
                 new_pages_supported = True
@@ -59,7 +59,7 @@ class _SessionAcquisitionMixin:
                 except Exception as exc:
                     if not _is_target_already_loaded_error(exc):
                         raise
-                    page = self._w._first_open_context_page(context)
+                    page = self._w._browser_runtime.first_open_context_page(context)
                     if page is None:
                         raise
                     new_pages_supported = False

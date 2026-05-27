@@ -86,23 +86,17 @@ class _StubWorker:
         self._get_session = AsyncMock(return_value=self._session)
         self._goto = AsyncMock()
         self._goto_page = AsyncMock()
-        self._preferred_session_page = MagicMock(return_value=self._session.page)
         self._ensure_session_page_alias = MagicMock()
         self._remember_current_url = MagicMock()
         self._wait_for_page_visual_ready = AsyncMock()
-        self._wait_for_page_load_complete = AsyncMock()
-        self._set_page_viewport = AsyncMock()
         self._evaluate_page = AsyncMock(return_value={"ok": True})
-        self._element_target = MagicMock(return_value={"selector": "[data-pa-node-id='n1']"})
-        self._action_context_for_element = AsyncMock(return_value=self._session.page)
-        self._upload_files = AsyncMock(return_value={"ok": True})
-        self._browser_action_target_payload = MagicMock(return_value={"node_id": "n1"})
 
 
 class _StubSessionManager:
     def __init__(self, session: _StubSession) -> None:
         self._session = session
         self.ensure_session_page_alias = MagicMock(return_value="p1")
+        self.preferred_session_page = MagicMock(return_value=session.page)
 
     async def get_session(self, conversation_id: str) -> _StubSession:
         return self._session
@@ -114,6 +108,11 @@ class _StubSessionManager:
 
 
 class _StubElementHelpers:
+    def __init__(self) -> None:
+        self.element_target = MagicMock(return_value={"selector": "[data-pa-node-id='n1']"})
+        self.action_context_for_element = AsyncMock(return_value=None)
+        self.upload_files = AsyncMock(return_value={"ok": True})
+
     async def safe_user_agent(self, page: Any) -> str:
         return "Mozilla/5.0"
 
@@ -123,6 +122,9 @@ class _StubElementHelpers:
 
 class _StubPageHelpers:
     async def wait_for_page_visual_ready(self, page: Any) -> None:
+        pass
+
+    async def wait_for_page_load_complete(self, page: Any, *, timeout_ms: int | None = None) -> None:
         pass
 
 
@@ -415,7 +417,7 @@ class TestViewAct:
             height=600,
             files=["/tmp/test.txt"],
         )
-        worker._upload_files.assert_awaited_once()
+        worker.element_helpers.upload_files.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_fill_action_includes_value_in_last_action(self):

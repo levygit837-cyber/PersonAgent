@@ -26,7 +26,7 @@ class BrowserMarkdown:
 
     async def lightpanda_markdown(self, session: _BrowserSession) -> str:
         url = _clean_browser_url(str(getattr(session.page, "url", "") or ""))
-        return await self._w._lightpanda_markdown_url(url)
+        return await self._w._markdown.lightpanda_markdown_url(url)
 
     async def lightpanda_markdown_url(self, url: str) -> str:
         url = _clean_browser_url(url)
@@ -34,7 +34,7 @@ class BrowserMarkdown:
             return ""
         try:
             payload = await asyncio.wait_for(
-                self._w._lightpanda_raw_cdp_command(
+                self._w._cdp_runtime.lightpanda_raw_cdp_command(
                     url=url,
                     method="LP.getMarkdown",
                 ),

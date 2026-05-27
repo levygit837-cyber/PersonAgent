@@ -24,7 +24,7 @@ class BrowserPageRuntime:
         self._w = worker
 
     async def page_runtime(self, page: Any) -> str:
-        return "lightpanda" if await self._w._is_lightpanda_page(page) else "chrome_cdp"
+        return "lightpanda" if await self._w._browser_runtime.is_lightpanda_page(page) else "chrome_cdp"
 
     async def is_lightpanda_page(self, page: Any) -> bool:
         user_agent = await self._w.element_helpers.safe_user_agent(page)
@@ -72,7 +72,7 @@ class BrowserPageRuntime:
                         result = detach()
                         if inspect.isawaitable(result):
                             await result
-        return await self._w._lightpanda_raw_cdp_command(
+        return await self._w._cdp_runtime.lightpanda_raw_cdp_command(
             url=url or "about:blank",
             method=method,
             params=params or {},

@@ -10,6 +10,7 @@ from personagent.infrastructure.browser.search.url_utils import (
 from personagent.infrastructure.browser.search.url_utils import (
     clean_browser_url as _clean_browser_url,
 )
+from personagent.infrastructure.browser.cdp.element_helpers import ElementHelpers
 from personagent.infrastructure.browser.view_actions._script import (
     _BROWSER_ACT_SCRIPT,
 )
@@ -57,28 +58,28 @@ class _ActMixin:
         if normalized_action not in supported_actions:
             raise BrowserError(f"BrowserAct action must be one of: {', '.join(sorted(supported_actions))}.")
         session = await self._w.session_manager.get_session(browser_id)
-        page = self._w._preferred_session_page(session)
+        page = self._w.session_manager.preferred_session_page(session)
         session.page = page
         viewport_width, viewport_height = _clamped_viewport(width, height)
-        await self._w._set_page_viewport(page, viewport_width, viewport_height)
-        previous_target = self._w._element_target(browser_id, normalized_node_id)
-        previous_target_action = self._w._element_target(browser_id, str(target_node_id or "").strip())
+        await self._w.element_helpers.set_page_viewport(page, viewport_width, viewport_height)
+        previous_target = self._w.element_helpers.element_target(browser_id, normalized_node_id)
+        previous_target_action = self._w.element_helpers.element_target(browser_id, str(target_node_id or "").strip())
         raw_map = await self._w.snapshot.browser_element_map(page)
         self._w._element_map_cache[browser_id] = self._w.snapshot.enrich_browser_element_map(
             raw_map,
             browser_id=browser_id,
             tab_id=session.current_page_id or browser_id,
         )
-        target = self._w._element_target(browser_id, normalized_node_id) or previous_target
-        target_action = self._w._element_target(browser_id, str(target_node_id or "").strip()) or previous_target_action
+        target = self._w.element_helpers.element_target(browser_id, normalized_node_id) or previous_target
+        target_action = self._w.element_helpers.element_target(browser_id, str(target_node_id or "").strip()) or previous_target_action
         cached_selector = str(target.get("selector") or "")
         target_selector = str(target_action.get("selector") or "")
-        action_context = await self._w._action_context_for_element(page, target)
+        action_context = await self._w.element_helpers.action_context_for_element(page, target)
         before_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
         if normalized_action == "upload":
-            result = await self._w._upload_files(action_context, cached_selector, files or [])
+            result = await self._w.element_helpers.upload_files(action_context, cached_selector, files or [])
         else:
-            result = await self._w._evaluate_page(
+            result = await self._w._browser_runtime.evaluate_page(
                 action_context,
                 _BROWSER_ACT_SCRIPT,
                 {
@@ -109,7 +110,7 @@ class _ActMixin:
             if isinstance(result, Mapping):
                 reason = str(result.get("reason") or "")
             raise BrowserError(reason or "Browser action failed.")
-        await self._w._wait_for_page_load_complete(page, timeout_ms=1_500)
+        await self._w.page_helpers.wait_for_page_load_complete(page, timeout_ms=1_500)
         session.touch()
         view = await self._w.snapshot.browser_view_snapshot(
             browser_id,
@@ -127,7 +128,7 @@ class _ActMixin:
             "timeout_ms": timeout_ms,
             "files": files if normalized_action == "upload" else None,
             "text": text if normalized_action == "select_text" else None,
-            "target": self._w._browser_action_target_payload(target, fallback_node_id=normalized_node_id),
+            "target": ElementHelpers.browser_action_target_payload(target, fallback_node_id=normalized_node_id),
             "result": dict(result) if isinstance(result, Mapping) else result,
         }
         return view

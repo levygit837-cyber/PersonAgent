@@ -149,3 +149,4 @@ coverage/
 # docker-compose.yml is environment-specific and may contain secrets
 docker-compose.yml
 docs/ai-guides/_inventory/*.json
+.worktrees/

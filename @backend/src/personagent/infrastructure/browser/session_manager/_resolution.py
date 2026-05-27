@@ -91,7 +91,7 @@ class _PageResolutionMixin:
         page_url = _clean_browser_url(str(getattr(page, "url", "") or ""))
         target_url = opened_page.final_url or opened_page.url
         if target_url.startswith(("http://", "https://")) and not _urls_equivalent(page_url, target_url):
-            await self._w._goto_page(page, target_url, allow_partial=True)
+            await self._w._navigation.goto_page(page, target_url, allow_partial=True)
 
         session.pages[target_page_id] = page
         return page

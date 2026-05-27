@@ -38,7 +38,7 @@ class BrowserNavigation:
         wait_for_styles: bool = True,
     ) -> None:
         try:
-            await self._w._goto_page(
+            await self._w._navigation.goto_page(
                 session.page, url, allow_partial=allow_partial, wait_for_styles=wait_for_styles
             )
         except Exception:

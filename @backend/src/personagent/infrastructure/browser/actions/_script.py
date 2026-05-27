@@ -43,7 +43,7 @@ class _ScriptMixin:
             if len(script) > _MAX_BROWSER_SCRIPT_CHARS:
                 raise BrowserError(f"BrowserScript script is too large; max {_MAX_BROWSER_SCRIPT_CHARS} characters.")
             value = await asyncio.wait_for(
-                self._w._evaluate_page(page, script, args),
+                self._w._browser_runtime.evaluate_page(page, script, args),
                 timeout=safe_timeout_ms / 1000,
             )
             method = "Runtime.evaluate"
@@ -66,7 +66,7 @@ class _ScriptMixin:
                     f"BrowserScript Runtime.evaluate expression is too large; max {_MAX_BROWSER_SCRIPT_CHARS} characters."
                 )
             value = await asyncio.wait_for(
-                self._w._cdp_command_for_page(
+                self._w._browser_runtime.cdp_command_for_page(
                     page,
                     url=current_url,
                     method=method,
@@ -76,15 +76,15 @@ class _ScriptMixin:
             )
         else:
             raise BrowserError("BrowserScript mode must be one of: evaluate, cdp.")
-        result_text, result, truncated = self._w._bounded_script_result(value)
+        result_text, result, truncated = self._w._browser_runtime.bounded_script_result(value)
         return {
             "type": "browser_script",
             "page_id": resolved_page_id,
             "window_id": resolved_page_id,
             "url": current_url,
             "title": await self._w.page_helpers.safe_title(page),
-            "runtime": await self._w._page_runtime(page),
-            "render_mode": "html_mirror" if await self._w._is_lightpanda_page(page) else "pixel",
+            "runtime": await self._w._browser_runtime.page_runtime(page),
+            "render_mode": "html_mirror" if await self._w._browser_runtime.is_lightpanda_page(page) else "pixel",
             "active_tab_id": session.current_page_id or resolved_page_id,
             "navigated": False,
             "mode": normalized_mode,
