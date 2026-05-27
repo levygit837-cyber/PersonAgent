@@ -293,9 +293,9 @@ class BrowserSearch:
         search_page = await self._w.session_manager.new_session_page(session)
         if search_page is not None:
             try:
-                await self._w._goto_page(search_page, search_url)
+                await self._w._navigation.goto_page(search_page, search_url)
                 await self._w.block_detector.raise_if_search_blocked(search_page)
-                extracted = await self._w._evaluate_page(
+                extracted = await self._w._browser_runtime.evaluate_page(
                     search_page,
                     _search_results_script(self._w.search_provider),
                     {"maxResults": max_results},
@@ -312,7 +312,7 @@ class BrowserSearch:
                 f"({_search_results_script(self._w.search_provider)})"
                 f"({json.dumps({'maxResults': max_results})})"
             )
-            extracted = await self._w._raw_runtime_evaluate_value(
+            extracted = await self._w._cdp_runtime.raw_runtime_evaluate_value(
                 search_url,
                 expression,
                 label="search_results",

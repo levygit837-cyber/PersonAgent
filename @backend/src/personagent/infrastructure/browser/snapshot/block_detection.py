@@ -31,7 +31,7 @@ class BlockDetector:
     async def _page_body_sample(self, page: Any) -> str:
         with suppress(Exception):
             return str(
-                await self._w._evaluate_page(
+                await self._w._browser_runtime.evaluate_page(
                     page,
                     "() => ((document.body && (document.body.innerText "
                     "|| document.body.textContent)) || '').slice(0, 3000)",

@@ -39,7 +39,7 @@ class BrowserCdpRuntime:
             return None
         try:
             payload = await asyncio.wait_for(
-                self._w._lightpanda_raw_cdp_command(
+                self._w._cdp_runtime.lightpanda_raw_cdp_command(
                     url=url,
                     method="Runtime.evaluate",
                     params={

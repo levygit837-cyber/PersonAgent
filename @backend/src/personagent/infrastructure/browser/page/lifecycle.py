@@ -100,7 +100,7 @@ class BrowserPageLifecycle:
         if page is None:
             page = self._w.session_manager.preferred_session_page(session)
         try:
-            await self._w._goto_page(page, target_url, allow_partial=True)
+            await self._w._navigation.goto_page(page, target_url, allow_partial=True)
             await self._w.block_detector.raise_if_search_blocked(page)
         except Exception:
             if close_failed_page:

@@ -78,7 +78,7 @@ class _ActMixin:
         if normalized_action == "upload":
             result = await self._w._upload_files(action_context, cached_selector, files or [])
         else:
-            result = await self._w._evaluate_page(
+            result = await self._w._browser_runtime.evaluate_page(
                 action_context,
                 _BROWSER_ACT_SCRIPT,
                 {

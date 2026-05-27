@@ -132,7 +132,7 @@ class BrowserConsole:
 
     async def install_console_capture(self, page: Any) -> None:
         with suppress(Exception):
-            await self._w._evaluate_page(page, _CONSOLE_CAPTURE_SCRIPT)
+            await self._w._browser_runtime.evaluate_page(page, _CONSOLE_CAPTURE_SCRIPT)
 
     async def drain_page_console_entries(
         self,
@@ -141,7 +141,7 @@ class BrowserConsole:
         page_id: str,
     ) -> None:
         await self.install_console_capture(page)
-        entries = await self._w._evaluate_page(page, _CONSOLE_DRAIN_SCRIPT)
+        entries = await self._w._browser_runtime.evaluate_page(page, _CONSOLE_DRAIN_SCRIPT)
         if not isinstance(entries, list):
             return
         for entry in entries:
@@ -176,7 +176,7 @@ class BrowserConsole:
                     )
             self._w._cooperation_listener_keys.add(key)
         with suppress(Exception):
-            await self._w._evaluate_page(
+            await self._w._browser_runtime.evaluate_page(
                 page,
                 _COOPERATION_CAPTURE_SCRIPT,
                 {"browserId": browser_id, "pageId": page_id},
@@ -199,7 +199,7 @@ class BrowserConsole:
             entries.extend(cached[:200])
             del cached[:200]
         with suppress(Exception):
-            drained = await self._w._evaluate_page(
+            drained = await self._w._browser_runtime.evaluate_page(
                 page, _COOPERATION_DRAIN_SCRIPT
             )
             if isinstance(drained, list):

@@ -50,7 +50,7 @@ class _ContentTargetMixin:
         page = await self._w.session_manager.new_session_page(session)
         if page is None:
             page = preferred_page
-        await self._w._goto_page(page, clean_target_url, allow_partial=True)
+        await self._w._navigation.goto_page(page, clean_target_url, allow_partial=True)
         session.page = page
         session.current_url = _clean_browser_url(
             str(getattr(page, "url", clean_target_url) or clean_target_url)

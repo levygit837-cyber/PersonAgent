@@ -50,7 +50,7 @@ class _SessionAcquisitionMixin:
                 if session is not None:
                     await self.close_session(conversation_id, session)
 
-            browser = await self._w._connect_browser()
+            browser = await self._w._connection.connect_browser()
             try:
                 context = await browser.new_context()
                 new_pages_supported = True
@@ -59,7 +59,7 @@ class _SessionAcquisitionMixin:
                 except Exception as exc:
                     if not _is_target_already_loaded_error(exc):
                         raise
-                    page = self._w._first_open_context_page(context)
+                    page = self._w._browser_runtime.first_open_context_page(context)
                     if page is None:
                         raise
                     new_pages_supported = False

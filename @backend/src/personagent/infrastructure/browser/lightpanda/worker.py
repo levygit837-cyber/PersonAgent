@@ -170,7 +170,7 @@ class LightPandaBrowserWorker:
         """Best-effort startup connection. Failures are logged, not raised."""
 
         try:
-            browser = await self._connect_browser()
+            browser = await self._connection.connect_browser()
         except BrowserError as exc:
             logger.warning("lightpanda_warmup_failed", error=str(exc))
             return False
@@ -211,12 +211,6 @@ class LightPandaBrowserWorker:
 
     async def get_html(self, **kwargs: Any) -> dict[str, Any]:
         return await self.content_module.get_html(**kwargs)
-
-    async def _lightpanda_markdown(self, session: Any) -> str:
-        return await self._markdown.lightpanda_markdown(session)
-
-    async def _lightpanda_markdown_url(self, url: str) -> str:
-        return await self._markdown.lightpanda_markdown_url(url)
 
     async def view_snapshot(self, **kwargs: Any) -> dict[str, Any]:
         return await self.snapshot.view_snapshot(**kwargs)
@@ -290,95 +284,5 @@ class LightPandaBrowserWorker:
         return await self.lifecycle.switch_tab(**kwargs)
 
     # ------------------------------------------------------------------
-    # Core: page runtime helpers
+    # Core: sub-module accessors (internal use only)
     # ------------------------------------------------------------------
-
-    async def _page_runtime(self, page: Any) -> str:
-        return await self._browser_runtime.page_runtime(page)
-
-    async def _is_lightpanda_page(self, page: Any) -> bool:
-        return await self._browser_runtime.is_lightpanda_page(page)
-
-    def _bounded_script_result(self, value: Any) -> tuple[str, Any | None, bool]:
-        return self._browser_runtime.bounded_script_result(value)
-
-    async def _cdp_command_for_page(
-        self,
-        page: Any,
-        *,
-        url: str,
-        method: str,
-        params: dict[str, Any],
-    ) -> Any:
-        return await self._browser_runtime.cdp_command_for_page(
-            page, url=url, method=method, params=params
-        )
-
-    def _first_open_context_page(self, context: Any) -> Any | None:
-        return self._browser_runtime.first_open_context_page(context)
-
-    async def _connect_browser(self) -> Any:
-        return await self._connection.connect_browser()
-
-    async def _new_session_page(self, session: _BrowserSession) -> Any | None:
-        return await self.session_manager.new_session_page(session)
-
-    async def _goto(
-        self,
-        conversation_id: str,
-        session: _BrowserSession,
-        url: str,
-        *,
-        allow_partial: bool = False,
-        wait_for_styles: bool = True,
-    ) -> None:
-        return await self._navigation.goto(
-            conversation_id,
-            session,
-            url,
-            allow_partial=allow_partial,
-            wait_for_styles=wait_for_styles,
-        )
-
-    async def _goto_page(
-        self,
-        page: Any,
-        url: str,
-        *,
-        allow_partial: bool = False,
-        wait_for_styles: bool = True,
-    ) -> None:
-        return await self._navigation.goto_page(
-            page, url, allow_partial=allow_partial, wait_for_styles=wait_for_styles
-        )
-
-    async def _evaluate_page(
-        self,
-        page: Any,
-        script: str,
-        arg: Any | None = None,
-    ) -> Any:
-        return await self._browser_runtime.evaluate_page(page, script, arg)
-
-    async def _raw_runtime_evaluate_value(
-        self,
-        url: str,
-        expression: str,
-        *,
-        label: str,
-        timeout: float,
-    ) -> Any:
-        return await self._cdp_runtime.raw_runtime_evaluate_value(
-            url, expression, label=label, timeout=timeout
-        )
-
-    async def _lightpanda_raw_cdp_command(
-        self,
-        *,
-        url: str,
-        method: str,
-        params: dict[str, Any] | None = None,
-    ) -> Any:
-        return await self._cdp_runtime.lightpanda_raw_cdp_command(
-            url=url, method=method, params=params
-        )

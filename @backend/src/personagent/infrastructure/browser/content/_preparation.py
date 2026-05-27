@@ -58,7 +58,7 @@ class _PagePreparationMixin:
     async def _dismiss_page_popups(self, page: Any) -> dict[str, Any]:
         try:
             value = await asyncio.wait_for(
-                self._w._evaluate_page(page, _POPUP_DISMISS_SCRIPT),
+                self._w._browser_runtime.evaluate_page(page, _POPUP_DISMISS_SCRIPT),
                 timeout=min(self._w.timeout_ms / 1000, 3),
             )
         except Exception as exc:
@@ -89,7 +89,7 @@ class _PagePreparationMixin:
     async def _scroll_page_incrementally(self, page: Any) -> dict[str, Any]:
         try:
             value = await asyncio.wait_for(
-                self._w._evaluate_page(
+                self._w._browser_runtime.evaluate_page(
                     page,
                     _INCREMENTAL_SCROLL_SCRIPT,
                     {

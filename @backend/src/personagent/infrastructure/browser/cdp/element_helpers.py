@@ -196,7 +196,7 @@ class ElementHelpers:
         mouse = getattr(page, "mouse", None)
         if mouse is None:
             return {"ok": False, "reason": "mouse_unavailable"}
-        payload = await self._w._evaluate_page(
+        payload = await self._w._browser_runtime.evaluate_page(
             page,
             """
             ({ selector, targetSelector, x, y }) => {
@@ -261,7 +261,7 @@ class ElementHelpers:
 
     async def safe_user_agent(self, page: Any) -> str:
         with suppress(Exception):
-            value = await self._w._evaluate_page(
+            value = await self._w._browser_runtime.evaluate_page(
                 page, "() => navigator.userAgent || ''"
             )
             if isinstance(value, str):
@@ -287,7 +287,7 @@ class ElementHelpers:
 
     async def safe_scroll_state(self, page: Any) -> dict[str, int]:
         with suppress(Exception):
-            value = await self._w._evaluate_page(
+            value = await self._w._browser_runtime.evaluate_page(
                 page,
                 """() => ({
                   scroll_x: Math.round(window.scrollX || document.documentElement.scrollLeft || 0),

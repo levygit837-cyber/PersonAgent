@@ -31,7 +31,7 @@ class _NavigationMixin:
 
         session = await self._w.session_manager.get_session(browser_id)
         target_url = _normalize_navigation_url(url)
-        await self._w._goto(browser_id, session, target_url, allow_partial=True, wait_for_styles=wait_for_styles)
+        await self._w._navigation.goto(browser_id, session, target_url, allow_partial=True, wait_for_styles=wait_for_styles)
         final_url = _clean_browser_url(str(getattr(session.page, "url", target_url) or target_url))
         session.current_url = final_url
         session.last_open_url = final_url
@@ -114,11 +114,11 @@ class _NavigationMixin:
             except Exception as exc:
                 if current_url.startswith(("http://", "https://")):
                     logger.warning("lightpanda_reload_falling_back_to_goto", url=current_url, error=str(exc))
-                    await self._w._goto_page(page, current_url, allow_partial=True, wait_for_styles=wait_for_styles)
+                    await self._w._navigation.goto_page(page, current_url, allow_partial=True, wait_for_styles=wait_for_styles)
                 else:
                     raise BrowserUnavailableError("LightPanda reload is unavailable.") from exc
         elif current_url.startswith(("http://", "https://")):
-            await self._w._goto_page(page, current_url, allow_partial=True, wait_for_styles=wait_for_styles)
+            await self._w._navigation.goto_page(page, current_url, allow_partial=True, wait_for_styles=wait_for_styles)
         else:
             raise BrowserUnavailableError("LightPanda reload is unavailable.")
         if wait_for_styles:

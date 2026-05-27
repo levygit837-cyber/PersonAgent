@@ -97,7 +97,7 @@ class _PointerMixin:
         if callable(wheel):
             await wheel(float(delta_x), float(delta_y))
         else:
-            await self._w._evaluate_page(
+            await self._w._browser_runtime.evaluate_page(
                 page,
                 "([deltaX, deltaY]) => window.scrollBy(deltaX, deltaY)",
                 [float(delta_x), float(delta_y)],
