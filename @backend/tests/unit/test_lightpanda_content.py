@@ -76,9 +76,6 @@ class _StubWorker:
 
         self._get_session = AsyncMock(return_value=self._session)
         self._cached_usable_session = MagicMock(return_value=self._session)
-        self._preferred_session_page = MagicMock(return_value=self._session.page)
-        self._page_is_open = MagicMock(return_value=True)
-        self._is_session_page_alias = MagicMock(return_value=False)
         self._remember_current_url = MagicMock()
         self._goto_page = AsyncMock()
         self._new_session_page = AsyncMock(return_value=None)
@@ -89,13 +86,16 @@ class _StubWorker:
         self._lightpanda_markdown_url = AsyncMock(return_value="")
         self._cleanup_live_pages = AsyncMock()
         self._opened_page = MagicMock(return_value=None)
-        self._resolve_content_target = MagicMock(return_value=("https://example.com", None))
         self._target_title = MagicMock(return_value="Test Page")
 
 
 class _StubSessionManager:
     def __init__(self, session: _StubSession) -> None:
         self._session = session
+        self.resolve_content_target = MagicMock(return_value=("https://example.com", None))
+        self.preferred_session_page = MagicMock(return_value=session.page)
+        self.is_session_page_alias = MagicMock(return_value=False)
+        self.page_is_open = MagicMock(return_value=True)
 
     async def get_session(self, conversation_id: str) -> _StubSession:
         return self._session
@@ -206,7 +206,7 @@ class TestExtractContent:
         bc, worker = _make()
         worker._cached_usable_session = MagicMock(return_value=None)
         worker._get_session = AsyncMock(return_value=None)
-        worker._resolve_content_target = MagicMock(return_value=(None, None))
+        worker.session_manager.resolve_content_target = MagicMock(return_value=(None, None))
         with pytest.raises(BrowserError, match="No browser page selected"):
             await bc.extract_content(
                 conversation_id="c1",
@@ -237,7 +237,7 @@ class TestExtractContent:
             extraction_count=0,
         )
         worker.opened_pages._opened_page = opened
-        worker._resolve_content_target = MagicMock(return_value=("https://example.com", "p1"))
+        worker.session_manager.resolve_content_target = MagicMock(return_value=("https://example.com", "p1"))
         await bc.extract_content(
             conversation_id="c1",
             max_chars=10_000,
@@ -276,7 +276,7 @@ class TestGetHtml:
         bc, worker = _make()
         worker._cached_usable_session = MagicMock(return_value=None)
         worker._get_session = AsyncMock(return_value=None)
-        worker._resolve_content_target = MagicMock(return_value=(None, None))
+        worker.session_manager.resolve_content_target = MagicMock(return_value=(None, None))
         with pytest.raises(BrowserError, match="No browser page selected"):
             await bc.get_html(
                 conversation_id="c1",

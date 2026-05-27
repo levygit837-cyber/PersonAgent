@@ -23,10 +23,10 @@ class _PointerMixin:
         """Click within the rendered session-panel browser viewport."""
 
         session = await self._w.session_manager.get_session(browser_id)
-        page = self._w._preferred_session_page(session)
+        page = self._w.session_manager.preferred_session_page(session)
         session.page = page
         viewport_width, viewport_height = _clamped_viewport(width, height)
-        await self._w._set_page_viewport(page, viewport_width, viewport_height)
+        await self._w.element_helpers.set_page_viewport(page, viewport_width, viewport_height)
         mouse = getattr(page, "mouse", None)
         click = getattr(mouse, "click", None)
         if not callable(click):
@@ -37,7 +37,7 @@ class _PointerMixin:
             min(max(float(y), 0.0), float(viewport_height)),
             button=safe_button,
         )
-        await self._w._wait_for_page_load_complete(page, timeout_ms=1_500)
+        await self._w.page_helpers.wait_for_page_load_complete(page, timeout_ms=1_500)
         session.touch()
         return await self._w.snapshot.browser_view_snapshot(
             browser_id,
@@ -59,7 +59,7 @@ class _PointerMixin:
         """Type or press a key in the focused session-panel browser page."""
 
         session = await self._w.session_manager.get_session(browser_id)
-        page = self._w._preferred_session_page(session)
+        page = self._w.session_manager.preferred_session_page(session)
         session.page = page
         keyboard = getattr(page, "keyboard", None)
         if keyboard is None:
@@ -74,7 +74,7 @@ class _PointerMixin:
             if not callable(press_key):
                 raise BrowserUnavailableError("LightPanda key input is unavailable.")
             await press_key(key)
-        await self._w._wait_for_page_load_complete(page, timeout_ms=1_500)
+        await self._w.page_helpers.wait_for_page_load_complete(page, timeout_ms=1_500)
         session.touch()
         return await self._w.snapshot.browser_view_snapshot(browser_id, session, width=width, height=height, wait_for_styles=False)
 
@@ -90,7 +90,7 @@ class _PointerMixin:
         """Scroll the real session-panel browser page."""
 
         session = await self._w.session_manager.get_session(browser_id)
-        page = self._w._preferred_session_page(session)
+        page = self._w.session_manager.preferred_session_page(session)
         session.page = page
         mouse = getattr(page, "mouse", None)
         wheel = getattr(mouse, "wheel", None)

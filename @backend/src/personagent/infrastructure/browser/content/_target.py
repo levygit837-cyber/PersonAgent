@@ -33,15 +33,15 @@ class _ContentTargetMixin:
         clean_target_url = _clean_browser_url(target_url)
         if target_page_id:
             page = session.pages.get(target_page_id)
-            if page is None and self._w._is_session_page_alias(conversation_id, session, target_page_id):
-                page = self._w._preferred_session_page(session)
-                if page is not None and self._w._page_is_open(page):
+            if page is None and self._w.session_manager.is_session_page_alias(conversation_id, session, target_page_id):
+                page = self._w.session_manager.preferred_session_page(session)
+                if page is not None and self._w.session_manager.page_is_open(page):
                     session.pages[target_page_id] = page
             if page is not None and self._is_live_page_for_url(page, clean_target_url):
                 return page
             return None
 
-        preferred_page = self._w._preferred_session_page(session)
+        preferred_page = self._w.session_manager.preferred_session_page(session)
         if self._is_live_page_for_url(preferred_page, clean_target_url):
             return preferred_page
         if not allow_navigation or not clean_target_url.startswith(("http://", "https://")):

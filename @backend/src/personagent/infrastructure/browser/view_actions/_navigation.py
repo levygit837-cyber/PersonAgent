@@ -60,7 +60,7 @@ class _NavigationMixin:
         """Move the session-panel browser back or forward in its real page history."""
 
         session = await self._w.session_manager.get_session(browser_id)
-        page = self._w._preferred_session_page(session)
+        page = self._w.session_manager.preferred_session_page(session)
         session.page = page
         operation = getattr(page, "go_back" if direction < 0 else "go_forward", None)
         if not callable(operation):
@@ -99,7 +99,7 @@ class _NavigationMixin:
         """Reload the current session-panel browser page and return the rendered view."""
 
         session = await self._w.session_manager.get_session(browser_id)
-        page = self._w._preferred_session_page(session)
+        page = self._w.session_manager.preferred_session_page(session)
         session.page = page
         current_url = _clean_browser_url(
             str(getattr(page, "url", "") or session.current_url or session.last_open_url or "")

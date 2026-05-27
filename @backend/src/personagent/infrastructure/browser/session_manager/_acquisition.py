@@ -28,7 +28,7 @@ class _SessionAcquisitionMixin:
                         browser_connected = bool(is_connected())
                     if browser_connected and self.session_has_open_page(session):
                         session.page = self.preferred_session_page(session)
-                        cached_results = self._w.d
+                        cached_results = self._w.search_result_cache.latest_cached_search_results(conversation_id)
                         if cached_results:
                             session.search_results = cached_results
                         else:
