@@ -17,6 +17,7 @@ from typing import Any, cast
 
 from personagent.application.dto import ChatRequestDTO
 from personagent.application.plan_mode import is_plan_mode_active
+from personagent.application.ports.artifact_storage import ArtifactStoragePort
 from personagent.application.tools import (
     ToolOrchestrator,
     ToolRegistry,
@@ -46,9 +47,11 @@ class ToolRuntime:
         *,
         tool_registry: ToolRegistry | None,
         tool_runtime_config: ToolRuntimeConfig | None,
+        artifact_storage: ArtifactStoragePort | None = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._tool_runtime_config = tool_runtime_config
+        self._artifact_storage = artifact_storage
 
     def resolve_schemas(
         self,
@@ -101,7 +104,11 @@ class ToolRuntime:
 
         if self._tool_registry is None or self._tool_runtime_config is None:
             raise RuntimeError("Tool runtime is not configured")
-        return ToolOrchestrator(self._tool_registry, self._tool_runtime_config)
+        return ToolOrchestrator(
+            self._tool_registry,
+            self._tool_runtime_config,
+            self._artifact_storage,
+        )
 
     def effective_max_tool_iterations(self, request: ChatRequestDTO) -> int:
         """Return the bounded tool-iteration cap for ``request``.

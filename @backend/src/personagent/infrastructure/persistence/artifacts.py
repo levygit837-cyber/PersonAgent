@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from personagent.application.ports.artifact_storage import StoredArtifactRef
+
 DEFAULT_ARTIFACT_ROOT = Path(
     os.getenv("PERSONAGENT_ARTIFACT_ROOT", "~/.cache/personagent/artifacts")
 ).expanduser()
@@ -235,3 +237,55 @@ def _chmod_private_tree(path: Path) -> None:
 def _chmod_private_file(path: Path) -> None:
     with suppress(OSError):
         path.chmod(0o600)
+
+
+# ---------------------------------------------------------------------------
+# Local filesystem implementation of ArtifactStoragePort
+# ---------------------------------------------------------------------------
+
+
+class LocalArtifactStorage:
+    """Store artifacts on the local filesystem."""
+
+    def persist_tool_result(
+        self,
+        content: str,
+        conversation_id: str,
+        tool_call_id: str,
+        root: Path | None,
+    ) -> str | None:
+        storage_dir = (root or DEFAULT_ARTIFACT_ROOT) / "tool-results" / safe_segment(conversation_id)
+        try:
+            storage_dir.mkdir(parents=True, exist_ok=True)
+            path = storage_dir / f"{safe_segment(tool_call_id)}.txt"
+            path.write_text(content, encoding="utf-8")
+            return str(path)
+        except OSError:
+            return None
+
+    def store_bytes(
+        self,
+        *,
+        category: str,
+        conversation_id: str,
+        content: bytes,
+        suffix: str,
+        mime_type: str,
+        root: Path | None,
+        ttl_seconds: int | None,
+    ) -> StoredArtifactRef:
+        artifact = store_bytes_artifact(
+            category=category,
+            conversation_id=conversation_id,
+            content=content,
+            suffix=suffix,
+            mime_type=mime_type,
+            root=root,
+            ttl_seconds=ttl_seconds,
+        )
+        return StoredArtifactRef(
+            artifact_id=artifact.artifact_id,
+            url=artifact.url,
+            size_bytes=artifact.size_bytes,
+            sha256=artifact.sha256,
+        )

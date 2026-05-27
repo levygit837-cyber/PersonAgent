@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from personagent.infrastructure.persistence.artifacts import DEFAULT_ARTIFACT_ROOT
-
 DEFAULT_MAX_TOOL_ITERATIONS: int | None = None
 """Default operator-imposed tool iteration limit.
 
@@ -61,7 +59,7 @@ class ToolRuntimeConfig:
     web_timeout_ms: int = 15_000
     web_max_bytes: int = 10_000_000
     result_max_chars: int | None = None
-    tool_result_storage_root: Path | None = DEFAULT_ARTIFACT_ROOT
+    tool_result_storage_root: Path | None = None
     web_allowed_domains: tuple[str, ...] = ()
     web_blocked_domains: tuple[str, ...] = ("localhost", "127.0.0.1", "0.0.0.0")
     web_allow_private_hosts: bool = False
@@ -110,7 +108,7 @@ class ToolRuntimeConfig:
             tool_result_storage_root=(
                 Path(tool_result_storage_root).expanduser().resolve()
                 if tool_result_storage_root
-                else DEFAULT_ARTIFACT_ROOT.expanduser().resolve()
+                else None
             ),
             web_allowed_domains=tuple(item.lower() for item in (web_allowed_domains or ())),
             web_blocked_domains=tuple(

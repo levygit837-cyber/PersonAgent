@@ -34,13 +34,15 @@ import binascii
 from pathlib import Path
 
 from personagent.application.dto import ChatRequestDTO
+from personagent.application.ports.artifact_storage import (
+    ArtifactStoragePort,
+)
 from personagent.application.security import (
     enforce_provider_data_policy,
 )
 from personagent.application.use_cases.chat.helpers import image_suffix
 from personagent.application.use_cases.chat.messaging.state import PromptPackage
 from personagent.domain.llm_backend.models import GeneratedImage
-from personagent.infrastructure.persistence.artifacts import store_bytes_artifact
 
 
 class MediaPolicyHandler:
@@ -53,9 +55,11 @@ class MediaPolicyHandler:
     def __init__(
         self,
         *,
+        artifact_storage: ArtifactStoragePort | None = None,
         artifact_root: Path | None,
         artifact_ttl_seconds: int | None,
     ) -> None:
+        self._artifact_storage = artifact_storage or _default_artifact_storage()
         self._artifact_root = artifact_root
         self._artifact_ttl_seconds = artifact_ttl_seconds
 
@@ -99,7 +103,7 @@ class MediaPolicyHandler:
                 stored.append(image)
                 continue
             mime_type = image.mime_type or "image/png"
-            artifact = store_bytes_artifact(
+            artifact = self._artifact_storage.store_bytes(
                 category="generated-images",
                 conversation_id=conversation_id,
                 content=raw,
@@ -119,6 +123,11 @@ class MediaPolicyHandler:
                 )
             )
         return stored
+
+
+def _default_artifact_storage() -> ArtifactStoragePort:
+    from personagent.infrastructure.persistence.artifacts import LocalArtifactStorage
+    return LocalArtifactStorage()
 
 
 __all__ = ["MediaPolicyHandler"]

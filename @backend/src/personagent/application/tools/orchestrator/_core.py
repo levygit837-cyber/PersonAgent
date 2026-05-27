@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
+from personagent.application.ports.artifact_storage import ArtifactStoragePort
 from personagent.application.tools.registry import ToolRegistry
 from personagent.application.tools.runtime_config import ToolRuntimeConfig
 from personagent.domain.tools import (
@@ -23,9 +24,15 @@ from ._result_capping import _ToolResultCappingMixin
 class ToolOrchestrator(_ToolExecutionMixin, _ToolResultCappingMixin):
     """Executa ferramentas com paralelismo seguro e bloqueio conservador."""
 
-    def __init__(self, registry: ToolRegistry, config: ToolRuntimeConfig) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        config: ToolRuntimeConfig,
+        artifact_storage: ArtifactStoragePort | None = None,
+    ) -> None:
         self._registry = registry
         self._config = config
+        self._artifact_storage = artifact_storage or _default_artifact_storage()
 
     async def execute(
         self,
@@ -182,3 +189,8 @@ class ToolOrchestrator(_ToolExecutionMixin, _ToolResultCappingMixin):
                 data={"tool_call_ids": [call.id for call in calls]},
             ),
         )
+
+
+def _default_artifact_storage() -> ArtifactStoragePort:
+    from personagent.infrastructure.persistence.artifacts import LocalArtifactStorage
+    return LocalArtifactStorage()

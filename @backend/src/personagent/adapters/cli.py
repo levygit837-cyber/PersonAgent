@@ -68,6 +68,7 @@ async def _chat(
             tool_runtime_config=container.get_tool_runtime_config(),
             artifact_root=container.settings.personagent_artifact_root,
             artifact_ttl_seconds=container.settings.personagent_artifact_ttl_seconds,
+            artifact_storage=container.get_artifact_storage(),
         )
 
         conv_id = UUID(conversation_id) if conversation_id else None

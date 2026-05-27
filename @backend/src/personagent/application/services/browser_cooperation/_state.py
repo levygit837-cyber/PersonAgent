@@ -18,16 +18,16 @@ from personagent.application.services.browser_cooperation.helpers import (
 )
 
 
-def _cooperation_state_from_workspace(workspace, browser_id: str) -> dict[str, Any]:
-    state = _coerce_dict(workspace.state)
+def _cooperation_state_from_workspace(workspace: dict[str, Any], browser_id: str) -> dict[str, Any]:
+    state = _coerce_dict(workspace.get("state"))
     cooperation = _coerce_dict(state.get("cooperation"))
     return {
         "enabled": bool(cooperation.get("enabled", False)),
         "mode": _normalize_mode(cooperation.get("mode")),
         "agent_control": _normalize_mode(cooperation.get("agent_control") or cooperation.get("mode")),
         "browser_id": str(cooperation.get("browser_id") or browser_id),
-        "url": str(cooperation.get("url") or workspace.current_url or ""),
-        "title": str(cooperation.get("title") or workspace.current_title or ""),
+        "url": str(cooperation.get("url") or workspace.get("current_url") or ""),
+        "title": str(cooperation.get("title") or workspace.get("current_title") or ""),
         "page_state": _coerce_dict(cooperation.get("page_state")),
         "recent_actions": _coerce_list(cooperation.get("recent_actions"))[-MAX_RECENT_ACTIONS:],
         "useful_timeline": _coerce_list(cooperation.get("useful_timeline"))[-MAX_USEFUL_TIMELINE:],

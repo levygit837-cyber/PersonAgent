@@ -141,6 +141,7 @@ def _create_chat_use_case(
         default_output_tokens=resolve_default_output_tokens(container, provider),
         artifact_root=container.settings.personagent_artifact_root,
         artifact_ttl_seconds=container.settings.personagent_artifact_ttl_seconds,
+        artifact_storage=container.get_artifact_storage(),
     )
 
 

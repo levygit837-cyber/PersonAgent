@@ -8,14 +8,16 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from personagent.application.ports.artifact_storage import ArtifactStoragePort
 from personagent.domain.tools import ToolResult, ToolUseContext
-from personagent.infrastructure.persistence.artifacts import DEFAULT_ARTIFACT_ROOT, safe_segment
 
 DEFAULT_TOOL_RESULT_MAX_CHARS = 60_000
 
 
 class _ToolResultCappingMixin:
     """Mixin that caps tool results to configurable character limits."""
+
+    _artifact_storage: ArtifactStoragePort
 
     def _cap_result(self, result: ToolResult, context: ToolUseContext) -> ToolResult:
         raw_context_limit = context.limits.get(
@@ -137,16 +139,10 @@ class _ToolResultCappingMixin:
 
     def _persist_large_result(self, result: ToolResult, context: ToolUseContext) -> str | None:
         raw_root = context.limits.get("tool_result_storage_root")
-        root = (
-            Path(str(raw_root)).expanduser()
-            if raw_root
-            else self._config.tool_result_storage_root or DEFAULT_ARTIFACT_ROOT
+        root = Path(str(raw_root)).expanduser() if raw_root else self._config.tool_result_storage_root
+        return self._artifact_storage.persist_tool_result(
+            content=result.content,
+            conversation_id=context.conversation_id,
+            tool_call_id=result.tool_call_id,
+            root=root,
         )
-        storage_dir = root / "tool-results" / safe_segment(context.conversation_id)
-        try:
-            storage_dir.mkdir(parents=True, exist_ok=True)
-            path = storage_dir / f"{safe_segment(result.tool_call_id)}.txt"
-            path.write_text(result.content, encoding="utf-8")
-            return str(path)
-        except OSError:
-            return None

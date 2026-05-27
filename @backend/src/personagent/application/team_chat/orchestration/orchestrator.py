@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import structlog
 
+from personagent.application.ports.artifact_storage import ArtifactStoragePort
 from personagent.application.services import SessionTitleService
 from personagent.application.team_chat.blackboard.json_parsing import (
     _parse_json_object,  # noqa: F401  # backward-compat for tests
@@ -63,6 +64,7 @@ class TeamChatOrchestrator:
         tool_registry: ToolRegistry | None = None,
         tool_runtime_config: ToolRuntimeConfig | None = None,
         session_title_service: SessionTitleService | None = None,
+        artifact_storage: ArtifactStoragePort | None = None,
     ) -> None:
         self._conversation_repo = conversation_repo
         self._llm_backend = llm_backend
@@ -77,6 +79,7 @@ class TeamChatOrchestrator:
             llm_backend=llm_backend,
             tool_registry=tool_registry,
             tool_runtime_config=tool_runtime_config,
+            artifact_storage=artifact_storage,
         )
 
         self._phase_loop = TeamChatPhaseLoop(

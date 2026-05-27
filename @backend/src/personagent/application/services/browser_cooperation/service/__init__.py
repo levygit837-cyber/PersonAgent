@@ -6,8 +6,6 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from personagent.application.services.browser_cooperation.event_processing import (
     _apply_events_to_cooperation_state,
     _event_dedupe_key,
@@ -31,16 +29,11 @@ from personagent.application.services.browser_cooperation.helpers import (
     _policy_from_state,
     build_browser_agent_context,
 )
-from personagent.infrastructure.persistence.models import BrowserCooperationEventORM
-
-from ._queries import (
-    _enforce_retention,
-    _existing_event_ids,
-    _get_or_create_workspace,
-    _latest_raw_events,
-    _next_cooperation_sequence,
+from personagent.application.services.browser_cooperation.ports import (
+    BrowserCooperationRepository,
 )
-from ._state import (
+
+from .._state import (
     _cooperation_state_from_workspace,
     _merge_metadata_cooperation,
     _mirror_browser_cooperation,
@@ -50,8 +43,8 @@ from ._state import (
 class BrowserCooperationService:
     """Persist Browser Cooperation state and normalized event logs."""
 
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+    def __init__(self, repository: BrowserCooperationRepository) -> None:
+        self._repository = repository
 
     async def set_cooperation(
         self,
@@ -63,8 +56,14 @@ class BrowserCooperationService:
     ) -> dict[str, Any]:
         """Enable/disable cooperation and store the current control mode."""
 
-        workspace = await _get_or_create_workspace(self._session, conversation, browser_id)
-        state = _coerce_dict(workspace.state)
+        conversation_id = str(_conversation_uuid(conversation))
+        workspace_id = str(
+            _coerce_dict(getattr(conversation, "metadata", {})).get("workspace_id") or ""
+        )
+        workspace = await self._repository.get_or_create_workspace(
+            conversation_id, browser_id, workspace_id
+        )
+        state = _coerce_dict(workspace.get("state"))
         current = _cooperation_state_from_workspace(workspace, browser_id)
         next_mode = _normalize_mode(mode or current.get("mode") or "observe_only")
         cooperation = {
@@ -77,8 +76,8 @@ class BrowserCooperationService:
             "updated_at": _now_iso(),
         }
         state["cooperation"] = cooperation
-        workspace.state = state
-        await self._session.commit()
+        await self._repository.update_workspace_state(workspace["id"], state)
+        await self._repository.commit()
         _mirror_browser_cooperation(conversation, browser_id, cooperation)
         return {
             "cooperation": cooperation,
@@ -95,8 +94,14 @@ class BrowserCooperationService:
     ) -> dict[str, Any]:
         """Normalize, redact, persist, and summarize Browser -> Agent events."""
 
-        workspace = await _get_or_create_workspace(self._session, conversation, browser_id)
-        state = _coerce_dict(workspace.state)
+        conversation_id = str(_conversation_uuid(conversation))
+        workspace_id = str(
+            _coerce_dict(getattr(conversation, "metadata", {})).get("workspace_id") or ""
+        )
+        workspace = await self._repository.get_or_create_workspace(
+            conversation_id, browser_id, workspace_id
+        )
+        state = _coerce_dict(workspace.get("state"))
         cooperation = _cooperation_state_from_workspace(workspace, browser_id)
         if not cooperation.get("enabled"):
             cooperation = {
@@ -109,8 +114,8 @@ class BrowserCooperationService:
                 "updated_at": _now_iso(),
             }
             state["cooperation"] = cooperation
-            workspace.state = state
-            await self._session.commit()
+            await self._repository.update_workspace_state(workspace["id"], state)
+            await self._repository.commit()
             _mirror_browser_cooperation(conversation, browser_id, cooperation)
             return {
                 "accepted_count": 0,
@@ -122,19 +127,19 @@ class BrowserCooperationService:
         normalized_inputs = [
             event for event in events[:MAX_INGEST_EVENTS] if isinstance(event, Mapping)
         ]
-        existing_ids = await _existing_event_ids(
-            self._session,
-            workspace,
+        existing_ids = await self._repository.existing_event_ids(
+            workspace["id"],
             [
                 str(event.get("event_id") or event.get("id") or "").strip()
                 for event in normalized_inputs
                 if str(event.get("event_id") or event.get("id") or "").strip()
             ],
         )
-        next_sequence = await _next_cooperation_sequence(self._session, workspace)
+        next_sequence = await self._repository.next_sequence(workspace["id"])
         accepted: list[Any] = []
         dropped = len(events) - len(normalized_inputs)
         seen_batch_keys: set[tuple[str, str, str, str, int]] = set()
+        orm_events: list[dict[str, Any]] = []
         for raw in normalized_inputs:
             event_id = str(raw.get("event_id") or raw.get("id") or f"bev_{uuid4().hex[:12]}").strip()
             if event_id in existing_ids:
@@ -147,39 +152,39 @@ class BrowserCooperationService:
             seen_batch_keys.add(dedupe_key)
             envelope = _normalize_event(
                 raw,
-                conversation_id=str(_conversation_uuid(conversation)),
+                conversation_id=conversation_id,
                 browser_id=browser_id,
                 sequence=next_sequence,
             )
             next_sequence += 1
             accepted.append(envelope)
             existing_ids.add(event_id)
-            self._session.add(
-                BrowserCooperationEventORM(
-                    event_id=envelope.event_id,
-                    browser_workspace_id=workspace.id,
-                    conversation_id=_conversation_uuid(conversation),
-                    browser_id=browser_id,
-                    tab_id=envelope.tab_id,
-                    page_id=envelope.page_id,
-                    source=envelope.source,
-                    channel=envelope.channel,
-                    trace_role=envelope.trace_role,
-                    visibility=envelope.visibility,
-                    raw_kind=envelope.raw_kind,
-                    kind=envelope.kind,
-                    url=envelope.url,
-                    target=envelope.target,
-                    payload=envelope.payload,
-                    coordinates=envelope.coordinates,
-                    duration_ms=envelope.duration_ms,
-                    trace_effect=envelope.trace_effect,
-                    correlation_id=envelope.correlation_id,
-                    importance=envelope.importance,
-                    semantic_label=envelope.semantic_label,
-                    sequence=envelope.sequence,
-                    occurred_at=_parse_timestamp(envelope.timestamp),
-                )
+            orm_events.append(
+                {
+                    "event_id": envelope.event_id,
+                    "browser_workspace_id": workspace["id"],
+                    "conversation_id": conversation_id,
+                    "browser_id": browser_id,
+                    "tab_id": envelope.tab_id,
+                    "page_id": envelope.page_id,
+                    "source": envelope.source,
+                    "channel": envelope.channel,
+                    "trace_role": envelope.trace_role,
+                    "visibility": envelope.visibility,
+                    "raw_kind": envelope.raw_kind,
+                    "kind": envelope.kind,
+                    "url": envelope.url,
+                    "target": envelope.target,
+                    "payload": envelope.payload,
+                    "coordinates": envelope.coordinates,
+                    "duration_ms": envelope.duration_ms,
+                    "trace_effect": envelope.trace_effect,
+                    "correlation_id": envelope.correlation_id,
+                    "importance": envelope.importance,
+                    "semantic_label": envelope.semantic_label,
+                    "sequence": envelope.sequence,
+                    "occurred_at": _parse_timestamp(envelope.timestamp),
+                }
             )
 
         if accepted:
@@ -194,9 +199,13 @@ class BrowserCooperationService:
             "updated_at": _now_iso(),
         }
         state["cooperation"] = cooperation
-        workspace.state = state
-        await _enforce_retention(self._session, workspace, cooperation)
-        await self._session.commit()
+        await self._repository.update_workspace_state(workspace["id"], state)
+        if orm_events:
+            await self._repository.persist_events(workspace["id"], orm_events)
+        policy = _policy_from_state(cooperation)
+        limit = int(policy.get("raw_event_retention_limit", 0))
+        await self._repository.enforce_retention(workspace["id"], limit)
+        await self._repository.commit()
         _mirror_browser_cooperation(conversation, browser_id, cooperation)
         return {
             "accepted_count": len(accepted),
@@ -220,7 +229,13 @@ class BrowserCooperationService:
     ) -> dict[str, Any] | None:
         """Record a backend-originated browser event when cooperation is enabled."""
 
-        workspace = await _get_or_create_workspace(self._session, conversation, browser_id)
+        conversation_id = str(_conversation_uuid(conversation))
+        workspace_id = str(
+            _coerce_dict(getattr(conversation, "metadata", {})).get("workspace_id") or ""
+        )
+        workspace = await self._repository.get_or_create_workspace(
+            conversation_id, browser_id, workspace_id
+        )
         cooperation = _merge_metadata_cooperation(
             _cooperation_state_from_workspace(workspace, browser_id),
             conversation,
@@ -261,13 +276,19 @@ class BrowserCooperationService:
     ) -> dict[str, Any]:
         """Return the current realtime cooperation snapshot for the Browser UI."""
 
-        workspace = await _get_or_create_workspace(self._session, conversation, browser_id)
+        conversation_id = str(_conversation_uuid(conversation))
+        workspace_id = str(
+            _coerce_dict(getattr(conversation, "metadata", {})).get("workspace_id") or ""
+        )
+        workspace = await self._repository.get_or_create_workspace(
+            conversation_id, browser_id, workspace_id
+        )
         cooperation = _merge_metadata_cooperation(
             _cooperation_state_from_workspace(workspace, browser_id),
             conversation,
             browser_id,
         )
-        raw_events = await _latest_raw_events(self._session, workspace, limit=raw_limit)
+        raw_events = await self._repository.latest_raw_events(workspace["id"], raw_limit)
         return {
             "type": "snapshot",
             "cooperation": cooperation,
@@ -290,8 +311,14 @@ class BrowserCooperationService:
     ) -> dict[str, Any]:
         """Mark a persisted Browser Arbiter proposal as approved, denied, or dismissed."""
 
-        workspace = await _get_or_create_workspace(self._session, conversation, browser_id)
-        state = _coerce_dict(workspace.state)
+        conversation_id = str(_conversation_uuid(conversation))
+        workspace_id = str(
+            _coerce_dict(getattr(conversation, "metadata", {})).get("workspace_id") or ""
+        )
+        workspace = await self._repository.get_or_create_workspace(
+            conversation_id, browser_id, workspace_id
+        )
+        state = _coerce_dict(workspace.get("state"))
         cooperation = _merge_metadata_cooperation(
             _cooperation_state_from_workspace(workspace, browser_id),
             conversation,
@@ -320,8 +347,8 @@ class BrowserCooperationService:
             "updated_at": _now_iso(),
         }
         state["cooperation"] = cooperation
-        workspace.state = state
-        await self._session.commit()
+        await self._repository.update_workspace_state(workspace["id"], state)
+        await self._repository.commit()
         _mirror_browser_cooperation(conversation, browser_id, cooperation)
         return {
             "type": "proposal.resolved",

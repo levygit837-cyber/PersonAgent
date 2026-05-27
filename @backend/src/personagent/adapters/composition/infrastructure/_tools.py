@@ -1,6 +1,7 @@
 """Tool registry and runtime configuration mixin."""
 
 from personagent.application.tools import ToolRegistry, ToolRuntimeConfig
+from personagent.infrastructure.persistence.artifacts import LocalArtifactStorage
 from personagent.infrastructure.persistence.database import AsyncSessionLocal
 from personagent.infrastructure.persistence.task_store import SqlAlchemyTaskStore
 from personagent.infrastructure.tools import (
@@ -69,6 +70,12 @@ class _ToolMixin:
             registry.register(create_tool_search_tool(lambda: registry))
             self._tool_registry = registry
         return self._tool_registry
+
+    def get_artifact_storage(self) -> LocalArtifactStorage:
+        """Return the local artifact storage adapter."""
+        if getattr(self, "_artifact_storage", None) is None:
+            self._artifact_storage = LocalArtifactStorage()
+        return self._artifact_storage
 
     def get_tool_runtime_config(self) -> ToolRuntimeConfig:
         """Return the tool runtime configuration."""

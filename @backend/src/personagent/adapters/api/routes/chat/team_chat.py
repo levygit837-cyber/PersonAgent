@@ -106,6 +106,7 @@ def register_team_chat_routes(router: APIRouter) -> None:
                     tool_registry=tool_registry,
                     tool_runtime_config=tool_runtime_config,
                     session_title_service=getattr(container, "get_session_title_service", lambda: None)(),
+                    artifact_storage=getattr(container, "get_artifact_storage", lambda: None)(),
                 )
                 request = TeamChatRequest(
                     conversation_id=UUID(start.conversation_id) if start.conversation_id else None,

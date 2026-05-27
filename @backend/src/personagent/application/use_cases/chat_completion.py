@@ -14,6 +14,7 @@ from personagent.application.plan_mode import (
     auto_finalize_plan_mode,
     plan_mode_event,
 )
+from personagent.application.ports.artifact_storage import ArtifactStoragePort
 from personagent.application.services import (
     NextStepSuggestionService,
     OperationalMemoryService,
@@ -105,6 +106,7 @@ class ChatCompletionUseCase:
         default_output_tokens: int = 65_536,
         artifact_root: str | Path | None = None,
         artifact_ttl_seconds: int | None = None,
+        artifact_storage: ArtifactStoragePort | None = None,
     ):
         self._conversation_repo = conversation_repo
         self._llm_backend = llm_backend
@@ -144,6 +146,7 @@ class ChatCompletionUseCase:
         self._tool_runtime = ToolRuntime(
             tool_registry=self._tool_registry,
             tool_runtime_config=self._tool_runtime_config,
+            artifact_storage=artifact_storage,
         )
         self._turn_context = TurnContextResolver(
             build_context_use_case=self._build_context_use_case,
@@ -182,6 +185,7 @@ class ChatCompletionUseCase:
         self._artifact_root = Path(artifact_root).expanduser() if artifact_root else None
         self._artifact_ttl_seconds = artifact_ttl_seconds if artifact_ttl_seconds and artifact_ttl_seconds > 0 else None
         self._media_policy = MediaPolicyHandler(
+            artifact_storage=artifact_storage,
             artifact_root=self._artifact_root,
             artifact_ttl_seconds=self._artifact_ttl_seconds,
         )

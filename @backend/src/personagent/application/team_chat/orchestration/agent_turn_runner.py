@@ -10,6 +10,7 @@ from typing import Any
 
 import structlog
 
+from personagent.application.ports.artifact_storage import ArtifactStoragePort
 from personagent.application.team_chat.blackboard.core import (
     _Blackboard,
 )
@@ -65,10 +66,12 @@ class AgentTurnRunner:
         llm_backend: LLMBackendRepository,
         tool_registry: ToolRegistry | None = None,
         tool_runtime_config: ToolRuntimeConfig | None = None,
+        artifact_storage: ArtifactStoragePort | None = None,
     ) -> None:
         self._llm_backend = llm_backend
         self._tool_registry = tool_registry
         self._tool_runtime_config = tool_runtime_config
+        self._artifact_storage = artifact_storage
 
     async def _run_agent_turns_parallel(
         self,
@@ -389,7 +392,11 @@ class AgentTurnRunner:
             raw_context=raw_tool_context,
             config=self._tool_runtime_config,
         )
-        orchestrator = ToolOrchestrator(self._tool_registry, self._tool_runtime_config)
+        orchestrator = ToolOrchestrator(
+            self._tool_registry,
+            self._tool_runtime_config,
+            self._artifact_storage,
+        )
         async for tool_event in orchestrator.execute(read_calls, context):
             metadata = tool_event.to_stream_metadata()
             metadata.update(

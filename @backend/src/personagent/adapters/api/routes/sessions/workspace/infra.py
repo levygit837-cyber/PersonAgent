@@ -18,17 +18,23 @@ from personagent.application.services.browser_cooperation import (
     BrowserCooperationService,
 )
 from personagent.application.services.browser_workspace import BrowserWorkspaceService
+from personagent.infrastructure.persistence.browser_cooperation_repository import (
+    PostgresBrowserCooperationRepository,
+)
+from personagent.infrastructure.persistence.browser_workspace_repository import (
+    PostgresBrowserWorkspaceRepository,
+)
 
 
 def _browser_workspace_service(session: AsyncSession) -> BrowserWorkspaceService | None:
     if isinstance(session, AsyncSession):
-        return BrowserWorkspaceService(session)
+        return BrowserWorkspaceService(PostgresBrowserWorkspaceRepository(session))
     return None
 
 
 def _browser_cooperation_service(session: AsyncSession) -> BrowserCooperationService | None:
     if isinstance(session, AsyncSession):
-        return BrowserCooperationService(session)
+        return BrowserCooperationService(PostgresBrowserCooperationRepository(session))
     return None
 
 

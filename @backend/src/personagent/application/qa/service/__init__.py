@@ -11,8 +11,6 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from personagent.application.qa.contracts import (
     CodeEdgeData,
@@ -36,22 +34,9 @@ from personagent.application.qa.indexer import PythonCodeIndexer
 from personagent.application.qa.redaction import redact_mapping
 from personagent.application.qa.runtime_tracer import PythonRuntimeTracer
 from personagent.domain.exceptions import InvalidRequestError
-from personagent.infrastructure.persistence.models import (
-    QACodeEdgeORM,
-    QACodeNodeORM,
-    QARequestRunORM,
-    QARuntimeEventORM,
-    QASessionORM,
-)
+from personagent.infrastructure.persistence.qa_repository import QARepository
 
-from ._mappers import (
-    _code_edge_data,
-    _code_node_data,
-    _request_run_data,
-    _runtime_event_data,
-    _session_data,
-)
-from ._utils import (
+from .._utils import (
     _GLOBAL_TRACER,
     _create_worktree,
     _git_output,
@@ -65,8 +50,8 @@ from ._utils import (
 class QASessionService:
     """Coordinates QA session persistence, indexing, and runtime tracing."""
 
-    def __init__(self, session: AsyncSession, *, tracer: PythonRuntimeTracer | None = None) -> None:
-        self._session = session
+    def __init__(self, repository: QARepository, *, tracer: PythonRuntimeTracer | None = None) -> None:
+        self._repository = repository
         self._tracer = tracer or _GLOBAL_TRACER
 
     async def create_session(self, request: QASessionCreateRequest) -> QASessionData:
@@ -96,23 +81,21 @@ class QASessionService:
             )
             metadata["sandbox_created"] = True
 
-        orm = QASessionORM(
-            id=session_id,
-            repo_root=str(repo_root),
-            sandbox_path=sandbox_path,
-            base_commit=base_commit,
-            branch_name=branch_name,
-            branch_mode=request.branch_mode,
-            env_profile=_safe_env_profile(request.env_profile),
-            trace_mode=request.trace_mode.value,
-            agent_id=request.agent_id,
-            status=QASessionStatus.ACTIVE.value,
-            metadata_=metadata,
+        return await self._repository.create_session(
+            {
+                "id": session_id,
+                "repo_root": str(repo_root),
+                "sandbox_path": sandbox_path,
+                "base_commit": base_commit,
+                "branch_name": branch_name,
+                "branch_mode": request.branch_mode,
+                "env_profile": _safe_env_profile(request.env_profile),
+                "trace_mode": request.trace_mode.value,
+                "agent_id": request.agent_id,
+                "status": QASessionStatus.ACTIVE.value,
+                "metadata_": metadata,
+            }
         )
-        self._session.add(orm)
-        await self._session.commit()
-        await self._session.refresh(orm)
-        return _session_data(orm)
 
     async def index_session(
         self,
@@ -125,35 +108,39 @@ class QASessionService:
         repo_root = Path(str(qa_session.sandbox_path or qa_session.repo_root)).resolve()
         graph = PythonCodeIndexer(repo_root, app=app).build(include_tests=request.include_tests)
 
-        await self._session.execute(delete(QACodeEdgeORM).where(QACodeEdgeORM.session_id == session_id))
-        await self._session.execute(delete(QACodeNodeORM).where(QACodeNodeORM.session_id == session_id))
-        for node in graph.nodes:
-            self._session.add(
-                QACodeNodeORM(
-                    session_id=session_id,
-                    node_key=node.id,
-                    kind=node.kind.value,
-                    name=node.name,
-                    file_path=node.file_path,
-                    start_line=node.start_line,
-                    end_line=node.end_line,
-                    metadata_=node.metadata,
-                )
-            )
-        for edge in graph.edges:
-            self._session.add(
-                QACodeEdgeORM(
-                    session_id=session_id,
-                    edge_key=edge.id,
-                    kind=edge.kind.value,
-                    source_node_key=edge.source_id,
-                    target_node_key=edge.target_id,
-                    metadata_=edge.metadata,
-                )
-            )
-        qa_session.metadata_ = {**dict(qa_session.metadata_ or {}), "last_index": graph.stats}
-        qa_session.updated_at = datetime.now(UTC)
-        await self._session.commit()
+        await self._repository.clear_code_graph(session_id)
+        await self._repository.add_code_nodes(
+            [
+                {
+                    "session_id": session_id,
+                    "node_key": node.id,
+                    "kind": node.kind.value,
+                    "name": node.name,
+                    "file_path": node.file_path,
+                    "start_line": node.start_line,
+                    "end_line": node.end_line,
+                    "metadata_": node.metadata,
+                }
+                for node in graph.nodes
+            ]
+        )
+        await self._repository.add_code_edges(
+            [
+                {
+                    "session_id": session_id,
+                    "edge_key": edge.id,
+                    "kind": edge.kind.value,
+                    "source_node_key": edge.source_id,
+                    "target_node_key": edge.target_id,
+                    "metadata_": edge.metadata,
+                }
+                for edge in graph.edges
+            ]
+        )
+        await self._repository.update_session_metadata(
+            session_id, {**dict(qa_session.metadata or {}), "last_index": graph.stats}
+        )
+        await self._repository.commit()
         return graph
 
     async def execute_request(
@@ -172,17 +159,17 @@ class QASessionService:
             )
         request_id = uuid4()
         trace_mode = request.trace_mode or TraceMode(str(qa_session.trace_mode))
-        run = QARequestRunORM(
-            id=request_id,
-            session_id=session_id,
-            method=request.method.upper(),
-            path=request.path,
-            status=QARequestRunStatus.RUNNING.value,
-            trace_id="",
-            request_payload=_request_payload(request),
+        run = await self._repository.create_request_run(
+            {
+                "id": request_id,
+                "session_id": session_id,
+                "method": request.method.upper(),
+                "path": request.path,
+                "status": QARequestRunStatus.RUNNING.value,
+                "trace_id": "",
+                "request_payload": _request_payload(request),
+            }
         )
-        self._session.add(run)
-        await self._session.commit()
 
         source_root = _source_root(Path(str(qa_session.sandbox_path or qa_session.repo_root)))
         started = time.perf_counter()
@@ -230,32 +217,50 @@ class QASessionService:
                 )
             )
             self._tracer.event_bus.publish(str(session_id), events[-1])
-            run.status = QARequestRunStatus.COMPLETED.value
-            run.trace_id = trace_id
-            run.status_code = response.status_code
-            run.duration_ms = duration_ms
-            run.response_payload = response_payload
-            run.finished_at = datetime.now(UTC)
+            await self._repository.update_request_run(
+                request_id,
+                {
+                    "status": QARequestRunStatus.COMPLETED.value,
+                    "trace_id": trace_id,
+                    "status_code": response.status_code,
+                    "duration_ms": duration_ms,
+                    "response_payload": response_payload,
+                    "finished_at": datetime.now(UTC),
+                },
+            )
             await self._persist_events(session_id, request_id, events)
-            await self._session.commit()
-            return _request_run_data(run)
+            await self._repository.commit()
+            run = await self._repository.recent_runs(session_id, limit=1)
+            return run[0] if run else QARequestRunData(
+                id=str(request_id),
+                session_id=str(session_id),
+                method=request.method.upper(),
+                path=request.path,
+                status=QARequestRunStatus.COMPLETED,
+                trace_id=trace_id,
+            )
         except Exception as exc:
             duration_ms = round((time.perf_counter() - started) * 1000, 3)
-            run.status = QARequestRunStatus.FAILED.value
-            run.trace_id = run.trace_id or ""
-            run.duration_ms = duration_ms
-            run.error = f"{type(exc).__name__}: {exc}"
-            run.finished_at = datetime.now(UTC)
-            await self._session.commit()
+            await self._repository.update_request_run(
+                request_id,
+                {
+                    "status": QARequestRunStatus.FAILED.value,
+                    "trace_id": "",
+                    "duration_ms": duration_ms,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "finished_at": datetime.now(UTC),
+                },
+            )
+            await self._repository.commit()
             raise
 
     async def graph_response(self, session_id: UUID) -> QAGraphResponse:
         qa_session = await self._get_session(session_id)
-        nodes = await self._load_nodes(session_id)
-        edges = await self._load_edges(session_id)
+        nodes = await self._repository.load_nodes(session_id)
+        edges = await self._repository.load_edges(session_id)
         runtime_edges = await self._runtime_edges(session_id, nodes)
         return QAGraphResponse(
-            session=_session_data(qa_session),
+            session=qa_session,
             graph=QACodeGraph(
                 nodes=nodes,
                 edges=edges,
@@ -270,28 +275,21 @@ class QASessionService:
 
     async def list_events(self, session_id: UUID, *, limit: int = 500) -> list[QARuntimeEventData]:
         await self._get_session(session_id)
-        result = await self._session.execute(
-            select(QARuntimeEventORM)
-            .where(QARuntimeEventORM.session_id == session_id)
-            .order_by(QARuntimeEventORM.created_at.desc(), QARuntimeEventORM.sequence.desc())
-            .limit(max(1, min(limit, 5_000)))
-        )
-        events = [_runtime_event_data(orm) for orm in result.scalars().all()]
-        return list(reversed(events))
+        return await self._repository.list_events(session_id, limit=limit)
 
     async def context_response(self, session_id: UUID) -> QAContextResponse:
         qa_session = await self._get_session(session_id)
-        nodes = await self._load_nodes(session_id)
+        nodes = await self._repository.load_nodes(session_id)
         endpoint_nodes = [node for node in nodes if node.kind.value == "endpoint"]
         events = await self.list_events(session_id, limit=80)
-        runs = await self._recent_runs(session_id, limit=10)
+        runs = await self._repository.recent_runs(session_id, limit=10)
         files = sorted({event.file for event in events if event.file})
         summary = (
             f"QA session {qa_session.id} traced {len(runs)} request(s), "
             f"{len(events)} recent runtime event(s), and {len(endpoint_nodes)} indexed endpoint(s)."
         )
         return QAContextResponse(
-            session=_session_data(qa_session),
+            session=qa_session,
             summary=summary,
             endpoints=[node.model_dump() for node in endpoint_nodes[:80]],
             recent_requests=runs,
@@ -299,15 +297,15 @@ class QASessionService:
             files=files,
         )
 
-    async def _get_session(self, session_id: UUID) -> QASessionORM:
-        orm = await self._session.get(QASessionORM, session_id)
-        if orm is None:
+    async def _get_session(self, session_id: UUID) -> QASessionData:
+        session = await self._repository.get_session(session_id)
+        if session is None:
             raise InvalidRequestError(
                 f"QA session not found: {session_id}",
                 code="qa.session_not_found",
                 http_status=404,
             )
-        return orm
+        return _session_data_from_orm(session)
 
     async def _persist_events(
         self,
@@ -315,41 +313,27 @@ class QASessionService:
         request_id: UUID,
         events: list[QARuntimeEventData],
     ) -> None:
-        for event in events:
-            self._session.add(
-                QARuntimeEventORM(
-                    session_id=session_id,
-                    request_id=request_id,
-                    event_key=event.id,
-                    sequence=event.sequence,
-                    trace_id=event.trace_id,
-                    span_id=event.span_id,
-                    parent_id=event.parent_id,
-                    event_type=event.event_type.value,
-                    function=event.function,
-                    file_path=event.file,
-                    line=event.line,
-                    duration_ms=event.duration_ms,
-                    exception=event.exception,
-                    sanitized_payload=event.sanitized_payload,
-                )
-            )
-
-    async def _load_nodes(self, session_id: UUID) -> list[CodeNodeData]:
-        result = await self._session.execute(
-            select(QACodeNodeORM)
-            .where(QACodeNodeORM.session_id == session_id)
-            .order_by(QACodeNodeORM.file_path, QACodeNodeORM.start_line)
+        await self._repository.persist_events(
+            [
+                {
+                    "session_id": session_id,
+                    "request_id": request_id,
+                    "event_key": event.id,
+                    "sequence": event.sequence,
+                    "trace_id": event.trace_id,
+                    "span_id": event.span_id,
+                    "parent_id": event.parent_id,
+                    "event_type": event.event_type.value,
+                    "function": event.function,
+                    "file_path": event.file,
+                    "line": event.line,
+                    "duration_ms": event.duration_ms,
+                    "exception": event.exception,
+                    "sanitized_payload": event.sanitized_payload,
+                }
+                for event in events
+            ]
         )
-        return [_code_node_data(orm) for orm in result.scalars().all()]
-
-    async def _load_edges(self, session_id: UUID) -> list[CodeEdgeData]:
-        result = await self._session.execute(
-            select(QACodeEdgeORM)
-            .where(QACodeEdgeORM.session_id == session_id)
-            .order_by(QACodeEdgeORM.kind, QACodeEdgeORM.edge_key)
-        )
-        return [_code_edge_data(orm) for orm in result.scalars().all()]
 
     async def _runtime_edges(
         self,
@@ -382,14 +366,23 @@ class QASessionService:
             previous_node_id = node_id
         return list(edges.values())
 
-    async def _recent_runs(self, session_id: UUID, *, limit: int) -> list[QARequestRunData]:
-        result = await self._session.execute(
-            select(QARequestRunORM)
-            .where(QARequestRunORM.session_id == session_id)
-            .order_by(QARequestRunORM.created_at.desc())
-            .limit(limit)
-        )
-        return [_request_run_data(orm) for orm in result.scalars().all()]
+
+def _session_data_from_orm(orm: Any) -> QASessionData:
+    return QASessionData(
+        id=str(orm.id),
+        repo_root=str(orm.repo_root),
+        sandbox_path=str(orm.sandbox_path) if orm.sandbox_path else None,
+        base_commit=str(orm.base_commit) if orm.base_commit else None,
+        branch_name=str(orm.branch_name) if orm.branch_name else None,
+        branch_mode=str(orm.branch_mode),
+        env_profile=orm.env_profile,
+        trace_mode=TraceMode(str(orm.trace_mode or TraceMode.FUNCTION.value)),
+        agent_id=str(orm.agent_id) if orm.agent_id else None,
+        status=QASessionStatus(str(orm.status or QASessionStatus.ACTIVE.value)),
+        metadata=dict(orm.metadata_ or {}),
+        created_at=orm.created_at,
+        updated_at=orm.updated_at,
+    )
 
 
 __all__ = ["QASessionService"]

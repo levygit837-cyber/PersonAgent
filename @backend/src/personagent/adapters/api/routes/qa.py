@@ -26,6 +26,7 @@ from personagent.application.qa.contracts import (
 from personagent.application.qa.runtime_tracer import PythonRuntimeTracer, QARuntimeEventBus
 from personagent.application.qa.service import QASessionService
 from personagent.infrastructure.persistence.database import AsyncSessionLocal
+from personagent.infrastructure.persistence.qa_repository import QARepository
 
 router = APIRouter(prefix="/qa", tags=["qa"])
 _EVENT_BUS = QARuntimeEventBus()
@@ -44,7 +45,7 @@ DB_SESSION_DEPENDENCY = Depends(get_db)
 
 
 def _service(session: AsyncSession) -> QASessionService:
-    return QASessionService(session, tracer=None)
+    return QASessionService(QARepository(session), tracer=None)
 
 
 @router.post("/sessions", response_model=QASessionData)
@@ -79,7 +80,7 @@ async def execute_qa_request(
     session: AsyncSession = DB_SESSION_DEPENDENCY,
 ) -> QARequestRunData:
     """Execute an ASGI request through the active backend under QA tracing."""
-    service = QASessionService(session, tracer=_qa_tracer())
+    service = QASessionService(QARepository(session), tracer=_qa_tracer())
     return await service.execute_request(session_id, payload, app=request.app)
 
 
