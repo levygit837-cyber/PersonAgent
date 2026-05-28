@@ -1,5 +1,9 @@
 # AIDesigner
 .aidesigner/
+.codedb/
+.commandcode/
+.tracking/
+.kimi-code/
 
 # Benchmarks
 .benchmarks/
