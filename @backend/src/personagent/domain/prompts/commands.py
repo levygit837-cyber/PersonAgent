@@ -315,6 +315,12 @@ BUILTIN_COMMANDS: dict[str, BuiltinCommand] = {
         should_query=False,
         ui_action="clear_chat",
     ),
+    "new": BuiltinCommand(
+        name="new",
+        description="Start a new chat session in the UI.",
+        should_query=False,
+        ui_action="clear_chat",
+    ),
     "compact": BuiltinCommand(
         name="compact",
         description="Request context compaction for a long conversation.",

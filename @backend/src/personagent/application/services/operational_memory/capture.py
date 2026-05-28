@@ -214,6 +214,17 @@ class OperationalMemoryCapture:
         """Process indexing for a single event (used by outbox worker)."""
         await self._process_indexing_event(event, content=content, file_path=file_path)
 
+    @staticmethod
+    def _strip_null_bytes(value: Any) -> Any:
+        """Recursively strip null bytes from strings in dicts/lists."""
+        if isinstance(value, str):
+            return value.replace("\x00", "")
+        if isinstance(value, dict):
+            return {k: OperationalMemoryCapture._strip_null_bytes(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [OperationalMemoryCapture._strip_null_bytes(v) for v in value]
+        return value
+
     async def _capture_event(
         self,
         event: MemoryEvent,
@@ -221,6 +232,11 @@ class OperationalMemoryCapture:
         content: str,
         file_path: str | None = None,
     ) -> None:
+        content = self._strip_null_bytes(content)
+        event.input = self._strip_null_bytes(event.input)
+        event.output = self._strip_null_bytes(event.output)
+        event.error = self._strip_null_bytes(event.error) if event.error else None
+        event.resolution = self._strip_null_bytes(event.resolution) if event.resolution else None
         try:
             if self._queue_enabled and self._queue is not None:
                 payload = {

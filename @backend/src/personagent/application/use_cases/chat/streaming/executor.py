@@ -284,6 +284,7 @@ class StreamingTurnExecutor(
                         },
                     )
                 )
+                await self._conversation_repo.update(conversation)
 
                 tool_calls = self._tool_results.parse_calls(
                     assistant_state.tool_calls

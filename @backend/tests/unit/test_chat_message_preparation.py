@@ -182,6 +182,75 @@ def test_with_prompt_renders_all_messages_in_order() -> None:
     assert [m["content"] for m in msgs[1:]] == ["u1", "a1", "u2"]
 
 
+def test_with_prompt_skips_empty_assistant_messages() -> None:
+    """Interrupted/aborted assistant messages with empty content must be
+    omitted from the prompt so the LLM API does not return HTTP 400."""
+    preparer, _ = _preparer()
+    conv = _conversation(
+        [
+            Message(role=Role.USER, content="u1"),
+            Message(role=Role.ASSISTANT, content=""),
+            Message(role=Role.USER, content="u2"),
+        ]
+    )
+
+    msgs = preparer.with_prompt(conv, _package())
+
+    assert [m["role"] for m in msgs] == ["system", "user", "user"]
+
+
+def test_with_prompt_skips_whitespace_only_assistant_messages() -> None:
+    preparer, _ = _preparer()
+    conv = _conversation(
+        [
+            Message(role=Role.USER, content="u1"),
+            Message(role=Role.ASSISTANT, content="   \n  "),
+            Message(role=Role.USER, content="u2"),
+        ]
+    )
+
+    msgs = preparer.with_prompt(conv, _package())
+
+    assert [m["role"] for m in msgs] == ["system", "user", "user"]
+
+
+def test_with_prompt_keeps_assistant_with_tool_calls_even_if_empty_content() -> None:
+    """Assistant messages that have tool calls (not just text) must be
+    preserved even when content is empty."""
+    preparer, _ = _preparer()
+    conv = _conversation(
+        [
+            Message(role=Role.USER, content="u1"),
+            Message(
+                role=Role.ASSISTANT,
+                content="",
+                tool_calls=[{"id": "t1", "function": {"name": "shell", "arguments": "ls"}}],
+            ),
+            Message(role=Role.USER, content="u2"),
+        ]
+    )
+
+    msgs = preparer.with_prompt(conv, _package())
+
+    assert [m["role"] for m in msgs] == ["system", "user", "assistant", "user"]
+    assert msgs[2]["tool_calls"] is not None
+
+
+def test_with_prompt_keeps_assistant_with_content() -> None:
+    """Normal assistant messages with non-empty content are preserved."""
+    preparer, _ = _preparer()
+    conv = _conversation(
+        [
+            Message(role=Role.USER, content="u1"),
+            Message(role=Role.ASSISTANT, content="hello"),
+        ]
+    )
+
+    msgs = preparer.with_prompt(conv, _package())
+
+    assert [m["role"] for m in msgs] == ["system", "user", "assistant"]
+
+
 def test_with_prompt_includes_reasoning_content_only_for_assistant_when_enabled() -> None:
     preparer, _ = _preparer()
     conv = _conversation(

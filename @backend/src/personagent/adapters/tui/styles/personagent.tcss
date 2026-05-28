@@ -1,0 +1,198 @@
+/* PersonAgent TUI — Dark theme based on desktop design system */
+
+$background: #0a0a0a;
+$foreground: #ece9e1;
+$primary: #e88a4f;
+$card: #101010;
+$muted: #938e86;
+$glass-border: #211f1b;
+$destructive: #cc5555;
+$success: #4caf7d;
+$warning: #e6a84f;
+
+Screen {
+    background: $background;
+    color: $foreground;
+}
+
+#main-container {
+    height: 100%;
+}
+
+Header {
+    background: $card;
+    color: $primary;
+    height: auto;
+    border-bottom: solid $glass-border;
+}
+
+Header > .header--title {
+    color: $primary;
+    text-style: bold;
+}
+
+Header > .header--sub-title {
+    color: $muted;
+}
+
+ChatContainer {
+    background: $background;
+    color: $foreground;
+    border: none;
+    height: 1fr;
+    padding: 1 0 0 0;
+    scrollbar-size: 0 0;
+    overflow-y: auto;
+}
+
+InputBar {
+    background: $card;
+    color: $foreground;
+    border: solid $glass-border;
+    height: 4;
+    padding: 0 1;
+    margin: 0 2;
+}
+
+InputBar:focus {
+    border: solid $primary;
+}
+
+InputBar > .text-area--gutter {
+    display: none;
+}
+
+InputBar > .text-area--cursor {
+    color: $primary;
+}
+
+InputBar > .text-area--cursor-line {
+    background: transparent;
+}
+
+InputBar > .text-area--matching-bracket {
+    background: transparent;
+}
+
+ModelLabel {
+    background: transparent;
+    color: $muted;
+    height: 1;
+    content-align: left middle;
+    margin: 0 2;
+    text-style: dim;
+}
+
+StreamingIndicator {
+    background: transparent;
+    color: $primary;
+    height: 1;
+    content-align: left middle;
+    margin: 0 2;
+    text-style: bold;
+}
+
+StreamingIndicator.-hidden {
+    display: none;
+}
+
+ChatMessage {
+    background: transparent;
+    color: $foreground;
+    height: auto;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+ChatMessage.-user {
+    color: $foreground;
+    content-align-horizontal: right;
+    padding: 0 1 0 4;
+}
+
+ChatMessage.-agent {
+    color: $foreground;
+    padding: 0 4 0 1;
+    margin: 0;
+    content-align-horizontal: left;
+}
+
+CommandPalette {
+    background: $card;
+    color: $foreground;
+    border: solid $glass-border;
+    border-bottom: none;
+    width: 100%;
+    height: auto;
+    max-height: 12;
+    padding: 0 1;
+    margin: 0 2;
+    overflow-y: auto;
+    scrollbar-size: 0 0;
+}
+
+CommandPalette > .palette-row {
+    height: auto;
+    padding: 0 1;
+    margin: 0;
+}
+
+CommandPalette > .palette-row.-selected {
+    background: $glass-border;
+    color: $primary;
+}
+
+CommandPalette > .palette-empty {
+    color: $muted;
+    content-align: center middle;
+    height: 1;
+}
+
+#session-overlay {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: $background;
+    layout: grid;
+    grid-size: 1 1;
+    align: center middle;
+}
+
+SessionList {
+    background: $card;
+    color: $foreground;
+    border: solid $glass-border;
+    width: 60;
+    height: auto;
+    max-height: 40;
+    padding: 1;
+}
+
+SessionList > .session-row {
+    height: auto;
+    padding: 0 1;
+    margin: 0;
+}
+
+SessionList > .session-row.-selected {
+    background: $glass-border;
+    color: $primary;
+}
+
+SessionList > .session-empty {
+    color: $muted;
+    content-align: center middle;
+    height: 3;
+}
+
+SessionList > .session-close {
+    margin-top: 1;
+    width: 100%;
+}
+
+Footer {
+    background: $card;
+    color: $muted;
+    border-top: solid $glass-border;
+    height: 1;
+}

@@ -56,10 +56,10 @@ class ChatRequest(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=-1, ge=-1)
     provider: str = Field(
-        default="llama",
+        default="deepseek",
         description="Inference provider: llama, nvidia, deepseek, zenmux, vertex, kimi, or codex",
     )
-    model: str = Field(default="local-model", description="Model to use for inference")
+    model: str = Field(default="deepseek-v4-flash", description="Model to use for inference")
     prompt_mode: str = Field(
         default="auto",
         description="System prompt mode: auto, writing, exploring, or research.",

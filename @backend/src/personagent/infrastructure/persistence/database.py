@@ -1,5 +1,8 @@
 """Configuração do banco de dados PostgreSQL com SQLAlchemy async."""
 
+import logging
+import warnings
+
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -10,6 +13,15 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import declarative_base
 
 from personagent.infrastructure.settings.settings import get_settings
+
+warnings.filterwarnings(
+    "ignore",
+    message="The garbage collector is trying to clean up non-checked-in connection",
+    category=Warning,
+)
+
+# Suppress noisy asyncpg connection-termination tracebacks during cancelled streams.
+logging.getLogger("sqlalchemy.pool").setLevel(logging.CRITICAL)
 
 Base = declarative_base()
 logger = structlog.get_logger(__name__)

@@ -424,6 +424,30 @@ async def test_assistant_message_appended_with_full_metadata() -> None:
 
 
 @pytest.mark.asyncio
+async def test_assistant_message_persisted_immediately_after_stream() -> None:
+    """Assistant message must be written to the repo as soon as it is
+    assembled, so a client disconnect does not lose it."""
+
+    def mutate(state: Any) -> None:
+        state.content_chunks.append("hello")
+        state.finish_reason = "stop"
+
+    executor, deps = _make_executor(assistant_pass_state_mutator=mutate)
+    conv = Conversation()
+
+    await _drain(executor, conv)
+
+    repo: AsyncMock = deps["conversation_repo"]
+    # One call for the user message, one for the assistant message
+    assert repo.update.await_count >= 2
+    # The last call should be the assistant-message persistence
+    last_call_conv = repo.update.call_args_list[-1][0][0]
+    assistant_msgs = [m for m in last_call_conv.messages if m.role == Role.ASSISTANT]
+    assert assistant_msgs
+    assert assistant_msgs[-1].content == "hello"
+
+
+@pytest.mark.asyncio
 async def test_next_step_suggestion_chunk_emitted_when_suggestion_present() -> None:
     executor, _ = _make_executor(next_step_suggestion="try next thing")
     conv = Conversation()
