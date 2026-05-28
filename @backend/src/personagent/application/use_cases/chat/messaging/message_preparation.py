@@ -147,6 +147,14 @@ class MessagePreparer:
                 {"role": "system", "content": prompt_package.system_prompt}
             )
         for message in conversation.messages:
+            # Skip assistant messages that were interrupted/aborted
+            # (empty content and no tool calls = incomplete stream)
+            if (
+                message.role == Role.ASSISTANT
+                and not message.content.strip()
+                and not message.tool_calls
+            ):
+                continue
             rendered = message.to_dict()
             reasoning_content = message.metadata.get("reasoning_content")
             if (

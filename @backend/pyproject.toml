@@ -54,6 +54,7 @@ dependencies = [
     "aio-pika>=9.5.0",
     "opentelemetry-api>=1.41.1",
     "opentelemetry-sdk>=1.41.1",
+    "textual>=8.2.7",
 ]
 
 [project.optional-dependencies]
@@ -68,7 +69,7 @@ dev = [
 ]
 
 [project.scripts]
-personagent = "personagent.interfaces.cli.main:app"
+personagent = "personagent.adapters.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/personagent"]
@@ -109,6 +110,8 @@ markers = [
     "nvidia_live: real NVIDIA NIM API tests gated by NVIDIA_LIVE_TESTS",
     "vertex_live: real Vertex AI API tests gated by VERTEX_LIVE_TESTS",
     "kimi_live: real Kimi Code API tests gated by KIMI_LIVE_TESTS",
+    "stress: performance and stress tests (use -m stress to run)",
+    "stress_live: stress tests requiring real LLM backends (gated by STRESS_LIVE_TESTS)",
 ]
 
 [dependency-groups]

@@ -939,6 +939,48 @@ def test_compact_json_falls_back_to_str() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _strip_null_bytes
+# ---------------------------------------------------------------------------
+
+
+def test_strip_null_bytes_removes_from_strings() -> None:
+    capture = _capture()
+    assert capture._strip_null_bytes("hello\x00world") == "helloworld"
+
+
+def test_strip_null_bytes_walks_dicts_and_lists() -> None:
+    capture = _capture()
+    payload = {
+        "text": "hello\x00world",
+        "nested": {"deep": "a\x00b"},
+        "list": ["x\x00y", {"z": "z\x00z"}],
+        "int": 42,
+    }
+    result = capture._strip_null_bytes(payload)
+    assert result["text"] == "helloworld"
+    assert result["nested"]["deep"] == "ab"
+    assert result["list"] == ["xy", {"z": "zz"}]
+    assert result["int"] == 42
+
+
+@pytest.mark.anyio
+async def test_capture_event_strips_null_bytes_before_insert() -> None:
+    repo = _RepositoryStub()
+    capture = _capture(repository=repo)
+    event = _memory_event()
+    event.input = {"message": "hello\x00world"}
+    event.output = {"content": "a\x00b"}
+    event.error = "err\x00or"
+
+    await capture._capture_event(event, content="body\x00text")
+
+    recorded = repo.record_event_calls[0]
+    assert recorded.input["message"] == "helloworld"
+    assert recorded.output["content"] == "ab"
+    assert recorded.error == "error"
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

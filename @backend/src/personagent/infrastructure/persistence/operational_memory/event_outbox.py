@@ -47,6 +47,7 @@ class EventOutboxManager:
 
         async with self._session_factory() as session:
             session.add(_event_row(event))
+            await session.flush()
             existing = await session.scalar(
                 select(MemoryOutboxORM).where(MemoryOutboxORM.dedupe_key == dedupe_key)
             )

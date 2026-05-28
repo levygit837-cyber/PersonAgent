@@ -71,30 +71,47 @@ services:
   #     timeout: 5s
   #     retries: 5
 
-  # Uncomment to run the FastAPI backend in Docker as well. The default
-  # workflow runs it on the host so hot reload picks up source changes
-  # without rebuilding the image.
-  #
-  # backend:
-  #   build:
-  #     context: ./@backend
-  #     dockerfile: Dockerfile  # not included; see @backend/README.md
-  #   container_name: personagent-backend
-  #   restart: unless-stopped
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     lightpanda:
-  #       condition: service_healthy
-  #   env_file: .env
-  #   environment:
-  #     POSTGRES_HOST: postgres
-  #     POSTGRES_PORT: 5432
-  #     LIGHTPANDA_CDP_URL: http://lightpanda:9222
-  #   ports:
-  #     - "8000:8000"
-  #   command: >
-  #     uv run personagent serve --host 0.0.0.0 --port 8000
+  backend:
+    build:
+      context: ./@backend
+      dockerfile: Dockerfile
+    container_name: personagent-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      lightpanda:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      DATABASE_URL: ""
+      LIGHTPANDA_CDP_URL: http://lightpanda:9222
+    ports:
+      - "8000:8000"
+    command: >
+      personagent serve --host 0.0.0.0 --port 8000
+
+  memory-worker:
+    build:
+      context: ./@backend
+      dockerfile: Dockerfile
+    container_name: personagent-memory-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      DATABASE_URL: ""
+      MEMORY_QUEUE_URL: amqp://personagent:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/personagent
+    command: >
+      personagent memory-worker
 
 volumes:
   personagent_pgdata:

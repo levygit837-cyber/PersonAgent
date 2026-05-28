@@ -130,6 +130,17 @@ async def _chat(
 
 
 @app.command()
+def tui(
+    backend_url: str = typer.Option(None, "--backend-url", help="PersonAgent backend URL"),
+) -> None:
+    """Launch the interactive terminal chat UI."""
+    from personagent.adapters.tui.app import ChatApp
+
+    app = ChatApp(base_url=backend_url)
+    app.run(mouse=False)
+
+
+@app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
     port: int = typer.Option(8000, "--port", help="Server port"),

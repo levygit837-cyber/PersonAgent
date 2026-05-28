@@ -19,7 +19,7 @@ _PUBLIC_PATHS = {
 }
 
 CLIENT_HEADER = "X-PersonAgent-Client"
-CLIENT_HEADER_VALUE = "desktop-electron"
+CLIENT_HEADER_VALUES = {"desktop-electron", "tui"}
 _WEAK_POSTGRES_PASSWORDS = {"", "personagent", "personagent_secret", "postgres", "password"}
 logger = structlog.get_logger(__name__)
 
@@ -64,7 +64,7 @@ def install_local_auth(app: FastAPI, settings: Any) -> None:
                 status_code=403,
             )
 
-        if request.headers.get(CLIENT_HEADER) != CLIENT_HEADER_VALUE:
+        if request.headers.get(CLIENT_HEADER) not in CLIENT_HEADER_VALUES:
             return JSONResponse(
                 {"detail": "Missing PersonAgent client header."},
                 status_code=401,
