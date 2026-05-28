@@ -1,9 +1,12 @@
 # AIDesigner
 .aidesigner/
 .codedb/
+.codedbignore
 .commandcode/
 .tracking/
 .kimi-code/
+COMMANDCODE.md
+docs/commandcode-reverse-engineering.md
 
 # Benchmarks
 .benchmarks/
