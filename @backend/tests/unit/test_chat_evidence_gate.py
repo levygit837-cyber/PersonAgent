@@ -192,3 +192,46 @@ def test_exhaustive_depth_accepts_broad_cross_surface_evidence() -> None:
 
     assert decision.should_continue is False
     assert decision.reason == "evidence checklist satisfied"
+
+
+def test_exhaustive_depth_still_continues_on_narrow_single_target_search() -> None:
+    """A single narrow search over one file is not broad enough for exhaustive."""
+    conversation = Conversation()
+    conversation.add_message(Message(role=Role.USER, content="Analyze this codebase bug"))
+    conversation.add_message(
+        Message(role=Role.ASSISTANT, content="", tool_calls=[{"id": "1", "function": {"name": "Shell"}}])
+    )
+    conversation.add_message(
+        Message(
+            role=Role.TOOL,
+            content="{}",
+            metadata={
+                "tool_name": "Shell",
+                "data": {
+                    "type": "shell_command",
+                    "command": "rg -n 'Service' src/app/service.py",
+                },
+            },
+        )
+    )
+    for path in ("src/app/service.py", "tests/test_service.py", "pyproject.toml"):
+        conversation.add_message(
+            Message(
+                role=Role.TOOL,
+                content="{}",
+                metadata={
+                    "tool_name": "Read",
+                    "data": {"type": "file_read", "display_path": path},
+                },
+            )
+        )
+
+    decision = EvidenceGateService(max_continuations=5).should_continue_investigation(
+        ChatRequestDTO(message="Analyze this codebase bug", investigation_depth="exhaustive"),
+        conversation,
+        {"evidence_gate_continuations": 0},
+        _CODE_METADATA,
+    )
+
+    assert decision.should_continue is True
+    assert "has_broad_symbol_search" in decision.missing

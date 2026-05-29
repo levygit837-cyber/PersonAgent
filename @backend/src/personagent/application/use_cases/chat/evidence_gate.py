@@ -502,12 +502,51 @@ def _has_adjacent_module_evidence(evidence: _TurnEvidence) -> bool:
 
 def _has_broad_symbol_search(evidence: _TurnEvidence) -> bool:
     searched_paths = evidence.searched_files | evidence.searched_paths
-    symbol_searches = sum(
-        1
+    symbol_search_commands = [
+        command
         for command in evidence.shell_commands
         if _SEARCH_COMMAND_RE.search(command) and _looks_like_symbol_search(command)
+    ]
+    multi_target_symbol_search = any(
+        _search_command_target_count(command) >= 2 for command in symbol_search_commands
     )
-    return symbol_searches >= 2 or len(searched_paths) >= 4
+    return (
+        len(symbol_search_commands) >= 2
+        or multi_target_symbol_search
+        or len(searched_paths) >= 4
+    )
+
+
+def _search_command_target_count(command: str) -> int:
+    """Count the path/dir targets a grep/rg-style search spans.
+
+    A single search that fans out over multiple files or directories (e.g.
+    ``rg -n 'pat' src tests pyproject.toml``) signals breadth even though it is
+    one command. Tokens are: the tool name, option flags, the first non-option
+    token (the search pattern), then any remaining non-option tokens (targets).
+    """
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    targets = 0
+    seen_tool = False
+    seen_pattern = False
+    for token in tokens:
+        if not token:
+            continue
+        if not seen_tool:
+            if re.fullmatch(r"(?:rg|grep|fd|find)", token, re.IGNORECASE):
+                seen_tool = True
+            continue
+        if token.startswith("-"):
+            continue
+        if not seen_pattern:
+            seen_pattern = True
+            continue
+        targets += 1
+    return targets
 
 
 def _has_cross_surface_coverage(evidence: _TurnEvidence) -> bool:
