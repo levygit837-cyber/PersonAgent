@@ -60,6 +60,7 @@ class TeamChatRequest:
     tool_context: dict[str, Any] = field(default_factory=dict)
     allowed_tools: list[str] | None = None
     max_tool_iterations: int | None = None
+    investigation_depth: str = "auto"
 
 
 def default_team_config() -> TeamConfig:

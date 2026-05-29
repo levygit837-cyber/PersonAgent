@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -19,6 +19,9 @@ from personagent.application.team_chat import DEFAULT_TEAM_ID
 from personagent.domain.conversation.models import Role
 from personagent.domain.llm_backend.repositories import LLMBackendRepository
 from personagent.infrastructure.persistence.database import AsyncSessionLocal
+
+INVESTIGATION_DEPTH_VALUES = {"auto", "light", "standard", "deep", "exhaustive"}
+InvestigationDepthValue = Literal["auto", "light", "standard", "deep", "exhaustive"]
 
 REASONING_BUDGETS = {
     "low": 2048,
@@ -96,7 +99,14 @@ class ChatRequest(BaseModel):
     max_tool_iterations: int | None = Field(
         default=None,
         ge=1,
-        description="Optional limit for model -> tools -> model cycles. Null means unlimited.",
+        description=(
+            "Optional limit for model -> tools -> model cycles. "
+            "Null delegates to runtime config, investigation_depth, and the safety ceiling."
+        ),
+    )
+    investigation_depth: InvestigationDepthValue = Field(
+        default="auto",
+        description="Investigation depth: auto, light, standard, deep, or exhaustive.",
     )
     context_attachments: list[dict[str, Any]] = Field(
         default_factory=list,
@@ -233,6 +243,17 @@ def resolve_provider(provider: str) -> str:
             detail="Invalid provider. Use llama, nvidia, deepseek, zenmux, vertex, kimi, or codex.",
         )
     return normalized
+
+
+def resolve_investigation_depth(investigation_depth: str | None) -> InvestigationDepthValue:
+    """Normalize and validate the investigation depth."""
+    normalized = (investigation_depth or "auto").strip().lower()
+    if normalized not in INVESTIGATION_DEPTH_VALUES:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid investigation_depth. Use auto, light, standard, deep, or exhaustive.",
+        )
+    return normalized  # type: ignore[return-value]
 
 
 def resolve_prompt_mode(prompt_mode: str | None) -> str:

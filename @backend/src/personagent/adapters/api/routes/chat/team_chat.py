@@ -21,6 +21,7 @@ import personagent.adapters.api.routes.chat as _chat
 from personagent.adapters.api.errors import error_event
 from personagent.adapters.api.routes.chat.helpers import (
     TeamRunStartRequest,
+    resolve_investigation_depth,
     resolve_provider,
     resolve_reasoning_budget,
     resolve_team_workspace_id,
@@ -122,6 +123,7 @@ def register_team_chat_routes(router: APIRouter) -> None:
                     tool_context=initial_tool_context,
                     allowed_tools=start.allowed_tools,
                     max_tool_iterations=start.max_tool_iterations,
+                    investigation_depth=resolve_investigation_depth(start.investigation_depth),
                 )
                 stop_task = asyncio.create_task(_watch_team_stop(websocket, stop_event))
                 try:

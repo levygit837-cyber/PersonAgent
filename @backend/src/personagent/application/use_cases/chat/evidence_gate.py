@@ -16,6 +16,10 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from personagent.application.dto import ChatRequestDTO
+from personagent.application.use_cases.chat.tooling.tool_runtime import (
+    max_evidence_gate_continuations,
+    minimum_evidence_expectations,
+)
 from personagent.domain.conversation.models import Conversation, Role
 
 EVIDENCE_GATE_REMINDER = (
@@ -194,7 +198,22 @@ class EvidenceGateService:
 
         retry_count = _retry_count(turn_state)
         metadata = context_metadata or {}
-        if retry_count >= self._max_continuations:
+        required_evidence = minimum_evidence_expectations(request)
+        if not required_evidence:
+            return EvidenceGateDecision(
+                should_continue=False,
+                reason="investigation depth has no minimum evidence expectations",
+                checklist={},
+                retry_count=retry_count,
+            )
+
+        depth_continuation_cap = max_evidence_gate_continuations(request)
+        continuation_cap = (
+            depth_continuation_cap
+            if request.investigation_depth != "auto"
+            else min(self._max_continuations, depth_continuation_cap)
+        )
+        if retry_count >= continuation_cap:
             return EvidenceGateDecision(
                 should_continue=False,
                 reason="evidence gate retry cap reached",
@@ -211,19 +230,32 @@ class EvidenceGateService:
         evidence = _collect_current_turn_evidence(conversation)
         needs_tests = _needs_tests(request, metadata)
         needs_manifests = _needs_manifests(request, metadata)
+        has_test_evidence = _has_test_evidence(
+            evidence.read_files | evidence.searched_files, evidence.shell_commands
+        )
+        has_manifest_evidence = _has_manifest_evidence(
+            evidence.read_files | evidence.searched_files, evidence.shell_commands
+        )
+        has_search_evidence = bool(evidence.searched_files or evidence.searched_paths) or any(
+            _SEARCH_COMMAND_RE.search(command) for command in evidence.shell_commands
+        )
         checklist = {
             "has_tool_calls": bool(evidence.tool_names),
-            "has_search_evidence": bool(evidence.searched_files or evidence.searched_paths)
-            or any(_SEARCH_COMMAND_RE.search(command) for command in evidence.shell_commands),
+            "has_search_evidence": has_search_evidence,
             "has_file_read_evidence": bool(evidence.read_files)
             or any(_READ_COMMAND_RE.search(command) for command in evidence.shell_commands),
             "has_core_implementation_read": _has_core_implementation_file(evidence.read_files),
-            "has_test_evidence": (not needs_tests)
-            or _has_test_evidence(evidence.read_files | evidence.searched_files, evidence.shell_commands),
-            "has_manifest_evidence": (not needs_manifests)
-            or _has_manifest_evidence(evidence.read_files | evidence.searched_files, evidence.shell_commands),
+            "has_test_evidence": has_test_evidence,
+            "has_manifest_evidence": has_manifest_evidence,
+            "has_relevant_test_evidence": (not needs_tests) or has_test_evidence,
+            "has_relevant_manifest_evidence": (not needs_manifests) or has_manifest_evidence,
+            "has_test_or_manifest_evidence": has_test_evidence or has_manifest_evidence,
+            "has_caller_or_symbol_search": _has_caller_or_symbol_search(evidence),
+            "has_adjacent_module_evidence": _has_adjacent_module_evidence(evidence),
+            "has_broad_symbol_search": _has_broad_symbol_search(evidence),
+            "has_cross_surface_coverage": _has_cross_surface_coverage(evidence),
         }
-        missing = tuple(name for name, satisfied in checklist.items() if not satisfied)
+        missing = tuple(name for name in required_evidence if not checklist.get(name, False))
         if not missing:
             return EvidenceGateDecision(
                 should_continue=False,
@@ -233,7 +265,10 @@ class EvidenceGateService:
             )
         return EvidenceGateDecision(
             should_continue=True,
-            reason="repository evidence is insufficient for codebase analysis",
+            reason=(
+                "repository evidence is insufficient for "
+                f"{request.investigation_depth} investigation depth"
+            ),
             reminder=EVIDENCE_GATE_REMINDER,
             missing=missing,
             checklist=checklist,
@@ -427,6 +462,78 @@ def _has_manifest_evidence(paths: set[str], commands: list[str]) -> bool:
         _is_manifest_path(path)
         for command in commands
         for path in _paths_from_shell_command(command)
+    )
+
+
+def _has_caller_or_symbol_search(evidence: _TurnEvidence) -> bool:
+    return any(
+        _SEARCH_COMMAND_RE.search(command) and _looks_like_symbol_search(command)
+        for command in evidence.shell_commands
+    ) or len(evidence.searched_files | evidence.searched_paths) >= 2
+
+
+def _has_adjacent_module_evidence(evidence: _TurnEvidence) -> bool:
+    source_files = {
+        path
+        for path in evidence.read_files | evidence.searched_files
+        if _is_core_implementation_path(path)
+    }
+    if len(source_files) >= 2:
+        return True
+    parents = {str(PurePosixPath(path).parent) for path in source_files if path}
+    searched_parents = {
+        str(PurePosixPath(path).parent)
+        for path in evidence.searched_files | evidence.searched_paths
+        if _is_core_implementation_path(path)
+    }
+    return bool(parents.intersection(searched_parents))
+
+
+def _has_broad_symbol_search(evidence: _TurnEvidence) -> bool:
+    searched_paths = evidence.searched_files | evidence.searched_paths
+    symbol_searches = sum(
+        1
+        for command in evidence.shell_commands
+        if _SEARCH_COMMAND_RE.search(command) and _looks_like_symbol_search(command)
+    )
+    return symbol_searches >= 2 or len(searched_paths) >= 4
+
+
+def _has_cross_surface_coverage(evidence: _TurnEvidence) -> bool:
+    paths = evidence.read_files | evidence.searched_files
+    surfaces = {
+        "implementation" for path in paths if _is_core_implementation_path(path)
+    }
+    if any(_is_test_path(path) for path in paths) or any(
+        _TEST_COMMAND_RE.search(command) for command in evidence.shell_commands
+    ):
+        surfaces.add("tests")
+    if any(_is_manifest_path(path) for path in paths) or any(
+        _is_manifest_path(path)
+        for command in evidence.shell_commands
+        for path in _paths_from_shell_command(command)
+    ):
+        surfaces.add("config")
+    if _has_caller_or_symbol_search(evidence):
+        surfaces.add("callers")
+    if _has_adjacent_module_evidence(evidence):
+        surfaces.add("adjacent_modules")
+    return len(surfaces) >= 4
+
+
+def _looks_like_symbol_search(command: str) -> bool:
+    lowered = command.lower()
+    return bool(
+        re.search(r"\b(rg|grep|fd|find)\b", lowered)
+        and (
+            "-n" in lowered
+            or "--line-number" in lowered
+            or "class " in lowered
+            or "def " in lowered
+            or "function " in lowered
+            or "import " in lowered
+            or "from " in lowered
+        )
     )
 
 
