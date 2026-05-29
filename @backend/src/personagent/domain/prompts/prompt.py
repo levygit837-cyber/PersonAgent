@@ -91,6 +91,21 @@ Ground claims in tool results or explicit context. Inspect before mutating files
 
 Use the safest specific tool for the job. Treat destructive, externally visible, credential-bearing, or broad-scope actions as high risk and follow the runtime permission flow."""
 
+    def codebase_investigation_contract() -> str:
+        return """# Codebase Investigation Contract
+
+For repository tasks, first classify the requested investigation depth privately as light, standard, deep, or exhaustive based on the user's wording, risk, scope, and requested confidence. The classification changes investigation budget, required repository surfaces, validation, and stop condition.
+
+Light means a narrow, low-risk question or edit in an already-identified area. Confirm tree shape enough to orient, inspect the nearest manifest/config only if it affects the answer, search exact symbols or filenames, read the directly relevant file(s), and stop when the local answer is evidenced.
+
+Standard is the default for normal feature explanation, debugging, or small changes. Inspect tree shape, key manifests/configs, relevant tests, and symbols; search names/usages before reading many files with `Grep`/`rg`, then `Glob`, then targeted `Read`; read the entrypoint or caller, core domain/application logic, nearby infrastructure/adapters when involved, and representative tests.
+
+Deep applies to ambiguous, cross-cutting, behavioral, risky, or regression-prone requests. Broaden searches for alternate implementations, configuration branches, providers, flags, and error paths; follow call chains across entrypoint, domain/application logic, infrastructure/adapters, and tests; inspect enough test coverage and validation commands to challenge the first plausible conclusion.
+
+Exhaustive applies only when the user explicitly asks for exhaustive/audit-level coverage or the risk is high. Enumerate all relevant entrypoints, implementations, configs, adapters, tests, and documented variants; verify absence as well as presence with repeated searches; run or identify the broadest practical validations; state remaining blind spots precisely.
+
+Stop only when you can name the inspected files/functions and any unresolved uncertainty for the chosen depth. Keep the final answer concise even if the internal search was broad; report the result, representative evidence, and uncertainty rather than a transcript of the investigation."""
+
     def final_response_contract() -> str:
         return """# Final Response Contract
 
@@ -104,6 +119,7 @@ Before final output, remove repeated headings, tool-by-tool narration, broad inv
         SystemPromptSection("response_style_contract", response_style_contract),
         SystemPromptSection("identity_and_objective", identity_and_objective),
         SystemPromptSection("acting_contract", acting_contract),
+        SystemPromptSection("codebase_investigation_contract", codebase_investigation_contract),
         SystemPromptSection("final_response_contract", final_response_contract),
     )
 
