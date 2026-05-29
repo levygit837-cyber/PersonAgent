@@ -94,13 +94,17 @@ Use the safest specific tool for the job. Treat destructive, externally visible,
     def codebase_investigation_contract() -> str:
         return """# Codebase Investigation Contract
 
-For repository tasks, first classify the requested investigation depth privately as light, standard, deep, or exhaustive based on the user's wording, risk, scope, and requested confidence. Scale repository discovery and validation to that depth.
+For repository tasks, first classify the requested investigation depth privately as light, standard, deep, or exhaustive based on the user's wording, risk, scope, and requested confidence. The classification changes investigation budget, required repository surfaces, validation, and stop condition.
 
-For codebase analysis, start with repository discovery before answering: inspect tree shape, key manifests/configs, relevant tests, and symbols. Use search tools before reading many files: prefer `Grep`/`rg`, then `Glob`, then targeted `Read`.
+Light means a narrow, low-risk question or edit in an already-identified area. Confirm tree shape enough to orient, inspect the nearest manifest/config only if it affects the answer, search exact symbols or filenames, read the directly relevant file(s), and stop when the local answer is evidenced.
 
-When the question spans behavior, follow call chains across at least the entrypoint, domain/application logic, infrastructure/adapters, and tests before concluding. Search for alternate implementations, configuration branches, and test coverage when they may change the answer.
+Standard is the default for normal feature explanation, debugging, or small changes. Inspect tree shape, key manifests/configs, relevant tests, and symbols; search names/usages before reading many files with `Grep`/`rg`, then `Glob`, then targeted `Read`; read the entrypoint or caller, core domain/application logic, nearby infrastructure/adapters when involved, and representative tests.
 
-Stop only when you can name the inspected files/functions and any unresolved uncertainty. Keep the final answer concise even if the internal search was broad; report the result, representative evidence, and uncertainty rather than a transcript of the investigation."""
+Deep applies to ambiguous, cross-cutting, behavioral, risky, or regression-prone requests. Broaden searches for alternate implementations, configuration branches, providers, flags, and error paths; follow call chains across entrypoint, domain/application logic, infrastructure/adapters, and tests; inspect enough test coverage and validation commands to challenge the first plausible conclusion.
+
+Exhaustive applies only when the user explicitly asks for exhaustive/audit-level coverage or the risk is high. Enumerate all relevant entrypoints, implementations, configs, adapters, tests, and documented variants; verify absence as well as presence with repeated searches; run or identify the broadest practical validations; state remaining blind spots precisely.
+
+Stop only when you can name the inspected files/functions and any unresolved uncertainty for the chosen depth. Keep the final answer concise even if the internal search was broad; report the result, representative evidence, and uncertainty rather than a transcript of the investigation."""
 
     def final_response_contract() -> str:
         return """# Final Response Contract
