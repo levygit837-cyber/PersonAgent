@@ -180,14 +180,21 @@ class MessagePreparer:
     ) -> list[dict[str, Any]]:
         """Inject a "respond now, do not call more tools" recovery reminder."""
 
+        return self.with_system_reminder(messages, _FINAL_ANSWER_REMINDER)
+
+    def with_system_reminder(
+        self,
+        messages: list[dict[str, Any]],
+        reminder: str,
+    ) -> list[dict[str, Any]]:
+        """Append a transient system reminder to the next model pass."""
+
         if messages and messages[0].get("role") == "system":
             updated = dict(messages[0])
-            updated["content"] = (
-                f"{updated.get('content') or ''}\n\n{_FINAL_ANSWER_REMINDER}"
-            )
+            updated["content"] = f"{updated.get('content') or ''}\n\n{reminder}"
             return [updated, *messages[1:]]
         return [
-            {"role": "system", "content": _FINAL_ANSWER_REMINDER},
+            {"role": "system", "content": reminder},
             *messages,
         ]
 

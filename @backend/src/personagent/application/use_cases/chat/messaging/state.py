@@ -127,6 +127,8 @@ class StreamingTurnState:
       replay the assistant pass with the final-answer reminder.
     * ``last_prompt_context_metadata`` -- the most recent context
       metadata dict, surfaced into the ``conversation_saved`` payload.
+    * ``evidence_gate_continuations`` -- how many extra model passes the
+      evidence gate has requested for the current turn.
 
     The dataclass is mutable (``slots=True`` but no ``frozen=True``)
     because the streaming loop mutates these fields in place.
@@ -140,6 +142,7 @@ class StreamingTurnState:
     iteration: int = 0
     executed_tools: bool = False
     last_prompt_context_metadata: dict[str, Any] = field(default_factory=dict)
+    evidence_gate_continuations: int = 0
 
 
 __all__ = [
