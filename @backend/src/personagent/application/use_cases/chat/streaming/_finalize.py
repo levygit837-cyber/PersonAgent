@@ -118,6 +118,7 @@ class StreamingTurnFinalizeMixin:
                 "model": turn_state.final_model,
                 "provider": turn_state.final_provider,
                 "next_step_suggestion": next_step_suggestion,
+                "tool_coverage": turn_state.coverage.to_metadata(),
                 **saved_context_metadata,
             }
         )

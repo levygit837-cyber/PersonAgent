@@ -384,10 +384,19 @@ def _collect_from_tool_data(data: dict[str, Any], tool_name: str, evidence: _Tur
     if tool_name in _SEARCH_TOOL_NAMES or result_type in {"search_results", "glob_results", "tool_search"}:
         if path:
             evidence.searched_paths.add(path)
-        for match in data.get("matches") or []:
-            normalized = _normal_path(match)
-            if normalized:
-                evidence.searched_files.add(normalized)
+        matches = data.get("matches")
+        if isinstance(matches, list):
+            for match in matches:
+                normalized = _normal_path(match)
+                if normalized:
+                    evidence.searched_files.add(normalized)
+        results = data.get("results")
+        if isinstance(results, list):
+            for item in results:
+                if isinstance(item, dict):
+                    normalized = _normal_path(item.get("path") or item.get("file"))
+                    if normalized:
+                        evidence.searched_files.add(normalized)
         content = str(data.get("content") or "")
         for line in content.splitlines():
             candidate = line.split(":", 1)[0].strip()

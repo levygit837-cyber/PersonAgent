@@ -254,6 +254,7 @@ class StreamingTurnExecutor(
                         messages, investigation_state.to_metadata()
                     )
                 turn_state.last_prompt_context_metadata = context_metadata
+                turn_state.coverage.record_prompt_metadata(context_metadata)
                 yield StreamChunk(
                     metadata={
                         "event": "prompt_context",
@@ -323,6 +324,7 @@ class StreamingTurnExecutor(
                                 context_metadata, assistant_state
                             ),
                             **assistant_state.metadata,
+                            "tool_coverage": turn_state.coverage.to_metadata(),
                         },
                     )
                 )
