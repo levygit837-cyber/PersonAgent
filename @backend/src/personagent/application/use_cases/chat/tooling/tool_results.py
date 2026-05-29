@@ -48,6 +48,7 @@ from personagent.application.tools import ToolOrchestrator
 from personagent.application.use_cases.chat.memory.operational_memory import (
     OperationalMemoryCapture,
 )
+from personagent.application.use_cases.chat.messaging.state import TurnCoverage
 from personagent.domain.conversation.models import Conversation, Message, Role
 from personagent.domain.llm_backend.models import StreamChunk
 from personagent.domain.security import canonical_args_hash
@@ -139,6 +140,7 @@ class ToolResultHandler:
         tool_calls: list[ToolCall],
         tool_context: ToolUseContext,
         conversation: Conversation,
+        coverage: TurnCoverage | None = None,
     ) -> None:
         """Run ``tool_calls`` and append their results to ``conversation``.
 
@@ -162,6 +164,8 @@ class ToolResultHandler:
                     result,
                     tool_context,
                 )
+            if coverage is not None:
+                coverage.record_tool_result(result)
             self.apply_state(result, conversation)
             if result.status != ToolExecutionStatus.PERMISSION_REQUIRED:
                 conversation.add_message(self.tool_message_from(result))

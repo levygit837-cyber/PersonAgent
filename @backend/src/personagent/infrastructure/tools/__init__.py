@@ -38,6 +38,7 @@ from personagent.infrastructure.tools.filesystem_tools import (
     create_search_files_tool,
     create_write_file_tool,
 )
+from personagent.infrastructure.tools.interaction import web_tools
 from personagent.infrastructure.tools.interaction.user_interaction_tools import (
     create_ask_user_question_tool,
     create_send_user_message_tool,
@@ -104,4 +105,5 @@ __all__ = [
     "create_web_search_tool",
     "create_write_file_tool",
     "validate_web_url",
+    "web_tools",
 ]

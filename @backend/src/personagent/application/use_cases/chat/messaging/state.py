@@ -187,10 +187,19 @@ class InvestigationState:
         if any(hint in tool_name for hint in _SEARCH_TOOL_HINTS) or result_type in {"search_results", "glob_results", "tool_search"}:
             if path:
                 _unique_append(self.searched_patterns, path)
-            for match in data.get("matches") or []:
-                match_path = _path_value(match)
-                if match_path:
-                    _unique_append(self.searched_patterns, match_path)
+            matches = data.get("matches")
+            if isinstance(matches, list):
+                for match in matches:
+                    match_path = _path_value(match)
+                    if match_path:
+                        _unique_append(self.searched_patterns, match_path)
+            results = data.get("results")
+            if isinstance(results, list):
+                for item in results:
+                    if isinstance(item, dict):
+                        match_path = _path_value(item.get("path") or item.get("file"))
+                        if match_path:
+                            _unique_append(self.searched_patterns, match_path)
 
     def refresh_coverage(self) -> None:
         if not self.active:
@@ -313,6 +322,166 @@ class PromptPreparation:
     browser_target: dict[str, Any] | None = None
 
 
+def _dedupe_append(values: list[str], value: Any) -> None:
+    text = str(value or "").strip()
+    if text and text not in values:
+        values.append(text)
+
+
+def _path_category(path: str) -> str | None:
+    normalized = path.replace("\\", "/").lower()
+    name = normalized.rsplit("/", 1)[-1]
+    if (
+        "/tests/" in f"/{normalized}/"
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+        or name.endswith(".test.ts")
+        or name.endswith(".test.tsx")
+    ):
+        return "tests"
+    if (
+        "config" in normalized
+        or name in {"pyproject.toml", "package.json", "tsconfig.json", "vite.config.ts"}
+        or name.endswith((".toml", ".yaml", ".yml"))
+    ):
+        return "config"
+    if (
+        name in {"main.py", "__main__.py", "cli.py", "app.py", "server.py", "index.ts", "index.tsx"}
+        or "/routes/" in f"/{normalized}/"
+        or "/entrypoints/" in f"/{normalized}/"
+    ):
+        return "entrypoints"
+    if "/domain/" in f"/{normalized}/":
+        return "domain"
+    if "/infrastructure/" in f"/{normalized}/" or "/adapters/" in f"/{normalized}/":
+        return "infra"
+    return None
+
+
+def _tool_args(call: Any) -> dict[str, Any]:
+    if isinstance(call, dict):
+        function = call.get("function")
+        raw_arguments = function.get("arguments") if isinstance(function, dict) else call.get("arguments")
+        if isinstance(raw_arguments, dict):
+            return raw_arguments
+        if isinstance(raw_arguments, str):
+            try:
+                parsed = json.loads(raw_arguments)
+            except ValueError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
+    arguments = getattr(call, "arguments", None)
+    return arguments if isinstance(arguments, dict) else {}
+
+
+def _tool_name(call_or_result: Any) -> str:
+    if isinstance(call_or_result, dict):
+        return _tool_call_name(call_or_result)
+    return str(getattr(call_or_result, "name", None) or getattr(call_or_result, "tool_name", "") or "")
+
+
+@dataclass(slots=True)
+class TurnCoverage:
+    """Per-turn tool coverage telemetry surfaced on assistant metadata."""
+
+    tool_names: list[str] = field(default_factory=list)
+    search_patterns: list[str] = field(default_factory=list)
+    files_read: list[str] = field(default_factory=list)
+    files_edited: list[str] = field(default_factory=list)
+    mcp_resources_read: list[str] = field(default_factory=list)
+    memory_items_injected: int = 0
+    coverage_category_hits: dict[str, int] = field(default_factory=dict)
+
+    def record_prompt_metadata(self, metadata: dict[str, Any] | None) -> None:
+        if not isinstance(metadata, dict):
+            return
+        injected = metadata.get("memory_items_injected")
+        if isinstance(injected, int):
+            self.memory_items_injected = max(self.memory_items_injected, injected)
+
+    def record_tool_calls(self, tool_calls: list[Any] | None) -> None:
+        for call in tool_calls or []:
+            name = _tool_name(call)
+            args = _tool_args(call)
+            _dedupe_append(self.tool_names, name)
+            self._record_from_name_and_args(name, args)
+
+    def record_tool_result(self, result: Any) -> None:
+        name = _tool_name(result)
+        _dedupe_append(self.tool_names, name)
+        data = getattr(result, "data", None)
+        if not isinstance(data, dict):
+            return
+        result_type = data.get("type")
+        if result_type == "file_read":
+            self._record_file_read(data.get("display_path") or data.get("path"))
+        elif result_type in {"file_write", "file_edit"}:
+            self._record_file_edited(data.get("display_path") or data.get("path"))
+        elif result_type == "mcp_resource":
+            self._record_mcp_resource(data.get("server"), data.get("uri"))
+        for key in ("pattern", "query", "glob"):
+            if key in data:
+                _dedupe_append(self.search_patterns, data.get(key))
+        matches = data.get("matches")
+        if isinstance(matches, list):
+            for path in matches:
+                self._record_category_for_path(str(path))
+        results = data.get("results")
+        if isinstance(results, list):
+            for item in results:
+                if isinstance(item, dict):
+                    self._record_category_for_path(str(item.get("path") or item.get("file") or ""))
+
+    def _record_from_name_and_args(self, name: str, args: dict[str, Any]) -> None:
+        if name in {"Grep", "Glob", "search_files", "WebSearch", "BrowserSearch", "ToolSearch"}:
+            for key in ("pattern", "query", "glob"):
+                _dedupe_append(self.search_patterns, args.get(key))
+        if name in {"Read", "read_file"}:
+            self._record_file_read(args.get("path"))
+        if name in {"Write", "Edit"}:
+            self._record_file_edited(args.get("path"))
+        if name == "ReadMcpResourceTool":
+            self._record_mcp_resource(args.get("server"), args.get("uri"))
+        if name == "Config":
+            self._hit_category("config")
+        path = args.get("path")
+        if isinstance(path, str):
+            self._record_category_for_path(path)
+
+    def _record_file_read(self, path: Any) -> None:
+        _dedupe_append(self.files_read, path)
+        self._record_category_for_path(str(path or ""))
+
+    def _record_file_edited(self, path: Any) -> None:
+        _dedupe_append(self.files_edited, path)
+        self._record_category_for_path(str(path or ""))
+
+    def _record_mcp_resource(self, server: Any, uri: Any) -> None:
+        if server or uri:
+            _dedupe_append(self.mcp_resources_read, f"{server or ''}:{uri or ''}")
+        self._hit_category("infra")
+
+    def _record_category_for_path(self, path: str) -> None:
+        category = _path_category(path)
+        if category:
+            self._hit_category(category)
+
+    def _hit_category(self, category: str) -> None:
+        self.coverage_category_hits[category] = self.coverage_category_hits.get(category, 0) + 1
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "tool_names": list(self.tool_names),
+            "search_patterns": list(self.search_patterns),
+            "files_read": list(self.files_read),
+            "files_edited": list(self.files_edited),
+            "mcp_resources_read": list(self.mcp_resources_read),
+            "memory_items_injected": self.memory_items_injected,
+            "coverage_category_hits": dict(sorted(self.coverage_category_hits.items())),
+        }
+
+
 @dataclass(slots=True)
 class AssistantStreamState:
     """Accumulator for the assistant pass of a single streaming turn.
@@ -387,6 +556,7 @@ class StreamingTurnState:
     executed_tools: bool = False
     last_prompt_context_metadata: dict[str, Any] = field(default_factory=dict)
     evidence_gate_continuations: int = 0
+    coverage: TurnCoverage = field(default_factory=TurnCoverage)
 
 
 __all__ = [
@@ -396,4 +566,5 @@ __all__ = [
     "PromptPackage",
     "PromptPreparation",
     "StreamingTurnState",
+    "TurnCoverage",
 ]

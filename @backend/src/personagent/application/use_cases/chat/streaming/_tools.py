@@ -12,7 +12,7 @@ from personagent.application.use_cases.chat.helpers import (
     set_session_status,
 )
 from personagent.application.use_cases.chat.messaging.state import StreamingTurnState
-from personagent.domain.conversation.models import Conversation
+from personagent.domain.conversation.models import Conversation, Role
 from personagent.domain.llm_backend.models import StreamChunk
 from personagent.domain.tools import ToolExecutionStatus
 
@@ -32,8 +32,10 @@ class StreamingTurnToolMixin:
         results_by_id: dict[str, Any] = {}
         waiting_for_plan_approval = False
         waiting_for_tool_approval = False
+        turn_state.coverage.record_tool_calls(tool_calls)
         async for event in orchestrator.execute(tool_calls, tool_context):
             if event.result is not None:
+                turn_state.coverage.record_tool_result(event.result)
                 results_by_id[event.call.id] = event.result
                 await self._operational_memory.capture_tool_result(
                     request,
@@ -110,4 +112,10 @@ class StreamingTurnToolMixin:
                         self._tool_results.tool_message_from(result)
                     )
                     turn_state.executed_tools = True
+        last_assistant = next(
+            (message for message in reversed(conversation.messages) if message.role == Role.ASSISTANT),
+            None,
+        )
+        if last_assistant is not None:
+            last_assistant.metadata["tool_coverage"] = turn_state.coverage.to_metadata()
         break_holder[0] = waiting_for_plan_approval or waiting_for_tool_approval

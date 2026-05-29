@@ -46,7 +46,7 @@ from personagent.application.use_cases.chat.memory.operational_memory import (
 )
 from personagent.application.use_cases.chat.messaging.media_policy import MediaPolicyHandler
 from personagent.application.use_cases.chat.messaging.message_preparation import MessagePreparer
-from personagent.application.use_cases.chat.messaging.state import InvestigationState
+from personagent.application.use_cases.chat.messaging.state import InvestigationState, TurnCoverage
 from personagent.application.use_cases.chat.messaging.turn_context import TurnContextResolver
 from personagent.application.use_cases.chat.prompt.prompt_package import (
     PromptPackageBuilder,
@@ -276,6 +276,7 @@ class ChatCompletionUseCase:
         effective_max_iterations = self._tool_runtime.effective_max_tool_iterations(request)
         evidence_gate_state: dict[str, int] = {"evidence_gate_continuations": 0}
         evidence_gate_reminder: str | None = None
+        coverage = TurnCoverage()
 
         try:
             iteration = 0
@@ -295,6 +296,7 @@ class ChatCompletionUseCase:
                     prompt_package,
                     tools,
                 )
+                coverage.record_prompt_metadata(context_metadata)
                 if investigation_state.active:
                     investigation_state.advance("inspect")
                     messages = self._message_preparer.with_system_reminder(
@@ -344,10 +346,12 @@ class ChatCompletionUseCase:
                         tool_call_id=assistant_msg.tool_call_id,
                         metadata=assistant_msg.metadata,
                     )
+                tool_calls = self._tool_results.parse_calls(assistant_msg.tool_calls)
+                coverage.record_tool_calls(tool_calls)
+                assistant_msg.metadata["tool_coverage"] = coverage.to_metadata()
                 conversation.add_message(assistant_msg)
                 investigation_state.record_assistant_tool_calls(assistant_msg.tool_calls)
 
-                tool_calls = self._tool_results.parse_calls(assistant_msg.tool_calls)
                 if not tool_calls or not tool_context:
                     investigation_state.advance("verify")
                     investigation_state.refresh_coverage()
@@ -386,6 +390,7 @@ class ChatCompletionUseCase:
                     tool_calls,
                     tool_context,
                     conversation,
+                    coverage,
                 )
                 iteration += 1
                 investigation_state.tool_iterations = iteration
