@@ -44,9 +44,17 @@ Use exact schemas, read tool results before deciding the next step, and change a
         if "Grep" in tool_set:
             guidance.append("Grep performs focused text or symbol search before reading many files")
         body = "; ".join(guidance) or "Use file tools according to their schemas"
+        repo_recipe = (
+            "For repository questions: discover structure with listing/glob/search; "
+            "search exact identifiers, then related terms; read the smallest high-signal file set; "
+            "follow imports, callers, and tests before final architecture or behavior claims; "
+            "in huge repositories, sample by subsystem and state coverage boundaries; "
+            "prefer parallel independent read/search calls when supported."
+        )
         return (
             "File Operations\n\n"
-            f"{body}. Be precise with file paths: use absolute paths or resolve relative paths correctly."
+            f"{body}. Be precise with file paths: use absolute paths or resolve relative paths "
+            f"correctly. {repo_recipe}"
         )
 
     def shell_section() -> str:
