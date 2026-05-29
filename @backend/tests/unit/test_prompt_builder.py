@@ -78,6 +78,34 @@ class TestPromptBuilder:
         assert response_index < personality_index < identity_index < acting_index < final_index
 
     @pytest.mark.asyncio
+    async def test_codebase_investigation_contract_precedes_final_style_reminders(
+        self, system_context, user_context
+    ):
+        """Repository investigation guidance should affect tool behavior before style reminders."""
+        builder = PromptBuilder(permission_mode="manual", enable_agent_sections=True)
+        result = await builder.build(
+            system_context,
+            user_context,
+            available_tools=["Read", "Grep", "Glob"],
+            supports_parallel_tool_calls=True,
+        )
+
+        assert "Codebase Investigation Contract" in result.content
+        assert "classify the requested investigation depth privately as light, standard, deep, or exhaustive" in result.content
+        assert "inspect tree shape, key manifests/configs, relevant tests, and symbols" in result.content
+        assert "prefer `Grep`/`rg`, then `Glob`, then targeted `Read`" in result.content
+        assert "entrypoint, domain/application logic, infrastructure/adapters, and tests" in result.content
+        assert "Stop only when you can name the inspected files/functions" in result.content
+        assert "Keep the final answer concise even if the internal search was broad" in result.content
+        assert "codebase_investigation_contract" in result.sections_used
+        assert result.sections_used.index("codebase_investigation_contract") < result.sections_used.index(
+            "final_response_contract"
+        )
+        assert result.sections_used.index("codebase_investigation_contract") < result.sections_used.index(
+            "response_style_runtime_reminder"
+        )
+
+    @pytest.mark.asyncio
     async def test_response_style_contract_discourages_report_bloat(
         self, system_context, user_context
     ):

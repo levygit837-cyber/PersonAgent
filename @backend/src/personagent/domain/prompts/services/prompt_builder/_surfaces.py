@@ -24,6 +24,7 @@ def get_surfaces_used(
             "response_style_runtime_reminder",
             "personality_and_collaboration",
             "acting_contract",
+            "codebase_investigation_contract",
             "final_response_contract",
             "work_management",
             "evidence_and_tool_use",
