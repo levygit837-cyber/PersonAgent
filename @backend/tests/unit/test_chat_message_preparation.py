@@ -604,3 +604,44 @@ def test_with_final_answer_reminder_does_not_mutate_input_list() -> None:
     preparer.with_final_answer_reminder(original)
 
     assert original == snapshot
+# ---------------------------------------------------------------------------
+# with_synthesis_reminder
+# ---------------------------------------------------------------------------
+
+
+def test_with_synthesis_reminder_appends_evidence_summary_to_system_message() -> None:
+    preparer, _ = _preparer()
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": "BASE"},
+        {"role": "user", "content": "hi"},
+    ]
+
+    out = preparer.with_synthesis_reminder(
+        messages,
+        {
+            "objective": "explain the repo",
+            "phase": "synthesize",
+            "read_files": ["src/app.py", "tests/test_app.py"],
+            "coverage_status": {"entrypoints": True, "tests": True},
+        },
+    )
+
+    assert out[0]["role"] == "system"
+    assert out[0]["content"].startswith("BASE")
+    assert "Use gathered tool evidence" in out[0]["content"]
+    assert "Do not call more tools unless evidence is missing" in out[0]["content"]
+    assert "Produce the requested concise final answer" in out[0]["content"]
+    assert "Name representative files/functions and uncertainty" in out[0]["content"]
+    assert "src/app.py" in out[0]["content"]
+    assert out[1:] == messages[1:]
+
+
+def test_with_synthesis_reminder_does_not_mutate_input_list() -> None:
+    preparer, _ = _preparer()
+    original = [{"role": "system", "content": "S"}, {"role": "user", "content": "U"}]
+    snapshot = [dict(m) for m in original]
+
+    preparer.with_synthesis_reminder(original, "read src/app.py")
+
+    assert original == snapshot
+

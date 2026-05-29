@@ -166,6 +166,7 @@ class EvidenceGateDecision:
     missing: tuple[str, ...] = ()
     checklist: dict[str, bool] = field(default_factory=dict)
     retry_count: int = 0
+    ready_for_final: bool = False
 
 
 @dataclass(slots=True)
@@ -262,6 +263,7 @@ class EvidenceGateService:
                 reason="evidence checklist satisfied",
                 checklist=checklist,
                 retry_count=retry_count,
+                ready_for_final=True,
             )
         return EvidenceGateDecision(
             should_continue=True,

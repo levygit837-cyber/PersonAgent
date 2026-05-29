@@ -305,13 +305,21 @@ class ChatCompletionUseCase:
                         messages, evidence_gate_reminder
                     )
                     evidence_gate_reminder = None
+                ready_for_synthesis = (
+                    investigation_state.active and investigation_state.ready_for_final
+                )
+                pass_tools = [] if ready_for_synthesis else tools
+                if ready_for_synthesis:
+                    messages = self._message_preparer.with_synthesis_reminder(
+                        messages, investigation_state.to_metadata()
+                    )
                 result = await self._llm_backend.chat_completion(
                     messages=messages,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
                     stream=False,
-                    tools=tools,
-                    tool_choice="auto" if tools else None,
+                    tools=pass_tools,
+                    tool_choice="auto" if pass_tools else None,
                     model=request.model,
                     provider=request.provider,
                     reasoning_level=request.reasoning_level,
@@ -361,6 +369,14 @@ class ChatCompletionUseCase:
                         conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                         evidence_gate_reminder = decision.reminder
                         continue
+                    if decision.ready_for_final:
+                        conversation.metadata["last_evidence_gate"] = {
+                            "reason": decision.reason,
+                            "missing": list(decision.missing),
+                            "checklist": decision.checklist,
+                            "retry_count": evidence_gate_state["evidence_gate_continuations"],
+                            "ready_for_final": True,
+                        }
                     investigation_state.advance("synthesize")
                     investigation_state.refresh_coverage()
                     conversation.metadata["investigation_state"] = investigation_state.to_metadata()

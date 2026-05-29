@@ -245,6 +245,14 @@ class StreamingTurnExecutor(
                         messages, evidence_gate_reminder
                     )
                     evidence_gate_reminder = None
+                ready_for_synthesis = (
+                    investigation_state.active and investigation_state.ready_for_final
+                )
+                pass_tools = [] if ready_for_synthesis else tools
+                if ready_for_synthesis:
+                    messages = self._message_preparer.with_synthesis_reminder(
+                        messages, investigation_state.to_metadata()
+                    )
                 turn_state.last_prompt_context_metadata = context_metadata
                 yield StreamChunk(
                     metadata={
@@ -262,7 +270,7 @@ class StreamingTurnExecutor(
                     request=request,
                     conversation_id=str(conversation.id),
                     messages=messages,
-                    tools=tools,
+                    tools=pass_tools,
                     seen_tool_call_ids=turn_state.seen_tool_call_ids,
                     iteration=turn_state.iteration,
                     state=assistant_state,
@@ -354,6 +362,14 @@ class StreamingTurnExecutor(
                         conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                         evidence_gate_reminder = decision.reminder
                         continue
+                    if decision.ready_for_final:
+                        conversation.metadata["last_evidence_gate"] = {
+                            "reason": decision.reason,
+                            "missing": list(decision.missing),
+                            "checklist": decision.checklist,
+                            "retry_count": turn_state.evidence_gate_continuations,
+                            "ready_for_final": True,
+                        }
                     investigation_state.advance("synthesize")
                     investigation_state.refresh_coverage()
                     conversation.metadata["investigation_state"] = investigation_state.to_metadata()
