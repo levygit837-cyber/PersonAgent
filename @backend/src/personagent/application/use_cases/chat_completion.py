@@ -26,6 +26,7 @@ from personagent.application.tools import (
     ToolRuntimeConfig,
 )
 from personagent.application.use_cases.build_context import BuildContextUseCase
+from personagent.application.use_cases.chat.evidence_gate import EvidenceGateService
 from personagent.application.use_cases.chat.helpers import (
     attach_plan_approval_artifact as _attach_plan_approval_artifact,
 )
@@ -165,6 +166,7 @@ class ChatCompletionUseCase:
             session_memory_service=self._session_memory_service,
             skill_roots_provider=self._skill_roots,
         )
+        self._evidence_gate = EvidenceGateService()
         self._tool_results = ToolResultHandler(
             orchestrator_factory=self._tool_runtime.new_orchestrator,
             operational_memory=self._operational_memory,
@@ -211,6 +213,7 @@ class ChatCompletionUseCase:
             assistant_pass_runner=self._assistant_pass_runner,
             stream_chunk_normalizer=self._stream_chunk_normalizer,
             tool_results=self._tool_results,
+            evidence_gate=self._evidence_gate,
             after_turn=self._after_turn,
             build_context_result=self._turn_context.build,
             resolve_tool_schemas=self._tool_runtime.resolve_schemas,
@@ -266,6 +269,8 @@ class ChatCompletionUseCase:
         result = InferenceResult(content="")
         seen_tool_call_ids: set[str] = set()
         effective_max_iterations = self._tool_runtime.effective_max_tool_iterations(request)
+        evidence_gate_state: dict[str, int] = {"evidence_gate_continuations": 0}
+        evidence_gate_reminder: str | None = None
 
         try:
             iteration = 0
@@ -285,6 +290,11 @@ class ChatCompletionUseCase:
                     prompt_package,
                     tools,
                 )
+                if evidence_gate_reminder:
+                    messages = self._message_preparer.with_system_reminder(
+                        messages, evidence_gate_reminder
+                    )
+                    evidence_gate_reminder = None
                 result = await self._llm_backend.chat_completion(
                     messages=messages,
                     temperature=request.temperature,
@@ -320,6 +330,22 @@ class ChatCompletionUseCase:
 
                 tool_calls = self._tool_results.parse_calls(assistant_msg.tool_calls)
                 if not tool_calls or not tool_context:
+                    decision = self._evidence_gate.should_continue_investigation(
+                        request,
+                        conversation,
+                        evidence_gate_state,
+                        context_metadata,
+                    )
+                    if decision.should_continue and tool_context:
+                        evidence_gate_state["evidence_gate_continuations"] += 1
+                        conversation.metadata["last_evidence_gate"] = {
+                            "reason": decision.reason,
+                            "missing": list(decision.missing),
+                            "checklist": decision.checklist,
+                            "retry_count": evidence_gate_state["evidence_gate_continuations"],
+                        }
+                        evidence_gate_reminder = decision.reminder
+                        continue
                     break
 
                 await self._tool_results.execute(

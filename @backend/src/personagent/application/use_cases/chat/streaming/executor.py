@@ -25,6 +25,7 @@ import structlog
 
 from personagent.application.dto import ChatRequestDTO
 from personagent.application.tools import ToolOrchestrator
+from personagent.application.use_cases.chat.evidence_gate import EvidenceGateService
 from personagent.application.use_cases.chat.helpers import (
     context_after_turn_metadata,
     context_usage_metadata,
@@ -111,6 +112,7 @@ class StreamingTurnExecutor(
         effective_max_tool_iterations: Callable[[ChatRequestDTO], int],
         tool_iteration_limit_source: Callable[[ChatRequestDTO], str],
         schedule_background: Callable[..., None],
+        evidence_gate: EvidenceGateService | None = None,
     ) -> None:
         self._conversation_repo = conversation_repo
         self._memory_recall = memory_recall
@@ -123,6 +125,7 @@ class StreamingTurnExecutor(
         self._assistant_pass_runner = assistant_pass_runner
         self._stream_chunk_normalizer = stream_chunk_normalizer
         self._tool_results = tool_results
+        self._evidence_gate = evidence_gate or EvidenceGateService()
         self._after_turn = after_turn
         self._build_context_result = build_context_result
         self._resolve_tool_schemas = resolve_tool_schemas
@@ -208,6 +211,7 @@ class StreamingTurnExecutor(
             final_provider=request.provider,
         )
         effective_max_iterations = self._effective_max_tool_iterations(request)
+        evidence_gate_reminder: str | None = None
 
         try:
             while True:
@@ -226,6 +230,11 @@ class StreamingTurnExecutor(
                     prompt_package,
                     tools,
                 )
+                if evidence_gate_reminder:
+                    messages = self._message_preparer.with_system_reminder(
+                        messages, evidence_gate_reminder
+                    )
+                    evidence_gate_reminder = None
                 turn_state.last_prompt_context_metadata = context_metadata
                 yield StreamChunk(
                     metadata={
@@ -305,6 +314,31 @@ class StreamingTurnExecutor(
                     assistant_state.tool_calls
                 )
                 if not tool_calls or not tool_context:
+                    decision = self._evidence_gate.should_continue_investigation(
+                        request,
+                        conversation,
+                        turn_state,
+                        context_metadata,
+                    )
+                    if decision.should_continue and tool_context:
+                        turn_state.evidence_gate_continuations += 1
+                        conversation.metadata["last_evidence_gate"] = {
+                            "reason": decision.reason,
+                            "missing": list(decision.missing),
+                            "checklist": decision.checklist,
+                            "retry_count": turn_state.evidence_gate_continuations,
+                        }
+                        await self._conversation_repo.update(conversation)
+                        yield StreamChunk(
+                            metadata={
+                                "event": "status",
+                                "status": "continuing_evidence_investigation",
+                                "evidence_gate_missing": list(decision.missing),
+                                "evidence_gate_retry_count": turn_state.evidence_gate_continuations,
+                            }
+                        )
+                        evidence_gate_reminder = decision.reminder
+                        continue
                     break
 
                 break_holder: list[bool] = [False]
