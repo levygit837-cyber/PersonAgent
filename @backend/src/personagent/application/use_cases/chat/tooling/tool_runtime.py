@@ -13,9 +13,10 @@ private methods. Concurrency: stateless. Safe to share across requests.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, cast
 
-from personagent.application.dto import ChatRequestDTO
+from personagent.application.dto import ChatRequestDTO, InvestigationDepth
 from personagent.application.plan_mode import is_plan_mode_active
 from personagent.application.ports.artifact_storage import ArtifactStoragePort
 from personagent.application.tools import (
@@ -27,6 +28,113 @@ from personagent.application.tools.runtime_config import (
     resolve_effective_tool_iterations,
 )
 from personagent.domain.conversation.models import Conversation
+
+
+@dataclass(frozen=True, slots=True)
+class InvestigationDepthPolicy:
+    """Runtime policy attached to an investigation-depth value.
+
+    ``minimum_evidence`` names the evidence checklist entries required before
+    the evidence gate lets a codebase-analysis answer finalize.
+    ``max_tool_iterations`` is used as the request-depth default when neither
+    the request nor operator runtime config supplies a stricter loop cap.
+    ``max_evidence_gate_continuations`` bounds forced extra model passes that
+    exist only to gather missing evidence.
+    """
+
+    minimum_evidence: tuple[str, ...]
+    max_tool_iterations: int | None
+    max_evidence_gate_continuations: int
+
+
+_AUTO_MINIMUM_EVIDENCE = (
+    "has_tool_calls",
+    "has_search_evidence",
+    "has_file_read_evidence",
+    "has_core_implementation_read",
+    "has_relevant_test_evidence",
+    "has_relevant_manifest_evidence",
+)
+
+INVESTIGATION_DEPTH_POLICIES: dict[InvestigationDepth, InvestigationDepthPolicy] = {
+    "auto": InvestigationDepthPolicy(
+        minimum_evidence=_AUTO_MINIMUM_EVIDENCE,
+        max_tool_iterations=None,
+        max_evidence_gate_continuations=2,
+    ),
+    "light": InvestigationDepthPolicy(
+        minimum_evidence=(),
+        max_tool_iterations=3,
+        max_evidence_gate_continuations=0,
+    ),
+    "standard": InvestigationDepthPolicy(
+        minimum_evidence=(
+            "has_tool_calls",
+            "has_file_read_evidence",
+            "has_core_implementation_read",
+            "has_test_or_manifest_evidence",
+        ),
+        max_tool_iterations=6,
+        max_evidence_gate_continuations=1,
+    ),
+    "deep": InvestigationDepthPolicy(
+        minimum_evidence=(
+            "has_tool_calls",
+            "has_search_evidence",
+            "has_file_read_evidence",
+            "has_core_implementation_read",
+            "has_caller_or_symbol_search",
+            "has_test_evidence",
+            "has_manifest_evidence",
+            "has_adjacent_module_evidence",
+        ),
+        max_tool_iterations=12,
+        max_evidence_gate_continuations=3,
+    ),
+    "exhaustive": InvestigationDepthPolicy(
+        minimum_evidence=(
+            "has_tool_calls",
+            "has_broad_symbol_search",
+            "has_core_implementation_read",
+            "has_caller_or_symbol_search",
+            "has_test_evidence",
+            "has_manifest_evidence",
+            "has_adjacent_module_evidence",
+            "has_cross_surface_coverage",
+        ),
+        max_tool_iterations=24,
+        max_evidence_gate_continuations=5,
+    ),
+}
+
+
+def normalize_investigation_depth(value: str | None) -> InvestigationDepth:
+    """Return a supported investigation-depth value, defaulting to ``auto``."""
+
+    normalized = (value or "auto").strip().lower()
+    if normalized in INVESTIGATION_DEPTH_POLICIES:
+        return cast(InvestigationDepth, normalized)
+    return "auto"
+
+
+def investigation_depth_policy(request: ChatRequestDTO) -> InvestigationDepthPolicy:
+    """Return the policy associated with ``request.investigation_depth``."""
+
+    return INVESTIGATION_DEPTH_POLICIES[
+        normalize_investigation_depth(getattr(request, "investigation_depth", "auto"))
+    ]
+
+
+def minimum_evidence_expectations(request: ChatRequestDTO) -> tuple[str, ...]:
+    """Return required evidence checklist keys for the request depth."""
+
+    return investigation_depth_policy(request).minimum_evidence
+
+
+def max_evidence_gate_continuations(request: ChatRequestDTO) -> int:
+    """Return the forced evidence-gathering continuation cap for the request depth."""
+
+    return investigation_depth_policy(request).max_evidence_gate_continuations
 
 
 class ToolRuntime:
@@ -123,18 +231,19 @@ class ToolRuntime:
             if self._tool_runtime_config is not None
             else None
         )
+        depth_max = investigation_depth_policy(request).max_tool_iterations
         return int(
             resolve_effective_tool_iterations(
                 request_max=request.max_tool_iterations,
-                config_max=config_max,
+                config_max=config_max if config_max is not None else depth_max,
             )
         )
 
     def tool_iteration_limit_source(self, request: ChatRequestDTO) -> str:
         """Describe which input determined the active iteration cap.
 
-        Returns one of ``"request"``, ``"runtime_config"``, or
-        ``"safety_ceiling"`` so the UI can attribute the limit to the
+        Returns one of ``"request"``, ``"runtime_config"``,
+        ``"investigation_depth"``, or ``"safety_ceiling"`` so the UI can attribute the limit to the
         right place when emitting ``tool_loop_limit_exceeded`` events.
         """
 
@@ -147,4 +256,6 @@ class ToolRuntime:
         )
         if config_max is not None:
             return "runtime_config"
+        if investigation_depth_policy(request).max_tool_iterations is not None:
+            return "investigation_depth"
         return "safety_ceiling"

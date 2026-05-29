@@ -23,6 +23,7 @@ from personagent.adapters.api.routes.chat.helpers import (
     ChatRequest,
     ChatResponse,
     encode_sse,
+    resolve_investigation_depth,
     resolve_next_step_suggestion_service,
     resolve_prompt_mode,
     resolve_provider,
@@ -65,6 +66,7 @@ def register_completion_routes(router: APIRouter) -> None:
         provider = resolve_provider(request.provider)
         model = resolve_model(provider, request.model)
         prompt_mode = resolve_prompt_mode(request.prompt_mode)
+        investigation_depth = resolve_investigation_depth(request.investigation_depth)
         llm_backend = container.get_llm_backend(provider)
         conv_repo = await container.get_conversation_repo(session)
         context_workspace_root = resolve_context_workspace_root(request)
@@ -128,6 +130,7 @@ def register_completion_routes(router: APIRouter) -> None:
             allowed_tools=request.allowed_tools,
             tool_context=resolve_tool_context(request),
             max_tool_iterations=request.max_tool_iterations,
+            investigation_depth=investigation_depth,
             context_attachments=request.context_attachments,
             plan_mode_requested=plan_mode_requested,
         )
@@ -165,6 +168,7 @@ def register_completion_routes(router: APIRouter) -> None:
         provider = resolve_provider(request.provider)
         model = resolve_model(provider, request.model)
         prompt_mode = resolve_prompt_mode(request.prompt_mode)
+        investigation_depth = resolve_investigation_depth(request.investigation_depth)
         llm_backend = container.get_llm_backend(provider)
         conv_repo = await container.get_conversation_repo(session)
         context_workspace_root = resolve_context_workspace_root(request)
@@ -228,6 +232,7 @@ def register_completion_routes(router: APIRouter) -> None:
             allowed_tools=request.allowed_tools,
             tool_context=resolve_tool_context(request),
             max_tool_iterations=request.max_tool_iterations,
+            investigation_depth=investigation_depth,
             context_attachments=request.context_attachments,
             plan_mode_requested=plan_mode_requested,
         )

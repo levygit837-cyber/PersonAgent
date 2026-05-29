@@ -258,3 +258,39 @@ async def test_execute_stream_uses_safety_ceiling_when_unbounded(tmp_path: Path)
     assert limit_chunk.metadata["limit"] == SAFETY_TOOL_ITERATION_CEILING
     # Defense in depth: never run more iterations than the safety ceiling.
     assert llm.calls <= SAFETY_TOOL_ITERATION_CEILING
+
+
+def test_tool_runtime_uses_investigation_depth_cap_when_other_caps_are_unset(tmp_path: Path) -> None:
+    from personagent.application.use_cases.chat.tooling.tool_runtime import ToolRuntime
+
+    runtime = ToolRuntime(
+        tool_registry=None,
+        tool_runtime_config=ToolRuntimeConfig.from_values(
+            workspace_root=tmp_path,
+            max_tool_iterations=None,
+        ),
+    )
+    request = ChatRequestDTO(message="Analyze deeply", investigation_depth="deep")
+
+    assert runtime.effective_max_tool_iterations(request) == 12
+    assert runtime.tool_iteration_limit_source(request) == "investigation_depth"
+
+
+def test_explicit_request_cap_overrides_investigation_depth(tmp_path: Path) -> None:
+    from personagent.application.use_cases.chat.tooling.tool_runtime import ToolRuntime
+
+    runtime = ToolRuntime(
+        tool_registry=None,
+        tool_runtime_config=ToolRuntimeConfig.from_values(
+            workspace_root=tmp_path,
+            max_tool_iterations=None,
+        ),
+    )
+    request = ChatRequestDTO(
+        message="Analyze exhaustively",
+        investigation_depth="exhaustive",
+        max_tool_iterations=2,
+    )
+
+    assert runtime.effective_max_tool_iterations(request) == 2
+    assert runtime.tool_iteration_limit_source(request) == "request"

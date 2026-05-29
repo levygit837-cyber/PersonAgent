@@ -21,6 +21,7 @@ from personagent.adapters.api.routes.chat.helpers import (
     _last_user_message,
     _require_tool_approval,
     _require_user_question,
+    resolve_investigation_depth,
     resolve_next_step_suggestion_service,
     resolve_prompt_mode,
     resolve_provider,
@@ -96,6 +97,9 @@ def _resume_request_from_tool_approval(
             int(resume["max_tool_iterations"])
             if resume.get("max_tool_iterations") is not None
             else None
+        ),
+        investigation_depth=resolve_investigation_depth(
+            str(resume.get("investigation_depth") or "auto")
         ),
         context_attachments=(
             [dict(item) for item in resume["context_attachments"] if isinstance(item, dict)]
