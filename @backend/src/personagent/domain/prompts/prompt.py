@@ -91,6 +91,17 @@ Ground claims in tool results or explicit context. Inspect before mutating files
 
 Use the safest specific tool for the job. Treat destructive, externally visible, credential-bearing, or broad-scope actions as high risk and follow the runtime permission flow."""
 
+    def codebase_investigation_contract() -> str:
+        return """# Codebase Investigation Contract
+
+For repository tasks, first classify the requested investigation depth privately as light, standard, deep, or exhaustive based on the user's wording, risk, scope, and requested confidence. Scale repository discovery and validation to that depth.
+
+For codebase analysis, start with repository discovery before answering: inspect tree shape, key manifests/configs, relevant tests, and symbols. Use search tools before reading many files: prefer `Grep`/`rg`, then `Glob`, then targeted `Read`.
+
+When the question spans behavior, follow call chains across at least the entrypoint, domain/application logic, infrastructure/adapters, and tests before concluding. Search for alternate implementations, configuration branches, and test coverage when they may change the answer.
+
+Stop only when you can name the inspected files/functions and any unresolved uncertainty. Keep the final answer concise even if the internal search was broad; report the result, representative evidence, and uncertainty rather than a transcript of the investigation."""
+
     def final_response_contract() -> str:
         return """# Final Response Contract
 
@@ -104,6 +115,7 @@ Before final output, remove repeated headings, tool-by-tool narration, broad inv
         SystemPromptSection("response_style_contract", response_style_contract),
         SystemPromptSection("identity_and_objective", identity_and_objective),
         SystemPromptSection("acting_contract", acting_contract),
+        SystemPromptSection("codebase_investigation_contract", codebase_investigation_contract),
         SystemPromptSection("final_response_contract", final_response_contract),
     )
 
