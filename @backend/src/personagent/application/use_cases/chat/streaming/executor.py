@@ -161,8 +161,23 @@ class StreamingTurnExecutor(
         yield StreamChunk(metadata={"event": "status", "status": status})
 
         # Recall memórias relevantes
+        yield StreamChunk(
+            metadata={
+                "event": "memory_recall_started",
+                "memory_status": "running",
+                "memory_message": "Recalling memories...",
+            }
+        )
         memory_recall = await self._memory_recall.recall(
             request, context_result, conversation
+        )
+        yield StreamChunk(
+            metadata={
+                "event": "memory_recall_finished",
+                "memory_status": "completed",
+                "memory_count": _memory_recall_count(memory_recall.trace),
+                "memory_trace": memory_recall.trace,
+            }
         )
 
         prompt_package = await self._prompt_package_builder.build(
@@ -343,3 +358,18 @@ class StreamingTurnExecutor(
             was_empty=was_empty,
         ):
             yield chunk
+
+
+def _memory_recall_count(trace: dict[str, Any] | None) -> int:
+    if not isinstance(trace, dict):
+        return 0
+    summary = trace.get("summary")
+    if isinstance(summary, dict):
+        value = summary.get("total_used")
+        if isinstance(value, int):
+            return max(0, value)
+    classic = trace.get("classic")
+    operational = trace.get("operational")
+    return (len(classic) if isinstance(classic, list) else 0) + (
+        len(operational) if isinstance(operational, list) else 0
+    )

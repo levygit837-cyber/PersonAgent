@@ -242,6 +242,14 @@ export function useBrowserTabContent({
     return () => URL.revokeObjectURL(nextUrl);
   }, [mirrorDocument]);
 
+  useEffect(() => {
+    if (!mirrorUrl || mirrorReady) return;
+    const timer = window.setTimeout(() => {
+      setMirrorReady(true);
+    }, 7000);
+    return () => window.clearTimeout(timer);
+  }, [mirrorUrl, mirrorReady]);
+
   const postMirrorState = () => {
     const target = iframeRef.current?.contentWindow;
     if (!target) return;

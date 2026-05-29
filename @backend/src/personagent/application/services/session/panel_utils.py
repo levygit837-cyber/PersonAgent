@@ -8,8 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from personagent.domain.conversation.models import Message
-
-_TEXT_TOKEN_DIVISOR = 4
+from personagent.domain.token_counting import count_text_tokens
 
 
 def _metric(value: int = 0, estimated: bool = False) -> dict[str, Any]:
@@ -22,9 +21,7 @@ def _add(metric: dict[str, Any], value: int, estimated: bool = False) -> None:
 
 
 def _estimate_tokens(text: str) -> int:
-    if not text:
-        return 0
-    return max(1, (len(text) + _TEXT_TOKEN_DIVISOR - 1) // _TEXT_TOKEN_DIVISOR)
+    return count_text_tokens(text)
 
 
 def _first_int(data: dict[str, Any], keys: tuple[str, ...]) -> int | None:

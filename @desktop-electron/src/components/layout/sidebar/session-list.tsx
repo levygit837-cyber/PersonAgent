@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, FolderOpen } from "lucide-react";
-import { useAppStore } from "../../stores/app-store";
-import { useChatStore } from "../../stores/chat-store";
-import { MAIN_CHAT_PANE_ID, useChatLayoutStore } from "../../stores/chat-layout-store";
-import { workspaceName } from "../../lib/utils";
+import { useAppStore } from "../../../stores/app-store";
+import { useChatStore } from "../../../stores/chat-store";
+import { MAIN_CHAT_PANE_ID, useChatLayoutStore } from "../../../stores/chat-layout-store";
+import { workspaceName } from "../../../lib/utils";
 import { useGroupedConversations } from "./session-list/use-grouped-conversations";
 import { MAX_VISIBLE_CONVERSATIONS } from "./session-list/types";
 import { ConversationItem } from "./session-list/conversation-item";
