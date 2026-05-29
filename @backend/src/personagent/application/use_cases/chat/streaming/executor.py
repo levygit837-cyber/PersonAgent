@@ -43,6 +43,7 @@ from personagent.application.use_cases.chat.messaging.media_policy import MediaP
 from personagent.application.use_cases.chat.messaging.message_preparation import MessagePreparer
 from personagent.application.use_cases.chat.messaging.state import (
     AssistantStreamState,
+    InvestigationState,
     StreamingTurnState,
 )
 from personagent.application.use_cases.chat.prompt.prompt_package import PromptPackageBuilder
@@ -144,9 +145,13 @@ class StreamingTurnExecutor(
         status: str,
     ) -> AsyncIterator[StreamChunk]:
         """Execute one streaming turn, optionally without a new user message."""
+        investigation_state = InvestigationState.classify(request)
         context_result = await self._build_context_result(request, conversation)
         preparation = self._prompt_surfaces.prepare(request, context_result)
         request = preparation.request
+        if investigation_state.active:
+            investigation_state.advance("discover")
+            conversation.metadata["investigation_state"] = investigation_state.to_metadata()
         tools = self._resolve_tool_schemas(request, conversation)
 
         if append_user_message:
@@ -230,6 +235,11 @@ class StreamingTurnExecutor(
                     prompt_package,
                     tools,
                 )
+                if investigation_state.active:
+                    investigation_state.advance("inspect")
+                    messages = self._message_preparer.with_system_reminder(
+                        messages, investigation_state.reminder()
+                    )
                 if evidence_gate_reminder:
                     messages = self._message_preparer.with_system_reminder(
                         messages, evidence_gate_reminder
@@ -310,10 +320,14 @@ class StreamingTurnExecutor(
                 )
                 await self._conversation_repo.update(conversation)
 
+                investigation_state.record_assistant_tool_calls(assistant_state.tool_calls)
                 tool_calls = self._tool_results.parse_calls(
                     assistant_state.tool_calls
                 )
                 if not tool_calls or not tool_context:
+                    investigation_state.advance("verify")
+                    investigation_state.refresh_coverage()
+                    conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                     decision = self._evidence_gate.should_continue_investigation(
                         request,
                         conversation,
@@ -337,8 +351,12 @@ class StreamingTurnExecutor(
                                 "evidence_gate_retry_count": turn_state.evidence_gate_continuations,
                             }
                         )
+                        conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                         evidence_gate_reminder = decision.reminder
                         continue
+                    investigation_state.advance("synthesize")
+                    investigation_state.refresh_coverage()
+                    conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                     break
 
                 break_holder: list[bool] = [False]
@@ -352,6 +370,10 @@ class StreamingTurnExecutor(
                 ):
                     yield chunk
                 turn_state.iteration += 1
+                investigation_state.tool_iterations = turn_state.iteration
+                investigation_state.advance("verify")
+                investigation_state.record_tool_messages(conversation.messages)
+                conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                 if break_holder[0]:
                     break
 
