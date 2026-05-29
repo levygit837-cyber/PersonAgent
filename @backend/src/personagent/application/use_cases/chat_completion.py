@@ -26,6 +26,7 @@ from personagent.application.tools import (
     ToolRuntimeConfig,
 )
 from personagent.application.use_cases.build_context import BuildContextUseCase
+from personagent.application.use_cases.chat.evidence_gate import EvidenceGateService
 from personagent.application.use_cases.chat.helpers import (
     attach_plan_approval_artifact as _attach_plan_approval_artifact,
 )
@@ -45,6 +46,7 @@ from personagent.application.use_cases.chat.memory.operational_memory import (
 )
 from personagent.application.use_cases.chat.messaging.media_policy import MediaPolicyHandler
 from personagent.application.use_cases.chat.messaging.message_preparation import MessagePreparer
+from personagent.application.use_cases.chat.messaging.state import InvestigationState, TurnCoverage
 from personagent.application.use_cases.chat.messaging.turn_context import TurnContextResolver
 from personagent.application.use_cases.chat.prompt.prompt_package import (
     PromptPackageBuilder,
@@ -165,6 +167,7 @@ class ChatCompletionUseCase:
             session_memory_service=self._session_memory_service,
             skill_roots_provider=self._skill_roots,
         )
+        self._evidence_gate = EvidenceGateService()
         self._tool_results = ToolResultHandler(
             orchestrator_factory=self._tool_runtime.new_orchestrator,
             operational_memory=self._operational_memory,
@@ -211,6 +214,7 @@ class ChatCompletionUseCase:
             assistant_pass_runner=self._assistant_pass_runner,
             stream_chunk_normalizer=self._stream_chunk_normalizer,
             tool_results=self._tool_results,
+            evidence_gate=self._evidence_gate,
             after_turn=self._after_turn,
             build_context_result=self._turn_context.build,
             resolve_tool_schemas=self._tool_runtime.resolve_schemas,
@@ -229,9 +233,13 @@ class ChatCompletionUseCase:
         if request.plan_mode_requested:
             activate_plan_mode_if_requested(conversation.metadata, requested=True)
 
+        investigation_state = InvestigationState.classify(request)
         context_result = await self._turn_context.build(request, conversation)
         preparation = self._prompt_surfaces.prepare(request, context_result)
         request = preparation.request
+        if investigation_state.active:
+            investigation_state.advance("discover")
+            conversation.metadata["investigation_state"] = investigation_state.to_metadata()
         tools = self._tool_runtime.resolve_schemas(request, conversation)
 
         # Adiciona mensagem do usuário
@@ -266,6 +274,9 @@ class ChatCompletionUseCase:
         result = InferenceResult(content="")
         seen_tool_call_ids: set[str] = set()
         effective_max_iterations = self._tool_runtime.effective_max_tool_iterations(request)
+        evidence_gate_state: dict[str, int] = {"evidence_gate_continuations": 0}
+        evidence_gate_reminder: str | None = None
+        coverage = TurnCoverage()
 
         try:
             iteration = 0
@@ -285,13 +296,32 @@ class ChatCompletionUseCase:
                     prompt_package,
                     tools,
                 )
+                coverage.record_prompt_metadata(context_metadata)
+                if investigation_state.active:
+                    investigation_state.advance("inspect")
+                    messages = self._message_preparer.with_system_reminder(
+                        messages, investigation_state.reminder()
+                    )
+                if evidence_gate_reminder:
+                    messages = self._message_preparer.with_system_reminder(
+                        messages, evidence_gate_reminder
+                    )
+                    evidence_gate_reminder = None
+                ready_for_synthesis = (
+                    investigation_state.active and investigation_state.ready_for_final
+                )
+                pass_tools = [] if ready_for_synthesis else tools
+                if ready_for_synthesis:
+                    messages = self._message_preparer.with_synthesis_reminder(
+                        messages, investigation_state.to_metadata()
+                    )
                 result = await self._llm_backend.chat_completion(
                     messages=messages,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
                     stream=False,
-                    tools=tools,
-                    tool_choice="auto" if tools else None,
+                    tools=pass_tools,
+                    tool_choice="auto" if pass_tools else None,
                     model=request.model,
                     provider=request.provider,
                     reasoning_level=request.reasoning_level,
@@ -316,18 +346,57 @@ class ChatCompletionUseCase:
                         tool_call_id=assistant_msg.tool_call_id,
                         metadata=assistant_msg.metadata,
                     )
-                conversation.add_message(assistant_msg)
-
                 tool_calls = self._tool_results.parse_calls(assistant_msg.tool_calls)
+                coverage.record_tool_calls(tool_calls)
+                assistant_msg.metadata["tool_coverage"] = coverage.to_metadata()
+                conversation.add_message(assistant_msg)
+                investigation_state.record_assistant_tool_calls(assistant_msg.tool_calls)
+
                 if not tool_calls or not tool_context:
+                    investigation_state.advance("verify")
+                    investigation_state.refresh_coverage()
+                    conversation.metadata["investigation_state"] = investigation_state.to_metadata()
+                    decision = self._evidence_gate.should_continue_investigation(
+                        request,
+                        conversation,
+                        evidence_gate_state,
+                        context_metadata,
+                    )
+                    if decision.should_continue and tool_context:
+                        evidence_gate_state["evidence_gate_continuations"] += 1
+                        conversation.metadata["last_evidence_gate"] = {
+                            "reason": decision.reason,
+                            "missing": list(decision.missing),
+                            "checklist": decision.checklist,
+                            "retry_count": evidence_gate_state["evidence_gate_continuations"],
+                        }
+                        conversation.metadata["investigation_state"] = investigation_state.to_metadata()
+                        evidence_gate_reminder = decision.reminder
+                        continue
+                    if decision.ready_for_final:
+                        conversation.metadata["last_evidence_gate"] = {
+                            "reason": decision.reason,
+                            "missing": list(decision.missing),
+                            "checklist": decision.checklist,
+                            "retry_count": evidence_gate_state["evidence_gate_continuations"],
+                            "ready_for_final": True,
+                        }
+                    investigation_state.advance("synthesize")
+                    investigation_state.refresh_coverage()
+                    conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                     break
 
                 await self._tool_results.execute(
                     tool_calls,
                     tool_context,
                     conversation,
+                    coverage,
                 )
                 iteration += 1
+                investigation_state.tool_iterations = iteration
+                investigation_state.advance("verify")
+                investigation_state.record_tool_messages(conversation.messages)
+                conversation.metadata["investigation_state"] = investigation_state.to_metadata()
         except LLMBackendError as exc:
             logger.error("llm_backend_error", error=str(exc))
             raise

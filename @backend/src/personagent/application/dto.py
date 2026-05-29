@@ -1,10 +1,12 @@
 """Data Transfer Objects para o caso de uso de chat."""
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from personagent.domain.llm_backend.models import GeneratedImage
+
+InvestigationDepth = Literal["auto", "light", "standard", "deep", "exhaustive"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +28,7 @@ class ChatRequestDTO:
     allowed_tools: list[str] | None = None
     tool_context: dict[str, Any] = field(default_factory=dict)
     max_tool_iterations: int | None = None
+    investigation_depth: InvestigationDepth = "auto"
     context_attachments: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     plan_mode_requested: bool = False

@@ -25,6 +25,7 @@ import structlog
 
 from personagent.application.dto import ChatRequestDTO
 from personagent.application.tools import ToolOrchestrator
+from personagent.application.use_cases.chat.evidence_gate import EvidenceGateService
 from personagent.application.use_cases.chat.helpers import (
     context_after_turn_metadata,
     context_usage_metadata,
@@ -42,6 +43,7 @@ from personagent.application.use_cases.chat.messaging.media_policy import MediaP
 from personagent.application.use_cases.chat.messaging.message_preparation import MessagePreparer
 from personagent.application.use_cases.chat.messaging.state import (
     AssistantStreamState,
+    InvestigationState,
     StreamingTurnState,
 )
 from personagent.application.use_cases.chat.prompt.prompt_package import PromptPackageBuilder
@@ -111,6 +113,7 @@ class StreamingTurnExecutor(
         effective_max_tool_iterations: Callable[[ChatRequestDTO], int],
         tool_iteration_limit_source: Callable[[ChatRequestDTO], str],
         schedule_background: Callable[..., None],
+        evidence_gate: EvidenceGateService | None = None,
     ) -> None:
         self._conversation_repo = conversation_repo
         self._memory_recall = memory_recall
@@ -123,6 +126,7 @@ class StreamingTurnExecutor(
         self._assistant_pass_runner = assistant_pass_runner
         self._stream_chunk_normalizer = stream_chunk_normalizer
         self._tool_results = tool_results
+        self._evidence_gate = evidence_gate or EvidenceGateService()
         self._after_turn = after_turn
         self._build_context_result = build_context_result
         self._resolve_tool_schemas = resolve_tool_schemas
@@ -141,9 +145,13 @@ class StreamingTurnExecutor(
         status: str,
     ) -> AsyncIterator[StreamChunk]:
         """Execute one streaming turn, optionally without a new user message."""
+        investigation_state = InvestigationState.classify(request)
         context_result = await self._build_context_result(request, conversation)
         preparation = self._prompt_surfaces.prepare(request, context_result)
         request = preparation.request
+        if investigation_state.active:
+            investigation_state.advance("discover")
+            conversation.metadata["investigation_state"] = investigation_state.to_metadata()
         tools = self._resolve_tool_schemas(request, conversation)
 
         if append_user_message:
@@ -208,6 +216,7 @@ class StreamingTurnExecutor(
             final_provider=request.provider,
         )
         effective_max_iterations = self._effective_max_tool_iterations(request)
+        evidence_gate_reminder: str | None = None
 
         try:
             while True:
@@ -226,7 +235,26 @@ class StreamingTurnExecutor(
                     prompt_package,
                     tools,
                 )
+                if investigation_state.active:
+                    investigation_state.advance("inspect")
+                    messages = self._message_preparer.with_system_reminder(
+                        messages, investigation_state.reminder()
+                    )
+                if evidence_gate_reminder:
+                    messages = self._message_preparer.with_system_reminder(
+                        messages, evidence_gate_reminder
+                    )
+                    evidence_gate_reminder = None
+                ready_for_synthesis = (
+                    investigation_state.active and investigation_state.ready_for_final
+                )
+                pass_tools = [] if ready_for_synthesis else tools
+                if ready_for_synthesis:
+                    messages = self._message_preparer.with_synthesis_reminder(
+                        messages, investigation_state.to_metadata()
+                    )
                 turn_state.last_prompt_context_metadata = context_metadata
+                turn_state.coverage.record_prompt_metadata(context_metadata)
                 yield StreamChunk(
                     metadata={
                         "event": "prompt_context",
@@ -243,7 +271,7 @@ class StreamingTurnExecutor(
                     request=request,
                     conversation_id=str(conversation.id),
                     messages=messages,
-                    tools=tools,
+                    tools=pass_tools,
                     seen_tool_call_ids=turn_state.seen_tool_call_ids,
                     iteration=turn_state.iteration,
                     state=assistant_state,
@@ -296,15 +324,57 @@ class StreamingTurnExecutor(
                                 context_metadata, assistant_state
                             ),
                             **assistant_state.metadata,
+                            "tool_coverage": turn_state.coverage.to_metadata(),
                         },
                     )
                 )
                 await self._conversation_repo.update(conversation)
 
+                investigation_state.record_assistant_tool_calls(assistant_state.tool_calls)
                 tool_calls = self._tool_results.parse_calls(
                     assistant_state.tool_calls
                 )
                 if not tool_calls or not tool_context:
+                    investigation_state.advance("verify")
+                    investigation_state.refresh_coverage()
+                    conversation.metadata["investigation_state"] = investigation_state.to_metadata()
+                    decision = self._evidence_gate.should_continue_investigation(
+                        request,
+                        conversation,
+                        turn_state,
+                        context_metadata,
+                    )
+                    if decision.should_continue and tool_context:
+                        turn_state.evidence_gate_continuations += 1
+                        conversation.metadata["last_evidence_gate"] = {
+                            "reason": decision.reason,
+                            "missing": list(decision.missing),
+                            "checklist": decision.checklist,
+                            "retry_count": turn_state.evidence_gate_continuations,
+                        }
+                        await self._conversation_repo.update(conversation)
+                        yield StreamChunk(
+                            metadata={
+                                "event": "status",
+                                "status": "continuing_evidence_investigation",
+                                "evidence_gate_missing": list(decision.missing),
+                                "evidence_gate_retry_count": turn_state.evidence_gate_continuations,
+                            }
+                        )
+                        conversation.metadata["investigation_state"] = investigation_state.to_metadata()
+                        evidence_gate_reminder = decision.reminder
+                        continue
+                    if decision.ready_for_final:
+                        conversation.metadata["last_evidence_gate"] = {
+                            "reason": decision.reason,
+                            "missing": list(decision.missing),
+                            "checklist": decision.checklist,
+                            "retry_count": turn_state.evidence_gate_continuations,
+                            "ready_for_final": True,
+                        }
+                    investigation_state.advance("synthesize")
+                    investigation_state.refresh_coverage()
+                    conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                     break
 
                 break_holder: list[bool] = [False]
@@ -318,6 +388,10 @@ class StreamingTurnExecutor(
                 ):
                     yield chunk
                 turn_state.iteration += 1
+                investigation_state.tool_iterations = turn_state.iteration
+                investigation_state.advance("verify")
+                investigation_state.record_tool_messages(conversation.messages)
+                conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                 if break_holder[0]:
                     break
 

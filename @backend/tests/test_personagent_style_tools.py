@@ -721,3 +721,115 @@ class HeuristicSearchLLM(LLMBackendRepository):
 
     async def get_model_info(self) -> dict:
         return {}
+
+
+class DeepCoverageStreamLLM(LLMBackendRepository):
+    def __init__(self) -> None:
+        self.calls = 0
+        self.synthesis_saw_tools_disabled = False
+
+    async def chat_completion(self, *args, **kwargs) -> InferenceResult:
+        return InferenceResult(content="unused")
+
+    async def chat_completion_stream(self, *args, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            yield StreamChunk(
+                tool_calls=[
+                    _tool_call("read_entry", "Read", {"path": "main.py"}),
+                    _tool_call(
+                        "read_domain", "Read", {"path": "personagent/domain/models.py"}
+                    ),
+                    _tool_call(
+                        "read_infra",
+                        "Read",
+                        {"path": "personagent/infrastructure/repository.py"},
+                    ),
+                    _tool_call("read_tests", "Read", {"path": "tests/test_models.py"}),
+                    _tool_call("read_config", "Read", {"path": "pyproject.toml"}),
+                    _tool_call("grep_router", "Grep", {"pattern": "router|entry", "path": "."}),
+                ],
+                finish_reason="tool_calls",
+            )
+            return
+        self.synthesis_saw_tools_disabled = kwargs.get("tools") == []
+        yield StreamChunk(content="Synthesis after coverage.", finish_reason="stop")
+
+    async def health_check(self) -> dict:
+        return {"status": "healthy"}
+
+    async def get_model_info(self) -> dict:
+        return {}
+
+
+def _tool_call(call_id: str, name: str, arguments: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments)},
+    }
+
+
+@pytest.mark.asyncio
+async def test_deep_codebase_streaming_attaches_tool_coverage_before_final_synthesis(
+    tmp_path,
+):
+    (tmp_path / "personagent" / "domain").mkdir(parents=True)
+    (tmp_path / "personagent" / "infrastructure").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "main.py").write_text("from personagent.routes import router\n", encoding="utf-8")
+    (tmp_path / "personagent" / "domain" / "models.py").write_text("class Entity: pass\n", encoding="utf-8")
+    (tmp_path / "personagent" / "infrastructure" / "repository.py").write_text(
+        "class Repo: pass\n", encoding="utf-8"
+    )
+    (tmp_path / "tests" / "test_models.py").write_text("def test_entity(): pass\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+
+    repo = MemoryConversationRepository()
+    llm = DeepCoverageStreamLLM()
+    use_case = ChatCompletionUseCase(
+        conversation_repo=repo,
+        llm_backend=llm,
+        tool_registry=ToolRegistry([create_read_file_tool(), create_grep_tool()]),
+        tool_runtime_config=ToolRuntimeConfig.from_values(workspace_root=tmp_path),
+    )
+
+    chunks = [
+        chunk
+        async for chunk in use_case.execute_stream(
+            ChatRequestDTO(
+                message=(
+                    "Deep codebase review: inspect entrypoints, domain, infra, "
+                    "tests, and config before synthesis."
+                ),
+                tools_enabled=True,
+            )
+        )
+    ]
+    saved = next(chunk.metadata for chunk in chunks if chunk.metadata.get("event") == "conversation_saved")
+    conversation = await repo.get_by_id(UUID(saved["conversation_id"]))
+
+    assert llm.synthesis_saw_tools_disabled is True
+    assert conversation is not None
+    assistant_messages = [message for message in conversation.messages if message.role.value == "assistant"]
+    assert len(assistant_messages) >= 2
+    pre_synthesis_coverage = assistant_messages[0].metadata["tool_coverage"]
+    final_coverage = assistant_messages[-1].metadata["tool_coverage"]
+
+    assert "Grep" in pre_synthesis_coverage["tool_names"]
+    assert "router|entry" in pre_synthesis_coverage["search_patterns"]
+    assert set(pre_synthesis_coverage["coverage_category_hits"]) >= {
+        "tests",
+        "config",
+        "entrypoints",
+        "domain",
+        "infra",
+    }
+    assert set(final_coverage["coverage_category_hits"]) >= {
+        "tests",
+        "config",
+        "entrypoints",
+        "domain",
+        "infra",
+    }
+    assert saved["tool_coverage"] == final_coverage
