@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from typing import Any
 
 from textual.app import App
@@ -22,12 +23,19 @@ from personagent.adapters.tui.client import (
 from personagent.adapters.tui.widgets import (
     ChatContainer,
     InputBar,
+    MemoryRecallBlock,
     ModelLabel,
+    ModelList,
     StreamingIndicator,
+    ToolCallGroup,
 )
 from personagent.adapters.tui.widgets.chat_message import ChatMessage
 from personagent.adapters.tui.widgets.command_palette import CommandPalette
 from personagent.adapters.tui.widgets.session_list import SessionList
+from personagent.adapters.tui.widgets.tool_call_group import (
+    is_memory_recall_event,
+    is_tool_stream_event,
+)
 
 
 class ChatApp(App[None]):
@@ -53,10 +61,14 @@ class ChatApp(App[None]):
     def __init__(self, base_url: str | None = None, **kwargs: Any) -> None:
         self._base_url = base_url
         self._abort_event = asyncio.Event()
+        self._stream_aborted = False
         self._current_agent_message: ChatMessage | None = None
+        self._current_tool_group: ToolCallGroup | None = None
+        self._current_memory_block: MemoryRecallBlock | None = None
         self._command_palette: CommandPalette | None = None
         self._session_list: SessionList | None = None
         self._session_overlay: Container | None = None
+        self._model_list: ModelList | None = None
         super().__init__(**kwargs)
 
     def compose(self) -> Any:
@@ -121,10 +133,41 @@ class ChatApp(App[None]):
         if self._command_palette is not None:
             self._command_palette.move_selection(1)
 
+    def _abort_stream(self) -> None:
+        """Abort the current stream and show an interrupted label."""
+        self._stream_aborted = True
+        self._abort_event.set()
+        self.is_streaming = False
+        indicator = self.query_one("#streaming-indicator", StreamingIndicator)
+        indicator.is_streaming = False
+        input_bar = self.query_one("#input-bar", InputBar)
+        input_bar.focus()
+
+        container = self.query_one("#chat-container", ChatContainer)
+        if self._current_agent_message is not None:
+            container.mark_aborted(self._current_agent_message)
+        else:
+            # No message created yet: inject one with the interrupted label
+            self._current_agent_message = container.add_message(
+                "agent",
+                "",
+                aborted=True,
+                model=self.model_name,
+            )
+
+    def _hide_model_list(self) -> None:
+        """Remove the floating model list if it exists."""
+        if self._model_list is not None:
+            self._model_list.remove()
+            self._model_list = None
+
     def action_palette_close(self) -> None:
         """Close any open overlays or abort streaming if active."""
         if self._command_palette is not None:
             self._hide_palette()
+            return
+        if self._model_list is not None:
+            self._hide_model_list()
             return
         if self._session_overlay is not None:
             self._session_overlay.remove()
@@ -132,15 +175,7 @@ class ChatApp(App[None]):
             self._session_list = None
             return
         if self.is_streaming:
-            self._abort_event.set()
-            self.is_streaming = False
-            indicator = self.query_one("#streaming-indicator", StreamingIndicator)
-            indicator.is_streaming = False
-            input_bar = self.query_one("#input-bar", InputBar)
-            input_bar.focus()
-            if self._current_agent_message is not None:
-                container = self.query_one("#chat-container", ChatContainer)
-                container.mark_aborted(self._current_agent_message)
+            self._abort_stream()
             return
 
     def action_submit(self) -> None:
@@ -310,8 +345,8 @@ class ChatApp(App[None]):
 
     async def _handle_model(self, args: str) -> None:
         """Handle the /model command: show current model or list available models."""
-        container = self.query_one("#chat-container", ChatContainer)
         if args.strip():
+            container = self.query_one("#chat-container", ChatContainer)
             parts = args.strip().split("/", 1)
             if len(parts) == 2:
                 provider, model = parts
@@ -324,37 +359,50 @@ class ChatApp(App[None]):
             container.add_message(
                 "agent", f"Model set to `{self.model_name}`."
             )
+            return
+
+        # No args: show floating model card overlay
+        provider = os.environ.get("PERSONAGENT_PROVIDER", "deepseek")
+        try:
+            data = await list_models(self._backend_url, provider=provider)
+            models = data.get("data", [])
+        except Exception as exc:
+            container = self.query_one("#chat-container", ChatContainer)
+            container.add_message("agent", f"**Error fetching models:** {exc}")
+            return
+
+        self._model_list = ModelList(id="model-list")
+        self.screen.mount(self._model_list)
+
+        # Center the floating card on screen
+        card_width = 60
+        card_height = min(len(models) + 2, 40)
+        offset_x = max(0, (self.screen.size.width - card_width) // 2)
+        offset_y = max(0, (self.screen.size.height - card_height) // 2)
+        self._model_list.styles.offset = (offset_x, offset_y)
+
+        self._model_list.models = models
+        self._model_list.focus()
+
+    def on_model_list_model_selected(self, event: ModelList.ModelSelected) -> None:
+        """Update the active model when selected from the floating card."""
+        self.model_name = event.model_name
+        parts = event.model_name.split("/", 1)
+        if len(parts) == 2:
+            os.environ["PERSONAGENT_PROVIDER"] = parts[0].strip()
+            os.environ["PERSONAGENT_MODEL"] = parts[1].strip()
         else:
-            provider = os.environ.get("PERSONAGENT_PROVIDER", "deepseek")
-            model = os.environ.get("PERSONAGENT_MODEL", "deepseek-v4-flash")
-            lines = [
-                f"**Current model:** `{model}`",
-                f"**Provider:** `{provider}`",
-                "",
-                "Fetching available models...",
-            ]
-            container.add_message("agent", "\n".join(lines))
-            try:
-                data = await list_models(self._backend_url, provider=provider)
-                models = data.get("data", [])
-                if models:
-                    lines = [f"**Available models for `{provider}`:**", ""]
-                    for m in models:
-                        name = m.get("id") or m.get("name") or str(m)
-                        lines.append(f"- `{name}`")
-                else:
-                    lines = [f"No models returned for provider `{provider}`.", ""]
-                    lines.append(f"Raw response: `{data}`")
-                container.add_message("agent", "\n".join(lines))
-            except Exception as exc:
-                container.add_message("agent", f"**Error fetching models:** {exc}")
+            os.environ["PERSONAGENT_MODEL"] = event.model_name.strip()
+        self._hide_model_list()
+        input_bar = self.query_one("#input-bar", InputBar)
+        input_bar.focus()
 
     def _send_message(self, text: str) -> None:
         container = self.query_one("#chat-container", ChatContainer)
         input_bar = self.query_one("#input-bar", InputBar)
         indicator = self.query_one("#streaming-indicator", StreamingIndicator)
 
-        container.add_message("user", text)
+        container.add_message("user", text, model=self.model_name)
         input_bar.text = ""
         self.is_streaming = True
         indicator.is_streaming = True
@@ -382,6 +430,9 @@ class ChatApp(App[None]):
             content_parts: list[str] = []
             thinking_parts: list[str] = []
             was_thinking = False
+            current_thinking_msg: ChatMessage | None = None
+            current_content_msg: ChatMessage | None = None
+
             async for chunk in stream_chat_completion(
                 self._backend_url,
                 payload,
@@ -392,44 +443,85 @@ class ChatApp(App[None]):
                 if chunk.model:
                     self.model_name = chunk.model
 
+                if is_memory_recall_event(chunk):
+                    if self._current_memory_block is None:
+                        self._current_memory_block = container.add_memory_recall(
+                            model=self.model_name,
+                        )
+                    self._current_memory_block.update_from_chunk(chunk)
+                    await asyncio.sleep(0)
+                    continue
+
+                if is_tool_stream_event(chunk):
+                    content_parts = []
+                    thinking_parts = []
+                    current_content_msg = None
+                    current_thinking_msg = None
+                    self._current_agent_message = None
+                    self._current_memory_block = None
+                    if self._current_tool_group is None:
+                        self._current_tool_group = container.add_tool_group(
+                            model=self.model_name,
+                        )
+                    self._current_tool_group.upsert_chunk(chunk)
+                    await asyncio.sleep(0)
+                    continue
+
                 is_now_thinking = bool(chunk.is_thinking)
 
-                # Start of a new reasoning block: reset accumulator
+                # Start of a new reasoning block: create a new message
                 if is_now_thinking and not was_thinking:
                     thinking_parts = []
+                    current_thinking_msg = container.add_message(
+                        "agent",
+                        "",
+                        thinking="",
+                        model=self.model_name,
+                    )
+                    current_content_msg = None
+                    self._current_tool_group = None
+                    self._current_memory_block = None
 
                 # Capture reasoning/thinking content
                 if chunk.reasoning_content:
                     thinking_parts.append(chunk.reasoning_content)
                     full_thinking = "".join(thinking_parts)
-                    if self._current_agent_message is None:
-                        self._current_agent_message = container.add_message(
-                            "agent", "", thinking=full_thinking
-                        )
-                    else:
-                        container.update_thinking(
-                            self._current_agent_message, full_thinking
-                        )
+                    self._current_tool_group = None
+                    self._current_memory_block = None
+                    if current_thinking_msg is not None:
+                        container.update_thinking(current_thinking_msg, full_thinking)
+                        self._current_agent_message = current_thinking_msg
                     await asyncio.sleep(0)
 
                 if chunk.content:
+                    # Skip raw tool JSON or tool args that the backend mirrors as content
+                    if self._is_tool_like_content(chunk.content):
+                        await asyncio.sleep(0)
+                        continue
                     content_parts.append(chunk.content)
                     full_text = "".join(content_parts)
-                    if self._current_agent_message is None:
-                        self._current_agent_message = container.add_message(
-                            "agent", full_text
+                    self._current_tool_group = None
+                    self._current_memory_block = None
+                    if current_content_msg is None:
+                        current_content_msg = container.add_message(
+                            "agent",
+                            full_text,
+                            model=self.model_name,
                         )
                     else:
-                        container.update_message(
-                            self._current_agent_message, full_text
-                        )
+                        container.update_message(current_content_msg, full_text)
+                    self._current_agent_message = current_content_msg
                     await asyncio.sleep(0)
 
                 # Tool calls signal a phase transition
                 if chunk.tool_calls:
                     content_parts = []
                     thinking_parts = []
-                    # Future: render tool call UI here
+                    current_content_msg = None
+                    current_thinking_msg = None
+                    self._current_tool_group = None
+                    self._current_memory_block = None
+                    # Tool execution details arrive as tool_* stream events.
 
                 was_thinking = is_now_thinking
 
@@ -443,7 +535,15 @@ class ChatApp(App[None]):
             indicator.is_streaming = False
             input_bar = self.query_one("#input-bar", InputBar)
             input_bar.focus()
+
+            # If stream was aborted and no message exists yet, inject an interrupted label
+            if self._stream_aborted and self._current_agent_message is None:
+                container.add_message("agent", "", aborted=True, model=self.model_name)
+
             self._current_agent_message = None
+            self._current_tool_group = None
+            self._current_memory_block = None
+            self._stream_aborted = False
             self._abort_event.clear()
 
     def _format_tool_calls(self, tool_calls: list[dict[str, Any]]) -> str:
@@ -486,16 +586,52 @@ class ChatApp(App[None]):
         container = self.query_one("#chat-container", ChatContainer)
         container.scroll_end()
 
+    def _is_tool_like_content(self, text: str) -> bool:
+        """Heuristic: detect raw tool JSON or tool args the backend sends as content."""
+        text = text.strip()
+        if not text:
+            return False
+        # Raw JSON result with known tool type field
+        if text.startswith("{"):
+            prefix = text[:300]
+            if '"type"' in prefix:
+                return any(
+                    t in prefix
+                    for t in (
+                        '"file_read"',
+                        '"read_file"',
+                        '"shell"',
+                        '"glob_results"',
+                        '"search_files"',
+                        '"write_file"',
+                        '"edit_file"',
+                        '"web_fetch"',
+                        '"web_search"',
+                        '"browser"',
+                    )
+                )
+            return False
+        # Plain-text tool args description, e.g. "shell args: {...}"
+        first_line = text.split("\n", 1)[0]
+        m = re.match(r"^(\w+)\s+args:\s*\{", first_line)
+        if m:
+            tool_name = m.group(1).lower()
+            return tool_name in {
+                "shell",
+                "read",
+                "write",
+                "edit",
+                "glob",
+                "grep",
+                "search",
+            }
+        return False
+
     def action_quit(self) -> None:
-        if self._command_palette is not None or self._session_list is not None:
+        if self._command_palette is not None or self._session_list is not None or self._model_list is not None:
             self.action_palette_close()
             return
         if self.is_streaming:
-            self._abort_event.set()
-            self.is_streaming = False
-            indicator = self.query_one("#streaming-indicator", StreamingIndicator)
-            indicator.is_streaming = False
-            input_bar = self.query_one("#input-bar", InputBar)
-            input_bar.focus()
+            self._abort_stream()
         else:
             self.exit()

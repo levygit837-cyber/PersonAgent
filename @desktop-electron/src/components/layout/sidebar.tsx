@@ -213,3 +213,63 @@ function SidebarActions() {
   );
 }
 
+function SidebarFooter() {
+  const [mcpOpen, setMcpOpen] = useState(false);
+
+  return (
+    <div className="shrink-0 border-t border-glass-border/25 px-2 py-1.5">
+      <CollapsibleSection
+        label="MCP Connections"
+        count={0}
+        open={mcpOpen}
+        onToggle={() => setMcpOpen(!mcpOpen)}
+      >
+        <div data-testid="mcp-connections-region" className="px-2 pb-1">
+          <div className="flex items-start gap-2 py-1">
+            <Plug className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <div className="text-[12px] font-medium text-foreground">No connections</div>
+              <div className="text-[11px] leading-4 text-muted-foreground">Backend MCP not available.</div>
+            </div>
+          </div>
+        </div>
+      </CollapsibleSection>
+    </div>
+  );
+}
+
+function CollapsibleSection({
+  label,
+  count,
+  open,
+  onToggle,
+  children,
+}: {
+  label: string;
+  count?: number;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1 text-left hover:bg-glass/80"
+      >
+        <ChevronRight
+          className={`h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+        />
+        <span className="min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+          {label}
+        </span>
+        {count != null ? (
+          <span className="text-[10px] tabular-nums text-muted-foreground">{count}</span>
+        ) : null}
+      </button>
+      {open ? children : null}
+    </div>
+  );
+}
+

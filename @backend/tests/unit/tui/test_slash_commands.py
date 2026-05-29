@@ -10,6 +10,7 @@ import pytest
 from personagent.adapters.tui.app import ChatApp
 from personagent.adapters.tui.widgets import InputBar
 from personagent.adapters.tui.widgets.chat_container import ChatContainer
+from personagent.adapters.tui.widgets.chat_message import ChatMessage
 from personagent.adapters.tui.widgets.command_palette import BUILTIN_COMMANDS, CommandPalette
 from personagent.adapters.tui.widgets.session_list import SessionList
 
@@ -23,6 +24,11 @@ async def _empty_stream(*args: Any, **kwargs: Any) -> Any:
     """Async generator that yields nothing."""
     return
     yield  # makes it an async generator
+
+
+def _messages(container: ChatContainer) -> list[ChatMessage]:
+    """Return rendered chat messages, ignoring layout rows."""
+    return list(container.query(ChatMessage))
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -265,7 +271,7 @@ async def test_help_shows_command_list_in_chat(app: ChatApp) -> None:
         await pilot.pause()
 
         container = app.query_one("#chat-container", ChatContainer)
-        messages = list(container.children)
+        messages = _messages(container)
         assert len(messages) > 0
 
         last = messages[-1]
@@ -312,8 +318,13 @@ async def test_sessions_shows_overlay(mock_list: AsyncMock, app: ChatApp) -> Non
 
 
 @pytest.mark.asyncio
+@patch("personagent.adapters.tui.app.get_conversation")
 @patch("personagent.adapters.tui.app.list_conversations")
-async def test_sessions_select_switches_conversation(mock_list: AsyncMock, app: ChatApp) -> None:
+async def test_sessions_select_switches_conversation(
+    mock_list: AsyncMock,
+    mock_get_conversation: AsyncMock,
+    app: ChatApp,
+) -> None:
     """Pressing Enter on a session row switches conversation_id."""
     mock_list.return_value = [
         {
@@ -323,6 +334,7 @@ async def test_sessions_select_switches_conversation(mock_list: AsyncMock, app: 
             "updated_at": "2024-01-01T00:00:00",
         },
     ]
+    mock_get_conversation.return_value = {"messages": []}
 
     async with app.run_test() as pilot:
         input_bar = app.query_one("#input-bar", InputBar)
@@ -458,8 +470,13 @@ async def test_palette_closes_when_space_typed(app: ChatApp) -> None:
 # ═══════════════════════════════════════════════════════════════════
 
 @pytest.mark.asyncio
-async def test_full_flow_tab_then_enter_clears_input(app: ChatApp) -> None:
+@patch("personagent.adapters.tui.app.list_conversations")
+async def test_full_flow_tab_then_enter_clears_input(
+    mock_list: AsyncMock,
+    app: ChatApp,
+) -> None:
     """Complete interaction: '/', Tab auto-completes, Enter submits."""
+    mock_list.return_value = []
     async with app.run_test() as pilot:
         input_bar = app.query_one("#input-bar", InputBar)
         input_bar.text = "/"
@@ -515,7 +532,10 @@ async def test_local_commands_not_sent_to_llm(cmd_name: str, app: ChatApp) -> No
     with patch(
         "personagent.adapters.tui.app.stream_chat_completion",
         side_effect=_empty_stream,
-    ) as mock_stream:
+    ) as mock_stream, patch(
+        "personagent.adapters.tui.app.list_models",
+    ) as mock_list_models:
+        mock_list_models.return_value = {"data": []}
         async with app.run_test() as pilot:
             input_bar = app.query_one("#input-bar", InputBar)
             input_bar.text = f"/{cmd_name}"
@@ -562,7 +582,7 @@ async def test_effort_sets_env_and_shows_confirmation(app: ChatApp) -> None:
 
             assert os.environ.get("PERSONAGENT_REASONING_LEVEL") == "high"
             container = app.query_one("#chat-container", ChatContainer)
-            messages = list(container.children)
+            messages = _messages(container)
             assert any("Reasoning effort set to `high`" in m._content for m in messages)
     finally:
         if old is not None:
@@ -579,7 +599,7 @@ async def test_effort_without_args_shows_current_value(app: ChatApp) -> None:
         await pilot.pause()
 
         container = app.query_one("#chat-container", ChatContainer)
-        messages = list(container.children)
+        messages = _messages(container)
         assert any("Current reasoning effort" in m._content for m in messages)
 
 
@@ -605,7 +625,6 @@ async def test_model_with_args_sets_env_and_not_sent(app: ChatApp) -> None:
 async def test_esc_during_stream_shows_aborted_label(app: ChatApp) -> None:
     """Pressing ESC while streaming marks the agent message as aborted."""
     from personagent.adapters.tui.widgets.chat_message import ChatMessage
-    from personagent.adapters.tui.widgets.streaming_indicator import StreamingIndicator
 
     async def _slow_stream(*args: Any, **kwargs: Any) -> Any:
         """Yields one chunk then hangs until aborted."""

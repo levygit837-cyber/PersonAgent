@@ -137,7 +137,7 @@ def tui(
     from personagent.adapters.tui.app import ChatApp
 
     app = ChatApp(base_url=backend_url)
-    app.run(mouse=False)
+    app.run(mouse=True)
 
 
 @app.command()

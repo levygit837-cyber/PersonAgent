@@ -40,7 +40,7 @@ ChatContainer {
     color: $foreground;
     border: none;
     height: 1fr;
-    padding: 1 0 0 0;
+    padding: 1 2 0 2;
     scrollbar-size: 0 0;
     overflow-y: auto;
 }
@@ -49,7 +49,7 @@ InputBar {
     background: $card;
     color: $foreground;
     border: solid $glass-border;
-    height: 4;
+    height: 3;
     padding: 0 1;
     margin: 0 2;
 }
@@ -96,25 +96,53 @@ StreamingIndicator.-hidden {
     display: none;
 }
 
+ChatMessageRow {
+    background: transparent;
+    height: auto;
+    width: 100%;
+    padding: 0;
+    margin: 0 0 1 0;
+}
+
+ChatMessageRow.-user {
+    align: right top;
+}
+
+ChatMessageRow.-agent {
+    align: left top;
+}
+
 ChatMessage {
     background: transparent;
     color: $foreground;
     height: auto;
+    width: auto;
     padding: 0 1;
-    margin: 0 0 1 0;
+    margin: 0;
+    content-align-horizontal: left;
 }
 
 ChatMessage.-user {
+    background: $card;
     color: $foreground;
-    content-align-horizontal: right;
-    padding: 0 1 0 4;
+    max-width: 72;
+    padding: 0 1;
 }
 
 ChatMessage.-agent {
     color: $foreground;
-    padding: 0 4 0 1;
+    max-width: 104;
+    padding: 0 1;
+}
+
+ToolCallGroup,
+MemoryRecallBlock {
+    background: transparent;
+    color: $foreground;
+    height: auto;
+    max-width: 112;
+    padding: 0 1;
     margin: 0;
-    content-align-horizontal: left;
 }
 
 CommandPalette {
@@ -188,6 +216,34 @@ SessionList > .session-empty {
 SessionList > .session-close {
     margin-top: 1;
     width: 100%;
+}
+
+ModelList {
+    position: absolute;
+    background: $card;
+    color: $foreground;
+    border: solid $glass-border;
+    width: 60;
+    height: auto;
+    max-height: 40;
+    padding: 1;
+}
+
+ModelList > .model-row {
+    height: auto;
+    padding: 0 1;
+    margin: 0;
+}
+
+ModelList > .model-row.-selected {
+    background: $glass-border;
+    color: $primary;
+}
+
+ModelList > .model-empty {
+    color: $muted;
+    content-align: center middle;
+    height: 3;
 }
 
 Footer {

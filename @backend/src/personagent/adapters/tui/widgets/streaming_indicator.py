@@ -21,7 +21,7 @@ class StreamingIndicator(Static):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(content="", **kwargs)
         self.set_class(True, "-hidden")
-        self._spinner = Spinner(self.SPINNER_STYLE, text=" Thinking...")
+        self._spinner = Spinner(self.SPINNER_STYLE, text="Thinking...")
         self._tick_task = None
 
     def on_mount(self) -> None:
