@@ -22,15 +22,15 @@ DEPTH_POLICIES: dict[InvestigationDepth, dict[str, object]] = {
         "required_surfaces": (),
     },
     "standard": {
-        "max_tool_iterations": 6,
+        "max_tool_iterations": 30,
         "required_surfaces": ("domain", "tests"),
     },
     "deep": {
-        "max_tool_iterations": 12,
+        "max_tool_iterations": 100,
         "required_surfaces": ("entrypoints", "domain", "adapters", "tests"),
     },
     "exhaustive": {
-        "max_tool_iterations": 24,
+        "max_tool_iterations": 500,
         "required_surfaces": tuple(SURFACES),
     },
 }

@@ -59,7 +59,7 @@ _AUTO_MINIMUM_EVIDENCE = (
 INVESTIGATION_DEPTH_POLICIES: dict[InvestigationDepth, InvestigationDepthPolicy] = {
     "auto": InvestigationDepthPolicy(
         minimum_evidence=_AUTO_MINIMUM_EVIDENCE,
-        max_tool_iterations=None,
+        max_tool_iterations=50,
         max_evidence_gate_continuations=2,
     ),
     "light": InvestigationDepthPolicy(
@@ -74,7 +74,7 @@ INVESTIGATION_DEPTH_POLICIES: dict[InvestigationDepth, InvestigationDepthPolicy]
             "has_core_implementation_read",
             "has_test_or_manifest_evidence",
         ),
-        max_tool_iterations=6,
+        max_tool_iterations=30,
         max_evidence_gate_continuations=1,
     ),
     "deep": InvestigationDepthPolicy(
@@ -88,7 +88,7 @@ INVESTIGATION_DEPTH_POLICIES: dict[InvestigationDepth, InvestigationDepthPolicy]
             "has_manifest_evidence",
             "has_adjacent_module_evidence",
         ),
-        max_tool_iterations=12,
+        max_tool_iterations=100,
         max_evidence_gate_continuations=3,
     ),
     "exhaustive": InvestigationDepthPolicy(
@@ -102,7 +102,7 @@ INVESTIGATION_DEPTH_POLICIES: dict[InvestigationDepth, InvestigationDepthPolicy]
             "has_adjacent_module_evidence",
             "has_cross_surface_coverage",
         ),
-        max_tool_iterations=24,
+        max_tool_iterations=500,
         max_evidence_gate_continuations=5,
     ),
 }
