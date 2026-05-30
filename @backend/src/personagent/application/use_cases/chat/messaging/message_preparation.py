@@ -39,21 +39,12 @@ from typing import Any
 from personagent.application.dto import ChatRequestDTO
 from personagent.application.use_cases.chat.lifecycle.compaction import ConversationCompactor
 from personagent.application.use_cases.chat.messaging.state import PromptPackage
+from personagent.application.use_cases.chat.messaging.system_reminders import (
+    with_final_answer_reminder,
+    with_synthesis_reminder,
+    with_system_reminder,
+)
 from personagent.domain.conversation.models import Conversation, Role
-
-_FINAL_ANSWER_REMINDER = (
-    "The previous provider pass stopped after tool results without a visible "
-    "final answer. Use the tool results already present in the conversation "
-    "and respond now with the final answer. Do not call more tools for this "
-    "recovery pass."
-)
-
-_SYNTHESIS_REMINDER_PREFIX = (
-    "Synthesis reminder: Use gathered tool evidence. Do not call more tools "
-    "unless evidence is missing and the evidence gate allows it. Produce the "
-    "requested concise final answer. Name representative files/functions and "
-    "uncertainty."
-)
 
 _REASONING_CONTENT_PROVIDERS = frozenset({"deepseek", "zenmux"})
 _REASONING_DETAILS_PROVIDERS = frozenset({"zenmux"})
@@ -191,7 +182,7 @@ class MessagePreparer:
     ) -> list[dict[str, Any]]:
         """Inject a "respond now, do not call more tools" recovery reminder."""
 
-        return self.with_system_reminder(messages, _FINAL_ANSWER_REMINDER)
+        return with_final_answer_reminder(messages)
 
     def with_synthesis_reminder(
         self,
@@ -200,11 +191,7 @@ class MessagePreparer:
     ) -> list[dict[str, Any]]:
         """Inject the final-synthesis reminder for evidence-ready turns."""
 
-        summary_text = _format_evidence_summary(evidence_summary)
-        reminder = _SYNTHESIS_REMINDER_PREFIX
-        if summary_text:
-            reminder = f"{reminder} Evidence summary: {summary_text}"
-        return self.with_system_reminder(messages, reminder)
+        return with_synthesis_reminder(messages, evidence_summary)
 
     def with_system_reminder(
         self,
@@ -213,57 +200,7 @@ class MessagePreparer:
     ) -> list[dict[str, Any]]:
         """Append a transient system reminder to the next model pass."""
 
-        if messages and messages[0].get("role") == "system":
-            updated = dict(messages[0])
-            updated["content"] = f"{updated.get('content') or ''}\n\n{reminder}"
-            return [updated, *messages[1:]]
-        return [
-            {"role": "system", "content": reminder},
-            *messages,
-        ]
-
-
-def _format_evidence_summary(evidence_summary: Any) -> str:
-    """Return a compact, provider-safe evidence summary string."""
-
-    if evidence_summary is None:
-        return ""
-    if isinstance(evidence_summary, str):
-        return evidence_summary.strip()
-    if isinstance(evidence_summary, dict):
-        parts: list[str] = []
-        for key in (
-            "reason",
-            "objective",
-            "phase",
-            "coverage_status",
-            "read_files",
-            "searched_patterns",
-            "missing",
-            "checklist",
-        ):
-            value = evidence_summary.get(key)
-            if value in (None, "", [], {}, ()):  # keep the reminder concise
-                continue
-            parts.append(f"{key}={_compact_value(value)}")
-        return "; ".join(parts)
-    return str(evidence_summary).strip()
-
-
-def _compact_value(value: Any) -> str:
-    if isinstance(value, dict):
-        items = list(value.items())[:8]
-        rendered = ", ".join(f"{key}: {val}" for key, val in items)
-        if len(value) > len(items):
-            rendered = f"{rendered}, ..."
-        return "{" + rendered + "}"
-    if isinstance(value, (list, tuple, set, frozenset)):
-        items = [str(item) for item in list(value)[:8]]
-        rendered = ", ".join(items)
-        if len(value) > len(items):
-            rendered = f"{rendered}, ..."
-        return "[" + rendered + "]"
-    return str(value)
+        return with_system_reminder(messages, reminder)
 
 
 __all__ = ["MessagePreparer"]
