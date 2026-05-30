@@ -91,6 +91,7 @@ def _make_executor(
     effective_max_iterations: int = 25,
     next_step_suggestion: str | None = None,
     enforce_tools: bool = False,
+    evidence_gate: Any = None,
 ) -> tuple[StreamingTurnExecutor, dict[str, Any]]:
     """Build a fully mocked executor.
 
@@ -144,8 +145,11 @@ def _make_executor(
     chunks = assistant_pass_chunks or []
 
     async def _pass_run(**kwargs: Any) -> AsyncIterator[StreamChunk]:
+        state = kwargs["state"]
         if assistant_pass_state_mutator is not None:
-            assistant_pass_state_mutator(kwargs["state"])
+            assistant_pass_state_mutator(state)
+        elif not state.content_chunks:
+            state.content_chunks = ["Hello from test."]
         for chunk in chunks:
             yield chunk
 
@@ -218,6 +222,7 @@ def _make_executor(
         effective_max_tool_iterations=effective_max_tool_iterations,
         tool_iteration_limit_source=tool_iteration_limit_source,
         schedule_background=schedule_background,
+        evidence_gate=evidence_gate,
     )
     deps = {
         "conversation_repo": conversation_repo,
@@ -238,6 +243,7 @@ def _make_executor(
         "effective_max_tool_iterations": effective_max_tool_iterations,
         "tool_iteration_limit_source": tool_iteration_limit_source,
         "schedule_background": schedule_background,
+        "evidence_gate": evidence_gate,
     }
     return executor, deps
 
@@ -276,6 +282,8 @@ async def test_happy_path_no_tools_emits_full_chunk_sequence() -> None:
     events = [chunk.metadata.get("event") for chunk in chunks]
     assert events == [
         "status",
+        "memory_recall_started",
+        "memory_recall_finished",
         "prompt_context",
         "conversation_saved",
     ]
@@ -301,7 +309,7 @@ async def test_happy_path_prompt_context_chunk_merges_message_preparer_metadata(
 
     chunks = await _drain(executor, conv)
 
-    prompt_context = chunks[1].metadata
+    prompt_context = chunks[3].metadata
     assert prompt_context["event"] == "prompt_context"
     assert prompt_context["context_tokens_estimated"] == 10
     assert prompt_context["context_tokens_used"] == 5
@@ -310,6 +318,7 @@ async def test_happy_path_prompt_context_chunk_merges_message_preparer_metadata(
 @pytest.mark.asyncio
 async def test_happy_path_conversation_saved_carries_final_state() -> None:
     def mutate(state: Any) -> None:
+        state.content_chunks = ["Hello, this is a substantive response with files."]
         state.finish_reason = "stop"
         state.usage = {"prompt_tokens": 7}
         state.model = "gpt-4o"
@@ -540,7 +549,17 @@ async def test_tool_calls_iterate_once_then_break_when_no_tool_context() -> None
 
 @pytest.mark.asyncio
 async def test_tools_present_with_no_tool_calls_does_not_invoke_orchestrator() -> None:
-    executor, deps = _make_executor(enforce_tools=True, tool_call_lists=[[]])
+    evidence_gate = MagicMock()
+    evidence_gate.should_continue = MagicMock(
+        return_value=MagicMock(
+            should_continue=False,
+            reason="test",
+            ready_for_final=False,
+        )
+    )
+    executor, deps = _make_executor(
+        enforce_tools=True, tool_call_lists=[[]], evidence_gate=evidence_gate
+    )
     conv = Conversation()
 
     await _drain(executor, conv)
@@ -597,6 +616,7 @@ async def test_empty_tool_response_retry_yields_status_and_notice() -> None:
                 {"id": "t1", "function": {"name": "noop", "arguments": "{}"}}
             ]
             kwargs["state"].finish_reason = "tool_calls"
+            kwargs["state"].content_chunks = ["Tool call made."]
         else:
             # second + third passes are empty -> retry branch activates
             kwargs["state"].finish_reason = "stop"
@@ -616,12 +636,21 @@ async def test_empty_tool_response_retry_yields_status_and_notice() -> None:
         event.to_stream_metadata = MagicMock(return_value={"event": "tool_completed"})
         yield event
 
+    evidence_gate = MagicMock()
+    evidence_gate.should_continue = MagicMock(
+        return_value=MagicMock(
+            should_continue=False,
+            reason="test",
+            ready_for_final=False,
+        )
+    )
     executor, deps = _make_executor(
         enforce_tools=True,
         tool_call_lists=[
             [ToolCall(id="t1", name="noop", arguments={})],
             [],
         ],
+        evidence_gate=evidence_gate,
     )
     deps["assistant_pass_runner"].run = _pass_run
     deps["new_orchestrator"].return_value.execute = _execute

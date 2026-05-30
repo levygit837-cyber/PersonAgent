@@ -115,11 +115,55 @@ If validation was skipped or blocked, say so directly. Separate verified facts f
 
 Before final output, remove repeated headings, tool-by-tool narration, broad inventories, decorative markers, and table/report structure unless the user asked for that expanded format."""
 
+    def post_tool_synthesis_mandate() -> str:
+        return """# Post-Tool Synthesis Mandate
+
+When tool results appear in the conversation after your previous tool_calls message, you must use those results to produce a substantive final answer. Do not stop without answering. One-word responses such as "Done.", "OK.", "Fixed.", or "Completed." are never acceptable after tool use.
+
+Your answer must reference specific files, functions, or evidence from the tool results. If the results are insufficient to answer, call more tools instead of responding."""
+
+    def exploration_self_checklist() -> str:
+        return """# Exploration Self-Checklist
+
+Before producing any final answer that depends on code, files, or repository structure, evaluate whether you have completed the following checks:
+
+* [ ] I have read the file(s) most directly related to the user's question.
+* [ ] I have searched for callers, usages, or related implementations.
+* [ ] I have checked tests or manifests that validate my understanding.
+* [ ] I can name specific files and line numbers as evidence.
+
+Do not answer until all items are checked. If any item is unchecked, call more tools instead of responding."""
+
+    def response_quality_minimum() -> str:
+        return """# Response Quality Minimum
+
+After tool execution, your response must contain:
+* At least one specific file reference (path or filename)
+* At least one function, class, or line number reference
+* A synthesis explaining how the evidence answers the user's question
+
+If you cannot meet this minimum, call more tools instead of responding."""
+
+    def exploration_protocol() -> str:
+        return """# Exploration Protocol
+
+Before finalizing your answer:
+1. Identify the entrypoints relevant to the user's question
+2. Search for usages and callers of key functions
+3. Read the implementation, not just the interface
+4. Check tests for expected behavior and edge cases
+5. Verify your understanding by tracing at least one complete call chain
+6. Only then synthesize your answer"""
+
     return (
         SystemPromptSection("response_style_contract", response_style_contract),
         SystemPromptSection("identity_and_objective", identity_and_objective),
         SystemPromptSection("acting_contract", acting_contract),
         SystemPromptSection("codebase_investigation_contract", codebase_investigation_contract),
+        SystemPromptSection("post_tool_synthesis_mandate", post_tool_synthesis_mandate),
+        SystemPromptSection("exploration_self_checklist", exploration_self_checklist),
+        SystemPromptSection("response_quality_minimum", response_quality_minimum),
+        SystemPromptSection("exploration_protocol", exploration_protocol),
         SystemPromptSection("final_response_contract", final_response_contract),
     )
 

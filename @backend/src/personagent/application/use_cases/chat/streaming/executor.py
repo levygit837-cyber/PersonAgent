@@ -338,38 +338,88 @@ class StreamingTurnExecutor(
                     investigation_state.advance("verify")
                     investigation_state.refresh_coverage()
                     conversation.metadata["investigation_state"] = investigation_state.to_metadata()
-                    decision = self._evidence_gate.should_continue_investigation(
-                        request,
-                        conversation,
-                        turn_state,
-                        context_metadata,
-                    )
-                    if decision.should_continue and tool_context:
-                        turn_state.evidence_gate_continuations += 1
+
+                    # Model-driven ready-for-final check
+                    if assistant_state.ready_for_final:
+                        decision = self._evidence_gate.should_continue(
+                            request,
+                            turn_state.coverage,
+                        )
+                        if decision.should_continue and tool_context:
+                            if turn_state.iteration >= effective_max_iterations - 1:
+                                raise ToolLoopLimitExceededError(
+                                    f"Tool loop exceeded {effective_max_iterations} iterations",
+                                    metadata={
+                                        "limit": effective_max_iterations,
+                                        "conversation_id": str(conversation.id),
+                                        "source": self._tool_iteration_limit_source(request),
+                                    },
+                                )
+                            conversation.metadata["last_evidence_gate"] = {
+                                "reason": decision.reason,
+                                "checklist": decision.checklist,
+                                "model_ready_for_final": True,
+                                "gate_overruled": True,
+                            }
+                            await self._conversation_repo.update(conversation)
+                            yield StreamChunk(
+                                metadata={
+                                    "event": "status",
+                                    "status": "continuing_evidence_investigation",
+                                    "evidence_gate_reason": decision.reason,
+                                    "model_ready_for_final": True,
+                                }
+                            )
+                            evidence_gate_reminder = decision.reminder
+                            assistant_state.ready_for_final = False
+                            turn_state.iteration += 1
+                            continue
                         conversation.metadata["last_evidence_gate"] = {
                             "reason": decision.reason,
-                            "missing": list(decision.missing),
                             "checklist": decision.checklist,
-                            "retry_count": turn_state.evidence_gate_continuations,
+                            "model_ready_for_final": True,
+                            "ready_for_final": True,
+                        }
+                        investigation_state.advance("synthesize")
+                        investigation_state.refresh_coverage()
+                        conversation.metadata["investigation_state"] = investigation_state.to_metadata()
+                        break
+
+                    # Gate-initiated check when model hasn't declared ready
+                    decision = self._evidence_gate.should_continue(
+                        request,
+                        turn_state.coverage,
+                    )
+                    if decision.should_continue and tool_context:
+                        if turn_state.iteration >= effective_max_iterations - 1:
+                            raise ToolLoopLimitExceededError(
+                                f"Tool loop exceeded {effective_max_iterations} iterations",
+                                metadata={
+                                    "limit": effective_max_iterations,
+                                    "conversation_id": str(conversation.id),
+                                    "source": self._tool_iteration_limit_source(request),
+                                },
+                            )
+                        conversation.metadata["last_evidence_gate"] = {
+                            "reason": decision.reason,
+                            "checklist": decision.checklist,
                         }
                         await self._conversation_repo.update(conversation)
                         yield StreamChunk(
                             metadata={
                                 "event": "status",
                                 "status": "continuing_evidence_investigation",
-                                "evidence_gate_missing": list(decision.missing),
-                                "evidence_gate_retry_count": turn_state.evidence_gate_continuations,
+                                "evidence_gate_reason": decision.reason,
                             }
                         )
                         conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                         evidence_gate_reminder = decision.reminder
+                        turn_state.iteration += 1
                         continue
                     if decision.ready_for_final:
                         conversation.metadata["last_evidence_gate"] = {
                             "reason": decision.reason,
-                            "missing": list(decision.missing),
                             "checklist": decision.checklist,
-                            "retry_count": turn_state.evidence_gate_continuations,
                             "ready_for_final": True,
                         }
                     investigation_state.advance("synthesize")

@@ -112,10 +112,4 @@ class StreamingTurnToolMixin:
                         self._tool_results.tool_message_from(result)
                     )
                     turn_state.executed_tools = True
-        last_assistant = next(
-            (message for message in reversed(conversation.messages) if message.role == Role.ASSISTANT),
-            None,
-        )
-        if last_assistant is not None:
-            last_assistant.metadata["tool_coverage"] = turn_state.coverage.to_metadata()
         break_holder[0] = waiting_for_plan_approval or waiting_for_tool_approval

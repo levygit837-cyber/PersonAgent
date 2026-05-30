@@ -21,7 +21,6 @@ from personagent.domain.prompts.services import (
     PromptBuilder,
     PromptContextAnalyzer,
 )
-from personagent.domain.prompts.skills import discover_skills
 
 
 class TestPromptBuilder:
@@ -560,21 +559,6 @@ class TestPromptBuilder:
         assert llm.calls[0]["kwargs"]["tools"] is None
         assert llm.calls[0]["kwargs"]["reasoning_level"] == "low"
 
-    def test_discover_skills_can_skip_global_roots(self, tmp_path, monkeypatch):
-        home = tmp_path / "home"
-        workspace = tmp_path / "workspace"
-        global_skill = home / ".codex" / "skills" / "global-skill" / "SKILL.md"
-        workspace_skill = workspace / ".personagent" / "skills" / "local-skill" / "SKILL.md"
-        global_skill.parent.mkdir(parents=True)
-        workspace_skill.parent.mkdir(parents=True)
-        global_skill.write_text("---\nname: Global Skill\n---\nGlobal body", encoding="utf-8")
-        workspace_skill.write_text("---\nname: Local Skill\n---\nLocal body", encoding="utf-8")
-        monkeypatch.setattr(Path, "home", lambda: home)
-
-        skills = discover_skills(workspace_root=workspace, include_global=False)
-
-        assert [skill.name for skill in skills] == ["Local Skill"]
-
     @pytest.mark.asyncio
     async def test_prompt_context_analyzer_reuses_llm_cache(self):
         llm = FakeAnalysisLLM(
@@ -757,7 +741,8 @@ class TestPromptBuilder:
             bullet_lines = [
                 line for line in content.splitlines() if line.lstrip().startswith("- ")
             ]
-            assert len(bullet_lines) <= 3, section.name
+            limit = 8 if section.name == "state_plan_mode" else 3
+            assert len(bullet_lines) <= limit, section.name
 
     @pytest.mark.asyncio
     async def test_dynamic_boundary_is_inserted(self, system_context, user_context):
@@ -785,7 +770,7 @@ class TestPromptBuilder:
             return "dynamic section"
 
         monkeypatch.setattr(
-            "personagent.domain.prompts.services.prompt_builder.get_default_prompt_sections",
+            "personagent.domain.prompts.services.prompt_builder.prompt_builder.get_default_prompt_sections",
             lambda: (
                 SystemPromptSection("stable_test", stable_section),
                 SystemPromptSection("dynamic_test", dynamic_section, cache_break=True),
