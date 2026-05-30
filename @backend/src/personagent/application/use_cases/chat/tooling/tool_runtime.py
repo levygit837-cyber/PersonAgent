@@ -25,6 +25,7 @@ from personagent.application.tools import (
     ToolRuntimeConfig,
 )
 from personagent.application.tools.runtime_config import (
+    SAFETY_TOOL_ITERATION_CEILING,
     resolve_effective_tool_iterations,
 )
 from personagent.domain.conversation.models import Conversation
@@ -231,11 +232,12 @@ class ToolRuntime:
             if self._tool_runtime_config is not None
             else None
         )
-        depth_max = investigation_depth_policy(request).max_tool_iterations
+        if config_max is None:
+            config_max = investigation_depth_policy(request).max_tool_iterations
         return int(
             resolve_effective_tool_iterations(
                 request_max=request.max_tool_iterations,
-                config_max=config_max if config_max is not None else depth_max,
+                config_max=config_max,
             )
         )
 
@@ -256,6 +258,7 @@ class ToolRuntime:
         )
         if config_max is not None:
             return "runtime_config"
-        if investigation_depth_policy(request).max_tool_iterations is not None:
+        depth_max = investigation_depth_policy(request).max_tool_iterations
+        if depth_max is not None and depth_max < SAFETY_TOOL_ITERATION_CEILING:
             return "investigation_depth"
         return "safety_ceiling"
