@@ -237,22 +237,12 @@ class StreamingTurnExecutor(
                 )
                 if investigation_state.active:
                     investigation_state.advance("inspect")
-                    messages = self._message_preparer.with_system_reminder(
-                        messages, investigation_state.reminder()
-                    )
                 if evidence_gate_reminder:
                     messages = self._message_preparer.with_system_reminder(
                         messages, evidence_gate_reminder
                     )
                     evidence_gate_reminder = None
-                ready_for_synthesis = (
-                    investigation_state.active and investigation_state.ready_for_final
-                )
-                pass_tools = [] if ready_for_synthesis else tools
-                if ready_for_synthesis:
-                    messages = self._message_preparer.with_synthesis_reminder(
-                        messages, investigation_state.to_metadata()
-                    )
+                pass_tools = tools
                 turn_state.last_prompt_context_metadata = context_metadata
                 turn_state.coverage.record_prompt_metadata(context_metadata)
                 yield StreamChunk(
@@ -330,13 +320,11 @@ class StreamingTurnExecutor(
                 )
                 await self._conversation_repo.update(conversation)
 
-                investigation_state.record_assistant_tool_calls(assistant_state.tool_calls)
                 tool_calls = self._tool_results.parse_calls(
                     assistant_state.tool_calls
                 )
                 if not tool_calls or not tool_context:
                     investigation_state.advance("verify")
-                    investigation_state.refresh_coverage()
                     conversation.metadata["investigation_state"] = investigation_state.to_metadata()
 
                     # Model-driven ready-for-final check
@@ -381,7 +369,6 @@ class StreamingTurnExecutor(
                             "ready_for_final": True,
                         }
                         investigation_state.advance("synthesize")
-                        investigation_state.refresh_coverage()
                         conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                         break
 
@@ -423,7 +410,6 @@ class StreamingTurnExecutor(
                             "ready_for_final": True,
                         }
                     investigation_state.advance("synthesize")
-                    investigation_state.refresh_coverage()
                     conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                     break
 
@@ -440,7 +426,6 @@ class StreamingTurnExecutor(
                 turn_state.iteration += 1
                 investigation_state.tool_iterations = turn_state.iteration
                 investigation_state.advance("verify")
-                investigation_state.record_tool_messages(conversation.messages)
                 conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                 if break_holder[0]:
                     break

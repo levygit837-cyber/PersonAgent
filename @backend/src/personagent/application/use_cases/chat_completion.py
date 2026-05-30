@@ -299,22 +299,12 @@ class ChatCompletionUseCase:
                 coverage.record_prompt_metadata(context_metadata)
                 if investigation_state.active:
                     investigation_state.advance("inspect")
-                    messages = self._message_preparer.with_system_reminder(
-                        messages, investigation_state.reminder()
-                    )
                 if evidence_gate_reminder:
                     messages = self._message_preparer.with_system_reminder(
                         messages, evidence_gate_reminder
                     )
                     evidence_gate_reminder = None
-                ready_for_synthesis = (
-                    investigation_state.active and investigation_state.ready_for_final
-                )
-                pass_tools = [] if ready_for_synthesis else tools
-                if ready_for_synthesis:
-                    messages = self._message_preparer.with_synthesis_reminder(
-                        messages, investigation_state.to_metadata()
-                    )
+                pass_tools = tools
                 result = await self._llm_backend.chat_completion(
                     messages=messages,
                     temperature=request.temperature,
@@ -350,11 +340,8 @@ class ChatCompletionUseCase:
                 coverage.record_tool_calls(tool_calls)
                 assistant_msg.metadata["tool_coverage"] = coverage.to_metadata()
                 conversation.add_message(assistant_msg)
-                investigation_state.record_assistant_tool_calls(assistant_msg.tool_calls)
-
                 if not tool_calls or not tool_context:
                     investigation_state.advance("verify")
-                    investigation_state.refresh_coverage()
                     conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                     decision = self._evidence_gate.should_continue_investigation(
                         request,
@@ -382,7 +369,6 @@ class ChatCompletionUseCase:
                             "ready_for_final": True,
                         }
                     investigation_state.advance("synthesize")
-                    investigation_state.refresh_coverage()
                     conversation.metadata["investigation_state"] = investigation_state.to_metadata()
                     break
 
@@ -395,7 +381,6 @@ class ChatCompletionUseCase:
                 iteration += 1
                 investigation_state.tool_iterations = iteration
                 investigation_state.advance("verify")
-                investigation_state.record_tool_messages(conversation.messages)
                 conversation.metadata["investigation_state"] = investigation_state.to_metadata()
         except LLMBackendError as exc:
             logger.error("llm_backend_error", error=str(exc))
