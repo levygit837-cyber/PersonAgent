@@ -114,6 +114,7 @@ class StreamingTurnExecutor(
         tool_iteration_limit_source: Callable[[ChatRequestDTO], str],
         schedule_background: Callable[..., None],
         evidence_gate: EvidenceGateService | None = None,
+        skip_tool_names: set[str] | None = None,
     ) -> None:
         self._conversation_repo = conversation_repo
         self._memory_recall = memory_recall
@@ -134,6 +135,7 @@ class StreamingTurnExecutor(
         self._effective_max_tool_iterations = effective_max_tool_iterations
         self._tool_iteration_limit_source = tool_iteration_limit_source
         self._schedule_background = schedule_background
+        self._skip_tool_names = skip_tool_names or set()
 
     async def run(
         self,
@@ -234,6 +236,7 @@ class StreamingTurnExecutor(
                     request,
                     prompt_package,
                     tools,
+                    skip_tool_names=self._skip_tool_names,
                 )
                 if investigation_state.active:
                     investigation_state.advance("inspect")

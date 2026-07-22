@@ -1,0 +1,367 @@
+{
+  "benchmark_id": "pd_discriminated_union",
+  "project": "pydantic",
+  "model": "deepseek-v4-flash",
+  "started_at": "2026-05-30T09:20:03.009148+00:00",
+  "finished_at": "2026-05-30T09:20:39.831450+00:00",
+  "success": false,
+  "final_answer": "",
+  "failure_reason": "Stuck after max retries: no new files read in recent steps",
+  "total_steps": 11,
+  "max_steps_allowed": 30,
+  "tool_calls": [
+    {
+      "step": 1,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/*.py",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic",
+        "max_results": 50
+      },
+      "duration_ms": 3.23,
+      "success": true,
+      "result_preview": "deprecated/__init__.py\ndeprecated/decorator.py\ndeprecated/parse.py\ndeprecated/config.py\ndeprecated/tools.py\ndeprecated/json.py\ndeprecated/copy_internals.py\ndeprecated/class_validators.py\nv1/typing.py\n"
+    },
+    {
+      "step": 1,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "class Discriminator",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic"
+      },
+      "duration_ms": 38.33,
+      "success": true,
+      "result_preview": "types.py:2981: class Discriminator:"
+    },
+    {
+      "step": 1,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "discriminator",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/pydantic",
+        "glob": "*.py",
+        "max_results": 100
+      },
+      "duration_ms": 0.09,
+      "success": false,
+      "result_preview": "Error: Path not found: /home/levybonito/Documentos/pydantic/pydantic/pydantic"
+    },
+    {
+      "step": 2,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "discriminator",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic",
+        "glob": "*.py",
+        "max_results": 200
+      },
+      "duration_ms": 60.16,
+      "success": true,
+      "result_preview": "_migration.py:241:     'pydantic.utils:get_discriminator_alias_and_values',\n_migration.py:243:     'pydantic.utils:get_unique_discriminator_alias',\njson_schema.py:92: JsonSchemaWarningKind = Literal['"
+    },
+    {
+      "step": 3,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_discriminated_union.py"
+      },
+      "duration_ms": 0.48,
+      "success": true,
+      "result_preview": "1: from __future__ import annotations as _annotations\n2: \n3: from collections.abc import Hashable, Sequence\n4: from typing import TYPE_CHECKING, Any, cast\n5: \n6: from pydantic_core import CoreSchema, "
+    },
+    {
+      "step": 3,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/types.py",
+        "offset": 2940,
+        "limit": 200
+      },
+      "duration_ms": 0.7,
+      "success": true,
+      "result_preview": "2940:     )\n2941:     print(repr(apple_variation))\n2942:     '''\n2943:     ThanksgivingDinner(dessert=ApplePie(time_to_cook=60, num_ingredients=8, fruit='apple'))\n2944:     '''\n2945: \n2946:     pumpki"
+    },
+    {
+      "step": 4,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_discriminated_union.py",
+        "offset": 200
+      },
+      "duration_ms": 0.77,
+      "success": true,
+      "result_preview": "200:             # If the schema is not a union, it probably means it just had a single member and\n201:             # was flattened by pydantic_core.\n202:             # However, it still may make sens"
+    },
+    {
+      "step": 4,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/types.py",
+        "offset": 3139,
+        "limit": 100
+      },
+      "duration_ms": 1.0,
+      "success": true,
+      "result_preview": "3139:         custom_error_type = original_schema.get('custom_error_type') if custom_error_type is None else custom_error_type\n3140:         return core_schema.tagged_union_schema(\n3141:             t"
+    },
+    {
+      "step": 5,
+      "tool_name": "Read",
+      "arguments": {
+        "offset": 399,
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_discriminated_union.py"
+      },
+      "duration_ms": 0.63,
+      "success": true,
+      "result_preview": "399: \n400:     def _infer_discriminator_values_for_dataclass_choice(\n401:         self, choice: core_schema.DataclassArgsSchema, source_name: str | None = None\n402:     ) -> list[str | int]:\n403:     "
+    },
+    {
+      "step": 5,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "is_function_with_inner_schema",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_core_utils.py"
+      },
+      "duration_ms": 13.31,
+      "success": true,
+      "result_preview": "_internal/_discriminated_union.py:271:         } and not _core_utils.is_function_with_inner_schema(choice):\n_internal/_discriminated_union.py:314:         elif _core_utils.is_function_with_inner_schem"
+    },
+    {
+      "step": 6,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "apply_discriminator",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal"
+      },
+      "duration_ms": 13.16,
+      "success": true,
+      "result_preview": "_internal/_discriminated_union.py:34: def apply_discriminator(\n_internal/_generate_schema.py:682:     def _apply_discriminator_to_union(\n_internal/_generate_schema.py:688:             return _discrimi"
+    },
+    {
+      "step": 6,
+      "tool_name": "Read",
+      "arguments": {
+        "offset": 55,
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_core_utils.py",
+        "limit": 30
+      },
+      "duration_ms": 0.41,
+      "success": true,
+      "result_preview": "55: def is_function_with_inner_schema(\n56:     schema: CoreSchemaOrField,\n57: ) -> TypeGuard[FunctionSchemaWithInnerSchema]:\n58:     return schema['type'] in _FUNCTION_WITH_INNER_SCHEMA_TYPES\n59: \n60:"
+    },
+    {
+      "step": 7,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+        "offset": 670,
+        "limit": 40
+      },
+      "duration_ms": 0.89,
+      "success": true,
+      "result_preview": "670: \n671:     def _unknown_type_schema(self, obj: Any) -> CoreSchema:\n672:         raise PydanticSchemaGenerationError(\n673:             f'Unable to generate pydantic-core schema for {obj!r}. '\n674: "
+    },
+    {
+      "step": 7,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+        "offset": 1270,
+        "limit": 30
+      },
+      "duration_ms": 0.73,
+      "success": true,
+      "result_preview": "1270:             serialization_alias=field_info.serialization_alias,\n1271:             serialization_exclude_if=field_info.exclude_if,\n1272:             frozen=field_info.frozen,\n1273:             me"
+    },
+    {
+      "step": 7,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+        "offset": 2280,
+        "limit": 40
+      },
+      "duration_ms": 0.77,
+      "success": true,
+      "result_preview": "2280: \n2281:                 if (\n2282:                     metadata.default_factory_takes_validated_data\n2283:                     and self.model_type_stack.get() is None\n2284:                     an"
+    },
+    {
+      "step": 8,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "_apply_annotations",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+        "max_results": 20
+      },
+      "duration_ms": 15.25,
+      "success": true,
+      "result_preview": "_internal/_generate_schema.py:1293:                 schema = self._apply_annotations(\n_internal/_generate_schema.py:1297:                 schema = self._apply_annotations(\n_internal/_generate_schema.p"
+    },
+    {
+      "step": 8,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "transform_inner_schema",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+        "max_results": 20
+      },
+      "duration_ms": 14.59,
+      "success": true,
+      "result_preview": "_internal/_generate_schema.py:1294:                     source_type, annotations + validators_from_decorators, transform_inner_schema=set_discriminator\n_internal/_generate_schema.py:2212:         tran"
+    },
+    {
+      "step": 9,
+      "tool_name": "Read",
+      "arguments": {
+        "offset": 2200,
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+        "limit": 60
+      },
+      "duration_ms": 0.82,
+      "success": true,
+      "result_preview": "2200:         schema = self._apply_annotations(source_type, annotations)\n2201:         # put the default validator last so that TypeAdapter.get_default_value() works\n2202:         # even if there are "
+    },
+    {
+      "step": 9,
+      "tool_name": "Read",
+      "arguments": {
+        "offset": 2840,
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+        "limit": 60
+      },
+      "duration_ms": 0.74,
+      "success": true,
+      "result_preview": "2840:             if inlinable_def_ref is not None and (inlining_behavior := _inlining_behavior(inlinable_def_ref)) != 'keep':\n2841:                 if inlining_behavior == 'inline':\n2842:            "
+    },
+    {
+      "step": 10,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "_get_wrapped_inner_schema",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+        "max_results": 5
+      },
+      "duration_ms": 15.04,
+      "success": true,
+      "result_preview": "_internal/_generate_schema.py:2243:             get_inner_schema = self._get_wrapped_inner_schema(\n_internal/_generate_schema.py:2410:     def _get_wrapped_inner_schema("
+    },
+    {
+      "step": 10,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "_generate_schema_from_get_schema_method",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+        "max_results": 5
+      },
+      "duration_ms": 12.78,
+      "success": true,
+      "result_preview": "_internal/_generate_schema.py:739:         schema = self._generate_schema_from_get_schema_method(obj, obj)\n_internal/_generate_schema.py:899:     def _generate_schema_from_get_schema_method(self, obj:"
+    },
+    {
+      "step": 11,
+      "tool_name": "Read",
+      "arguments": {
+        "offset": 2410,
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+        "limit": 80
+      },
+      "duration_ms": 0.8,
+      "success": true,
+      "result_preview": "2410:     def _get_wrapped_inner_schema(\n2411:         self,\n2412:         get_inner_schema: GetCoreSchemaHandler,\n2413:         annotation: Any,\n2414:         pydantic_js_annotation_functions: list[G"
+    },
+    {
+      "step": 11,
+      "tool_name": "Read",
+      "arguments": {
+        "offset": 899,
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+        "limit": 60
+      },
+      "duration_ms": 0.69,
+      "success": true,
+      "result_preview": "899:     def _generate_schema_from_get_schema_method(self, obj: Any, source: Any) -> core_schema.CoreSchema | None:\n900:         BaseModel_ = import_cached_base_model()\n901: \n902:         get_schema ="
+    }
+  ],
+  "tool_counts": {
+    "Glob": 1,
+    "Grep": 9,
+    "Read": 13
+  },
+  "retry_count": 3,
+  "max_retries_allowed": 3,
+  "stuck_count": 4,
+  "stuck_events": [
+    {
+      "reason": "no new files read in recent steps",
+      "step": 8
+    },
+    {
+      "reason": "no new files read in recent steps",
+      "step": 9
+    },
+    {
+      "reason": "no new files read in recent steps",
+      "step": 10
+    },
+    {
+      "reason": "no new files read in recent steps",
+      "step": 11
+    }
+  ],
+  "total_time_seconds": 36.82,
+  "time_to_first_tool_seconds": 3.23,
+  "checkpoint_times": [
+    {
+      "checkpoint_id": "found_apply_discriminator",
+      "step_reached": 1,
+      "time_seconds": 3.2735008439995,
+      "description": "Found apply_discriminator function"
+    },
+    {
+      "checkpoint_id": "found_literal_extraction",
+      "step_reached": 1,
+      "time_seconds": 3.27350711300096,
+      "description": "Understood how literal values are extracted"
+    }
+  ],
+  "prompt_tokens": 614886,
+  "completion_tokens": 20098,
+  "total_tokens": 634984,
+  "system_prompt_chars": 16510,
+  "system_prompt_tokens": 3128,
+  "mode_used": "exploring",
+  "states_used": [
+    "intake",
+    "context_discovery",
+    "tool_execution",
+    "finalization"
+  ],
+  "files_read": [
+    "/home/levybonito/Documentos/pydantic/pydantic/_internal/_discriminated_union.py",
+    "/home/levybonito/Documentos/pydantic/pydantic/types.py",
+    "/home/levybonito/Documentos/pydantic/pydantic/_internal/_core_utils.py",
+    "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py"
+  ],
+  "searches_made": [
+    "**/*.py",
+    "class Discriminator",
+    "discriminator",
+    "is_function_with_inner_schema",
+    "apply_discriminator",
+    "_apply_annotations",
+    "transform_inner_schema",
+    "_get_wrapped_inner_schema",
+    "_generate_schema_from_get_schema_method"
+  ],
+  "derived": {
+    "success_rate": 0.0,
+    "tool_efficiency": 0.17,
+    "total_tool_calls": 23,
+    "unique_files_read": 4,
+    "unique_searches": 9,
+    "checkpoints_reached": 2,
+    "retry_utilization": 1.0,
+    "stuck_rate": 0.36,
+    "avg_time_per_step_ms": 3347.27
+  }
+}

@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""Aggregate multiple benchmark evaluations into a comparative report.
+
+Usage:
+    python benchmarks/scripts/aggregate.py \\
+        --input benchmarks/results/*.json \\
+        --output benchmarks/analysis/full_report.md
+
+Produces:
+  - Per-project, per-difficulty summary tables
+  - Cross-run metric comparisons
+  - Grade distribution
+  - Improvement recommendations
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from collections import defaultdict
+from pathlib import Path
+from statistics import mean, stdev
+
+
+def load_results(paths: list[Path]) -> list[dict]:
+    all_results: list[dict] = []
+    for p in paths:
+        data = json.loads(p.read_text())
+        if isinstance(data, list):
+            all_results.extend(data)
+        elif isinstance(data, dict):
+            all_results.append(data)
+    return all_results
+
+
+def build_summary(results: list[dict]) -> dict:
+    by_project = defaultdict(list)
+    by_difficulty = defaultdict(list)
+    by_grade = defaultdict(int)
+
+    for r in results:
+        by_project[r["project"]].append(r)
+        by_difficulty[r["difficulty"]].append(r)
+        by_grade[r["grade"]] += 1
+
+    summary = {
+        "total_runs": len(results),
+        "grade_distribution": dict(by_grade),
+        "by_project": {},
+        "by_difficulty": {},
+        "overall": {},
+    }
+
+    # Per-project stats
+    for project, runs in by_project.items():
+        summary["by_project"][project] = _compute_stats(runs)
+
+    # Per-difficulty stats
+    for diff, runs in by_difficulty.items():
+        summary["by_difficulty"][diff] = _compute_stats(runs)
+
+    # Overall
+    summary["overall"] = _compute_stats(results)
+
+    return summary
+
+
+def _compute_stats(runs: list[dict]) -> dict:
+    def avg(key: str) -> float:
+        vals = [r[key] for r in runs if key in r]
+        return round(mean(vals), 2) if vals else 0.0
+
+    def std(key: str) -> float:
+        vals = [r[key] for r in runs if key in r]
+        return round(stdev(vals), 2) if len(vals) > 1 else 0.0
+
+    return {
+        "count": len(runs),
+        "avg_exploration": avg("exploration_score"),
+        "avg_tool_efficiency": avg("tool_efficiency"),
+        "avg_synthesis": avg("synthesis_quality"),
+        "avg_success": avg("success_rate"),
+        "avg_final_score": avg("final_score"),
+        "std_final_score": std("final_score"),
+        "avg_tokens_per_step": avg("token_efficiency"),
+        "avg_stuck": avg("stuck_count"),
+        "hallucination_rate": round(
+            sum(1 for r in runs if r.get("hallucination_detected")) / len(runs) * 100, 2
+        ),
+    }
+
+
+def generate_report(summary: dict) -> str:
+    lines = [
+        "# PersonAgent Exploration Benchmark Report",
+        "",
+        f"**Total Runs:** {summary['total_runs']}",
+        f"**Grade Distribution:** {summary['grade_distribution']}",
+        "",
+        "---",
+        "",
+        "## Overall Metrics",
+        "",
+        "| Metric | Average |",
+        "|--------|---------|",
+        f"| Exploration Depth | {summary['overall']['avg_exploration']}% |",
+        f"| Tool Efficiency | {summary['overall']['avg_tool_efficiency']}% |",
+        f"| Synthesis Quality | {summary['overall']['avg_synthesis']}% |",
+        f"| Success Rate | {summary['overall']['avg_success']}% |",
+        f"| Final Score | {summary['overall']['avg_final_score']} (std: {summary['overall']['std_final_score']}) |",
+        f"| Tokens/Step | {summary['overall']['avg_tokens_per_step']} |",
+        f"| Stuck Events | {summary['overall']['avg_stuck']} |",
+        f"| Hallucination Rate | {summary['overall']['hallucination_rate']}% |",
+        "",
+        "## By Project",
+        "",
+    ]
+
+    for project, stats in summary["by_project"].items():
+        lines.extend([
+            f"### {project}",
+            "",
+            f"- Runs: {stats['count']}",
+            f"- Avg Final Score: {stats['avg_final_score']} ",
+            f"- Avg Exploration: {stats['avg_exploration']}%",
+            f"- Avg Synthesis: {stats['avg_synthesis']}%",
+            f"- Hallucination Rate: {stats['hallucination_rate']}%",
+            "",
+        ])
+
+    lines.extend([
+        "## By Difficulty",
+        "",
+        "| Difficulty | Runs | Avg Score | Avg Exploration | Avg Synthesis |",
+        "|------------|------|-----------|-----------------|---------------|",
+    ])
+    for diff, stats in summary["by_difficulty"].items():
+        lines.append(
+            f"| {diff} | {stats['count']} | {stats['avg_final_score']} | "
+            f"{stats['avg_exploration']}% | {stats['avg_synthesis']}% |"
+        )
+
+    lines.extend([
+        "",
+        "## Key Findings",
+        "",
+        _generate_findings(summary),
+        "",
+        "## Improvement Recommendations",
+        "",
+        _generate_recommendations(summary),
+        "",
+        "---",
+        "*Generated by benchmarks/scripts/aggregate.py*",
+    ])
+
+    return "\n".join(lines)
+
+
+def _generate_findings(summary: dict) -> str:
+    findings = []
+    overall = summary["overall"]
+
+    if overall["avg_exploration"] < 70:
+        findings.append("- **Exploration is shallow.** Agents frequently answer without reading enough files. "
+                        "The prompt should mandate a minimum exploration checklist before synthesis.")
+    if overall["avg_tool_efficiency"] < 60:
+        findings.append("- **Tool efficiency is low.** Agents make redundant searches. "
+                        "Consider adding a 'avoid repeating searches' rule to the prompt.")
+    if overall["avg_synthesis"] < 75:
+        findings.append("- **Synthesis quality is weak.** Answers lack specific file/line references. "
+                        "The 'Evidence' section requirement in the prompt may need stronger enforcement.")
+    if overall["hallucination_rate"] > 10:
+        findings.append("- **Hallucination is a concern.** Agents are fabricating file paths. "
+                        "Strengthen the 'verify before claiming' rule in the system prompt.")
+    if overall["avg_stuck"] > 1:
+        findings.append("- **Agents get stuck frequently.** Retry prompts help but are a band-aid. "
+                        "The prompt should include broader exploration strategies by default.")
+
+    if not findings:
+        findings.append("- **No major issues detected.** The harness is performing well overall.")
+
+    return "\n".join(findings)
+
+
+def _generate_recommendations(summary: dict) -> str:
+    recs = []
+    overall = summary["overall"]
+
+    if overall["avg_exploration"] < 70:
+        recs.append("1. **Add an exploration checklist to the system prompt.** Before allowing synthesis, "
+                    "require the agent to confirm it has checked: entrypoints, domain logic, adapters/tests, and config.")
+    if overall["avg_synthesis"] < 75:
+        recs.append("2. **Strengthen evidence citation requirements.** The prompt should explicitly demand "
+                    "file paths with line numbers in every final answer. Add a stub regex check for missing citations.")
+    if overall["hallucination_rate"] > 10:
+        recs.append("3. **Add a verification step.** Before claiming a file exists, the agent must use Glob. "
+                    "If a cited file is not found, the response should be flagged and retried automatically.")
+    if overall["avg_tool_efficiency"] < 60:
+        recs.append("4. **Improve tool guidance.** The tool schema should include 'when NOT to use' guidance "
+                    "to prevent redundant searches. Also consider adding a 'recent searches' memory to the context.")
+    if overall["avg_stuck"] > 1:
+        recs.append("5. **Reduce stuck events by broadening exploration strategies.** Add rules like: "
+                    "'If a search returns no results, try a broader pattern or check tests for usage examples.'")
+
+    recs.append("6. **Track prompt composition at runtime.** Log which prompt sections are active during "
+                "each benchmark run so we can correlate prompt structure with metric scores.")
+
+    return "\n".join(recs)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Aggregate benchmark evaluations")
+    parser.add_argument("--input", required=True, nargs="+", help="Result JSON files")
+    parser.add_argument("--output", required=True, help="Output markdown report")
+    args = parser.parse_args()
+
+    paths = [Path(p) for p in args.input]
+    results = load_results(paths)
+    summary = build_summary(results)
+    report = generate_report(summary)
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(report)
+    print(f"Wrote aggregate report to {output_path}")
+    print(f"  Total runs: {summary['total_runs']}")
+    print(f"  Avg final score: {summary['overall']['avg_final_score']}")
+    print(f"  Grade distribution: {summary['grade_distribution']}")
+
+
+if __name__ == "__main__":
+    main()

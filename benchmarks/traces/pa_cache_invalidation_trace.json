@@ -1,0 +1,629 @@
+[
+  {
+    "event": "start",
+    "task": "pa_cache_invalidation",
+    "project": "PersonAgent",
+    "system_prompt_stats": {
+      "chars": 16510,
+      "tokens": 3128,
+      "lines": 203
+    },
+    "system_prompt_mode": "exploring",
+    "system_prompt_states": [
+      "intake",
+      "context_discovery",
+      "tool_execution",
+      "finalization"
+    ],
+    "timestamp": "2026-05-30T09:17:50.203538+00:00"
+  },
+  {
+    "event": "assistant_message",
+    "role": "assistant",
+    "content": "",
+    "step": 1,
+    "llm_time_seconds": 2.94,
+    "tool_calls": [
+      {
+        "index": 0,
+        "id": "call_00_QiIWrro2a8VKuaD82sH92872",
+        "type": "function",
+        "function": {
+          "name": "Glob",
+          "arguments": "{\"pattern\": \"**/*.py\", \"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent\"}"
+        }
+      },
+      {
+        "index": 1,
+        "id": "call_01_EVYMU86SmMWF1LUH8gKr9088",
+        "type": "function",
+        "function": {
+          "name": "Grep",
+          "arguments": "{\"pattern\": \"PromptBuilder\", \"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent\"}"
+        }
+      },
+      {
+        "index": 2,
+        "id": "call_02_cQt7dxFLPlDLyt9lQDyr4743",
+        "type": "function",
+        "function": {
+          "name": "Grep",
+          "arguments": "{\"pattern\": \"SystemPromptSection\", \"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent\"}"
+        }
+      },
+      {
+        "index": 3,
+        "id": "call_03_AF3hf0f6IMbXYuOrYWti4523",
+        "type": "function",
+        "function": {
+          "name": "Grep",
+          "arguments": "{\"pattern\": \"cache_scope\", \"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent\"}"
+        }
+      }
+    ]
+  },
+  {
+    "event": "tool_result",
+    "step": 1,
+    "tool_name": "Glob",
+    "arguments": {
+      "pattern": "**/*.py",
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+    },
+    "success": true,
+    "duration_ms": 13.0,
+    "result_preview": "domain/__init__.py\ndomain/token_counting.py\ndomain/exceptions.py\ndomain/browser_workspace/__init__.py\ndomain/browser_workspace/repositories.py\ndomain/prompts/prompt.py\ndomain/prompts/__init__.py\ndomain/prompts/frontmatter.py\ndomain/prompts/compact.py\ndomain/prompts/surfaces.py\ndomain/prompts/command"
+  },
+  {
+    "event": "tool_result",
+    "step": 1,
+    "tool_name": "Grep",
+    "arguments": {
+      "pattern": "PromptBuilder",
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+    },
+    "success": true,
+    "duration_ms": 134.04,
+    "result_preview": "domain/prompts/sections/base.py:10:     \"\"\"Return the shared manual base sections used by the PromptBuilder.\"\"\"\ndomain/prompts/sections/__pycache__/base.cpython-313.pyc:3: \u0000\u0000\u0000\u0000m\u0014\u0016j�\u0001\u0000\u0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0001�6\u0000\u0000\u0000�\u0000S\u0000r\u0000S\u0001S\u0002K\u0001J\u0002r\u0002 \u0000S\u0001S\u0003K\u0003J\u0004r\u0004 \u0000S\u0001S\u0004K\u0005J\u0006r\u0006 \u0000S\u0007S\u0005\u001a\u0000j\u0004r\u0007g\u0006)\bz9Compatibility entrypoint for bas"
+  },
+  {
+    "event": "tool_result",
+    "step": 1,
+    "tool_name": "Grep",
+    "arguments": {
+      "pattern": "SystemPromptSection",
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+    },
+    "success": true,
+    "duration_ms": 7.47,
+    "result_preview": "domain/prompts/prompt.py:10: from personagent.domain.prompts.models import PromptMode, SystemPromptSection\ndomain/prompts/prompt.py:56: def core_system_prompt_sections() -> tuple[SystemPromptSection, ...]:\ndomain/prompts/prompt.py:159:         SystemPromptSection(\"response_style_contract\", response_"
+  },
+  {
+    "event": "tool_result",
+    "step": 1,
+    "tool_name": "Grep",
+    "arguments": {
+      "pattern": "cache_scope",
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+    },
+    "success": true,
+    "duration_ms": 131.25,
+    "result_preview": "domain/prompts/services/prompt_builder/prompt_builder.py:191:         cache_scope = self._cache_scope(\ndomain/prompts/services/prompt_builder/prompt_builder.py:199:         resolved_sections = await self._resolve_sections(parts, cache_scope)\ndomain/prompts/services/prompt_builder/prompt_builder.py:2"
+  },
+  {
+    "event": "checkpoint",
+    "id": "found_cache_break",
+    "step": 1,
+    "elapsed": 3.2220728760003112
+  },
+  {
+    "event": "checkpoint",
+    "id": "found_scope_hash",
+    "step": 1,
+    "elapsed": 3.222085043998959
+  },
+  {
+    "event": "assistant_message",
+    "role": "assistant",
+    "content": "",
+    "step": 2,
+    "llm_time_seconds": 2.69,
+    "tool_calls": [
+      {
+        "index": 0,
+        "id": "call_00_LWNBvhNXqW555mZljIxS2346",
+        "type": "function",
+        "function": {
+          "name": "Read",
+          "arguments": "{\"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py\"}"
+        }
+      },
+      {
+        "index": 1,
+        "id": "call_01_0dcad0xSpWPLZRDv6qWu9674",
+        "type": "function",
+        "function": {
+          "name": "Read",
+          "arguments": "{\"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/models.py\"}"
+        }
+      }
+    ]
+  },
+  {
+    "event": "tool_result",
+    "step": 2,
+    "tool_name": "Read",
+    "arguments": {
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py"
+    },
+    "success": true,
+    "duration_ms": 1.14,
+    "result_preview": "1: \"\"\"Prompt builder service.\n2: \n3: Este serviço monta o system prompt completo a partir das seções disponíveis,\n4: aplicando contexto de sistema e usuário quando apropriado.\n5: \"\"\"\n6: \n7: from __future__ import annotations\n8: \n9: import time\n10: from hashlib import sha256\n11: from typing import An"
+  },
+  {
+    "event": "tool_result",
+    "step": 2,
+    "tool_name": "Read",
+    "arguments": {
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/models.py"
+    },
+    "success": true,
+    "duration_ms": 0.64,
+    "result_preview": "1: \"\"\"Prompts domain models.\n2: \n3: Este módulo define as entidades para montagem dinâmica de system prompts.\n4: Seguindo os princípios da Arquitetura Clean, estas entidades não dependem\n5: de infraestrutura (filesystem, banco, APIs externas).\n6: \"\"\"\n7: \n8: from __future__ import annotations\n9: \n10:"
+  },
+  {
+    "event": "assistant_message",
+    "role": "assistant",
+    "content": "",
+    "step": 3,
+    "llm_time_seconds": 2.09,
+    "tool_calls": [
+      {
+        "index": 0,
+        "id": "call_00_3WB5sCh5kuv8OcnYhCHb4399",
+        "type": "function",
+        "function": {
+          "name": "Read",
+          "arguments": "{\"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py\", \"offset\": 200}"
+        }
+      }
+    ]
+  },
+  {
+    "event": "tool_result",
+    "step": 3,
+    "tool_name": "Read",
+    "arguments": {
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py",
+      "offset": 200
+    },
+    "success": true,
+    "duration_ms": 0.82,
+    "result_preview": "200: \n201:         # Monta prompt completo\n202:         content, dynamic_sections = self._assemble_system_prompt(\n203:             resolved_sections,\n204:             system_context,\n205:         )\n206:         user_context_message = build_user_context_message(user_context, runtime_reminders)\n207:  "
+  },
+  {
+    "event": "assistant_message",
+    "role": "assistant",
+    "content": "",
+    "step": 4,
+    "llm_time_seconds": 2.07,
+    "tool_calls": [
+      {
+        "index": 0,
+        "id": "call_00_5NNsUeFVUd478eMY1wVP5552",
+        "type": "function",
+        "function": {
+          "name": "Read",
+          "arguments": "{\"offset\": 400, \"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py\"}"
+        }
+      }
+    ]
+  },
+  {
+    "event": "tool_result",
+    "step": 4,
+    "tool_name": "Read",
+    "arguments": {
+      "offset": 400,
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py"
+    },
+    "success": true,
+    "duration_ms": 0.82,
+    "result_preview": "400:                 surface_hints=(\"system\", \"mode\", \"tool\", \"memory\", \"next_step\", \"reminder\"),\n401:             )\n402:         if prompt_profile is not None:\n403:             return prompt_profile\n404:         return PromptProfile(\n405:             primary_mode=\"exploring\",\n406:             reque"
+  },
+  {
+    "event": "assistant_message",
+    "role": "assistant",
+    "content": "Now let me check which sections actually set `cache_break=True` to see examples of volatile sections:",
+    "step": 5,
+    "llm_time_seconds": 2.69,
+    "tool_calls": [
+      {
+        "index": 0,
+        "id": "call_00_NxtyYKjxtkpNfBdRPTO44086",
+        "type": "function",
+        "function": {
+          "name": "Grep",
+          "arguments": "{\"pattern\": \"cache_break\", \"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts\"}"
+        }
+      },
+      {
+        "index": 1,
+        "id": "call_01_6Ry80nlVaJQeim5JRykR3132",
+        "type": "function",
+        "function": {
+          "name": "Grep",
+          "arguments": "{\"pattern\": \"cache_break\", \"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts\", \"glob\": \"*.py\"}"
+        }
+      }
+    ]
+  },
+  {
+    "event": "tool_result",
+    "step": 5,
+    "tool_name": "Grep",
+    "arguments": {
+      "pattern": "cache_break",
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts"
+    },
+    "success": true,
+    "duration_ms": 25.56,
+    "result_preview": "domain/prompts/prompt.py:216:         cache_break=True,\ndomain/prompts/models.py:44:     cache_break: bool = False  # True = recompute every turn (breaks cache)\ndomain/prompts/__pycache__/prompt.cpython-313.pyc:115: For project-reading answers, turn tool output into readable blocks. Cite only repres"
+  },
+  {
+    "event": "tool_result",
+    "step": 5,
+    "tool_name": "Grep",
+    "arguments": {
+      "pattern": "cache_break",
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts",
+      "glob": "*.py"
+    },
+    "success": true,
+    "duration_ms": 8.82,
+    "result_preview": "domain/prompts/prompt.py:216:         cache_break=True,\ndomain/prompts/models.py:44:     cache_break: bool = False  # True = recompute every turn (breaks cache)\ndomain/prompts/sections/tool_prompts.py:36:     cache_break = any(\ndomain/prompts/sections/tool_prompts.py:39:     return (SystemPromptSect"
+  },
+  {
+    "event": "assistant_message",
+    "role": "assistant",
+    "content": "",
+    "step": 6,
+    "llm_time_seconds": 2.53,
+    "tool_calls": [
+      {
+        "index": 0,
+        "id": "call_00_geQuKzsQsbLEcdA8v0BL4486",
+        "type": "function",
+        "function": {
+          "name": "Read",
+          "arguments": "{\"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/_sections.py\"}"
+        }
+      },
+      {
+        "index": 1,
+        "id": "call_01_Z7379oYedgqDksX5tvAO1822",
+        "type": "function",
+        "function": {
+          "name": "Read",
+          "arguments": "{\"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/prompt.py\", \"offset\": 200, \"limit\": 30}"
+        }
+      },
+      {
+        "index": 2,
+        "id": "call_02_hMdo20tn6alvPfI32PVQ7324",
+        "type": "function",
+        "function": {
+          "name": "Read",
+          "arguments": "{\"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/sections/tool_prompts.py\"}"
+        }
+      }
+    ]
+  },
+  {
+    "event": "tool_result",
+    "step": 6,
+    "tool_name": "Read",
+    "arguments": {
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/_sections.py"
+    },
+    "success": true,
+    "duration_ms": 0.78,
+    "result_preview": "1: \"\"\"Section builders for the prompt builder.\"\"\"\n2: \n3: from __future__ import annotations\n4: \n5: from personagent.domain.prompts.commands import PromptCommand\n6: from personagent.domain.prompts.models import SystemPromptSection\n7: from personagent.domain.prompts.skills import SkillDefinition\n8: \n9"
+  },
+  {
+    "event": "tool_result",
+    "step": 6,
+    "tool_name": "Read",
+    "arguments": {
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/prompt.py",
+      "offset": 200,
+      "limit": 30
+    },
+    "success": true,
+    "duration_ms": 0.55,
+    "result_preview": "200:     return SystemPromptSection(\"parallel_tool_use\", render)\n201: \n202: \n203: def response_style_runtime_reminder_section() -> SystemPromptSection:\n204:     \"\"\"Return a late, compact reminder that output style outranks prompt scaffolding.\"\"\"\n205: \n206:     def render() -> str:\n207:         retur"
+  },
+  {
+    "event": "tool_result",
+    "step": 6,
+    "tool_name": "Read",
+    "arguments": {
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/sections/tool_prompts.py"
+    },
+    "success": true,
+    "duration_ms": 0.5,
+    "result_preview": "1: \"\"\"Rich tool prompt sections inspired by PersonAgent tool guidance.\"\"\"\n2: \n3: from __future__ import annotations\n4: \n5: from personagent.domain.prompts.models import SystemPromptSection\n6: from personagent.domain.tools import ToolDefinition\n7: \n8: \n9: def get_rich_tool_prompt_sections(\n10:     to"
+  },
+  {
+    "event": "assistant_message",
+    "role": "assistant",
+    "content": "Let me also check the `SystemContext` model to see what `workspace_root` is:",
+    "step": 7,
+    "llm_time_seconds": 2.46,
+    "tool_calls": [
+      {
+        "index": 0,
+        "id": "call_00_ld4sdwj291QMstjUVvvB0854",
+        "type": "function",
+        "function": {
+          "name": "Read",
+          "arguments": "{\"path\": \"/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/context/models.py\"}"
+        }
+      }
+    ]
+  },
+  {
+    "event": "tool_result",
+    "step": 7,
+    "tool_name": "Read",
+    "arguments": {
+      "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/context/models.py"
+    },
+    "success": true,
+    "duration_ms": 0.81,
+    "result_preview": "1: \"\"\"Context domain models.\n2: \n3: Este módulo define as entidades puras de contexto usadas pelo PersonAgent.\n4: Seguindo os princípios da Arquitetura Clean, estas entidades não dependem\n5: de infraestrutura (filesystem, banco, APIs externas).\n6: \"\"\"\n7: \n8: from __future__ import annotations\n9: \n10"
+  },
+  {
+    "event": "assistant_message",
+    "role": "assistant",
+    "content": "Agora tenho todas as peças. Aqui está a análise completa.\n\n---\n\n## Como o PromptBuilder decide se um SystemPromptSection deve ser cacheado ou recomputado\n\nA decisão opera em duas camadas: um **flag por seção** (`cache_break`) que diz se ela é volátil, e um **hash de escopo** (`cache_scope`) que define qual \"versão\" do ambiente está valendo.\n\n### 1. O flag `cache_break` — o interruptor por seção\n\nCada `SystemPromptSection` (definida em `domain/prompts/models.py:34-51`) carrega um campo booleano:\n\n```python\ncache_break: bool = False  # True = recompute every turn (breaks cache)\n```\n\nA lógica de resolução está em `_resolve_sections` (`prompt_builder.py:296-326`):\n\n1. Para cada seção, monta uma chave: `cache_key = f\"{cache_scope}:{section.name}\"` (linha 313)\n2. Se `cache_break=False` **e** a chave existe no dicionário `self._section_cache`, reusa o conteúdo cacheado — **pula a computação** (linhas 314-315)\n3. Se `cache_break=True` ou a chave não existe no cache, chama `section.compute()` para resolver a seção (linha 317)\n4. Se o resultado não for vazio e `cache_break=False`, armazena no cache para o próximo turno (linhas 318-319)\n\nAlém disso, em `_assemble_system_prompt` (`prompt_builder.py:351-386`), seções com `cache_break=True` são movidas para **depois do `PROMPT_DYNAMIC_BOUNDARY`** (linhas 370-372), garantindo que apareçam sempre no final e sejam tratadas como conteúdo dinâmico.\n\n**Seções com `cache_break=True` (sempre recomputadas):**\n\n| Seção | Arquivo | Linha |\n|---|---|---|\n| `response_style_runtime_reminder` | `domain/prompts/prompt.py` | 216 |\n| `session_memory` | `domain/prompts/services/prompt_builder/_sections.py` | 80 |\n| `relevant_memories` | `domain/prompts/services/prompt_builder/_sections.py` | 99 |\n| `tool_prompts` (condicional) | `domain/prompts/sections/tool_prompts.py` | 36-39 |\n\nA seção `tool_prompts` é cacheable **a menos que** alguma `ToolDefinition` tenha `cacheable_prompt=False` — nesse caso o `cache_break` vira `True` para todo o lote (tool_prompts.py:36-38).\n\nTodas as demais seções (response style contract, acting contract, exploration protocol, tool sections estáticas, execution sections, agent state sections, command inventory, skill inventory, etc.) têm `cache_break=False` e são cacheadas.\n\n---\n\n### 2. O hash `cache_scope` — o que chaveia o cache\n\nO método `_cache_scope` (`prompt_builder.py:413-431`) produz um hash SHA-256 truncado para 16 caracteres a partir de **sete inputs** concatenados com `|`:\n\n```python\nraw = (\n    f\"{workspace}|{prompt_mode}|{states}|\"\n    f\"{self._permission_mode}|{provider}|{model}|{tools}\"\n)\ndigest = sha256(raw.encode(\"utf-8\")).hexdigest()[:16]\nreturn f\"system-prompt:{digest}\"\n```\n\nCada componente:\n\n| Input | Fonte | Exemplo |\n|---|---|---|\n| `workspace` | `system_context.workspace_root` | `/home/user/projeto` |\n| `prompt_mode` | Modo primário resolvido (`writing`, `exploring`, `research`) | `exploring` |\n| `states` | Estados de agente, concatenados com `,` | `intake,context_discovery,finalization` |\n| `permission_mode` | `self._permission_mode` (definido no construtor) | `manual` |\n| `provider` | Nome do provedor LLM | `llama` |\n| `model` | Nome do modelo | `local-model` |\n| `tools` | Nomes de ferramentas disponíveis, ordenados e concatenados com `,` | `Glob,Grep,Read,shell` |\n\nA **chave final** para uma seção individual no cache é:\n```\nsystem-prompt:<16-char-sha256>:<section.name>\n```\n\nIsso significa que se qualquer um desses sete fatores mudar entre turnos (ex.: um novo workspace, modo de prompt diferente, nova ferramenta disponível, troca de modelo), todo o prefixo `cache_scope` muda — e **todas** as seções perdem o cache, mesmo aquelas com `cache_break=False`.",
+    "step": 8,
+    "llm_time_seconds": 13.69
+  },
+  {
+    "event": "final_answer",
+    "step": 8,
+    "content": "Agora tenho todas as peças. Aqui está a análise completa.\n\n---\n\n## Como o PromptBuilder decide se um SystemPromptSection deve ser cacheado ou recomputado\n\nA decisão opera em duas camadas: um **flag por seção** (`cache_break`) que diz se ela é volátil, e um **hash de escopo** (`cache_scope`) que define qual \"versão\" do ambiente está valendo.\n\n### 1. O flag `cache_break` — o interruptor por seção\n\nCada `SystemPromptSection` (definida em `domain/prompts/models.py:34-51`) carrega um campo booleano:\n\n```python\ncache_break: bool = False  # True = recompute every turn (breaks cache)\n```\n\nA lógica de resolução está em `_resolve_sections` (`prompt_builder.py:296-326`):\n\n1. Para cada seção, monta uma chave: `cache_key = f\"{cache_scope}:{section.name}\"` (linha 313)\n2. Se `cache_break=False` **e** a chave existe no dicionário `self._section_cache`, reusa o conteúdo cacheado — **pula a computação** (linhas 314-315)\n3. Se `cache_break=True` ou a chave não existe no cache, chama `section.compute()` para resolver a seção (linha 317)\n4. Se o resultado não for vazio e `cache_break=False`, armazena no cache para o próximo turno (linhas 318-319)\n\nAlém disso, em `_assemble_system_prompt` (`prompt_builder.py:351-386`), seções com `cache_break=True` são movidas para **depois do `PROMPT_DYNAMIC_BOUNDARY`** (linhas 370-372), garantindo que apareçam sempre no final e sejam tratadas como conteúdo dinâmico.\n\n**Seções com `cache_break=True` (sempre recomputadas):**\n\n| Seção | Arquivo | Linha |\n|---|---|---|\n| `response_style_runtime_reminder` | `domain/prompts/prompt.py` | 216 |\n| `session_memory` | `domain/prompts/services/prompt_builder/_sections.py` | 80 |\n| `relevant_memories` | `domain/prompts/services/prompt_builder/_sections.py` | 99 |\n| `tool_prompts` (condicional) | `domain/prompts/sections/tool_prompts.py` | 36-39 |\n\nA seção `tool_prompts` é cacheable **a menos que** alguma `ToolDefinition` tenha `cacheable_prompt=False` — nesse caso o `cache_break` vira `True` para todo o lote (tool_prompts.py:36-38).\n\nTodas as demais seções (response style contract, acting contract, exploration protocol, tool sections estáticas, execution sections, agent state sections, command inventory, skill inventory, etc.) têm `cache_break=False` e são cacheadas.\n\n---\n\n### 2. O hash `cache_scope` — o que chaveia o cache\n\nO método `_cache_scope` (`prompt_builder.py:413-431`) produz um hash SHA-256 truncado para 16 caracteres a partir de **sete inputs** concatenados com `|`:\n\n```python\nraw = (\n    f\"{workspace}|{prompt_mode}|{states}|\"\n    f\"{self._permission_mode}|{provider}|{model}|{tools}\"\n)\ndigest = sha256(raw.encode(\"utf-8\")).hexdigest()[:16]\nreturn f\"system-prompt:{digest}\"\n```\n\nCada componente:\n\n| Input | Fonte | Exemplo |\n|---|---|---|\n| `workspace` | `system_context.workspace_root` | `/home/user/projeto` |\n| `prompt_mode` | Modo primário resolvido (`writing`, `exploring`, `research`) | `exploring` |\n| `states` | Estados de agente, concatenados com `,` | `intake,context_discovery,finalization` |\n| `permission_mode` | `self._permission_mode` (definido no construtor) | `manual` |\n| `provider` | Nome do provedor LLM | `llama` |\n| `model` | Nome do modelo | `local-model` |\n| `tools` | Nomes de ferramentas disponíveis, ordenados e concatenados com `,` | `Glob,Grep,Read,shell` |\n\nA **chave final** para uma seção individual no cache é:\n```\nsystem-prompt:<16-char-sha256>:<section.name>\n```\n\nIsso significa que se qualquer um desses sete fatores mudar entre turnos (ex.: um novo workspace, modo de prompt diferente, nova ferramenta disponível, troca de modelo), todo o prefixo `cache_scope` muda — e **todas** as seções perdem o cache, mesmo aquelas com `cache_break=False`."
+  },
+  {
+    "event": "end",
+    "metrics": {
+      "benchmark_id": "pa_cache_invalidation",
+      "project": "PersonAgent",
+      "model": "deepseek-v4-flash",
+      "started_at": "2026-05-30T09:17:50.052312+00:00",
+      "finished_at": "2026-05-30T09:18:21.683407+00:00",
+      "success": true,
+      "final_answer": "Agora tenho todas as peças. Aqui está a análise completa.\n\n---\n\n## Como o PromptBuilder decide se um SystemPromptSection deve ser cacheado ou recomputado\n\nA decisão opera em duas camadas: um **flag por seção** (`cache_break`) que diz se ela é volátil, e um **hash de escopo** (`cache_scope`) que define qual \"versão\" do ambiente está valendo.\n\n### 1. O flag `cache_break` — o interruptor por seção\n\nCada `SystemPromptSection` (definida em `domain/prompts/models.py:34-51`) carrega um campo booleano:\n\n```python\ncache_break: bool = False  # True = recompute every turn (breaks cache)\n```\n\nA lógica de resolução está em `_resolve_sections` (`prompt_builder.py:296-326`):\n\n1. Para cada seção, monta uma chave: `cache_key = f\"{cache_scope}:{section.name}\"` (linha 313)\n2. Se `cache_break=False` **e** a chave existe no dicionário `self._section_cache`, reusa o conteúdo cacheado — **pula a computação** (linhas 314-315)\n3. Se `cache_break=True` ou a chave não existe no cache, chama `section.compute()` para resolver a seção (linha 317)\n4. Se o resultado não for vazio e `cache_break=False`, armazena no cache para o próximo turno (linhas 318-319)\n\nAlém disso, em `_assemble_system_prompt` (`prompt_builder.py:351-386`), seções com `cache_break=True` são movidas para **depois do `PROMPT_DYNAMIC_BOUNDARY`** (linhas 370-372), garantindo que apareçam sempre no final e sejam tratadas como conteúdo dinâmico.\n\n**Seções com `cache_break=True` (sempre recomputadas):**\n\n| Seção | Arquivo | Linha |\n|---|---|---|\n| `response_style_runtime_reminder` | `domain/prompts/prompt.py` | 216 |\n| `session_memory` | `domain/prompts/services/prompt_builder/_sections.py` | 80 |\n| `relevant_memories` | `domain/prompts/services/prompt_builder/_sections.py` | 99 |\n| `tool_prompts` (condicional) | `domain/prompts/sections/tool_prompts.py` | 36-39 |\n\nA seção `tool_prompts` é cacheable **a menos que** alguma `ToolDefinition` tenha `cacheable_prompt=False` — nesse caso o `cache_break` vira `True` para todo o lote (tool_prompts.py:36-38).\n\nTodas as demais seções (response style contract, acting contract, exploration protocol, tool sections estáticas, execution sections, agent state sections, command inventory, skill inventory, etc.) têm `cache_break=False` e são cacheadas.\n\n---\n\n### 2. O hash `cache_scope` — o que chaveia o cache\n\nO método `_cache_scope` (`prompt_builder.py:413-431`) produz um hash SHA-256 truncado para 16 caracteres a partir de **sete inputs** concatenados com `|`:\n\n```python\nraw = (\n    f\"{workspace}|{prompt_mode}|{states}|\"\n    f\"{self._permission_mode}|{provider}|{model}|{tools}\"\n)\ndigest = sha256(raw.encode(\"utf-8\")).hexdigest()[:16]\nreturn f\"system-prompt:{digest}\"\n```\n\nCada componente:\n\n| Input | Fonte | Exemplo |\n|---|---|---|\n| `workspace` | `system_context.workspace_root` | `/home/user/projeto` |\n| `prompt_mode` | Modo primário resolvido (`writing`, `exploring`, `research`) | `exploring` |\n| `states` | Estados de agente, concatenados com `,` | `intake,context_discovery,finalization` |\n| `permission_mode` | `self._permission_mode` (definido no construtor) | `manual` |\n| `provider` | Nome do provedor LLM | `llama` |\n| `model` | Nome do modelo | `local-model` |\n| `tools` | Nomes de ferramentas disponíveis, ordenados e concatenados com `,` | `Glob,Grep,Read,shell` |\n\nA **chave final** para uma seção individual no cache é:\n```\nsystem-prompt:<16-char-sha256>:<section.name>\n```\n\nIsso significa que se qualquer um desses sete fatores mudar entre turnos (ex.: um novo workspace, modo de prompt diferente, nova ferramenta disponível, troca de modelo), todo o prefixo `cache_scope` muda — e **todas** as seções perdem o cache, mesmo aquelas com `cache_break=False`.",
+      "failure_reason": "",
+      "total_steps": 8,
+      "max_steps_allowed": 30,
+      "tool_calls": [
+        {
+          "step": 1,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/*.py",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+          },
+          "duration_ms": 13.0,
+          "success": true,
+          "result_preview": "domain/__init__.py\ndomain/token_counting.py\ndomain/exceptions.py\ndomain/browser_workspace/__init__.py\ndomain/browser_workspace/repositories.py\ndomain/prompts/prompt.py\ndomain/prompts/__init__.py\ndomai"
+        },
+        {
+          "step": 1,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "PromptBuilder",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+          },
+          "duration_ms": 134.04,
+          "success": true,
+          "result_preview": "domain/prompts/sections/base.py:10:     \"\"\"Return the shared manual base sections used by the PromptBuilder.\"\"\"\ndomain/prompts/sections/__pycache__/base.cpython-313.pyc:3: \u0000\u0000\u0000\u0000m\u0014\u0016j�\u0001\u0000\u0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000"
+        },
+        {
+          "step": 1,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "SystemPromptSection",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+          },
+          "duration_ms": 7.47,
+          "success": true,
+          "result_preview": "domain/prompts/prompt.py:10: from personagent.domain.prompts.models import PromptMode, SystemPromptSection\ndomain/prompts/prompt.py:56: def core_system_prompt_sections() -> tuple[SystemPromptSection, "
+        },
+        {
+          "step": 1,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "cache_scope",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+          },
+          "duration_ms": 131.25,
+          "success": true,
+          "result_preview": "domain/prompts/services/prompt_builder/prompt_builder.py:191:         cache_scope = self._cache_scope(\ndomain/prompts/services/prompt_builder/prompt_builder.py:199:         resolved_sections = await s"
+        },
+        {
+          "step": 2,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py"
+          },
+          "duration_ms": 1.14,
+          "success": true,
+          "result_preview": "1: \"\"\"Prompt builder service.\n2: \n3: Este serviço monta o system prompt completo a partir das seções disponíveis,\n4: aplicando contexto de sistema e usuário quando apropriado.\n5: \"\"\"\n6: \n7: from __fut"
+        },
+        {
+          "step": 2,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/models.py"
+          },
+          "duration_ms": 0.64,
+          "success": true,
+          "result_preview": "1: \"\"\"Prompts domain models.\n2: \n3: Este módulo define as entidades para montagem dinâmica de system prompts.\n4: Seguindo os princípios da Arquitetura Clean, estas entidades não dependem\n5: de infraes"
+        },
+        {
+          "step": 3,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py",
+            "offset": 200
+          },
+          "duration_ms": 0.82,
+          "success": true,
+          "result_preview": "200: \n201:         # Monta prompt completo\n202:         content, dynamic_sections = self._assemble_system_prompt(\n203:             resolved_sections,\n204:             system_context,\n205:         )\n20"
+        },
+        {
+          "step": 4,
+          "tool_name": "Read",
+          "arguments": {
+            "offset": 400,
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py"
+          },
+          "duration_ms": 0.82,
+          "success": true,
+          "result_preview": "400:                 surface_hints=(\"system\", \"mode\", \"tool\", \"memory\", \"next_step\", \"reminder\"),\n401:             )\n402:         if prompt_profile is not None:\n403:             return prompt_profile\n"
+        },
+        {
+          "step": 5,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "cache_break",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts"
+          },
+          "duration_ms": 25.56,
+          "success": true,
+          "result_preview": "domain/prompts/prompt.py:216:         cache_break=True,\ndomain/prompts/models.py:44:     cache_break: bool = False  # True = recompute every turn (breaks cache)\ndomain/prompts/__pycache__/prompt.cpyth"
+        },
+        {
+          "step": 5,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "cache_break",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts",
+            "glob": "*.py"
+          },
+          "duration_ms": 8.82,
+          "success": true,
+          "result_preview": "domain/prompts/prompt.py:216:         cache_break=True,\ndomain/prompts/models.py:44:     cache_break: bool = False  # True = recompute every turn (breaks cache)\ndomain/prompts/sections/tool_prompts.py"
+        },
+        {
+          "step": 6,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/_sections.py"
+          },
+          "duration_ms": 0.78,
+          "success": true,
+          "result_preview": "1: \"\"\"Section builders for the prompt builder.\"\"\"\n2: \n3: from __future__ import annotations\n4: \n5: from personagent.domain.prompts.commands import PromptCommand\n6: from personagent.domain.prompts.mode"
+        },
+        {
+          "step": 6,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/prompt.py",
+            "offset": 200,
+            "limit": 30
+          },
+          "duration_ms": 0.55,
+          "success": true,
+          "result_preview": "200:     return SystemPromptSection(\"parallel_tool_use\", render)\n201: \n202: \n203: def response_style_runtime_reminder_section() -> SystemPromptSection:\n204:     \"\"\"Return a late, compact reminder that"
+        },
+        {
+          "step": 6,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/sections/tool_prompts.py"
+          },
+          "duration_ms": 0.5,
+          "success": true,
+          "result_preview": "1: \"\"\"Rich tool prompt sections inspired by PersonAgent tool guidance.\"\"\"\n2: \n3: from __future__ import annotations\n4: \n5: from personagent.domain.prompts.models import SystemPromptSection\n6: from per"
+        },
+        {
+          "step": 7,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/context/models.py"
+          },
+          "duration_ms": 0.81,
+          "success": true,
+          "result_preview": "1: \"\"\"Context domain models.\n2: \n3: Este módulo define as entidades puras de contexto usadas pelo PersonAgent.\n4: Seguindo os princípios da Arquitetura Clean, estas entidades não dependem\n5: de infrae"
+        }
+      ],
+      "tool_counts": {
+        "Glob": 1,
+        "Grep": 5,
+        "Read": 8
+      },
+      "retry_count": 0,
+      "max_retries_allowed": 3,
+      "stuck_count": 0,
+      "stuck_events": [],
+      "total_time_seconds": 31.48,
+      "time_to_first_tool_seconds": 2.94,
+      "checkpoint_times": [
+        {
+          "checkpoint_id": "found_cache_break",
+          "step_reached": 1,
+          "time_seconds": 3.2220728760003112,
+          "description": "Located cache_break field in models"
+        },
+        {
+          "checkpoint_id": "found_scope_hash",
+          "step_reached": 1,
+          "time_seconds": 3.222085043998959,
+          "description": "Found how cache_scope is built"
+        }
+      ],
+      "prompt_tokens": 153124,
+      "completion_tokens": 3216,
+      "total_tokens": 156340,
+      "system_prompt_chars": 16510,
+      "system_prompt_tokens": 3128,
+      "mode_used": "exploring",
+      "states_used": [
+        "intake",
+        "context_discovery",
+        "tool_execution",
+        "finalization"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/models.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/_sections.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/prompt.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/sections/tool_prompts.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/context/models.py"
+      ],
+      "searches_made": [
+        "**/*.py",
+        "PromptBuilder",
+        "SystemPromptSection",
+        "cache_scope",
+        "cache_break"
+      ],
+      "derived": {
+        "success_rate": 1.0,
+        "tool_efficiency": 0.43,
+        "total_tool_calls": 14,
+        "unique_files_read": 6,
+        "unique_searches": 5,
+        "checkpoints_reached": 2,
+        "retry_utilization": 0.0,
+        "stuck_rate": 0.0,
+        "avg_time_per_step_ms": 3935.0
+      }
+    }
+  }
+]

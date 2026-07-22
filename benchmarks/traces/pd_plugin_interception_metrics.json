@@ -1,0 +1,298 @@
+{
+  "benchmark_id": "pd_plugin_interception",
+  "project": "pydantic",
+  "model": "deepseek-v4-flash",
+  "started_at": "2026-05-30T09:20:39.832840+00:00",
+  "finished_at": "2026-05-30T09:21:17.843826+00:00",
+  "success": true,
+  "final_answer": "I have all the pieces needed. Here is the complete mechanism.\n\n---\n\n## How a Plugin Intercepts BaseModel Validation\n\n### 1. Plugin Discovery via Entry Points\n\nFile: `plugin/_loader.py`, lines 22–58\n\nWhen `create_schema_validator()` is called, it first calls `get_plugins()` (line 40 of `_schema_validator.py`). The loader uses `importlib.metadata.distributions()` to enumerate all installed packages, and filters for entry points whose group is `'pydantic'` (the constant `PYDANTIC_ENTRY_POINT_GROUP`, line 13). Each matching entry point is loaded with `.load()` (line 48), producing an instance that implements `PydanticPluginProtocol`.\n\nThere is a recursion guard (`_loading_plugins` flag, lines 19/29–31): if a plugin itself imports and uses pydantic during loading, `get_plugins()` returns an empty tuple to prevent infinite recursion. Plugins can also be disabled by the `PYDANTIC_DISABLE_PLUGINS` env var (lines 27–33).\n\nThe discovered plugins are cached in the module-level `_plugins` dict (line 16) so the import scan runs only once.\n\n### 2. The Factory Decision: SchemaValidator vs. PluggableSchemaValidator\n\nFile: `plugin/_schema_validator.py`, lines 22–53\n\n```python\ndef create_schema_validator(...) -> SchemaValidator | PluggableSchemaValidator:\n    plugins = get_plugins()\n    if plugins:\n        return PluggableSchemaValidator(...)\n    else:\n        return SchemaValidator(schema, config, _use_prebuilt=_use_prebuilt)\n```\n\nIf `get_plugins()` returns any plugins, a `PluggableSchemaValidator` is returned instead of a plain `SchemaValidator`. This is the single decision point that gates plugin involvement.\n\nThis factory is called from every pydantic entry point that creates validators:\n\n- **BaseModel**: `_internal/_model_construction.py`, line 696 — `schema_kind='BaseModel'`\n- **TypeAdapter**: `type_adapter.py`, line 319 — `schema_kind='TypeAdapter'`\n- **dataclass**: `_internal/_dataclasses.py`, line 185 — `schema_kind='dataclass'`\n- **validate_call**: `_internal/_validate_call.py`, line 97 — `schema_kind='validate_call'`\n\n### 3. PluggableSchemaValidator.__init__: Asking Each Plugin for Handlers\n\nFile: `plugin/_schema_validator.py`, lines 61–93\n\nThe constructor does two things:\n\n**First (line 72):** Creates a real `SchemaValidator` internally and stores it as `self._schema_validator`. This is the actual pydantic-core validator that does the work.\n\n**Second (lines 74–93):** Iterates over every loaded plugin and calls `plugin.new_schema_validator(...)` on each (line 79). The plugin receives:\n- The core schema\n- The schema type (the model class)\n- The `SchemaTypePath` (module + name)\n- The schema kind (`'BaseModel'`, `'TypeAdapter'`, etc.)\n- The config\n- The plugin settings dict\n\nEach plugin returns a tuple of three optional handler objects: `(ValidatePythonHandlerProtocol | None, ValidateJsonHandlerProtocol | None, ValidateStringsHandlerProtocol | None)` (defined as `NewSchemaReturns` in `plugin/__init__.py`, line 28).\n\nNon-`None` handlers are collected into three lists:\n- `python_event_handlers`\n- `json_event_handlers`\n- `strings_event_handlers`\n\n### 4. build_wrapper: Wrapping the Real validate_python with Lifecycle Hooks\n\nFile: `plugin/_schema_validator.py`, lines 99–128\n\n```python\nself.validate_python = build_wrapper(self._schema_validator.validate_python, python_event_handlers)\n```\n\n`build_wrapper` takes the real `SchemaValidator.validate_python` method and the list of handler protocols from the plugins. If the handler list is empty (line 100), it returns the original function unchanged — zero overhead.\n\nIf handlers exist, it creates a closure `wrapper` (lines 108–126) that interleaves plugin callbacks around the real call:\n\n1. **On enter** (lines 110–111): Calls each handler's `on_enter(*args, **kwargs)` — same arguments as the real `validate_python`. This is where a plugin first intercepts validation, receiving the input data and all parameters (`strict`, `from_attributes`, `context`, `self_instance`, etc.).\n\n2. **Try** the real `self._schema_validator.validate_python(...)` (line 114).\n\n3. **On success** (lines 123–125): If validation succeeds, calls each handler's `on_success(result)`.\n\n4. **On ValidationError** (lines 115–118): Calls each handler's `on_error(error)`, then re-raises.\n\n5. **On Exception** (lines 119–122): Calls each handler's `on_exception(exception)`, then re-raises.\n\nThe `filter_handlers` function (lines 131–143) ensures that only methods actually implemented by the plugin (not inherited defaults from the protocol) are called, by checking `handler.__module__ != 'pydantic.plugin'`.\n\n### 5. The Trigger Point: BaseModel.__init__ Calls validate_python\n\nFile: `main.py`, lines 253–263\n\n```python\nclass BaseModel:\n    def __init__(self, /, **data: Any) -> None:\n        validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n```\n\n`self.__pydantic_validator__` was set during class construction (in `_model_construction.py`, line 696) to the result of `create_schema_validator(...)`. If plugins are installed, that result is a `PluggableSchemaValidator` instance, and `validate_python` on that instance is the wrapped function from `build_wrapper`. So every `MyModel(**data)` call transparently invokes all plugin lifecycle hooks.\n\n---\n\n### Summary of the Full Chain\n\n```\nBaseModel.__init__(**data)                           # main.py:263\n  → self.__pydantic_validator__.validate_python()    # PluggableSchemaValidator.validate_python\n  → wrapper(*args, **kwargs)                         # build_wrapper closure at _schema_validator.py:109\n      → on_enter_handler(...)                        # each plugin's on_enter callback\n      → self._schema_validator.validate_python(...)  # real pydantic-core validation\n      → on_success_handler(result)                   # or on_error/on_exception\n```\n\n**Key files:**\n- `plugin/_loader.py` lines 22–58 — entry-point discovery & caching\n- `plugin/__init__.py` lines 41–73 — `PydanticPluginProtocol.new_schema_validator` interface\n- `plugin/_schema_validator.py` lines 22–53 — `create_schema_validator` factory decision\n- `plugin/_schema_validator.py` lines 56–93 — `PluggableSchemaValidator.__init__` iterating plugins\n- `plugin/_schema_validator.py` lines 99–128 — `build_wrapper` creating the lifecycle-hooked closure\n- `_internal/_model_construction.py` lines 696–705 — BaseModel's call to `create_schema_validator`\n- `main.py` lines 253–263 — `BaseModel.__init__` invoking `validate_python`",
+  "failure_reason": "",
+  "total_steps": 11,
+  "max_steps_allowed": 30,
+  "tool_calls": [
+    {
+      "step": 1,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/*.py",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic",
+        "max_results": 50
+      },
+      "duration_ms": 3.09,
+      "success": true,
+      "result_preview": "deprecated/__init__.py\ndeprecated/decorator.py\ndeprecated/parse.py\ndeprecated/config.py\ndeprecated/tools.py\ndeprecated/json.py\ndeprecated/copy_internals.py\ndeprecated/class_validators.py\nv1/typing.py\n"
+    },
+    {
+      "step": 1,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "plugin",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic",
+        "max_results": 50
+      },
+      "duration_ms": 16.48,
+      "success": true,
+      "result_preview": "config.py:810:     plugin_settings: dict[str, object] | None\nconfig.py:811:     \"\"\"A `dict` of settings for plugins. Defaults to `None`.\"\"\"\nmain.py:55: from .plugin._schema_validator import PluggableS"
+    },
+    {
+      "step": 2,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "plugin/**/*.py",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic"
+      },
+      "duration_ms": 3.36,
+      "success": true,
+      "result_preview": "No files matching 'plugin/**/*.py'"
+    },
+    {
+      "step": 3,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "plugin",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic",
+        "glob": "**/_schema_validator*"
+      },
+      "duration_ms": 1.55,
+      "success": true,
+      "result_preview": "No matches found for 'plugin'"
+    },
+    {
+      "step": 3,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/_schema_validator*",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic"
+      },
+      "duration_ms": 3.62,
+      "success": true,
+      "result_preview": "plugin/_schema_validator.py"
+    },
+    {
+      "step": 3,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "PluggableSchemaValidator|_schema_validator",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic"
+      },
+      "duration_ms": 61.73,
+      "success": true,
+      "result_preview": "main.py:55: from .plugin._schema_validator import PluggableSchemaValidator\nmain.py:204:     __pydantic_validator__: ClassVar[SchemaValidator | PluggableSchemaValidator]\ntype_adapter.py:36: from .plugi"
+    },
+    {
+      "step": 4,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/plugin/__init__.py"
+      },
+      "duration_ms": 0.45,
+      "success": true,
+      "result_preview": "1: \"\"\"!!! abstract \"Usage Documentation\"\n2:     [Build a Plugin](../concepts/plugins.md#build-a-plugin)\n3: \n4: Plugin interface for Pydantic plugins, and related types.\n5: \"\"\"\n6: \n7: from __future__ i"
+    },
+    {
+      "step": 4,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/plugin/_schema_validator.py"
+      },
+      "duration_ms": 0.3,
+      "success": true,
+      "result_preview": "1: \"\"\"Pluggable schema validator for pydantic.\"\"\"\n2: \n3: from __future__ import annotations\n4: \n5: import functools\n6: from collections.abc import Callable, Iterable\n7: from typing import TYPE_CHECKIN"
+    },
+    {
+      "step": 5,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "plugin/_loader*",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic"
+      },
+      "duration_ms": 5.47,
+      "success": true,
+      "result_preview": "plugin/_loader.py"
+    },
+    {
+      "step": 5,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_model_construction.py",
+        "offset": 680,
+        "limit": 30
+      },
+      "duration_ms": 0.58,
+      "success": true,
+      "result_preview": "680:     core_config = config_wrapper.core_config(title=cls.__name__)\n681: \n682:     try:\n683:         schema = gen_schema.clean_schema(schema)\n684:     except InvalidSchemaError:\n685:         set_mod"
+    },
+    {
+      "step": 6,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/plugin/_loader.py"
+      },
+      "duration_ms": 0.34,
+      "success": true,
+      "result_preview": "1: from __future__ import annotations\n2: \n3: import importlib.metadata as importlib_metadata\n4: import os\n5: import warnings\n6: from collections.abc import Iterable\n7: from typing import TYPE_CHECKING"
+    },
+    {
+      "step": 7,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/main.py",
+        "limit": 100
+      },
+      "duration_ms": 1.26,
+      "success": true,
+      "result_preview": "1: \"\"\"Logic for creating models.\"\"\"\n2: \n3: # Because `dict` is in the local namespace of the `BaseModel` class, we use `Dict` for annotations.\n4: # TODO v3 fallback to `dict` when the deprecated `dict"
+    },
+    {
+      "step": 8,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "def __init__",
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/main.py"
+      },
+      "duration_ms": 26.42,
+      "success": true,
+      "result_preview": "json_schema.py:271:     def __init__(\njson_schema.py:2731:     def __init__(\njson_schema.py:2736:     def __init__(self, examples: list[Any], mode: Literal['validation', 'serialization'] | None = None"
+    },
+    {
+      "step": 9,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/main.py",
+        "offset": 253,
+        "limit": 40
+      },
+      "duration_ms": 0.92,
+      "success": true,
+      "result_preview": "253:     def __init__(self, /, **data: Any) -> None:\n254:         \"\"\"Create a new model by parsing and validating input data from keyword arguments.\n255: \n256:         Raises [`ValidationError`][pydan"
+    },
+    {
+      "step": 9,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/type_adapter.py",
+        "offset": 160,
+        "limit": 50
+      },
+      "duration_ms": 0.44,
+      "success": true,
+      "result_preview": "160:         `BaseModel`'s behavior isn't perfect either and _can_ break in similar ways,\n161:         so there is no right or wrong between the two.\n162: \n163:         But at the very least this beha"
+    },
+    {
+      "step": 10,
+      "tool_name": "Read",
+      "arguments": {
+        "offset": 300,
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/type_adapter.py",
+        "limit": 80
+      },
+      "duration_ms": 0.45,
+      "success": true,
+      "result_preview": "300: \n301:             schema_generator = _generate_schema.GenerateSchema(config_wrapper, ns_resolver=ns_resolver)\n302: \n303:             try:\n304:                 core_schema = schema_generator.gener"
+    },
+    {
+      "step": 10,
+      "tool_name": "Read",
+      "arguments": {
+        "offset": 80,
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_validate_call.py",
+        "limit": 50
+      },
+      "duration_ms": 0.25,
+      "success": true,
+      "result_preview": "80:             self.module = function.__module__\n81:         self.qualname = extract_function_qualname(function)\n82: \n83:         self.ns_resolver = NsResolver(\n84:             namespaces_tuple=ns_fo"
+    },
+    {
+      "step": 10,
+      "tool_name": "Read",
+      "arguments": {
+        "offset": 170,
+        "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_dataclasses.py",
+        "limit": 30
+      },
+      "duration_ms": 0.22,
+      "success": true,
+      "result_preview": "170:         return False\n171: \n172:     core_config = config_wrapper.core_config(title=cls.__name__)\n173: \n174:     try:\n175:         schema = gen_schema.clean_schema(schema)\n176:     except InvalidS"
+    }
+  ],
+  "tool_counts": {
+    "Glob": 4,
+    "Grep": 4,
+    "Read": 10
+  },
+  "retry_count": 3,
+  "max_retries_allowed": 3,
+  "stuck_count": 3,
+  "stuck_events": [
+    {
+      "reason": "no new files read in recent steps",
+      "step": 8
+    },
+    {
+      "reason": "no new files read in recent steps",
+      "step": 9
+    },
+    {
+      "reason": "no new files read in recent steps",
+      "step": 10
+    }
+  ],
+  "total_time_seconds": 38.01,
+  "time_to_first_tool_seconds": 2.43,
+  "checkpoint_times": [
+    {
+      "checkpoint_id": "found_loader",
+      "step_reached": 1,
+      "time_seconds": 2.447628573005204,
+      "description": "Found plugin loader mechanism"
+    },
+    {
+      "checkpoint_id": "found_wrapper",
+      "step_reached": 1,
+      "time_seconds": 2.4476371820055647,
+      "description": "Found validation wrapper"
+    }
+  ],
+  "prompt_tokens": 732399,
+  "completion_tokens": 23865,
+  "total_tokens": 756264,
+  "system_prompt_chars": 16510,
+  "system_prompt_tokens": 3128,
+  "mode_used": "exploring",
+  "states_used": [
+    "intake",
+    "context_discovery",
+    "tool_execution",
+    "finalization"
+  ],
+  "files_read": [
+    "/home/levybonito/Documentos/pydantic/pydantic/plugin/__init__.py",
+    "/home/levybonito/Documentos/pydantic/pydantic/plugin/_schema_validator.py",
+    "/home/levybonito/Documentos/pydantic/pydantic/_internal/_model_construction.py",
+    "/home/levybonito/Documentos/pydantic/pydantic/plugin/_loader.py",
+    "/home/levybonito/Documentos/pydantic/pydantic/main.py",
+    "/home/levybonito/Documentos/pydantic/pydantic/type_adapter.py",
+    "/home/levybonito/Documentos/pydantic/pydantic/_internal/_validate_call.py",
+    "/home/levybonito/Documentos/pydantic/pydantic/_internal/_dataclasses.py"
+  ],
+  "searches_made": [
+    "**/*.py",
+    "plugin",
+    "plugin/**/*.py",
+    "**/_schema_validator*",
+    "PluggableSchemaValidator|_schema_validator",
+    "plugin/_loader*",
+    "def __init__"
+  ],
+  "derived": {
+    "success_rate": 1.0,
+    "tool_efficiency": 0.44,
+    "total_tool_calls": 18,
+    "unique_files_read": 8,
+    "unique_searches": 7,
+    "checkpoints_reached": 2,
+    "retry_utilization": 1.0,
+    "stuck_rate": 0.27,
+    "avg_time_per_step_ms": 3455.45
+  }
+}

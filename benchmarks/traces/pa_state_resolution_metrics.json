@@ -1,0 +1,336 @@
+{
+  "benchmark_id": "pa_state_resolution",
+  "project": "PersonAgent",
+  "model": "deepseek-v4-flash",
+  "started_at": "2026-05-30T09:18:21.685443+00:00",
+  "finished_at": "2026-05-30T09:20:03.007394+00:00",
+  "success": false,
+  "final_answer": "",
+  "failure_reason": "Stuck after max retries: no new files read in recent steps",
+  "total_steps": 11,
+  "max_steps_allowed": 30,
+  "tool_calls": [
+    {
+      "step": 1,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/*.py",
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+      },
+      "duration_ms": 11.55,
+      "success": true,
+      "result_preview": "domain/__init__.py\ndomain/token_counting.py\ndomain/exceptions.py\ndomain/browser_workspace/__init__.py\ndomain/browser_workspace/repositories.py\ndomain/prompts/prompt.py\ndomain/prompts/__init__.py\ndomai"
+    },
+    {
+      "step": 1,
+      "tool_name": "shell",
+      "arguments": {
+        "command": "find /home/levybonito/Documentos/PersonAgent/@backend/src/personagent -type f -name \"*.py\" | head -80"
+      },
+      "duration_ms": 6.64,
+      "success": true,
+      "result_preview": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/browser_workspace/__init__.py\n/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/browser_workspace/reposito"
+    },
+    {
+      "step": 2,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/agent_state_resolver.py"
+      },
+      "duration_ms": 0.98,
+      "success": true,
+      "result_preview": "1: \"\"\"Resolve active agent execution states for prompt construction.\"\"\"\n2: \n3: from __future__ import annotations\n4: \n5: from collections.abc import Mapping, Sequence\n6: from typing import Any\n7: \n8: "
+    },
+    {
+      "step": 2,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/sections/states.py"
+      },
+      "duration_ms": 0.76,
+      "success": true,
+      "result_preview": "1: \"\"\"Agent-state prompt overlays.\n2: \n3: Prompt modes describe the user's intent. Agent states describe the active\n4: execution behavior the model should follow for the current turn.\n5: \"\"\"\n6: \n7: fr"
+    },
+    {
+      "step": 2,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/context_analyzer.py"
+      },
+      "duration_ms": 0.82,
+      "success": true,
+      "result_preview": "1: \"\"\"LLM-first prompt context analysis.\"\"\"\n2: \n3: from __future__ import annotations\n4: \n5: import asyncio\n6: import json\n7: import time\n8: from hashlib import sha256\n9: from typing import Any\n10: \n1"
+    },
+    {
+      "step": 3,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/models.py"
+      },
+      "duration_ms": 1.04,
+      "success": true,
+      "result_preview": "1: \"\"\"Prompts domain models.\n2: \n3: Este módulo define as entidades para montagem dinâmica de system prompts.\n4: Seguindo os princípios da Arquitetura Clean, estas entidades não dependem\n5: de infraes"
+    },
+    {
+      "step": 3,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/prompt.py"
+      },
+      "duration_ms": 0.62,
+      "success": true,
+      "result_preview": "1: \"\"\"Central dynamic system prompts for PersonAgent.\n2: \n3: This module keeps concise manual prompt sections in one place. The builder\n4: composes these sections with tool, execution, system context,"
+    },
+    {
+      "step": 4,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/agent_state_resolver.py",
+        "offset": 193
+      },
+      "duration_ms": 0.69,
+      "success": true,
+      "result_preview": "193: _DEBUG_TERMS = (\n194:     \"bug\",\n195:     \"crash\",\n196:     \"erro\",\n197:     \"error\",\n198:     \"falha\",\n199:     \"failure\",\n200:     \"stack\",\n201:     \"trace\",\n202:     \"causa\",\n203:     \"root ca"
+    },
+    {
+      "step": 4,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/context_analyzer.py",
+        "offset": 270
+      },
+      "duration_ms": 0.63,
+      "success": true,
+      "result_preview": "270:         self,\n271:         *,\n272:         message: str,\n273:         available_tools: list[str] | None,\n274:         workspace_root: str,\n275:     ) -> str:\n276:         raw = json.dumps(\n277:  "
+    },
+    {
+      "step": 5,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/test*/**/*agent_state*",
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+      },
+      "duration_ms": 52.04,
+      "success": true,
+      "result_preview": "No files matching '**/test*/**/*agent_state*'"
+    },
+    {
+      "step": 5,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/test*/**/*state*",
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend"
+      },
+      "duration_ms": 0.1,
+      "success": false,
+      "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/PersonAgent/@backend"
+    },
+    {
+      "step": 5,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "agent_state_resolver",
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend",
+        "glob": "**/test*.py"
+      },
+      "duration_ms": 0.06,
+      "success": false,
+      "result_preview": "Error: Path not found: /home/levybonito/Documentos/PersonAgent/@backend"
+    },
+    {
+      "step": 6,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/tests/**/*.py",
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+      },
+      "duration_ms": 136.45,
+      "success": true,
+      "result_preview": "No files matching '**/tests/**/*.py'"
+    },
+    {
+      "step": 6,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "agent_state_resolver|AgentStateResolver",
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+      },
+      "duration_ms": 428.11,
+      "success": true,
+      "result_preview": "domain/prompts/services/__init__.py:3: from personagent.domain.prompts.services.agent_state_resolver import (\ndomain/prompts/services/__init__.py:4:     AgentStateResolver,\ndomain/prompts/services/__i"
+    },
+    {
+      "step": 7,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/application/use_cases/chat/prompt/prompt_package.py"
+      },
+      "duration_ms": 1.12,
+      "success": true,
+      "result_preview": "1: \"\"\"Prompt-package assembly extracted from ``chat_completion.py``.\n2: \n3: After the surrounding pipeline has resolved the system context, recalled\n4: relevant memories, and prepared any slash-comman"
+    },
+    {
+      "step": 8,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/application/use_cases/chat/prompt/prompt_package.py",
+        "offset": 226
+      },
+      "duration_ms": 0.78,
+      "success": true,
+      "result_preview": "226:                 \"prompt_mode\": built_prompt.metadata.get(\"prompt_mode\"),\n227:                 \"requested_prompt_mode\": built_prompt.metadata.get(\"requested_prompt_mode\"),\n228:                 \"pr"
+    },
+    {
+      "step": 9,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "AgentStateResolver|agent_state_resolver",
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend",
+        "glob": "**/test*\""
+      },
+      "duration_ms": 0.18,
+      "success": false,
+      "result_preview": "Error: Path not found: /home/levybonito/Documentos/PersonAgent/@backend"
+    },
+    {
+      "step": 9,
+      "tool_name": "shell",
+      "arguments": {
+        "command": "find /home/levybonito/Documentos/PersonAgent/@backend -type d -name \"test*\" 2>/dev/null; find /home/levybonito/Documentos/PersonAgent/@backend -type d -name \"*test*\" 2>/dev/null | head -20"
+      },
+      "duration_ms": 164.14,
+      "success": true,
+      "result_preview": "/home/levybonito/Documentos/PersonAgent/@backend/.venv/lib/python3.13/site-packages/numpy/f2py/tests\n/home/levybonito/Documentos/PersonAgent/@backend/.venv/lib/python3.13/site-packages/numpy/_core/tes"
+    },
+    {
+      "step": 10,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/tests/**/*agent*",
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend"
+      },
+      "duration_ms": 0.17,
+      "success": false,
+      "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/PersonAgent/@backend"
+    },
+    {
+      "step": 10,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/tests/**/*resolver*",
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend"
+      },
+      "duration_ms": 0.11,
+      "success": false,
+      "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/PersonAgent/@backend"
+    },
+    {
+      "step": 10,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/tests/**/*state*",
+        "path": "/home/levybonito/Documentos/PersonAgent/@backend"
+      },
+      "duration_ms": 0.1,
+      "success": false,
+      "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/PersonAgent/@backend"
+    },
+    {
+      "step": 11,
+      "tool_name": "shell",
+      "arguments": {
+        "command": "find /home/levybonito/Documentos/PersonAgent/@backend/tests -type f -name \"*.py\" | head -40"
+      },
+      "duration_ms": 5.67,
+      "success": true,
+      "result_preview": "/home/levybonito/Documentos/PersonAgent/@backend/tests/test_skills_api.py\n/home/levybonito/Documentos/PersonAgent/@backend/tests/test_tools_runtime.py\n/home/levybonito/Documentos/PersonAgent/@backend/"
+    }
+  ],
+  "tool_counts": {
+    "Glob": 7,
+    "shell": 3,
+    "Read": 9,
+    "Grep": 3
+  },
+  "retry_count": 3,
+  "max_retries_allowed": 3,
+  "stuck_count": 4,
+  "stuck_events": [
+    {
+      "reason": "no new files read in recent steps",
+      "step": 8
+    },
+    {
+      "reason": "no new files read in recent steps",
+      "step": 9
+    },
+    {
+      "reason": "no new files read in recent steps",
+      "step": 10
+    },
+    {
+      "reason": "no new files read in recent steps",
+      "step": 11
+    }
+  ],
+  "total_time_seconds": 101.32,
+  "time_to_first_tool_seconds": 2.17,
+  "checkpoint_times": [
+    {
+      "checkpoint_id": "found_resolver",
+      "step_reached": 1,
+      "time_seconds": 2.1913256289990386,
+      "description": "Located AgentStateResolver"
+    },
+    {
+      "checkpoint_id": "traced_states",
+      "step_reached": 1,
+      "time_seconds": 2.191333795999526,
+      "description": "Traced the state sequence for the message"
+    }
+  ],
+  "prompt_tokens": 411630,
+  "completion_tokens": 16442,
+  "total_tokens": 428072,
+  "system_prompt_chars": 16898,
+  "system_prompt_tokens": 3207,
+  "mode_used": "exploring",
+  "states_used": [
+    "intake",
+    "context_discovery",
+    "planning",
+    "tool_execution",
+    "finalization"
+  ],
+  "files_read": [
+    "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/agent_state_resolver.py",
+    "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/sections/states.py",
+    "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/context_analyzer.py",
+    "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/models.py",
+    "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/prompt.py",
+    "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/application/use_cases/chat/prompt/prompt_package.py"
+  ],
+  "searches_made": [
+    "**/*.py",
+    "**/test*/**/*agent_state*",
+    "**/test*/**/*state*",
+    "agent_state_resolver",
+    "**/tests/**/*.py",
+    "agent_state_resolver|AgentStateResolver",
+    "AgentStateResolver|agent_state_resolver",
+    "**/tests/**/*agent*",
+    "**/tests/**/*resolver*",
+    "**/tests/**/*state*"
+  ],
+  "derived": {
+    "success_rate": 0.0,
+    "tool_efficiency": 0.27,
+    "total_tool_calls": 22,
+    "unique_files_read": 6,
+    "unique_searches": 10,
+    "checkpoints_reached": 2,
+    "retry_utilization": 1.0,
+    "stuck_rate": 0.36,
+    "avg_time_per_step_ms": 9210.91
+  }
+}

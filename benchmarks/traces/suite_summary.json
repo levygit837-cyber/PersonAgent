@@ -1,0 +1,2041 @@
+{
+  "total_benchmarks": 6,
+  "successes": 2,
+  "failures": 4,
+  "success_rate_pct": 33.3,
+  "avg_tools_per_run": 20.67,
+  "avg_tokens_per_run": 650482.17,
+  "avg_time_seconds": 43.37,
+  "per_benchmark": {
+    "pa_cache_invalidation": {
+      "success": true,
+      "steps": 8,
+      "tools": 14,
+      "tokens": 156340,
+      "time_seconds": 31.48,
+      "mode": "exploring",
+      "states": [
+        "intake",
+        "context_discovery",
+        "tool_execution",
+        "finalization"
+      ]
+    },
+    "pa_state_resolution": {
+      "success": false,
+      "steps": 11,
+      "tools": 22,
+      "tokens": 428072,
+      "time_seconds": 101.32,
+      "mode": "exploring",
+      "states": [
+        "intake",
+        "context_discovery",
+        "planning",
+        "tool_execution",
+        "finalization"
+      ]
+    },
+    "pd_discriminated_union": {
+      "success": false,
+      "steps": 11,
+      "tools": 23,
+      "tokens": 634984,
+      "time_seconds": 36.82,
+      "mode": "exploring",
+      "states": [
+        "intake",
+        "context_discovery",
+        "tool_execution",
+        "finalization"
+      ]
+    },
+    "pd_plugin_interception": {
+      "success": true,
+      "steps": 11,
+      "tools": 18,
+      "tokens": 756264,
+      "time_seconds": 38.01,
+      "mode": "exploring",
+      "states": [
+        "intake",
+        "context_discovery",
+        "tool_execution",
+        "finalization"
+      ]
+    },
+    "oc_permission_eval": {
+      "success": false,
+      "steps": 11,
+      "tools": 24,
+      "tokens": 897816,
+      "time_seconds": 25.34,
+      "mode": "exploring",
+      "states": [
+        "intake",
+        "context_discovery",
+        "tool_execution",
+        "finalization"
+      ]
+    },
+    "oc_skill_discovery": {
+      "success": false,
+      "steps": 11,
+      "tools": 23,
+      "tokens": 1029417,
+      "time_seconds": 27.26,
+      "mode": "exploring",
+      "states": [
+        "intake",
+        "context_discovery",
+        "tool_execution",
+        "finalization"
+      ]
+    }
+  },
+  "runs": [
+    {
+      "benchmark_id": "pa_cache_invalidation",
+      "project": "PersonAgent",
+      "model": "deepseek-v4-flash",
+      "started_at": "2026-05-30T09:17:50.052312+00:00",
+      "finished_at": "2026-05-30T09:18:21.683407+00:00",
+      "success": true,
+      "final_answer": "Agora tenho todas as peças. Aqui está a análise completa.\n\n---\n\n## Como o PromptBuilder decide se um SystemPromptSection deve ser cacheado ou recomputado\n\nA decisão opera em duas camadas: um **flag por seção** (`cache_break`) que diz se ela é volátil, e um **hash de escopo** (`cache_scope`) que define qual \"versão\" do ambiente está valendo.\n\n### 1. O flag `cache_break` — o interruptor por seção\n\nCada `SystemPromptSection` (definida em `domain/prompts/models.py:34-51`) carrega um campo booleano:\n\n```python\ncache_break: bool = False  # True = recompute every turn (breaks cache)\n```\n\nA lógica de resolução está em `_resolve_sections` (`prompt_builder.py:296-326`):\n\n1. Para cada seção, monta uma chave: `cache_key = f\"{cache_scope}:{section.name}\"` (linha 313)\n2. Se `cache_break=False` **e** a chave existe no dicionário `self._section_cache`, reusa o conteúdo cacheado — **pula a computação** (linhas 314-315)\n3. Se `cache_break=True` ou a chave não existe no cache, chama `section.compute()` para resolver a seção (linha 317)\n4. Se o resultado não for vazio e `cache_break=False`, armazena no cache para o próximo turno (linhas 318-319)\n\nAlém disso, em `_assemble_system_prompt` (`prompt_builder.py:351-386`), seções com `cache_break=True` são movidas para **depois do `PROMPT_DYNAMIC_BOUNDARY`** (linhas 370-372), garantindo que apareçam sempre no final e sejam tratadas como conteúdo dinâmico.\n\n**Seções com `cache_break=True` (sempre recomputadas):**\n\n| Seção | Arquivo | Linha |\n|---|---|---|\n| `response_style_runtime_reminder` | `domain/prompts/prompt.py` | 216 |\n| `session_memory` | `domain/prompts/services/prompt_builder/_sections.py` | 80 |\n| `relevant_memories` | `domain/prompts/services/prompt_builder/_sections.py` | 99 |\n| `tool_prompts` (condicional) | `domain/prompts/sections/tool_prompts.py` | 36-39 |\n\nA seção `tool_prompts` é cacheable **a menos que** alguma `ToolDefinition` tenha `cacheable_prompt=False` — nesse caso o `cache_break` vira `True` para todo o lote (tool_prompts.py:36-38).\n\nTodas as demais seções (response style contract, acting contract, exploration protocol, tool sections estáticas, execution sections, agent state sections, command inventory, skill inventory, etc.) têm `cache_break=False` e são cacheadas.\n\n---\n\n### 2. O hash `cache_scope` — o que chaveia o cache\n\nO método `_cache_scope` (`prompt_builder.py:413-431`) produz um hash SHA-256 truncado para 16 caracteres a partir de **sete inputs** concatenados com `|`:\n\n```python\nraw = (\n    f\"{workspace}|{prompt_mode}|{states}|\"\n    f\"{self._permission_mode}|{provider}|{model}|{tools}\"\n)\ndigest = sha256(raw.encode(\"utf-8\")).hexdigest()[:16]\nreturn f\"system-prompt:{digest}\"\n```\n\nCada componente:\n\n| Input | Fonte | Exemplo |\n|---|---|---|\n| `workspace` | `system_context.workspace_root` | `/home/user/projeto` |\n| `prompt_mode` | Modo primário resolvido (`writing`, `exploring`, `research`) | `exploring` |\n| `states` | Estados de agente, concatenados com `,` | `intake,context_discovery,finalization` |\n| `permission_mode` | `self._permission_mode` (definido no construtor) | `manual` |\n| `provider` | Nome do provedor LLM | `llama` |\n| `model` | Nome do modelo | `local-model` |\n| `tools` | Nomes de ferramentas disponíveis, ordenados e concatenados com `,` | `Glob,Grep,Read,shell` |\n\nA **chave final** para uma seção individual no cache é:\n```\nsystem-prompt:<16-char-sha256>:<section.name>\n```\n\nIsso significa que se qualquer um desses sete fatores mudar entre turnos (ex.: um novo workspace, modo de prompt diferente, nova ferramenta disponível, troca de modelo), todo o prefixo `cache_scope` muda — e **todas** as seções perdem o cache, mesmo aquelas com `cache_break=False`.",
+      "failure_reason": "",
+      "total_steps": 8,
+      "max_steps_allowed": 30,
+      "tool_calls": [
+        {
+          "step": 1,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/*.py",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+          },
+          "duration_ms": 13.0,
+          "success": true,
+          "result_preview": "domain/__init__.py\ndomain/token_counting.py\ndomain/exceptions.py\ndomain/browser_workspace/__init__.py\ndomain/browser_workspace/repositories.py\ndomain/prompts/prompt.py\ndomain/prompts/__init__.py\ndomai"
+        },
+        {
+          "step": 1,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "PromptBuilder",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+          },
+          "duration_ms": 134.04,
+          "success": true,
+          "result_preview": "domain/prompts/sections/base.py:10:     \"\"\"Return the shared manual base sections used by the PromptBuilder.\"\"\"\ndomain/prompts/sections/__pycache__/base.cpython-313.pyc:3: \u0000\u0000\u0000\u0000m\u0014\u0016j�\u0001\u0000\u0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000"
+        },
+        {
+          "step": 1,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "SystemPromptSection",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+          },
+          "duration_ms": 7.47,
+          "success": true,
+          "result_preview": "domain/prompts/prompt.py:10: from personagent.domain.prompts.models import PromptMode, SystemPromptSection\ndomain/prompts/prompt.py:56: def core_system_prompt_sections() -> tuple[SystemPromptSection, "
+        },
+        {
+          "step": 1,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "cache_scope",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+          },
+          "duration_ms": 131.25,
+          "success": true,
+          "result_preview": "domain/prompts/services/prompt_builder/prompt_builder.py:191:         cache_scope = self._cache_scope(\ndomain/prompts/services/prompt_builder/prompt_builder.py:199:         resolved_sections = await s"
+        },
+        {
+          "step": 2,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py"
+          },
+          "duration_ms": 1.14,
+          "success": true,
+          "result_preview": "1: \"\"\"Prompt builder service.\n2: \n3: Este serviço monta o system prompt completo a partir das seções disponíveis,\n4: aplicando contexto de sistema e usuário quando apropriado.\n5: \"\"\"\n6: \n7: from __fut"
+        },
+        {
+          "step": 2,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/models.py"
+          },
+          "duration_ms": 0.64,
+          "success": true,
+          "result_preview": "1: \"\"\"Prompts domain models.\n2: \n3: Este módulo define as entidades para montagem dinâmica de system prompts.\n4: Seguindo os princípios da Arquitetura Clean, estas entidades não dependem\n5: de infraes"
+        },
+        {
+          "step": 3,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py",
+            "offset": 200
+          },
+          "duration_ms": 0.82,
+          "success": true,
+          "result_preview": "200: \n201:         # Monta prompt completo\n202:         content, dynamic_sections = self._assemble_system_prompt(\n203:             resolved_sections,\n204:             system_context,\n205:         )\n20"
+        },
+        {
+          "step": 4,
+          "tool_name": "Read",
+          "arguments": {
+            "offset": 400,
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py"
+          },
+          "duration_ms": 0.82,
+          "success": true,
+          "result_preview": "400:                 surface_hints=(\"system\", \"mode\", \"tool\", \"memory\", \"next_step\", \"reminder\"),\n401:             )\n402:         if prompt_profile is not None:\n403:             return prompt_profile\n"
+        },
+        {
+          "step": 5,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "cache_break",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts"
+          },
+          "duration_ms": 25.56,
+          "success": true,
+          "result_preview": "domain/prompts/prompt.py:216:         cache_break=True,\ndomain/prompts/models.py:44:     cache_break: bool = False  # True = recompute every turn (breaks cache)\ndomain/prompts/__pycache__/prompt.cpyth"
+        },
+        {
+          "step": 5,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "cache_break",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts",
+            "glob": "*.py"
+          },
+          "duration_ms": 8.82,
+          "success": true,
+          "result_preview": "domain/prompts/prompt.py:216:         cache_break=True,\ndomain/prompts/models.py:44:     cache_break: bool = False  # True = recompute every turn (breaks cache)\ndomain/prompts/sections/tool_prompts.py"
+        },
+        {
+          "step": 6,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/_sections.py"
+          },
+          "duration_ms": 0.78,
+          "success": true,
+          "result_preview": "1: \"\"\"Section builders for the prompt builder.\"\"\"\n2: \n3: from __future__ import annotations\n4: \n5: from personagent.domain.prompts.commands import PromptCommand\n6: from personagent.domain.prompts.mode"
+        },
+        {
+          "step": 6,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/prompt.py",
+            "offset": 200,
+            "limit": 30
+          },
+          "duration_ms": 0.55,
+          "success": true,
+          "result_preview": "200:     return SystemPromptSection(\"parallel_tool_use\", render)\n201: \n202: \n203: def response_style_runtime_reminder_section() -> SystemPromptSection:\n204:     \"\"\"Return a late, compact reminder that"
+        },
+        {
+          "step": 6,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/sections/tool_prompts.py"
+          },
+          "duration_ms": 0.5,
+          "success": true,
+          "result_preview": "1: \"\"\"Rich tool prompt sections inspired by PersonAgent tool guidance.\"\"\"\n2: \n3: from __future__ import annotations\n4: \n5: from personagent.domain.prompts.models import SystemPromptSection\n6: from per"
+        },
+        {
+          "step": 7,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/context/models.py"
+          },
+          "duration_ms": 0.81,
+          "success": true,
+          "result_preview": "1: \"\"\"Context domain models.\n2: \n3: Este módulo define as entidades puras de contexto usadas pelo PersonAgent.\n4: Seguindo os princípios da Arquitetura Clean, estas entidades não dependem\n5: de infrae"
+        }
+      ],
+      "tool_counts": {
+        "Glob": 1,
+        "Grep": 5,
+        "Read": 8
+      },
+      "retry_count": 0,
+      "max_retries_allowed": 3,
+      "stuck_count": 0,
+      "stuck_events": [],
+      "total_time_seconds": 31.48,
+      "time_to_first_tool_seconds": 2.94,
+      "checkpoint_times": [
+        {
+          "checkpoint_id": "found_cache_break",
+          "step_reached": 1,
+          "time_seconds": 3.2220728760003112,
+          "description": "Located cache_break field in models"
+        },
+        {
+          "checkpoint_id": "found_scope_hash",
+          "step_reached": 1,
+          "time_seconds": 3.222085043998959,
+          "description": "Found how cache_scope is built"
+        }
+      ],
+      "prompt_tokens": 153124,
+      "completion_tokens": 3216,
+      "total_tokens": 156340,
+      "system_prompt_chars": 16510,
+      "system_prompt_tokens": 3128,
+      "mode_used": "exploring",
+      "states_used": [
+        "intake",
+        "context_discovery",
+        "tool_execution",
+        "finalization"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/models.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/_sections.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/prompt.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/sections/tool_prompts.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/context/models.py"
+      ],
+      "searches_made": [
+        "**/*.py",
+        "PromptBuilder",
+        "SystemPromptSection",
+        "cache_scope",
+        "cache_break"
+      ],
+      "derived": {
+        "success_rate": 1.0,
+        "tool_efficiency": 0.43,
+        "total_tool_calls": 14,
+        "unique_files_read": 6,
+        "unique_searches": 5,
+        "checkpoints_reached": 2,
+        "retry_utilization": 0.0,
+        "stuck_rate": 0.0,
+        "avg_time_per_step_ms": 3935.0
+      }
+    },
+    {
+      "benchmark_id": "pa_state_resolution",
+      "project": "PersonAgent",
+      "model": "deepseek-v4-flash",
+      "started_at": "2026-05-30T09:18:21.685443+00:00",
+      "finished_at": "2026-05-30T09:20:03.007394+00:00",
+      "success": false,
+      "final_answer": "",
+      "failure_reason": "Stuck after max retries: no new files read in recent steps",
+      "total_steps": 11,
+      "max_steps_allowed": 30,
+      "tool_calls": [
+        {
+          "step": 1,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/*.py",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+          },
+          "duration_ms": 11.55,
+          "success": true,
+          "result_preview": "domain/__init__.py\ndomain/token_counting.py\ndomain/exceptions.py\ndomain/browser_workspace/__init__.py\ndomain/browser_workspace/repositories.py\ndomain/prompts/prompt.py\ndomain/prompts/__init__.py\ndomai"
+        },
+        {
+          "step": 1,
+          "tool_name": "shell",
+          "arguments": {
+            "command": "find /home/levybonito/Documentos/PersonAgent/@backend/src/personagent -type f -name \"*.py\" | head -80"
+          },
+          "duration_ms": 6.64,
+          "success": true,
+          "result_preview": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/browser_workspace/__init__.py\n/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/browser_workspace/reposito"
+        },
+        {
+          "step": 2,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/agent_state_resolver.py"
+          },
+          "duration_ms": 0.98,
+          "success": true,
+          "result_preview": "1: \"\"\"Resolve active agent execution states for prompt construction.\"\"\"\n2: \n3: from __future__ import annotations\n4: \n5: from collections.abc import Mapping, Sequence\n6: from typing import Any\n7: \n8: "
+        },
+        {
+          "step": 2,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/sections/states.py"
+          },
+          "duration_ms": 0.76,
+          "success": true,
+          "result_preview": "1: \"\"\"Agent-state prompt overlays.\n2: \n3: Prompt modes describe the user's intent. Agent states describe the active\n4: execution behavior the model should follow for the current turn.\n5: \"\"\"\n6: \n7: fr"
+        },
+        {
+          "step": 2,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/context_analyzer.py"
+          },
+          "duration_ms": 0.82,
+          "success": true,
+          "result_preview": "1: \"\"\"LLM-first prompt context analysis.\"\"\"\n2: \n3: from __future__ import annotations\n4: \n5: import asyncio\n6: import json\n7: import time\n8: from hashlib import sha256\n9: from typing import Any\n10: \n1"
+        },
+        {
+          "step": 3,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/models.py"
+          },
+          "duration_ms": 1.04,
+          "success": true,
+          "result_preview": "1: \"\"\"Prompts domain models.\n2: \n3: Este módulo define as entidades para montagem dinâmica de system prompts.\n4: Seguindo os princípios da Arquitetura Clean, estas entidades não dependem\n5: de infraes"
+        },
+        {
+          "step": 3,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/prompt.py"
+          },
+          "duration_ms": 0.62,
+          "success": true,
+          "result_preview": "1: \"\"\"Central dynamic system prompts for PersonAgent.\n2: \n3: This module keeps concise manual prompt sections in one place. The builder\n4: composes these sections with tool, execution, system context,"
+        },
+        {
+          "step": 4,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/agent_state_resolver.py",
+            "offset": 193
+          },
+          "duration_ms": 0.69,
+          "success": true,
+          "result_preview": "193: _DEBUG_TERMS = (\n194:     \"bug\",\n195:     \"crash\",\n196:     \"erro\",\n197:     \"error\",\n198:     \"falha\",\n199:     \"failure\",\n200:     \"stack\",\n201:     \"trace\",\n202:     \"causa\",\n203:     \"root ca"
+        },
+        {
+          "step": 4,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/context_analyzer.py",
+            "offset": 270
+          },
+          "duration_ms": 0.63,
+          "success": true,
+          "result_preview": "270:         self,\n271:         *,\n272:         message: str,\n273:         available_tools: list[str] | None,\n274:         workspace_root: str,\n275:     ) -> str:\n276:         raw = json.dumps(\n277:  "
+        },
+        {
+          "step": 5,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/test*/**/*agent_state*",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+          },
+          "duration_ms": 52.04,
+          "success": true,
+          "result_preview": "No files matching '**/test*/**/*agent_state*'"
+        },
+        {
+          "step": 5,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/test*/**/*state*",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend"
+          },
+          "duration_ms": 0.1,
+          "success": false,
+          "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/PersonAgent/@backend"
+        },
+        {
+          "step": 5,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "agent_state_resolver",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend",
+            "glob": "**/test*.py"
+          },
+          "duration_ms": 0.06,
+          "success": false,
+          "result_preview": "Error: Path not found: /home/levybonito/Documentos/PersonAgent/@backend"
+        },
+        {
+          "step": 6,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/tests/**/*.py",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+          },
+          "duration_ms": 136.45,
+          "success": true,
+          "result_preview": "No files matching '**/tests/**/*.py'"
+        },
+        {
+          "step": 6,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "agent_state_resolver|AgentStateResolver",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent"
+          },
+          "duration_ms": 428.11,
+          "success": true,
+          "result_preview": "domain/prompts/services/__init__.py:3: from personagent.domain.prompts.services.agent_state_resolver import (\ndomain/prompts/services/__init__.py:4:     AgentStateResolver,\ndomain/prompts/services/__i"
+        },
+        {
+          "step": 7,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/application/use_cases/chat/prompt/prompt_package.py"
+          },
+          "duration_ms": 1.12,
+          "success": true,
+          "result_preview": "1: \"\"\"Prompt-package assembly extracted from ``chat_completion.py``.\n2: \n3: After the surrounding pipeline has resolved the system context, recalled\n4: relevant memories, and prepared any slash-comman"
+        },
+        {
+          "step": 8,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/application/use_cases/chat/prompt/prompt_package.py",
+            "offset": 226
+          },
+          "duration_ms": 0.78,
+          "success": true,
+          "result_preview": "226:                 \"prompt_mode\": built_prompt.metadata.get(\"prompt_mode\"),\n227:                 \"requested_prompt_mode\": built_prompt.metadata.get(\"requested_prompt_mode\"),\n228:                 \"pr"
+        },
+        {
+          "step": 9,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "AgentStateResolver|agent_state_resolver",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend",
+            "glob": "**/test*\""
+          },
+          "duration_ms": 0.18,
+          "success": false,
+          "result_preview": "Error: Path not found: /home/levybonito/Documentos/PersonAgent/@backend"
+        },
+        {
+          "step": 9,
+          "tool_name": "shell",
+          "arguments": {
+            "command": "find /home/levybonito/Documentos/PersonAgent/@backend -type d -name \"test*\" 2>/dev/null; find /home/levybonito/Documentos/PersonAgent/@backend -type d -name \"*test*\" 2>/dev/null | head -20"
+          },
+          "duration_ms": 164.14,
+          "success": true,
+          "result_preview": "/home/levybonito/Documentos/PersonAgent/@backend/.venv/lib/python3.13/site-packages/numpy/f2py/tests\n/home/levybonito/Documentos/PersonAgent/@backend/.venv/lib/python3.13/site-packages/numpy/_core/tes"
+        },
+        {
+          "step": 10,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/tests/**/*agent*",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend"
+          },
+          "duration_ms": 0.17,
+          "success": false,
+          "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/PersonAgent/@backend"
+        },
+        {
+          "step": 10,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/tests/**/*resolver*",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend"
+          },
+          "duration_ms": 0.11,
+          "success": false,
+          "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/PersonAgent/@backend"
+        },
+        {
+          "step": 10,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/tests/**/*state*",
+            "path": "/home/levybonito/Documentos/PersonAgent/@backend"
+          },
+          "duration_ms": 0.1,
+          "success": false,
+          "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/PersonAgent/@backend"
+        },
+        {
+          "step": 11,
+          "tool_name": "shell",
+          "arguments": {
+            "command": "find /home/levybonito/Documentos/PersonAgent/@backend/tests -type f -name \"*.py\" | head -40"
+          },
+          "duration_ms": 5.67,
+          "success": true,
+          "result_preview": "/home/levybonito/Documentos/PersonAgent/@backend/tests/test_skills_api.py\n/home/levybonito/Documentos/PersonAgent/@backend/tests/test_tools_runtime.py\n/home/levybonito/Documentos/PersonAgent/@backend/"
+        }
+      ],
+      "tool_counts": {
+        "Glob": 7,
+        "shell": 3,
+        "Read": 9,
+        "Grep": 3
+      },
+      "retry_count": 3,
+      "max_retries_allowed": 3,
+      "stuck_count": 4,
+      "stuck_events": [
+        {
+          "reason": "no new files read in recent steps",
+          "step": 8
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 9
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 10
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 11
+        }
+      ],
+      "total_time_seconds": 101.32,
+      "time_to_first_tool_seconds": 2.17,
+      "checkpoint_times": [
+        {
+          "checkpoint_id": "found_resolver",
+          "step_reached": 1,
+          "time_seconds": 2.1913256289990386,
+          "description": "Located AgentStateResolver"
+        },
+        {
+          "checkpoint_id": "traced_states",
+          "step_reached": 1,
+          "time_seconds": 2.191333795999526,
+          "description": "Traced the state sequence for the message"
+        }
+      ],
+      "prompt_tokens": 411630,
+      "completion_tokens": 16442,
+      "total_tokens": 428072,
+      "system_prompt_chars": 16898,
+      "system_prompt_tokens": 3207,
+      "mode_used": "exploring",
+      "states_used": [
+        "intake",
+        "context_discovery",
+        "planning",
+        "tool_execution",
+        "finalization"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/agent_state_resolver.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/sections/states.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/context_analyzer.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/models.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/prompt.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/application/use_cases/chat/prompt/prompt_package.py"
+      ],
+      "searches_made": [
+        "**/*.py",
+        "**/test*/**/*agent_state*",
+        "**/test*/**/*state*",
+        "agent_state_resolver",
+        "**/tests/**/*.py",
+        "agent_state_resolver|AgentStateResolver",
+        "AgentStateResolver|agent_state_resolver",
+        "**/tests/**/*agent*",
+        "**/tests/**/*resolver*",
+        "**/tests/**/*state*"
+      ],
+      "derived": {
+        "success_rate": 0.0,
+        "tool_efficiency": 0.27,
+        "total_tool_calls": 22,
+        "unique_files_read": 6,
+        "unique_searches": 10,
+        "checkpoints_reached": 2,
+        "retry_utilization": 1.0,
+        "stuck_rate": 0.36,
+        "avg_time_per_step_ms": 9210.91
+      }
+    },
+    {
+      "benchmark_id": "pd_discriminated_union",
+      "project": "pydantic",
+      "model": "deepseek-v4-flash",
+      "started_at": "2026-05-30T09:20:03.009148+00:00",
+      "finished_at": "2026-05-30T09:20:39.831450+00:00",
+      "success": false,
+      "final_answer": "",
+      "failure_reason": "Stuck after max retries: no new files read in recent steps",
+      "total_steps": 11,
+      "max_steps_allowed": 30,
+      "tool_calls": [
+        {
+          "step": 1,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/*.py",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic",
+            "max_results": 50
+          },
+          "duration_ms": 3.23,
+          "success": true,
+          "result_preview": "deprecated/__init__.py\ndeprecated/decorator.py\ndeprecated/parse.py\ndeprecated/config.py\ndeprecated/tools.py\ndeprecated/json.py\ndeprecated/copy_internals.py\ndeprecated/class_validators.py\nv1/typing.py\n"
+        },
+        {
+          "step": 1,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "class Discriminator",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic"
+          },
+          "duration_ms": 38.33,
+          "success": true,
+          "result_preview": "types.py:2981: class Discriminator:"
+        },
+        {
+          "step": 1,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "discriminator",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/pydantic",
+            "glob": "*.py",
+            "max_results": 100
+          },
+          "duration_ms": 0.09,
+          "success": false,
+          "result_preview": "Error: Path not found: /home/levybonito/Documentos/pydantic/pydantic/pydantic"
+        },
+        {
+          "step": 2,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "discriminator",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic",
+            "glob": "*.py",
+            "max_results": 200
+          },
+          "duration_ms": 60.16,
+          "success": true,
+          "result_preview": "_migration.py:241:     'pydantic.utils:get_discriminator_alias_and_values',\n_migration.py:243:     'pydantic.utils:get_unique_discriminator_alias',\njson_schema.py:92: JsonSchemaWarningKind = Literal['"
+        },
+        {
+          "step": 3,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_discriminated_union.py"
+          },
+          "duration_ms": 0.48,
+          "success": true,
+          "result_preview": "1: from __future__ import annotations as _annotations\n2: \n3: from collections.abc import Hashable, Sequence\n4: from typing import TYPE_CHECKING, Any, cast\n5: \n6: from pydantic_core import CoreSchema, "
+        },
+        {
+          "step": 3,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/types.py",
+            "offset": 2940,
+            "limit": 200
+          },
+          "duration_ms": 0.7,
+          "success": true,
+          "result_preview": "2940:     )\n2941:     print(repr(apple_variation))\n2942:     '''\n2943:     ThanksgivingDinner(dessert=ApplePie(time_to_cook=60, num_ingredients=8, fruit='apple'))\n2944:     '''\n2945: \n2946:     pumpki"
+        },
+        {
+          "step": 4,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_discriminated_union.py",
+            "offset": 200
+          },
+          "duration_ms": 0.77,
+          "success": true,
+          "result_preview": "200:             # If the schema is not a union, it probably means it just had a single member and\n201:             # was flattened by pydantic_core.\n202:             # However, it still may make sens"
+        },
+        {
+          "step": 4,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/types.py",
+            "offset": 3139,
+            "limit": 100
+          },
+          "duration_ms": 1.0,
+          "success": true,
+          "result_preview": "3139:         custom_error_type = original_schema.get('custom_error_type') if custom_error_type is None else custom_error_type\n3140:         return core_schema.tagged_union_schema(\n3141:             t"
+        },
+        {
+          "step": 5,
+          "tool_name": "Read",
+          "arguments": {
+            "offset": 399,
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_discriminated_union.py"
+          },
+          "duration_ms": 0.63,
+          "success": true,
+          "result_preview": "399: \n400:     def _infer_discriminator_values_for_dataclass_choice(\n401:         self, choice: core_schema.DataclassArgsSchema, source_name: str | None = None\n402:     ) -> list[str | int]:\n403:     "
+        },
+        {
+          "step": 5,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "is_function_with_inner_schema",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_core_utils.py"
+          },
+          "duration_ms": 13.31,
+          "success": true,
+          "result_preview": "_internal/_discriminated_union.py:271:         } and not _core_utils.is_function_with_inner_schema(choice):\n_internal/_discriminated_union.py:314:         elif _core_utils.is_function_with_inner_schem"
+        },
+        {
+          "step": 6,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "apply_discriminator",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal"
+          },
+          "duration_ms": 13.16,
+          "success": true,
+          "result_preview": "_internal/_discriminated_union.py:34: def apply_discriminator(\n_internal/_generate_schema.py:682:     def _apply_discriminator_to_union(\n_internal/_generate_schema.py:688:             return _discrimi"
+        },
+        {
+          "step": 6,
+          "tool_name": "Read",
+          "arguments": {
+            "offset": 55,
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_core_utils.py",
+            "limit": 30
+          },
+          "duration_ms": 0.41,
+          "success": true,
+          "result_preview": "55: def is_function_with_inner_schema(\n56:     schema: CoreSchemaOrField,\n57: ) -> TypeGuard[FunctionSchemaWithInnerSchema]:\n58:     return schema['type'] in _FUNCTION_WITH_INNER_SCHEMA_TYPES\n59: \n60:"
+        },
+        {
+          "step": 7,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+            "offset": 670,
+            "limit": 40
+          },
+          "duration_ms": 0.89,
+          "success": true,
+          "result_preview": "670: \n671:     def _unknown_type_schema(self, obj: Any) -> CoreSchema:\n672:         raise PydanticSchemaGenerationError(\n673:             f'Unable to generate pydantic-core schema for {obj!r}. '\n674: "
+        },
+        {
+          "step": 7,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+            "offset": 1270,
+            "limit": 30
+          },
+          "duration_ms": 0.73,
+          "success": true,
+          "result_preview": "1270:             serialization_alias=field_info.serialization_alias,\n1271:             serialization_exclude_if=field_info.exclude_if,\n1272:             frozen=field_info.frozen,\n1273:             me"
+        },
+        {
+          "step": 7,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+            "offset": 2280,
+            "limit": 40
+          },
+          "duration_ms": 0.77,
+          "success": true,
+          "result_preview": "2280: \n2281:                 if (\n2282:                     metadata.default_factory_takes_validated_data\n2283:                     and self.model_type_stack.get() is None\n2284:                     an"
+        },
+        {
+          "step": 8,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "_apply_annotations",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+            "max_results": 20
+          },
+          "duration_ms": 15.25,
+          "success": true,
+          "result_preview": "_internal/_generate_schema.py:1293:                 schema = self._apply_annotations(\n_internal/_generate_schema.py:1297:                 schema = self._apply_annotations(\n_internal/_generate_schema.p"
+        },
+        {
+          "step": 8,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "transform_inner_schema",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+            "max_results": 20
+          },
+          "duration_ms": 14.59,
+          "success": true,
+          "result_preview": "_internal/_generate_schema.py:1294:                     source_type, annotations + validators_from_decorators, transform_inner_schema=set_discriminator\n_internal/_generate_schema.py:2212:         tran"
+        },
+        {
+          "step": 9,
+          "tool_name": "Read",
+          "arguments": {
+            "offset": 2200,
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+            "limit": 60
+          },
+          "duration_ms": 0.82,
+          "success": true,
+          "result_preview": "2200:         schema = self._apply_annotations(source_type, annotations)\n2201:         # put the default validator last so that TypeAdapter.get_default_value() works\n2202:         # even if there are "
+        },
+        {
+          "step": 9,
+          "tool_name": "Read",
+          "arguments": {
+            "offset": 2840,
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+            "limit": 60
+          },
+          "duration_ms": 0.74,
+          "success": true,
+          "result_preview": "2840:             if inlinable_def_ref is not None and (inlining_behavior := _inlining_behavior(inlinable_def_ref)) != 'keep':\n2841:                 if inlining_behavior == 'inline':\n2842:            "
+        },
+        {
+          "step": 10,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "_get_wrapped_inner_schema",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+            "max_results": 5
+          },
+          "duration_ms": 15.04,
+          "success": true,
+          "result_preview": "_internal/_generate_schema.py:2243:             get_inner_schema = self._get_wrapped_inner_schema(\n_internal/_generate_schema.py:2410:     def _get_wrapped_inner_schema("
+        },
+        {
+          "step": 10,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "_generate_schema_from_get_schema_method",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+            "max_results": 5
+          },
+          "duration_ms": 12.78,
+          "success": true,
+          "result_preview": "_internal/_generate_schema.py:739:         schema = self._generate_schema_from_get_schema_method(obj, obj)\n_internal/_generate_schema.py:899:     def _generate_schema_from_get_schema_method(self, obj:"
+        },
+        {
+          "step": 11,
+          "tool_name": "Read",
+          "arguments": {
+            "offset": 2410,
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+            "limit": 80
+          },
+          "duration_ms": 0.8,
+          "success": true,
+          "result_preview": "2410:     def _get_wrapped_inner_schema(\n2411:         self,\n2412:         get_inner_schema: GetCoreSchemaHandler,\n2413:         annotation: Any,\n2414:         pydantic_js_annotation_functions: list[G"
+        },
+        {
+          "step": 11,
+          "tool_name": "Read",
+          "arguments": {
+            "offset": 899,
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+            "limit": 60
+          },
+          "duration_ms": 0.69,
+          "success": true,
+          "result_preview": "899:     def _generate_schema_from_get_schema_method(self, obj: Any, source: Any) -> core_schema.CoreSchema | None:\n900:         BaseModel_ = import_cached_base_model()\n901: \n902:         get_schema ="
+        }
+      ],
+      "tool_counts": {
+        "Glob": 1,
+        "Grep": 9,
+        "Read": 13
+      },
+      "retry_count": 3,
+      "max_retries_allowed": 3,
+      "stuck_count": 4,
+      "stuck_events": [
+        {
+          "reason": "no new files read in recent steps",
+          "step": 8
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 9
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 10
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 11
+        }
+      ],
+      "total_time_seconds": 36.82,
+      "time_to_first_tool_seconds": 3.23,
+      "checkpoint_times": [
+        {
+          "checkpoint_id": "found_apply_discriminator",
+          "step_reached": 1,
+          "time_seconds": 3.2735008439995,
+          "description": "Found apply_discriminator function"
+        },
+        {
+          "checkpoint_id": "found_literal_extraction",
+          "step_reached": 1,
+          "time_seconds": 3.27350711300096,
+          "description": "Understood how literal values are extracted"
+        }
+      ],
+      "prompt_tokens": 614886,
+      "completion_tokens": 20098,
+      "total_tokens": 634984,
+      "system_prompt_chars": 16510,
+      "system_prompt_tokens": 3128,
+      "mode_used": "exploring",
+      "states_used": [
+        "intake",
+        "context_discovery",
+        "tool_execution",
+        "finalization"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/pydantic/pydantic/_internal/_discriminated_union.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/types.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/_internal/_core_utils.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py"
+      ],
+      "searches_made": [
+        "**/*.py",
+        "class Discriminator",
+        "discriminator",
+        "is_function_with_inner_schema",
+        "apply_discriminator",
+        "_apply_annotations",
+        "transform_inner_schema",
+        "_get_wrapped_inner_schema",
+        "_generate_schema_from_get_schema_method"
+      ],
+      "derived": {
+        "success_rate": 0.0,
+        "tool_efficiency": 0.17,
+        "total_tool_calls": 23,
+        "unique_files_read": 4,
+        "unique_searches": 9,
+        "checkpoints_reached": 2,
+        "retry_utilization": 1.0,
+        "stuck_rate": 0.36,
+        "avg_time_per_step_ms": 3347.27
+      }
+    },
+    {
+      "benchmark_id": "pd_plugin_interception",
+      "project": "pydantic",
+      "model": "deepseek-v4-flash",
+      "started_at": "2026-05-30T09:20:39.832840+00:00",
+      "finished_at": "2026-05-30T09:21:17.843826+00:00",
+      "success": true,
+      "final_answer": "I have all the pieces needed. Here is the complete mechanism.\n\n---\n\n## How a Plugin Intercepts BaseModel Validation\n\n### 1. Plugin Discovery via Entry Points\n\nFile: `plugin/_loader.py`, lines 22–58\n\nWhen `create_schema_validator()` is called, it first calls `get_plugins()` (line 40 of `_schema_validator.py`). The loader uses `importlib.metadata.distributions()` to enumerate all installed packages, and filters for entry points whose group is `'pydantic'` (the constant `PYDANTIC_ENTRY_POINT_GROUP`, line 13). Each matching entry point is loaded with `.load()` (line 48), producing an instance that implements `PydanticPluginProtocol`.\n\nThere is a recursion guard (`_loading_plugins` flag, lines 19/29–31): if a plugin itself imports and uses pydantic during loading, `get_plugins()` returns an empty tuple to prevent infinite recursion. Plugins can also be disabled by the `PYDANTIC_DISABLE_PLUGINS` env var (lines 27–33).\n\nThe discovered plugins are cached in the module-level `_plugins` dict (line 16) so the import scan runs only once.\n\n### 2. The Factory Decision: SchemaValidator vs. PluggableSchemaValidator\n\nFile: `plugin/_schema_validator.py`, lines 22–53\n\n```python\ndef create_schema_validator(...) -> SchemaValidator | PluggableSchemaValidator:\n    plugins = get_plugins()\n    if plugins:\n        return PluggableSchemaValidator(...)\n    else:\n        return SchemaValidator(schema, config, _use_prebuilt=_use_prebuilt)\n```\n\nIf `get_plugins()` returns any plugins, a `PluggableSchemaValidator` is returned instead of a plain `SchemaValidator`. This is the single decision point that gates plugin involvement.\n\nThis factory is called from every pydantic entry point that creates validators:\n\n- **BaseModel**: `_internal/_model_construction.py`, line 696 — `schema_kind='BaseModel'`\n- **TypeAdapter**: `type_adapter.py`, line 319 — `schema_kind='TypeAdapter'`\n- **dataclass**: `_internal/_dataclasses.py`, line 185 — `schema_kind='dataclass'`\n- **validate_call**: `_internal/_validate_call.py`, line 97 — `schema_kind='validate_call'`\n\n### 3. PluggableSchemaValidator.__init__: Asking Each Plugin for Handlers\n\nFile: `plugin/_schema_validator.py`, lines 61–93\n\nThe constructor does two things:\n\n**First (line 72):** Creates a real `SchemaValidator` internally and stores it as `self._schema_validator`. This is the actual pydantic-core validator that does the work.\n\n**Second (lines 74–93):** Iterates over every loaded plugin and calls `plugin.new_schema_validator(...)` on each (line 79). The plugin receives:\n- The core schema\n- The schema type (the model class)\n- The `SchemaTypePath` (module + name)\n- The schema kind (`'BaseModel'`, `'TypeAdapter'`, etc.)\n- The config\n- The plugin settings dict\n\nEach plugin returns a tuple of three optional handler objects: `(ValidatePythonHandlerProtocol | None, ValidateJsonHandlerProtocol | None, ValidateStringsHandlerProtocol | None)` (defined as `NewSchemaReturns` in `plugin/__init__.py`, line 28).\n\nNon-`None` handlers are collected into three lists:\n- `python_event_handlers`\n- `json_event_handlers`\n- `strings_event_handlers`\n\n### 4. build_wrapper: Wrapping the Real validate_python with Lifecycle Hooks\n\nFile: `plugin/_schema_validator.py`, lines 99–128\n\n```python\nself.validate_python = build_wrapper(self._schema_validator.validate_python, python_event_handlers)\n```\n\n`build_wrapper` takes the real `SchemaValidator.validate_python` method and the list of handler protocols from the plugins. If the handler list is empty (line 100), it returns the original function unchanged — zero overhead.\n\nIf handlers exist, it creates a closure `wrapper` (lines 108–126) that interleaves plugin callbacks around the real call:\n\n1. **On enter** (lines 110–111): Calls each handler's `on_enter(*args, **kwargs)` — same arguments as the real `validate_python`. This is where a plugin first intercepts validation, receiving the input data and all parameters (`strict`, `from_attributes`, `context`, `self_instance`, etc.).\n\n2. **Try** the real `self._schema_validator.validate_python(...)` (line 114).\n\n3. **On success** (lines 123–125): If validation succeeds, calls each handler's `on_success(result)`.\n\n4. **On ValidationError** (lines 115–118): Calls each handler's `on_error(error)`, then re-raises.\n\n5. **On Exception** (lines 119–122): Calls each handler's `on_exception(exception)`, then re-raises.\n\nThe `filter_handlers` function (lines 131–143) ensures that only methods actually implemented by the plugin (not inherited defaults from the protocol) are called, by checking `handler.__module__ != 'pydantic.plugin'`.\n\n### 5. The Trigger Point: BaseModel.__init__ Calls validate_python\n\nFile: `main.py`, lines 253–263\n\n```python\nclass BaseModel:\n    def __init__(self, /, **data: Any) -> None:\n        validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n```\n\n`self.__pydantic_validator__` was set during class construction (in `_model_construction.py`, line 696) to the result of `create_schema_validator(...)`. If plugins are installed, that result is a `PluggableSchemaValidator` instance, and `validate_python` on that instance is the wrapped function from `build_wrapper`. So every `MyModel(**data)` call transparently invokes all plugin lifecycle hooks.\n\n---\n\n### Summary of the Full Chain\n\n```\nBaseModel.__init__(**data)                           # main.py:263\n  → self.__pydantic_validator__.validate_python()    # PluggableSchemaValidator.validate_python\n  → wrapper(*args, **kwargs)                         # build_wrapper closure at _schema_validator.py:109\n      → on_enter_handler(...)                        # each plugin's on_enter callback\n      → self._schema_validator.validate_python(...)  # real pydantic-core validation\n      → on_success_handler(result)                   # or on_error/on_exception\n```\n\n**Key files:**\n- `plugin/_loader.py` lines 22–58 — entry-point discovery & caching\n- `plugin/__init__.py` lines 41–73 — `PydanticPluginProtocol.new_schema_validator` interface\n- `plugin/_schema_validator.py` lines 22–53 — `create_schema_validator` factory decision\n- `plugin/_schema_validator.py` lines 56–93 — `PluggableSchemaValidator.__init__` iterating plugins\n- `plugin/_schema_validator.py` lines 99–128 — `build_wrapper` creating the lifecycle-hooked closure\n- `_internal/_model_construction.py` lines 696–705 — BaseModel's call to `create_schema_validator`\n- `main.py` lines 253–263 — `BaseModel.__init__` invoking `validate_python`",
+      "failure_reason": "",
+      "total_steps": 11,
+      "max_steps_allowed": 30,
+      "tool_calls": [
+        {
+          "step": 1,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/*.py",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic",
+            "max_results": 50
+          },
+          "duration_ms": 3.09,
+          "success": true,
+          "result_preview": "deprecated/__init__.py\ndeprecated/decorator.py\ndeprecated/parse.py\ndeprecated/config.py\ndeprecated/tools.py\ndeprecated/json.py\ndeprecated/copy_internals.py\ndeprecated/class_validators.py\nv1/typing.py\n"
+        },
+        {
+          "step": 1,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "plugin",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic",
+            "max_results": 50
+          },
+          "duration_ms": 16.48,
+          "success": true,
+          "result_preview": "config.py:810:     plugin_settings: dict[str, object] | None\nconfig.py:811:     \"\"\"A `dict` of settings for plugins. Defaults to `None`.\"\"\"\nmain.py:55: from .plugin._schema_validator import PluggableS"
+        },
+        {
+          "step": 2,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "plugin/**/*.py",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic"
+          },
+          "duration_ms": 3.36,
+          "success": true,
+          "result_preview": "No files matching 'plugin/**/*.py'"
+        },
+        {
+          "step": 3,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "plugin",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic",
+            "glob": "**/_schema_validator*"
+          },
+          "duration_ms": 1.55,
+          "success": true,
+          "result_preview": "No matches found for 'plugin'"
+        },
+        {
+          "step": 3,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/_schema_validator*",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic"
+          },
+          "duration_ms": 3.62,
+          "success": true,
+          "result_preview": "plugin/_schema_validator.py"
+        },
+        {
+          "step": 3,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "PluggableSchemaValidator|_schema_validator",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic"
+          },
+          "duration_ms": 61.73,
+          "success": true,
+          "result_preview": "main.py:55: from .plugin._schema_validator import PluggableSchemaValidator\nmain.py:204:     __pydantic_validator__: ClassVar[SchemaValidator | PluggableSchemaValidator]\ntype_adapter.py:36: from .plugi"
+        },
+        {
+          "step": 4,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/plugin/__init__.py"
+          },
+          "duration_ms": 0.45,
+          "success": true,
+          "result_preview": "1: \"\"\"!!! abstract \"Usage Documentation\"\n2:     [Build a Plugin](../concepts/plugins.md#build-a-plugin)\n3: \n4: Plugin interface for Pydantic plugins, and related types.\n5: \"\"\"\n6: \n7: from __future__ i"
+        },
+        {
+          "step": 4,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/plugin/_schema_validator.py"
+          },
+          "duration_ms": 0.3,
+          "success": true,
+          "result_preview": "1: \"\"\"Pluggable schema validator for pydantic.\"\"\"\n2: \n3: from __future__ import annotations\n4: \n5: import functools\n6: from collections.abc import Callable, Iterable\n7: from typing import TYPE_CHECKIN"
+        },
+        {
+          "step": 5,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "plugin/_loader*",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic"
+          },
+          "duration_ms": 5.47,
+          "success": true,
+          "result_preview": "plugin/_loader.py"
+        },
+        {
+          "step": 5,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_model_construction.py",
+            "offset": 680,
+            "limit": 30
+          },
+          "duration_ms": 0.58,
+          "success": true,
+          "result_preview": "680:     core_config = config_wrapper.core_config(title=cls.__name__)\n681: \n682:     try:\n683:         schema = gen_schema.clean_schema(schema)\n684:     except InvalidSchemaError:\n685:         set_mod"
+        },
+        {
+          "step": 6,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/plugin/_loader.py"
+          },
+          "duration_ms": 0.34,
+          "success": true,
+          "result_preview": "1: from __future__ import annotations\n2: \n3: import importlib.metadata as importlib_metadata\n4: import os\n5: import warnings\n6: from collections.abc import Iterable\n7: from typing import TYPE_CHECKING"
+        },
+        {
+          "step": 7,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/main.py",
+            "limit": 100
+          },
+          "duration_ms": 1.26,
+          "success": true,
+          "result_preview": "1: \"\"\"Logic for creating models.\"\"\"\n2: \n3: # Because `dict` is in the local namespace of the `BaseModel` class, we use `Dict` for annotations.\n4: # TODO v3 fallback to `dict` when the deprecated `dict"
+        },
+        {
+          "step": 8,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "def __init__",
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/main.py"
+          },
+          "duration_ms": 26.42,
+          "success": true,
+          "result_preview": "json_schema.py:271:     def __init__(\njson_schema.py:2731:     def __init__(\njson_schema.py:2736:     def __init__(self, examples: list[Any], mode: Literal['validation', 'serialization'] | None = None"
+        },
+        {
+          "step": 9,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/main.py",
+            "offset": 253,
+            "limit": 40
+          },
+          "duration_ms": 0.92,
+          "success": true,
+          "result_preview": "253:     def __init__(self, /, **data: Any) -> None:\n254:         \"\"\"Create a new model by parsing and validating input data from keyword arguments.\n255: \n256:         Raises [`ValidationError`][pydan"
+        },
+        {
+          "step": 9,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/type_adapter.py",
+            "offset": 160,
+            "limit": 50
+          },
+          "duration_ms": 0.44,
+          "success": true,
+          "result_preview": "160:         `BaseModel`'s behavior isn't perfect either and _can_ break in similar ways,\n161:         so there is no right or wrong between the two.\n162: \n163:         But at the very least this beha"
+        },
+        {
+          "step": 10,
+          "tool_name": "Read",
+          "arguments": {
+            "offset": 300,
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/type_adapter.py",
+            "limit": 80
+          },
+          "duration_ms": 0.45,
+          "success": true,
+          "result_preview": "300: \n301:             schema_generator = _generate_schema.GenerateSchema(config_wrapper, ns_resolver=ns_resolver)\n302: \n303:             try:\n304:                 core_schema = schema_generator.gener"
+        },
+        {
+          "step": 10,
+          "tool_name": "Read",
+          "arguments": {
+            "offset": 80,
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_validate_call.py",
+            "limit": 50
+          },
+          "duration_ms": 0.25,
+          "success": true,
+          "result_preview": "80:             self.module = function.__module__\n81:         self.qualname = extract_function_qualname(function)\n82: \n83:         self.ns_resolver = NsResolver(\n84:             namespaces_tuple=ns_fo"
+        },
+        {
+          "step": 10,
+          "tool_name": "Read",
+          "arguments": {
+            "offset": 170,
+            "path": "/home/levybonito/Documentos/pydantic/pydantic/_internal/_dataclasses.py",
+            "limit": 30
+          },
+          "duration_ms": 0.22,
+          "success": true,
+          "result_preview": "170:         return False\n171: \n172:     core_config = config_wrapper.core_config(title=cls.__name__)\n173: \n174:     try:\n175:         schema = gen_schema.clean_schema(schema)\n176:     except InvalidS"
+        }
+      ],
+      "tool_counts": {
+        "Glob": 4,
+        "Grep": 4,
+        "Read": 10
+      },
+      "retry_count": 3,
+      "max_retries_allowed": 3,
+      "stuck_count": 3,
+      "stuck_events": [
+        {
+          "reason": "no new files read in recent steps",
+          "step": 8
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 9
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 10
+        }
+      ],
+      "total_time_seconds": 38.01,
+      "time_to_first_tool_seconds": 2.43,
+      "checkpoint_times": [
+        {
+          "checkpoint_id": "found_loader",
+          "step_reached": 1,
+          "time_seconds": 2.447628573005204,
+          "description": "Found plugin loader mechanism"
+        },
+        {
+          "checkpoint_id": "found_wrapper",
+          "step_reached": 1,
+          "time_seconds": 2.4476371820055647,
+          "description": "Found validation wrapper"
+        }
+      ],
+      "prompt_tokens": 732399,
+      "completion_tokens": 23865,
+      "total_tokens": 756264,
+      "system_prompt_chars": 16510,
+      "system_prompt_tokens": 3128,
+      "mode_used": "exploring",
+      "states_used": [
+        "intake",
+        "context_discovery",
+        "tool_execution",
+        "finalization"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/pydantic/pydantic/plugin/__init__.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/plugin/_schema_validator.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/_internal/_model_construction.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/plugin/_loader.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/main.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/type_adapter.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/_internal/_validate_call.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/_internal/_dataclasses.py"
+      ],
+      "searches_made": [
+        "**/*.py",
+        "plugin",
+        "plugin/**/*.py",
+        "**/_schema_validator*",
+        "PluggableSchemaValidator|_schema_validator",
+        "plugin/_loader*",
+        "def __init__"
+      ],
+      "derived": {
+        "success_rate": 1.0,
+        "tool_efficiency": 0.44,
+        "total_tool_calls": 18,
+        "unique_files_read": 8,
+        "unique_searches": 7,
+        "checkpoints_reached": 2,
+        "retry_utilization": 1.0,
+        "stuck_rate": 0.27,
+        "avg_time_per_step_ms": 3455.45
+      }
+    },
+    {
+      "benchmark_id": "oc_permission_eval",
+      "project": "opencode",
+      "model": "deepseek-v4-flash",
+      "started_at": "2026-05-30T09:21:17.847307+00:00",
+      "finished_at": "2026-05-30T09:21:43.189266+00:00",
+      "success": false,
+      "final_answer": "",
+      "failure_reason": "Stuck after max retries: no new files read in recent steps",
+      "total_steps": 11,
+      "max_steps_allowed": 30,
+      "tool_calls": [
+        {
+          "step": 1,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/*.ts",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src"
+          },
+          "duration_ms": 16.36,
+          "success": true,
+          "result_preview": "pty/index.ts\npty/pty.ts\npty/ticket.ts\npty/input.ts\npty/pty.node.ts\npty/schema.ts\npty/pty.bun.ts\nv2/session.ts\ncommand/index.ts\nproject/instance-runtime.ts\nproject/instance-store.ts\nproject/bootstrap-s"
+        },
+        {
+          "step": 2,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/*.ts",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/v2"
+          },
+          "duration_ms": 0.42,
+          "success": true,
+          "result_preview": "No files matching '**/*.ts'"
+        },
+        {
+          "step": 2,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/tool*",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src"
+          },
+          "duration_ms": 28.66,
+          "success": true,
+          "result_preview": "cli/cmd/run/tool.ts\nsession/tools.ts\nacp/tool.ts\ntool/tool.ts"
+        },
+        {
+          "step": 2,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "permission|approval|auto.*allow|auto.*deny|manual.*mode",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src",
+            "glob": "*.ts"
+          },
+          "duration_ms": 20.51,
+          "success": true,
+          "result_preview": "v2/session.ts:59:   permission: optionalOmitUndefined(Permission.Ruleset),\nproject/instance-context.ts:16:  * Paths within the worktree but outside the working directory should not trigger external_di"
+        },
+        {
+          "step": 3,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/permission*",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src"
+          },
+          "duration_ms": 30.93,
+          "success": true,
+          "result_preview": "cli/cmd/tui/routes/session/permission.tsx\ncli/cmd/run/permission.shared.ts\nserver/routes/instance/httpapi/handlers/permission.ts\nserver/routes/instance/httpapi/groups/permission.ts\nacp/permission.ts\nc"
+        },
+        {
+          "step": 3,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "Permission",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/v2"
+          },
+          "duration_ms": 1.57,
+          "success": true,
+          "result_preview": "v2/session.ts:59:   permission: optionalOmitUndefined(Permission.Ruleset),"
+        },
+        {
+          "step": 4,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/config/permission.ts"
+          },
+          "duration_ms": 1.31,
+          "success": true,
+          "result_preview": "1: export * as ConfigPermission from \"./permission\"\n2: import { Schema, SchemaGetter } from \"effect\"\n3: \n4: export const Action = Schema.Literals([\"ask\", \"allow\", \"deny\"]).annotate({ identifier: \"Perm"
+        },
+        {
+          "step": 4,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/acp/permission.ts"
+          },
+          "duration_ms": 0.64,
+          "success": true,
+          "result_preview": "1: import type { AgentSideConnection, PermissionOption, RequestPermissionResponse } from \"@agentclientprotocol/sdk\"\n2: import * as Log from \"@opencode-ai/core/util/log\"\n3: import type { Event, Opencod"
+        },
+        {
+          "step": 4,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/cli/cmd/run/permission.shared.ts"
+          },
+          "duration_ms": 0.67,
+          "success": true,
+          "result_preview": "1: // Pure state machine for the permission UI.\n2: //\n3: // Lives outside the JSX component so it can be tested independently. The\n4: // machine has three stages:\n5: //\n6: //   permission → initial vi"
+        },
+        {
+          "step": 5,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/tool/tool.ts"
+          },
+          "duration_ms": 0.99,
+          "success": true,
+          "result_preview": "1: import { Effect, Schema } from \"effect\"\n2: import type { JSONSchema7 } from \"@ai-sdk/provider\"\n3: import type { MessageV2 } from \"../session/message-v2\"\n4: import type { Permission } from \"../permi"
+        },
+        {
+          "step": 5,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/command/index.ts"
+          },
+          "duration_ms": 0.77,
+          "success": true,
+          "result_preview": "1: import { BusEvent } from \"@/bus/bus-event\"\n2: import { InstanceState } from \"@/effect/instance-state\"\n3: import { EffectBridge } from \"@/effect/bridge\"\n4: import type { InstanceContext } from \"@/pr"
+        },
+        {
+          "step": 6,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/permission/**",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src"
+          },
+          "duration_ms": 34.76,
+          "success": true,
+          "result_preview": "No files matching '**/permission/**'"
+        },
+        {
+          "step": 6,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "import.*permission|from.*permission",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src",
+            "glob": "*.ts",
+            "max_results": 40
+          },
+          "duration_ms": 107.13,
+          "success": true,
+          "result_preview": "cli/cmd/run.ts:25: import { Permission } from \"@/permission\"\ncli/cmd/tui/attention.ts:18: import permissionSoundPath from \"@opencode-ai/ui/audio/staplebops-06.mp3\" with { type: \"file\" }\ncli/cmd/debug/"
+        },
+        {
+          "step": 7,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/permission/index.ts"
+          },
+          "duration_ms": 0.61,
+          "success": true,
+          "result_preview": "1: import { Bus } from \"@/bus\"\n2: import { BusEvent } from \"@/bus/bus-event\"\n3: import { ConfigPermission } from \"@/config/permission\"\n4: import { InstanceState } from \"@/effect/instance-state\"\n5: imp"
+        },
+        {
+          "step": 7,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/permission/evaluate.ts"
+          },
+          "duration_ms": 0.3,
+          "success": true,
+          "result_preview": "1: export { evaluate } from \"@opencode-ai/core/permission\""
+        },
+        {
+          "step": 8,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/permission/index.ts",
+            "offset": 200
+          },
+          "duration_ms": 0.48,
+          "success": true,
+          "result_preview": "200:       log.info(\"asking\", { id, permission: info.permission, patterns: info.patterns })\n201: \n202:       const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()\n203:       pe"
+        },
+        {
+          "step": 8,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/core/permission*",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode"
+          },
+          "duration_ms": 0.14,
+          "success": false,
+          "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/opencode/packages/opencode"
+        },
+        {
+          "step": 9,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/core/permission*",
+            "path": "/home/levybonito/Documentos/opencode"
+          },
+          "duration_ms": 0.16,
+          "success": false,
+          "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/opencode"
+        },
+        {
+          "step": 9,
+          "tool_name": "shell",
+          "arguments": {
+            "command": "find /home/levybonito/Documentos/opencode/packages -name \"*.ts\" -path \"*core*permission*\" 2>/dev/null | head -20"
+          },
+          "duration_ms": 28.35,
+          "success": true,
+          "result_preview": "/home/levybonito/Documentos/opencode/packages/core/src/permission.ts\n"
+        },
+        {
+          "step": 9,
+          "tool_name": "shell",
+          "arguments": {
+            "command": "find /home/levybonito/Documentos/opencode -name \"*.ts\" -path \"*wildcard*\" 2>/dev/null | head -20"
+          },
+          "duration_ms": 21.31,
+          "success": true,
+          "result_preview": "/home/levybonito/Documentos/opencode/packages/core/src/util/wildcard.ts\n/home/levybonito/Documentos/opencode/packages/opencode/test/util/wildcard.test.ts\n/home/levybonito/Documentos/opencode/packages/"
+        },
+        {
+          "step": 10,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/core/src/permission.ts"
+          },
+          "duration_ms": 0.23,
+          "success": false,
+          "result_preview": "Error: File not found: /home/levybonito/Documentos/opencode/packages/core/src/permission.ts"
+        },
+        {
+          "step": 10,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/core/src/util/wildcard.ts"
+          },
+          "duration_ms": 0.13,
+          "success": false,
+          "result_preview": "Error: File not found: /home/levybonito/Documentos/opencode/packages/core/src/util/wildcard.ts"
+        },
+        {
+          "step": 11,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/core/src/permission*",
+            "path": "/home/levybonito/Documentos/opencode"
+          },
+          "duration_ms": 0.15,
+          "success": false,
+          "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/opencode"
+        },
+        {
+          "step": 11,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/core/src/util/wildcard*",
+            "path": "/home/levybonito/Documentos/opencode"
+          },
+          "duration_ms": 0.09,
+          "success": false,
+          "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/opencode"
+        }
+      ],
+      "tool_counts": {
+        "Glob": 9,
+        "Grep": 3,
+        "Read": 10,
+        "shell": 2
+      },
+      "retry_count": 3,
+      "max_retries_allowed": 3,
+      "stuck_count": 4,
+      "stuck_events": [
+        {
+          "reason": "no new files read in recent steps",
+          "step": 8
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 9
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 10
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 11
+        }
+      ],
+      "total_time_seconds": 25.34,
+      "time_to_first_tool_seconds": 1.83,
+      "checkpoint_times": [
+        {
+          "checkpoint_id": "found_permission_merge",
+          "step_reached": 1,
+          "time_seconds": 1.8441408829967258,
+          "description": "Found permission merging logic"
+        },
+        {
+          "checkpoint_id": "found_doom_loop",
+          "step_reached": 1,
+          "time_seconds": 1.8441478309978265,
+          "description": "Found doom loop detection"
+        }
+      ],
+      "prompt_tokens": 871986,
+      "completion_tokens": 25830,
+      "total_tokens": 897816,
+      "system_prompt_chars": 16510,
+      "system_prompt_tokens": 3128,
+      "mode_used": "exploring",
+      "states_used": [
+        "intake",
+        "context_discovery",
+        "tool_execution",
+        "finalization"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/config/permission.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/acp/permission.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/cli/cmd/run/permission.shared.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/tool/tool.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/command/index.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/permission/index.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/permission/evaluate.ts",
+        "/home/levybonito/Documentos/opencode/packages/core/src/permission.ts",
+        "/home/levybonito/Documentos/opencode/packages/core/src/util/wildcard.ts"
+      ],
+      "searches_made": [
+        "**/*.ts",
+        "**/tool*",
+        "permission|approval|auto.*allow|auto.*deny|manual.*mode",
+        "**/permission*",
+        "Permission",
+        "**/permission/**",
+        "import.*permission|from.*permission",
+        "**/core/permission*",
+        "**/core/src/permission*",
+        "**/core/src/util/wildcard*"
+      ],
+      "derived": {
+        "success_rate": 0.0,
+        "tool_efficiency": 0.38,
+        "total_tool_calls": 24,
+        "unique_files_read": 9,
+        "unique_searches": 10,
+        "checkpoints_reached": 2,
+        "retry_utilization": 1.0,
+        "stuck_rate": 0.36,
+        "avg_time_per_step_ms": 2303.64
+      }
+    },
+    {
+      "benchmark_id": "oc_skill_discovery",
+      "project": "opencode",
+      "model": "deepseek-v4-flash",
+      "started_at": "2026-05-30T09:21:43.190899+00:00",
+      "finished_at": "2026-05-30T09:22:10.457442+00:00",
+      "success": false,
+      "final_answer": "",
+      "failure_reason": "Stuck after max retries: no new files read in recent steps",
+      "total_steps": 11,
+      "max_steps_allowed": 30,
+      "tool_calls": [
+        {
+          "step": 1,
+          "tool_name": "shell",
+          "arguments": {
+            "command": "find /home/levybonito/Documentos/opencode/packages/opencode/src -type f -name '*.ts' | head -80"
+          },
+          "duration_ms": 5.82,
+          "success": true,
+          "result_preview": "/home/levybonito/Documentos/opencode/packages/opencode/src/pty/index.ts\n/home/levybonito/Documentos/opencode/packages/opencode/src/pty/pty.ts\n/home/levybonito/Documentos/opencode/packages/opencode/src"
+        },
+        {
+          "step": 1,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "skill",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src",
+            "glob": "*.ts",
+            "max_results": 50
+          },
+          "duration_ms": 64.68,
+          "success": true,
+          "result_preview": "v2/session.ts:123:   readonly skill: (input: { id?: EventV2.ID; sessionID: SessionID; skill: string }) => Effect.Effect<void, never>\nv2/session.ts:320:       skill: Effect.fn(\"V2Session.skill\")(functi"
+        },
+        {
+          "step": 2,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/skill/**/*.ts",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src"
+          },
+          "duration_ms": 28.68,
+          "success": true,
+          "result_preview": "No files matching '**/skill/**/*.ts'"
+        },
+        {
+          "step": 2,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/skill.ts",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src"
+          },
+          "duration_ms": 22.37,
+          "success": true,
+          "result_preview": "cli/cmd/debug/skill.ts\ntool/skill.ts"
+        },
+        {
+          "step": 2,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "from.*skill",
+            "glob": "*.ts",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/skill",
+            "max_results": 40
+          },
+          "duration_ms": 1.56,
+          "success": true,
+          "result_preview": "No matches found for 'from.*skill'"
+        },
+        {
+          "step": 3,
+          "tool_name": "Glob",
+          "arguments": {
+            "pattern": "**/skill.{ts,tsx}",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src"
+          },
+          "duration_ms": 25.23,
+          "success": true,
+          "result_preview": "No files matching '**/skill.{ts,tsx}'"
+        },
+        {
+          "step": 3,
+          "tool_name": "shell",
+          "arguments": {
+            "command": "find /home/levybonito/Documentos/opencode/packages/opencode/src -type d -name 'skill*'"
+          },
+          "duration_ms": 4.91,
+          "success": true,
+          "result_preview": "/home/levybonito/Documentos/opencode/packages/opencode/src/skill\n"
+        },
+        {
+          "step": 4,
+          "tool_name": "shell",
+          "arguments": {
+            "command": "ls -la /home/levybonito/Documentos/opencode/packages/opencode/src/skill/"
+          },
+          "duration_ms": 5.83,
+          "success": true,
+          "result_preview": "total 28\ndrwxrwxr-x  3 levybonito levybonito  4096 mai 30 05:13 .\ndrwxrwxr-x 43 levybonito levybonito  4096 mai 30 05:13 ..\n-rw-rw-r--  1 levybonito levybonito  3952 mai 30 05:13 discovery.ts\n-rw-rw-r"
+        },
+        {
+          "step": 5,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/skill/index.ts"
+          },
+          "duration_ms": 0.56,
+          "success": true,
+          "result_preview": "1: import path from \"path\"\n2: import { pathToFileURL } from \"url\"\n3: import { Effect, Layer, Context, Schema } from \"effect\"\n4: import { NamedError } from \"@opencode-ai/core/util/error\"\n5: import type"
+        },
+        {
+          "step": 5,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/skill/discovery.ts"
+          },
+          "duration_ms": 0.32,
+          "success": true,
+          "result_preview": "1: import { NodePath } from \"@effect/platform-node\"\n2: import { Effect, Layer, Path, Schema, Context } from \"effect\"\n3: import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } fr"
+        },
+        {
+          "step": 5,
+          "tool_name": "shell",
+          "arguments": {
+            "command": "ls -la /home/levybonito/Documentos/opencode/packages/opencode/src/skill/prompt/"
+          },
+          "duration_ms": 5.1,
+          "success": true,
+          "result_preview": "total 24\ndrwxrwxr-x 2 levybonito levybonito  4096 mai 30 05:13 .\ndrwxrwxr-x 3 levybonito levybonito  4096 mai 30 05:13 ..\n-rw-rw-r-- 1 levybonito levybonito 13074 mai 30 05:13 customize-opencode.md\n"
+        },
+        {
+          "step": 6,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/skill/index.ts",
+            "offset": 200
+          },
+          "duration_ms": 0.69,
+          "success": true,
+          "result_preview": "200:     for (const root of upDirs) {\n201:       yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { dot: true, scope: \"project\" })\n202:     }\n203:   }\n204: \n205:   const configDirs = yield* config.dir"
+        },
+        {
+          "step": 7,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/session/system.ts"
+          },
+          "duration_ms": 0.56,
+          "success": true,
+          "result_preview": "1: import { Context, Effect, Layer } from \"effect\"\n2: \n3: import { InstanceState } from \"@/effect/instance-state\"\n4: \n5: import PROMPT_ANTHROPIC from \"./prompt/anthropic.txt\"\n6: import PROMPT_DEFAULT "
+        },
+        {
+          "step": 8,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/session/prompt.ts",
+            "offset": 1410,
+            "limit": 60
+          },
+          "duration_ms": 1.76,
+          "success": true,
+          "result_preview": "1410:             }\n1411: \n1412:             if (step === 1)\n1413:               yield* summary.summarize({ sessionID, messageID: lastUser.id }).pipe(Effect.ignore, Effect.forkIn(scope))\n1414: \n1415: "
+        },
+        {
+          "step": 9,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/tool/skill.ts"
+          },
+          "duration_ms": 0.46,
+          "success": true,
+          "result_preview": "1: import path from \"path\"\n2: import { pathToFileURL } from \"url\"\n3: import { Effect, Schema } from \"effect\"\n4: import * as Stream from \"effect/Stream\"\n5: import { Ripgrep } from \"../file/ripgrep\"\n6: "
+        },
+        {
+          "step": 9,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/session/prompt.ts",
+            "offset": 1,
+            "limit": 50
+          },
+          "duration_ms": 0.86,
+          "success": true,
+          "result_preview": "1: import path from \"path\"\n2: import os from \"os\"\n3: import { SessionID, MessageID, PartID } from \"./schema\"\n4: import { MessageV2 } from \"./message-v2\"\n5: import * as Log from \"@opencode-ai/core/util"
+        },
+        {
+          "step": 9,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "fsys\\.up",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src",
+            "max_results": 20
+          },
+          "duration_ms": 92.64,
+          "success": true,
+          "result_preview": "No matches found for 'fsys\\.up'"
+        },
+        {
+          "step": 10,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "up.*targets.*start.*stop",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src",
+            "max_results": 10
+          },
+          "duration_ms": 107.0,
+          "success": true,
+          "result_preview": "util/filesystem.ts:214: export async function* up(options: { targets: string[]; start: string; stop?: string }) {\nskill/index.ts:197:       .up({ targets: externalDirs, start: directory, stop: worktre"
+        },
+        {
+          "step": 10,
+          "tool_name": "Grep",
+          "arguments": {
+            "pattern": "readonly up",
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src",
+            "max_results": 10
+          },
+          "duration_ms": 77.06,
+          "success": true,
+          "result_preview": "pty/index.ts:109:   readonly update: (id: PtyID, input: UpdateInput) => Effect.Effect<Info, NotFoundError>\nproject/project.ts:128:   readonly update: (input: UpdateInput) => Effect.Effect<Info, NotFou"
+        },
+        {
+          "step": 10,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/session/prompt.ts",
+            "offset": 1430,
+            "limit": 30
+          },
+          "duration_ms": 0.55,
+          "success": true,
+          "result_preview": "1430:               }\n1431:             }\n1432: \n1433:             yield* plugin.trigger(\"experimental.chat.messages.transform\", {}, { messages: msgs })\n1434: \n1435:             const [skills, env, in"
+        },
+        {
+          "step": 11,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/util/filesystem.ts",
+            "offset": 200,
+            "limit": 60
+          },
+          "duration_ms": 0.53,
+          "success": true,
+          "result_preview": "200:     current = parent\n201:   }\n202: \n203:   const targets = Array.isArray(target) ? target : [target]\n204:   const result = []\n205:   for (const dir of options?.rootFirst ? dirs.toReversed() : dir"
+        },
+        {
+          "step": 11,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/tool/skill.txt"
+          },
+          "duration_ms": 0.31,
+          "success": true,
+          "result_preview": "1: Load a specialized skill when the task at hand matches one of the skills listed in the system prompt.\n2: \n3: Use this tool to inject the skill's instructions and resources into current conversation"
+        },
+        {
+          "step": 11,
+          "tool_name": "Read",
+          "arguments": {
+            "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/session/instruction.ts",
+            "limit": 50
+          },
+          "duration_ms": 0.36,
+          "success": true,
+          "result_preview": "1: import path from \"path\"\n2: import { Effect, Layer, Context } from \"effect\"\n3: import { FetchHttpClient, HttpClient, HttpClientRequest } from \"effect/unstable/http\"\n4: import { Config } from \"@/conf"
+        }
+      ],
+      "tool_counts": {
+        "shell": 4,
+        "Grep": 5,
+        "Glob": 3,
+        "Read": 11
+      },
+      "retry_count": 3,
+      "max_retries_allowed": 3,
+      "stuck_count": 4,
+      "stuck_events": [
+        {
+          "reason": "no new files read in recent steps",
+          "step": 8
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 9
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 10
+        },
+        {
+          "reason": "no new files read in recent steps",
+          "step": 11
+        }
+      ],
+      "total_time_seconds": 27.26,
+      "time_to_first_tool_seconds": 2.13,
+      "checkpoint_times": [
+        {
+          "checkpoint_id": "found_discovery",
+          "step_reached": 1,
+          "time_seconds": 2.20014837099734,
+          "description": "Found skill discovery function"
+        },
+        {
+          "checkpoint_id": "found_injection",
+          "step_reached": 1,
+          "time_seconds": 2.200155514998187,
+          "description": "Found prompt injection point"
+        }
+      ],
+      "prompt_tokens": 1001185,
+      "completion_tokens": 28232,
+      "total_tokens": 1029417,
+      "system_prompt_chars": 16510,
+      "system_prompt_tokens": 3128,
+      "mode_used": "exploring",
+      "states_used": [
+        "intake",
+        "context_discovery",
+        "tool_execution",
+        "finalization"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/skill/index.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/skill/discovery.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/session/system.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/session/prompt.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/tool/skill.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/util/filesystem.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/tool/skill.txt",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/session/instruction.ts"
+      ],
+      "searches_made": [
+        "skill",
+        "**/skill/**/*.ts",
+        "**/skill.ts",
+        "from.*skill",
+        "**/skill.{ts,tsx}",
+        "fsys\\.up",
+        "up.*targets.*start.*stop",
+        "readonly up"
+      ],
+      "derived": {
+        "success_rate": 0.0,
+        "tool_efficiency": 0.35,
+        "total_tool_calls": 23,
+        "unique_files_read": 8,
+        "unique_searches": 8,
+        "checkpoints_reached": 2,
+        "retry_utilization": 1.0,
+        "stuck_rate": 0.36,
+        "avg_time_per_step_ms": 2478.18
+      }
+    }
+  ]
+}

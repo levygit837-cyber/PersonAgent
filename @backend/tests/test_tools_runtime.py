@@ -360,16 +360,19 @@ async def test_orchestrator_applies_tool_definition_result_limit(tmp_path):
     storage_path = Path(result.metadata["storage_ref"])
     assert storage_path == tmp_path / "artifacts" / "tool-results" / "test" / "call_limited.txt"
     assert storage_path.read_text(encoding="utf-8") == "x" * 100
-    assert result.content == "x" * 12 + "\n[Output truncated.]"
+    # Result is now replaced with a structured preview message
+    assert result.content.startswith("<persisted-output>")
+    assert "Output too large" in result.content
+    assert result.content.endswith("</persisted-output>")
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_defaults_tool_result_limit_to_sixty_thousand(tmp_path):
+async def test_orchestrator_defaults_tool_result_limit_to_fifty_thousand(tmp_path):
     async def handler(args, context, call):
         return ToolResult(
             tool_call_id=call.id,
             tool_name="default_limited",
-            content="y" * 60_001,
+            content="y" * 50_001,
         )
 
     tool = build_tool(
@@ -402,11 +405,11 @@ async def test_orchestrator_defaults_tool_result_limit_to_sixty_thousand(tmp_pat
     result = events[-1].result
     assert result is not None
     assert result.metadata["truncated"] is True
-    assert result.metadata["max_result_size_chars"] == 60_000
-    assert result.metadata["original_chars"] == 60_001
-    assert result.content.startswith("y" * 60_000)
+    assert result.metadata["max_result_size_chars"] == 50_000
+    assert result.metadata["original_chars"] == 50_001
+    assert result.content.startswith("<persisted-output>")
     storage_path = Path(result.metadata["storage_ref"])
-    assert storage_path.read_text(encoding="utf-8") == "y" * 60_001
+    assert storage_path.read_text(encoding="utf-8") == "y" * 50_001
 
 
 @pytest.mark.asyncio
