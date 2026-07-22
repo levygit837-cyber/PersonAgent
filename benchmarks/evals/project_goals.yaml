@@ -1,0 +1,246 @@
+# PersonAgent Exploration Benchmark Goals — BEHAVIORAL EDITION
+#
+# Rule: Questions describe BEHAVIORS in natural language.
+# No directory names. No file names. No greppable keywords.
+# The agent must explore to discover WHERE the behavior is implemented.
+#
+# The evaluator uses `files_needed` and `expected_answer_brief` for scoring.
+# The agent NEVER sees those fields.
+
+projects:
+  opencode:
+    path: /home/levybonito/Documentos/opencode
+    language: TypeScript
+    complexity: 9
+    package_manager: bun
+    frameworks: [Effect, Drizzle, SolidJS, Hono]
+    description: "Open-source AI coding agent — Effect monorepo with plugin system"
+
+    goals:
+      - id: opencode_easy
+        difficulty: easy
+        question: >
+          When a user starts the application from the command line without passing
+          any specific command, how does the system decide whether to enter an
+          interactive interface or run a single task and exit? What configuration
+          or state determines this behavior?
+        expected_answer_brief: >
+          The CLI bootstrap reads the command-line arguments and environment.
+          If no command is provided, it checks the console state config
+          (packages/opencode/src/config/console-state.ts). If interactive mode
+          is enabled (default), it launches the TUI. Otherwise it falls back to
+          a single-shot execution. The effect-cmd.ts processes the CLI args
+          and the bootstrap.ts wires the runtime before starting the UI loop.
+        files_needed:
+          - packages/opencode/src/cli/bootstrap.ts
+          - packages/opencode/src/cli/effect-cmd.ts
+          - packages/opencode/src/config/console-state.ts
+        surfaces: [entrypoint, config]
+
+      - id: opencode_medium
+        difficulty: medium
+        question: >
+          When a user sends a message that begins with a special mention symbol
+          followed by a worker name, how does the system know to delegate that
+          request to a separate worker agent instead of handling it in the main
+          conversation? What determines whether that worker is allowed to modify
+          files on disk or is restricted to read-only operations?
+        expected_answer_brief: >
+          The message parser detects the mention prefix and routes to the agent
+          dispatch layer. The subagent permissions module
+          (packages/opencode/src/agent/subagent-permissions.ts) defines a
+          permission matrix keyed by agent type. The ACP tool service
+          (packages/opencode/src/acp/tool.ts) enforces these permissions before
+          executing any tool call from a subagent. The bus event system
+          (packages/opencode/src/bus/) handles the async handoff.
+        files_needed:
+          - packages/opencode/src/agent/agent.ts
+          - packages/opencode/src/agent/subagent-permissions.ts
+          - packages/opencode/src/acp/tool.ts
+          - packages/opencode/src/bus/global.ts
+          - packages/opencode/src/command/index.ts
+        surfaces: [entrypoint, domain, adapters, tests, config]
+
+      - id: opencode_hard
+        difficulty: hard
+        question: >
+          When multiple AI workers are active simultaneously in the same workspace,
+          how does the system prevent one worker's file operations from interfering
+          with another worker's state? What mechanism isolates their work, and how
+          does the event bus ensure messages from one worker don't leak into another
+          worker's context?
+        expected_answer_brief: >
+          Each worker gets a scoped session ID. The session service
+          (packages/opencode/src/acp/session.ts) manages lifecycle and
+          cancellation tokens per session. The bus uses topic filtering
+          (packages/opencode/src/bus/global.ts) so events are routed only to
+          subscribers with matching session scopes. The permission guard
+          (packages/opencode/src/acp/permission.ts) checks the caller's
+          session before allowing destructive operations. The store layer
+          uses session-keyed transactions for isolation.
+        files_needed:
+          - packages/opencode/src/acp/session.ts
+          - packages/opencode/src/acp/permission.ts
+          - packages/opencode/src/acp/service.ts
+          - packages/opencode/src/acp/event.ts
+          - packages/opencode/src/bus/global.ts
+          - packages/opencode/src/bus/bus-event.ts
+          - packages/opencode/src/agent/subagent-permissions.ts
+          - packages/opencode/src/account/repo.ts
+        surfaces: [entrypoint, domain, adapters, tests, config]
+
+  pydantic:
+    path: /home/levybonito/Documentos/pydantic
+    language: Python
+    complexity: 8
+    package_manager: uv
+    frameworks: [pydantic, pydantic-core Rust extension]
+    description: "Data validation using Python type hints — Python/Rust hybrid"
+
+    goals:
+      - id: pydantic_easy
+        difficulty: easy
+        question: >
+          When you define a model field with both a type annotation and a custom
+          validation function attached to it, which validation runs first: the type
+          check or the custom function? Can this execution order be changed, and
+          if so, what controls it?
+        expected_answer_brief: >
+          The @field_validator decorator (pydantic/functional_validators.py)
+          accepts a mode parameter: 'before', 'after', 'plain', or 'wrap'.
+          'before' runs the custom validator before the type check.
+          'after' runs it after. The mode is stored in the FieldValidatorInfo
+          and respected during CoreSchema construction by
+          _generate_schema.py. The default is 'after'.
+        files_needed:
+          - pydantic/functional_validators.py
+          - pydantic/_internal/_decorators.py
+          - pydantic/_internal/_validators.py
+        surfaces: [entrypoint, domain, config]
+
+      - id: pydantic_medium
+        difficulty: medium
+        question: >
+          When generating a JSON Schema for a model that contains nested models,
+          what strategy prevents two nested models with identical class names from
+          overwriting each other in the schema definitions? How are unique
+          identifiers assigned to each nested schema?
+        expected_answer_brief: >
+          The GenerateJsonSchema class (pydantic/json_schema.py) maintains a
+          definitions map. When it encounters a nested model, it checks
+          _core_metadata.py for a unique reference key. If a name collision
+          occurs, it appends a numeric suffix or uses the fully qualified
+          module path. The _generate_schema.py pre-assigns unique refs
+          during CoreSchema construction before JSON Schema generation begins.
+        files_needed:
+          - pydantic/json_schema.py
+          - pydantic/_internal/_generate_schema.py
+          - pydantic/_internal/_core_metadata.py
+          - pydantic/_internal/_discriminated_union.py
+        surfaces: [domain, adapters, tests, config]
+
+      - id: pydantic_hard
+        difficulty: hard
+        question: >
+          When a validation error occurs deep inside a nested model structure
+          (for example, inside a list inside a field inside another model), how
+          does the system construct the full path to the failing field? Where
+          does the path accumulation happen, and how is the error translated
+          from the low-level validation engine back into a structured Python
+          exception with human-readable field names?
+        expected_answer_brief: >
+          The Rust pydantic-core validator returns a raw error tree.
+          pydantic/_internal/_validators.py translates this tree into Python
+          ValidationError. The path accumulation happens in Rust during schema
+          traversal — each nested level pushes a segment onto a location stack.
+          When the error reaches Python, _core_utils.py reconstructs the dot
+          path. BaseModel.__init__ (main.py) wraps the final exception with
+          the model context. The errors.py module defines the structured
+          error format.
+        files_needed:
+          - pydantic/main.py
+          - pydantic/_internal/_validators.py
+          - pydantic/_internal/_core_utils.py
+          - pydantic/errors.py
+          - pydantic-core/src/validators/ (Rust)
+          - pydantic-core/python/pydantic_core/_pydantic_core.pyi
+        surfaces: [entrypoint, domain, adapters, tests, config]
+
+  personagent:
+    path: /home/levybonito/Documentos/PersonAgent
+    language: Python / TypeScript
+    complexity: 10
+    package_manager: uv / bun
+    frameworks: [FastAPI, SQLAlchemy, Electron, Effect]
+    description: "PersonAgent — the agent system being benchmarked itself"
+
+    goals:
+      - id: personagent_easy
+        difficulty: easy
+        question: >
+          Before the system sends a user message to the AI model, it prepares
+          a description of what tools are available. If there are many tools,
+          how does the system decide which ones to describe in the prompt?
+          What happens if the tool descriptions would take up more space than
+          the model can handle in its context window?
+        expected_answer_brief: >
+          The ToolContextBuilder resolves available tools from the ToolRegistry.
+          If too many tools exist, the system prioritizes by usage frequency
+          and relevance to the conversation context. The prompt builder
+          (prompt_package.py) assembles the tool schema block. If the assembled
+          prompt exceeds token budget, the context compaction logic (message
+          preparation) trims older messages while preserving system sections.
+        files_needed:
+          - @backend/src/personagent/application/use_cases/chat/tooling/tool_context_builder.py
+          - @backend/src/personagent/application/use_cases/chat/prompt/prompt_package.py
+          - @backend/src/personagent/application/use_cases/chat/messaging/message_preparation.py
+          - @backend/src/personagent/domain/tools/registry.py
+        surfaces: [entrypoint, domain, config]
+
+      - id: personagent_medium
+        difficulty: medium
+        question: >
+          After the AI model says it has finished investigating and wants to
+          provide a final answer, the system sometimes forces it to continue
+          searching. What criteria does the system use to accept or reject
+          the model's claim of being done? What minimum activity threshold
+          must the model have demonstrated before the system will allow it
+          to stop?
+        expected_answer_brief: >
+          The EvidenceGateService checks TurnCoverage: number of files read,
+          search patterns executed, and tools used. If fewer than 2 files
+          were read, the gate forces continue. The model's ready_for_final
+          signal is also validated — if the content is substanceless (stub
+          response), the signal is rejected. The executor's hard iteration
+          cap provides an absolute ceiling regardless of gate decisions.
+        files_needed:
+          - @backend/src/personagent/application/use_cases/chat/evidence_gate.py
+          - @backend/src/personagent/application/use_cases/chat/investigation/state.py
+          - @backend/src/personagent/application/use_cases/chat/streaming/executor.py
+          - @backend/src/personagent/application/use_cases/chat/streaming/_assistant.py
+        surfaces: [domain, adapters, tests]
+
+      - id: personagent_hard
+        difficulty: hard
+        question: >
+          During a multi-turn conversation where the AI calls multiple tools
+          in one response, what happens when some tool calls succeed but
+          others fail? Does the system retry the failed ones, skip them
+          and continue, or halt the entire conversation? How are successful
+          and failed results combined back into the conversation context
+          before the next AI turn?
+        expected_answer_brief: >
+          The StreamingTurnToolMixin executes each tool call independently.
+          Failed calls are captured as errors in the tool results list.
+          The executor does not retry automatically; it appends all results
+          (success + failure) to the conversation as tool result messages.
+          The next assistant pass receives all results and decides whether
+          to retry, skip, or abort. The ToolResultHandler normalizes the
+          output format before appending to messages. Partial failure does
+          not halt the loop unless the error is fatal (e.g. unhandled exception).
+        files_needed:
+          - @backend/src/personagent/application/use_cases/chat/streaming/executor.py
+          - @backend/src/personagent/application/use_cases/chat/streaming/_tools.py
+          - @backend/src/personagent/application/use_cases/chat/tooling/tool_result_handler.py
+          - @backend/src/personagent/application/use_cases/chat/streaming/_assistant.py
+        surfaces: [entrypoint, domain, adapters, tests, config]

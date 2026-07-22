@@ -1,0 +1,497 @@
+{
+  "analyses": [
+    {
+      "benchmark_id": "oc_permission_eval",
+      "project": "opencode",
+      "success": false,
+      "scores": {
+        "exploration_breadth": 100,
+        "tool_efficiency": 37.5,
+        "persistence": 50,
+        "answer_quality": 50.0,
+        "prompt_harness_effectiveness": 80,
+        "overall": 64.5
+      },
+      "statistics": {
+        "total_steps": 11,
+        "total_tool_calls": 24,
+        "unique_files_read": 9,
+        "unique_searches": 10,
+        "stuck_events": 4,
+        "retry_events": 3,
+        "checkpoints_reached": 2,
+        "total_tokens": 897816,
+        "total_time_seconds": 25.34
+      },
+      "tool_sequence": [
+        "Glob",
+        "Glob",
+        "Glob",
+        "Grep",
+        "Glob",
+        "Grep",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Glob",
+        "Grep",
+        "Read",
+        "Read",
+        "Read",
+        "Glob",
+        "Glob",
+        "shell",
+        "shell",
+        "Read",
+        "Read",
+        "Glob",
+        "Glob"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/opencode/packages/core/src/permission.ts",
+        "/home/levybonito/Documentos/opencode/packages/core/src/util/wildcard.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/acp/permission.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/cli/cmd/run/permission.shared.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/command/index.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/config/permission.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/permission/evaluate.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/permission/index.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/tool/tool.ts"
+      ],
+      "searches_made": [
+        "**/*.ts",
+        "**/core/permission*",
+        "**/core/src/permission*",
+        "**/core/src/util/wildcard*",
+        "**/permission*",
+        "**/permission/**",
+        "**/tool*",
+        "Permission",
+        "import.*permission|from.*permission",
+        "permission|approval|auto.*allow|auto.*deny|manual.*mode"
+      ],
+      "stuck_reasons": [
+        "no new files read in recent steps",
+        "no new files read in recent steps",
+        "no new files read in recent steps",
+        "no new files read in recent steps"
+      ],
+      "key_observations": [
+        "Agent got stuck 4 times, suggesting the prompt may not provide sufficient guidance for navigating complex codebases.",
+        "Final answer was very short or absent, suggesting the agent may not have synthesized findings effectively.",
+        "Benchmark failed. The agent may need stronger direction to explore deeply or synthesize properly."
+      ],
+      "recommendations": [
+        "Consider adding explicit 'if stuck, try X' guidance to the system prompt for exploration tasks.",
+        "Add synthesis instructions to the prompt: 'After gathering evidence, write a structured answer with file references.'",
+        "High tool call count suggests inefficiency. The prompt could guide more targeted searches."
+      ]
+    },
+    {
+      "benchmark_id": "oc_skill_discovery",
+      "project": "opencode",
+      "success": false,
+      "scores": {
+        "exploration_breadth": 100,
+        "tool_efficiency": 34.8,
+        "persistence": 50,
+        "answer_quality": 50.0,
+        "prompt_harness_effectiveness": 80,
+        "overall": 64.0
+      },
+      "statistics": {
+        "total_steps": 11,
+        "total_tool_calls": 23,
+        "unique_files_read": 8,
+        "unique_searches": 8,
+        "stuck_events": 4,
+        "retry_events": 3,
+        "checkpoints_reached": 2,
+        "total_tokens": 1029417,
+        "total_time_seconds": 27.26
+      },
+      "tool_sequence": [
+        "shell",
+        "Grep",
+        "Glob",
+        "Glob",
+        "Grep",
+        "Glob",
+        "shell",
+        "shell",
+        "Read",
+        "Read",
+        "shell",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Grep",
+        "Grep",
+        "Grep",
+        "Read",
+        "Read",
+        "Read",
+        "Read"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/session/instruction.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/session/prompt.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/session/system.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/skill/discovery.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/skill/index.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/tool/skill.ts",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/tool/skill.txt",
+        "/home/levybonito/Documentos/opencode/packages/opencode/src/util/filesystem.ts"
+      ],
+      "searches_made": [
+        "**/skill.ts",
+        "**/skill.{ts,tsx}",
+        "**/skill/**/*.ts",
+        "from.*skill",
+        "fsys\\.up",
+        "readonly up",
+        "skill",
+        "up.*targets.*start.*stop"
+      ],
+      "stuck_reasons": [
+        "no new files read in recent steps",
+        "no new files read in recent steps",
+        "no new files read in recent steps",
+        "no new files read in recent steps"
+      ],
+      "key_observations": [
+        "Agent got stuck 4 times, suggesting the prompt may not provide sufficient guidance for navigating complex codebases.",
+        "Final answer was very short or absent, suggesting the agent may not have synthesized findings effectively.",
+        "Benchmark failed. The agent may need stronger direction to explore deeply or synthesize properly."
+      ],
+      "recommendations": [
+        "Consider adding explicit 'if stuck, try X' guidance to the system prompt for exploration tasks.",
+        "Add synthesis instructions to the prompt: 'After gathering evidence, write a structured answer with file references.'",
+        "High tool call count suggests inefficiency. The prompt could guide more targeted searches."
+      ]
+    },
+    {
+      "benchmark_id": "pa_cache_invalidation",
+      "project": "PersonAgent",
+      "success": true,
+      "scores": {
+        "exploration_breadth": 85,
+        "tool_efficiency": 42.9,
+        "persistence": 100,
+        "answer_quality": 100,
+        "prompt_harness_effectiveness": 80,
+        "overall": 81.8
+      },
+      "statistics": {
+        "total_steps": 8,
+        "total_tool_calls": 14,
+        "unique_files_read": 6,
+        "unique_searches": 5,
+        "stuck_events": 0,
+        "retry_events": 0,
+        "checkpoints_reached": 2,
+        "total_tokens": 156340,
+        "total_time_seconds": 31.48
+      },
+      "tool_sequence": [
+        "Glob",
+        "Grep",
+        "Grep",
+        "Grep",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Grep",
+        "Grep",
+        "Read",
+        "Read",
+        "Read",
+        "Read"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/context/models.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/models.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/prompt.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/sections/tool_prompts.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/_sections.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/prompt_builder/prompt_builder.py"
+      ],
+      "searches_made": [
+        "**/*.py",
+        "PromptBuilder",
+        "SystemPromptSection",
+        "cache_break",
+        "cache_scope"
+      ],
+      "stuck_reasons": [],
+      "key_observations": [
+        "Benchmark was successful, indicating the prompt harness provided adequate exploration guidance."
+      ],
+      "recommendations": [
+        "Add synthesis instructions to the prompt: 'After gathering evidence, write a structured answer with file references.'"
+      ]
+    },
+    {
+      "benchmark_id": "pa_state_resolution",
+      "project": "PersonAgent",
+      "success": false,
+      "scores": {
+        "exploration_breadth": 100,
+        "tool_efficiency": 27.3,
+        "persistence": 50,
+        "answer_quality": 50.0,
+        "prompt_harness_effectiveness": 80,
+        "overall": 62.5
+      },
+      "statistics": {
+        "total_steps": 11,
+        "total_tool_calls": 22,
+        "unique_files_read": 6,
+        "unique_searches": 10,
+        "stuck_events": 4,
+        "retry_events": 3,
+        "checkpoints_reached": 2,
+        "total_tokens": 428072,
+        "total_time_seconds": 101.32
+      },
+      "tool_sequence": [
+        "Glob",
+        "shell",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Glob",
+        "Glob",
+        "Grep",
+        "Glob",
+        "Grep",
+        "Read",
+        "Read",
+        "Grep",
+        "shell",
+        "Glob",
+        "Glob",
+        "Glob",
+        "shell"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/application/use_cases/chat/prompt/prompt_package.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/models.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/prompt.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/sections/states.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/agent_state_resolver.py",
+        "/home/levybonito/Documentos/PersonAgent/@backend/src/personagent/domain/prompts/services/context_analyzer.py"
+      ],
+      "searches_made": [
+        "**/*.py",
+        "**/test*/**/*agent_state*",
+        "**/test*/**/*state*",
+        "**/tests/**/*.py",
+        "**/tests/**/*agent*",
+        "**/tests/**/*resolver*",
+        "**/tests/**/*state*",
+        "AgentStateResolver|agent_state_resolver",
+        "agent_state_resolver",
+        "agent_state_resolver|AgentStateResolver"
+      ],
+      "stuck_reasons": [
+        "no new files read in recent steps",
+        "no new files read in recent steps",
+        "no new files read in recent steps",
+        "no new files read in recent steps"
+      ],
+      "key_observations": [
+        "Agent got stuck 4 times, suggesting the prompt may not provide sufficient guidance for navigating complex codebases.",
+        "Final answer was very short or absent, suggesting the agent may not have synthesized findings effectively.",
+        "Benchmark failed. The agent may need stronger direction to explore deeply or synthesize properly."
+      ],
+      "recommendations": [
+        "Consider adding explicit 'if stuck, try X' guidance to the system prompt for exploration tasks.",
+        "Add synthesis instructions to the prompt: 'After gathering evidence, write a structured answer with file references.'",
+        "High tool call count suggests inefficiency. The prompt could guide more targeted searches."
+      ]
+    },
+    {
+      "benchmark_id": "pd_discriminated_union",
+      "project": "pydantic",
+      "success": false,
+      "scores": {
+        "exploration_breadth": 85,
+        "tool_efficiency": 17.4,
+        "persistence": 50,
+        "answer_quality": 50.0,
+        "prompt_harness_effectiveness": 40,
+        "overall": 50.7
+      },
+      "statistics": {
+        "total_steps": 11,
+        "total_tool_calls": 23,
+        "unique_files_read": 4,
+        "unique_searches": 9,
+        "stuck_events": 4,
+        "retry_events": 3,
+        "checkpoints_reached": 2,
+        "total_tokens": 634984,
+        "total_time_seconds": 36.82
+      },
+      "tool_sequence": [
+        "Glob",
+        "Grep",
+        "Grep",
+        "Grep",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Grep",
+        "Grep",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Grep",
+        "Grep",
+        "Read",
+        "Read",
+        "Grep",
+        "Grep",
+        "Read",
+        "Read"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/pydantic/pydantic/_internal/_core_utils.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/_internal/_discriminated_union.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/_internal/_generate_schema.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/types.py"
+      ],
+      "searches_made": [
+        "**/*.py",
+        "_apply_annotations",
+        "_generate_schema_from_get_schema_method",
+        "_get_wrapped_inner_schema",
+        "apply_discriminator",
+        "class Discriminator",
+        "discriminator",
+        "is_function_with_inner_schema",
+        "transform_inner_schema"
+      ],
+      "stuck_reasons": [
+        "no new files read in recent steps",
+        "no new files read in recent steps",
+        "no new files read in recent steps",
+        "no new files read in recent steps"
+      ],
+      "key_observations": [
+        "Agent got stuck 4 times, suggesting the prompt may not provide sufficient guidance for navigating complex codebases.",
+        "Final answer was very short or absent, suggesting the agent may not have synthesized findings effectively.",
+        "Benchmark failed. The agent may need stronger direction to explore deeply or synthesize properly."
+      ],
+      "recommendations": [
+        "Consider adding explicit 'if stuck, try X' guidance to the system prompt for exploration tasks.",
+        "The prompt could encourage broader initial exploration (e.g., 'read at least 3-5 files before answering').",
+        "Add synthesis instructions to the prompt: 'After gathering evidence, write a structured answer with file references.'",
+        "High tool call count suggests inefficiency. The prompt could guide more targeted searches."
+      ]
+    },
+    {
+      "benchmark_id": "pd_plugin_interception",
+      "project": "pydantic",
+      "success": true,
+      "scores": {
+        "exploration_breadth": 100,
+        "tool_efficiency": 44.4,
+        "persistence": 70,
+        "answer_quality": 100,
+        "prompt_harness_effectiveness": 100,
+        "overall": 84.4
+      },
+      "statistics": {
+        "total_steps": 11,
+        "total_tool_calls": 18,
+        "unique_files_read": 8,
+        "unique_searches": 7,
+        "stuck_events": 3,
+        "retry_events": 3,
+        "checkpoints_reached": 2,
+        "total_tokens": 756264,
+        "total_time_seconds": 38.01
+      },
+      "tool_sequence": [
+        "Glob",
+        "Grep",
+        "Glob",
+        "Grep",
+        "Glob",
+        "Grep",
+        "Read",
+        "Read",
+        "Glob",
+        "Read",
+        "Read",
+        "Read",
+        "Grep",
+        "Read",
+        "Read",
+        "Read",
+        "Read",
+        "Read"
+      ],
+      "files_read": [
+        "/home/levybonito/Documentos/pydantic/pydantic/_internal/_dataclasses.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/_internal/_model_construction.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/_internal/_validate_call.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/main.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/plugin/__init__.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/plugin/_loader.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/plugin/_schema_validator.py",
+        "/home/levybonito/Documentos/pydantic/pydantic/type_adapter.py"
+      ],
+      "searches_made": [
+        "**/*.py",
+        "**/_schema_validator*",
+        "PluggableSchemaValidator|_schema_validator",
+        "def __init__",
+        "plugin",
+        "plugin/**/*.py",
+        "plugin/_loader*"
+      ],
+      "stuck_reasons": [
+        "no new files read in recent steps",
+        "no new files read in recent steps",
+        "no new files read in recent steps"
+      ],
+      "key_observations": [
+        "Agent got stuck 3 times, suggesting the prompt may not provide sufficient guidance for navigating complex codebases.",
+        "Benchmark was successful, indicating the prompt harness provided adequate exploration guidance."
+      ],
+      "recommendations": [
+        "Consider adding explicit 'if stuck, try X' guidance to the system prompt for exploration tasks."
+      ]
+    }
+  ],
+  "summary": {
+    "total_benchmarks": 6,
+    "successes": 2,
+    "success_rate_pct": 33.3,
+    "avg_scores": {
+      "exploration_breadth": 95.0,
+      "tool_efficiency": 34.0,
+      "persistence": 61.7,
+      "answer_quality": 66.7,
+      "prompt_harness_effectiveness": 76.7,
+      "overall": 68.0
+    },
+    "total_time_seconds": 260.2,
+    "total_tokens": 3902893
+  }
+}

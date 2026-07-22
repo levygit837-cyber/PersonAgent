@@ -44,6 +44,10 @@ from personagent.application.use_cases.chat.messaging.system_reminders import (
     with_synthesis_reminder,
     with_system_reminder,
 )
+from personagent.application.use_cases.chat.tooling.tool_result_budget import (
+    ToolResultBudgetService,
+    reconstruct_state_from_conversation,
+)
 from personagent.domain.conversation.models import Conversation, Role
 
 _REASONING_CONTENT_PROVIDERS = frozenset({"deepseek", "zenmux"})
@@ -60,10 +64,10 @@ class MessagePreparer:
        including the DeepSeek / ZenMux reasoning carry-through.
     2. *Budget*: whether the conversation needs compaction before the
        next call and, if so, applying it in-place and re-rendering.
+    3. *Tool Result Budget*: caps aggregate tool result size per
+       assistant-turn group before the messages reach the LLM.
 
-    Both concerns share enough collaborators (the compactor, the
-    context-window setting) that they are kept on one class rather
-    than split. The pure-formatting helpers (:meth:`with_prompt`,
+    The pure-formatting helpers (:meth:`with_prompt`,
     :meth:`with_final_answer_reminder`, :meth:`with_synthesis_reminder`)
     are individually callable.
     """
@@ -73,9 +77,11 @@ class MessagePreparer:
         *,
         compactor: ConversationCompactor,
         context_window_tokens: int,
+        tool_result_budget_service: ToolResultBudgetService | None = None,
     ) -> None:
         self._compactor = compactor
         self._context_window_tokens = context_window_tokens
+        self._tool_result_budget_service = tool_result_budget_service
 
     # ---- Public API -----------------------------------------------------
 
@@ -85,6 +91,8 @@ class MessagePreparer:
         request: ChatRequestDTO,
         prompt_package: PromptPackage,
         tools: list[dict[str, Any]],
+        *,
+        skip_tool_names: set[str] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Return the OpenAI ``messages`` list and the context metadata.
 
@@ -103,6 +111,17 @@ class MessagePreparer:
             include_reasoning_content=request.provider in _REASONING_CONTENT_PROVIDERS,
             include_reasoning_details=request.provider in _REASONING_DETAILS_PROVIDERS,
         )
+
+        # ---- Apply tool result budget (Layer 2) -------------------------
+        if self._tool_result_budget_service is not None:
+            state = reconstruct_state_from_conversation(conversation)
+            messages = await self._tool_result_budget_service.apply_budget(
+                messages,
+                conversation,
+                state,
+                skip_tool_names=skip_tool_names,
+            )
+
         estimated_tokens = self._compactor.estimate_request_tokens(messages, tools)
         metadata: dict[str, Any] = {
             **prompt_package.metadata,

@@ -1,0 +1,118 @@
+# Benchmark Metrics Definitions
+# Each metric has: name, unit, target, description, weight in final score
+
+metrics:
+  # ----- Core Success Metrics -----
+  exploration_score:
+    name: "Exploration Depth"
+    unit: "percent"
+    target: ">= 70"
+    weight: 0.25
+    description: >
+      Percentage of required files/surfaces the agent actually read or searched.
+      Computed as: (covered_surfaces / required_surfaces) * 100.
+      A surface is covered if the agent read at least one file from that category
+      (entrypoint, domain, adapters, tests, config).
+
+  tool_efficiency:
+    name: "Tool Selection Efficiency"
+    unit: "percent"
+    target: ">= 60"
+    weight: 0.15
+    description: >
+      Ratio of useful tool calls to total tool calls.
+      A call is "useful" if it returned non-empty, relevant results that
+      contributed to answering the question. Repetitive searches on the same
+      pattern count as inefficiency.
+
+  synthesis_quality:
+    name: "Synthesis Quality"
+    unit: "percent"
+    target: ">= 75"
+    weight: 0.20
+    description: >
+      Does the final answer reference specific files and line numbers?
+      Does it explain *how* the evidence supports the conclusion?
+      Scored by rubric: 0=no evidence cited, 25=vague file refs,
+      50=specific files but no line numbers, 75=files + lines + reasoning,
+      100=files + lines + reasoning + uncertainty acknowledged.
+
+  success_rate:
+    name: "Answer Correctness"
+    unit: "percent"
+    target: ">= 80"
+    weight: 0.25
+    description: >
+      Binary: did the agent produce a substantively correct answer?
+      Correct means the answer matches the expected_answer_brief in
+      both factual content and architectural understanding.
+      Partial credit (0.5) for partially correct answers.
+
+  # ----- Efficiency Metrics -----
+  token_efficiency:
+    name: "Token Efficiency"
+    unit: "tokens_per_step"
+    target: "< 800"
+    weight: 0.05
+    description: >
+      Average tokens consumed per tool-loop step.
+      Lower is better. Excludes the initial system prompt cost.
+
+  time_to_first_evidence:
+    name: "Time to First Evidence"
+    unit: "seconds"
+    target: "< 30"
+    weight: 0.05
+    description: >
+      Wall-clock time from benchmark start until the first relevant
+      file is read or search returns meaningful results.
+
+  # ----- Resilience Metrics -----
+  stuck_count:
+    name: "Stuck Events"
+    unit: "count"
+    target: "0"
+    weight: 0.05
+    description: >
+      Number of times the agent repeated the same search pattern,
+      read the same file without progress, or emitted substanceless
+      responses ("Done.", "OK.", empty) requiring retry injection.
+
+  retry_success_rate:
+    name: "Retry Recovery Rate"
+    unit: "percent"
+    target: ">= 50"
+    weight: 0.00
+    description: >
+      If retries were injected, what % led to successful completion?
+      Weight 0 because it's secondary — a good agent should never need retries.
+
+  hallucination_detected:
+    name: "Hallucination Detected"
+    unit: "boolean"
+    target: "false"
+    weight: -0.10
+    description: >
+      Did the agent fabricate file paths, function names, or behavior?
+      This is a negative-weight penalty — any hallucination severely
+      reduces trustworthiness regardless of other scores.
+
+# ----- Final Score Computation -----
+scoring:
+  formula: |
+    final_score = (
+      exploration_score * 0.25 +
+      tool_efficiency * 0.15 +
+      synthesis_quality * 0.20 +
+      success_rate * 0.25 +
+      token_efficiency_bonus * 0.05 +
+      time_bonus * 0.05 +
+      resilience_bonus * 0.05 +
+      (hallucination_detected ? -10 : 0)
+    )
+  grade_thresholds:
+    A: ">= 90"
+    B: ">= 75"
+    C: ">= 60"
+    D: ">= 40"
+    F: "< 40"

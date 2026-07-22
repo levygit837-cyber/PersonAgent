@@ -1,0 +1,359 @@
+{
+  "benchmark_id": "oc_permission_eval",
+  "project": "opencode",
+  "model": "deepseek-v4-flash",
+  "started_at": "2026-05-30T09:21:17.847307+00:00",
+  "finished_at": "2026-05-30T09:21:43.189266+00:00",
+  "success": false,
+  "final_answer": "",
+  "failure_reason": "Stuck after max retries: no new files read in recent steps",
+  "total_steps": 11,
+  "max_steps_allowed": 30,
+  "tool_calls": [
+    {
+      "step": 1,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/*.ts",
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src"
+      },
+      "duration_ms": 16.36,
+      "success": true,
+      "result_preview": "pty/index.ts\npty/pty.ts\npty/ticket.ts\npty/input.ts\npty/pty.node.ts\npty/schema.ts\npty/pty.bun.ts\nv2/session.ts\ncommand/index.ts\nproject/instance-runtime.ts\nproject/instance-store.ts\nproject/bootstrap-s"
+    },
+    {
+      "step": 2,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/*.ts",
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/v2"
+      },
+      "duration_ms": 0.42,
+      "success": true,
+      "result_preview": "No files matching '**/*.ts'"
+    },
+    {
+      "step": 2,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/tool*",
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src"
+      },
+      "duration_ms": 28.66,
+      "success": true,
+      "result_preview": "cli/cmd/run/tool.ts\nsession/tools.ts\nacp/tool.ts\ntool/tool.ts"
+    },
+    {
+      "step": 2,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "permission|approval|auto.*allow|auto.*deny|manual.*mode",
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src",
+        "glob": "*.ts"
+      },
+      "duration_ms": 20.51,
+      "success": true,
+      "result_preview": "v2/session.ts:59:   permission: optionalOmitUndefined(Permission.Ruleset),\nproject/instance-context.ts:16:  * Paths within the worktree but outside the working directory should not trigger external_di"
+    },
+    {
+      "step": 3,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/permission*",
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src"
+      },
+      "duration_ms": 30.93,
+      "success": true,
+      "result_preview": "cli/cmd/tui/routes/session/permission.tsx\ncli/cmd/run/permission.shared.ts\nserver/routes/instance/httpapi/handlers/permission.ts\nserver/routes/instance/httpapi/groups/permission.ts\nacp/permission.ts\nc"
+    },
+    {
+      "step": 3,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "Permission",
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/v2"
+      },
+      "duration_ms": 1.57,
+      "success": true,
+      "result_preview": "v2/session.ts:59:   permission: optionalOmitUndefined(Permission.Ruleset),"
+    },
+    {
+      "step": 4,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/config/permission.ts"
+      },
+      "duration_ms": 1.31,
+      "success": true,
+      "result_preview": "1: export * as ConfigPermission from \"./permission\"\n2: import { Schema, SchemaGetter } from \"effect\"\n3: \n4: export const Action = Schema.Literals([\"ask\", \"allow\", \"deny\"]).annotate({ identifier: \"Perm"
+    },
+    {
+      "step": 4,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/acp/permission.ts"
+      },
+      "duration_ms": 0.64,
+      "success": true,
+      "result_preview": "1: import type { AgentSideConnection, PermissionOption, RequestPermissionResponse } from \"@agentclientprotocol/sdk\"\n2: import * as Log from \"@opencode-ai/core/util/log\"\n3: import type { Event, Opencod"
+    },
+    {
+      "step": 4,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/cli/cmd/run/permission.shared.ts"
+      },
+      "duration_ms": 0.67,
+      "success": true,
+      "result_preview": "1: // Pure state machine for the permission UI.\n2: //\n3: // Lives outside the JSX component so it can be tested independently. The\n4: // machine has three stages:\n5: //\n6: //   permission → initial vi"
+    },
+    {
+      "step": 5,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/tool/tool.ts"
+      },
+      "duration_ms": 0.99,
+      "success": true,
+      "result_preview": "1: import { Effect, Schema } from \"effect\"\n2: import type { JSONSchema7 } from \"@ai-sdk/provider\"\n3: import type { MessageV2 } from \"../session/message-v2\"\n4: import type { Permission } from \"../permi"
+    },
+    {
+      "step": 5,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/command/index.ts"
+      },
+      "duration_ms": 0.77,
+      "success": true,
+      "result_preview": "1: import { BusEvent } from \"@/bus/bus-event\"\n2: import { InstanceState } from \"@/effect/instance-state\"\n3: import { EffectBridge } from \"@/effect/bridge\"\n4: import type { InstanceContext } from \"@/pr"
+    },
+    {
+      "step": 6,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/permission/**",
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src"
+      },
+      "duration_ms": 34.76,
+      "success": true,
+      "result_preview": "No files matching '**/permission/**'"
+    },
+    {
+      "step": 6,
+      "tool_name": "Grep",
+      "arguments": {
+        "pattern": "import.*permission|from.*permission",
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src",
+        "glob": "*.ts",
+        "max_results": 40
+      },
+      "duration_ms": 107.13,
+      "success": true,
+      "result_preview": "cli/cmd/run.ts:25: import { Permission } from \"@/permission\"\ncli/cmd/tui/attention.ts:18: import permissionSoundPath from \"@opencode-ai/ui/audio/staplebops-06.mp3\" with { type: \"file\" }\ncli/cmd/debug/"
+    },
+    {
+      "step": 7,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/permission/index.ts"
+      },
+      "duration_ms": 0.61,
+      "success": true,
+      "result_preview": "1: import { Bus } from \"@/bus\"\n2: import { BusEvent } from \"@/bus/bus-event\"\n3: import { ConfigPermission } from \"@/config/permission\"\n4: import { InstanceState } from \"@/effect/instance-state\"\n5: imp"
+    },
+    {
+      "step": 7,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/permission/evaluate.ts"
+      },
+      "duration_ms": 0.3,
+      "success": true,
+      "result_preview": "1: export { evaluate } from \"@opencode-ai/core/permission\""
+    },
+    {
+      "step": 8,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode/src/permission/index.ts",
+        "offset": 200
+      },
+      "duration_ms": 0.48,
+      "success": true,
+      "result_preview": "200:       log.info(\"asking\", { id, permission: info.permission, patterns: info.patterns })\n201: \n202:       const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()\n203:       pe"
+    },
+    {
+      "step": 8,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/core/permission*",
+        "path": "/home/levybonito/Documentos/opencode/packages/opencode"
+      },
+      "duration_ms": 0.14,
+      "success": false,
+      "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/opencode/packages/opencode"
+    },
+    {
+      "step": 9,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/core/permission*",
+        "path": "/home/levybonito/Documentos/opencode"
+      },
+      "duration_ms": 0.16,
+      "success": false,
+      "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/opencode"
+    },
+    {
+      "step": 9,
+      "tool_name": "shell",
+      "arguments": {
+        "command": "find /home/levybonito/Documentos/opencode/packages -name \"*.ts\" -path \"*core*permission*\" 2>/dev/null | head -20"
+      },
+      "duration_ms": 28.35,
+      "success": true,
+      "result_preview": "/home/levybonito/Documentos/opencode/packages/core/src/permission.ts\n"
+    },
+    {
+      "step": 9,
+      "tool_name": "shell",
+      "arguments": {
+        "command": "find /home/levybonito/Documentos/opencode -name \"*.ts\" -path \"*wildcard*\" 2>/dev/null | head -20"
+      },
+      "duration_ms": 21.31,
+      "success": true,
+      "result_preview": "/home/levybonito/Documentos/opencode/packages/core/src/util/wildcard.ts\n/home/levybonito/Documentos/opencode/packages/opencode/test/util/wildcard.test.ts\n/home/levybonito/Documentos/opencode/packages/"
+    },
+    {
+      "step": 10,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/opencode/packages/core/src/permission.ts"
+      },
+      "duration_ms": 0.23,
+      "success": false,
+      "result_preview": "Error: File not found: /home/levybonito/Documentos/opencode/packages/core/src/permission.ts"
+    },
+    {
+      "step": 10,
+      "tool_name": "Read",
+      "arguments": {
+        "path": "/home/levybonito/Documentos/opencode/packages/core/src/util/wildcard.ts"
+      },
+      "duration_ms": 0.13,
+      "success": false,
+      "result_preview": "Error: File not found: /home/levybonito/Documentos/opencode/packages/core/src/util/wildcard.ts"
+    },
+    {
+      "step": 11,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/core/src/permission*",
+        "path": "/home/levybonito/Documentos/opencode"
+      },
+      "duration_ms": 0.15,
+      "success": false,
+      "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/opencode"
+    },
+    {
+      "step": 11,
+      "tool_name": "Glob",
+      "arguments": {
+        "pattern": "**/core/src/util/wildcard*",
+        "path": "/home/levybonito/Documentos/opencode"
+      },
+      "duration_ms": 0.09,
+      "success": false,
+      "result_preview": "Error: Invalid directory: /home/levybonito/Documentos/opencode"
+    }
+  ],
+  "tool_counts": {
+    "Glob": 9,
+    "Grep": 3,
+    "Read": 10,
+    "shell": 2
+  },
+  "retry_count": 3,
+  "max_retries_allowed": 3,
+  "stuck_count": 4,
+  "stuck_events": [
+    {
+      "reason": "no new files read in recent steps",
+      "step": 8
+    },
+    {
+      "reason": "no new files read in recent steps",
+      "step": 9
+    },
+    {
+      "reason": "no new files read in recent steps",
+      "step": 10
+    },
+    {
+      "reason": "no new files read in recent steps",
+      "step": 11
+    }
+  ],
+  "total_time_seconds": 25.34,
+  "time_to_first_tool_seconds": 1.83,
+  "checkpoint_times": [
+    {
+      "checkpoint_id": "found_permission_merge",
+      "step_reached": 1,
+      "time_seconds": 1.8441408829967258,
+      "description": "Found permission merging logic"
+    },
+    {
+      "checkpoint_id": "found_doom_loop",
+      "step_reached": 1,
+      "time_seconds": 1.8441478309978265,
+      "description": "Found doom loop detection"
+    }
+  ],
+  "prompt_tokens": 871986,
+  "completion_tokens": 25830,
+  "total_tokens": 897816,
+  "system_prompt_chars": 16510,
+  "system_prompt_tokens": 3128,
+  "mode_used": "exploring",
+  "states_used": [
+    "intake",
+    "context_discovery",
+    "tool_execution",
+    "finalization"
+  ],
+  "files_read": [
+    "/home/levybonito/Documentos/opencode/packages/opencode/src/config/permission.ts",
+    "/home/levybonito/Documentos/opencode/packages/opencode/src/acp/permission.ts",
+    "/home/levybonito/Documentos/opencode/packages/opencode/src/cli/cmd/run/permission.shared.ts",
+    "/home/levybonito/Documentos/opencode/packages/opencode/src/tool/tool.ts",
+    "/home/levybonito/Documentos/opencode/packages/opencode/src/command/index.ts",
+    "/home/levybonito/Documentos/opencode/packages/opencode/src/permission/index.ts",
+    "/home/levybonito/Documentos/opencode/packages/opencode/src/permission/evaluate.ts",
+    "/home/levybonito/Documentos/opencode/packages/core/src/permission.ts",
+    "/home/levybonito/Documentos/opencode/packages/core/src/util/wildcard.ts"
+  ],
+  "searches_made": [
+    "**/*.ts",
+    "**/tool*",
+    "permission|approval|auto.*allow|auto.*deny|manual.*mode",
+    "**/permission*",
+    "Permission",
+    "**/permission/**",
+    "import.*permission|from.*permission",
+    "**/core/permission*",
+    "**/core/src/permission*",
+    "**/core/src/util/wildcard*"
+  ],
+  "derived": {
+    "success_rate": 0.0,
+    "tool_efficiency": 0.38,
+    "total_tool_calls": 24,
+    "unique_files_read": 9,
+    "unique_searches": 10,
+    "checkpoints_reached": 2,
+    "retry_utilization": 1.0,
+    "stuck_rate": 0.36,
+    "avg_time_per_step_ms": 2303.64
+  }
+}

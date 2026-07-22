@@ -1,5 +1,6 @@
 """Caso de uso: Chat Completion."""
 
+import math
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
@@ -48,6 +49,9 @@ from personagent.application.use_cases.chat.messaging.media_policy import MediaP
 from personagent.application.use_cases.chat.messaging.message_preparation import MessagePreparer
 from personagent.application.use_cases.chat.messaging.state import InvestigationState, TurnCoverage
 from personagent.application.use_cases.chat.messaging.turn_context import TurnContextResolver
+from personagent.application.use_cases.chat.tooling.tool_result_budget import (
+    ToolResultBudgetService,
+)
 from personagent.application.use_cases.chat.prompt.prompt_package import (
     PromptPackageBuilder,
 )
@@ -172,9 +176,13 @@ class ChatCompletionUseCase:
             orchestrator_factory=self._tool_runtime.new_orchestrator,
             operational_memory=self._operational_memory,
         )
+        self._tool_result_budget_service = ToolResultBudgetService(
+            artifact_storage=artifact_storage,
+        )
         self._message_preparer = MessagePreparer(
             compactor=self._compactor,
             context_window_tokens=self._context_window_tokens,
+            tool_result_budget_service=self._tool_result_budget_service,
         )
         self._tool_context_builder = ToolContextBuilder(
             tool_runtime_config=self._tool_runtime_config,
@@ -222,7 +230,21 @@ class ChatCompletionUseCase:
             effective_max_tool_iterations=self._tool_runtime.effective_max_tool_iterations,
             tool_iteration_limit_source=self._tool_runtime.tool_iteration_limit_source,
             schedule_background=schedule_background,
+            skip_tool_names=self._skip_tool_names(),
         )
+
+    def _skip_tool_names(self) -> set[str]:
+        """Return tool names whose max_result_size_chars is Infinity.
+
+        These tools bypass both per-tool and aggregate budget enforcement.
+        """
+        if self._tool_registry is None:
+            return set()
+        return {
+            tool.definition.name
+            for tool in self._tool_registry.list_all()
+            if not math.isfinite(tool.definition.max_result_size_chars)
+        }
 
     async def execute(self, request: ChatRequestDTO) -> ChatResponseDTO:
         """Execute a synchronous chat completion."""
@@ -295,6 +317,7 @@ class ChatCompletionUseCase:
                     request,
                     prompt_package,
                     tools,
+                    skip_tool_names=self._skip_tool_names(),
                 )
                 coverage.record_prompt_metadata(context_metadata)
                 if investigation_state.active:
