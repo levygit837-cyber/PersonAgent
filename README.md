@@ -4,6 +4,8 @@
 
 **Plataforma alpha de agente pessoal local, com backend FastAPI, cliente Electron/TUI, tools e memória operacional.**
 
+*An experimental local-workspace agent platform for tool use, browser automation, operational memory and multi-agent coordination.*
+
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
@@ -14,7 +16,7 @@
 
 ## Navegação rápida
 
-[Produto](#o-que-o-projeto-explora) · [Implementação](#o-que-está-implementado) · [Arquitetura](#arquitetura) · [Execução](#rodar-localmente) · [Estado](#estado-atual)
+[Produto](#o-que-o-projeto-explora) · [Implementação](#o-que-está-implementado) · [Arquitetura](#arquitetura) · [Execução](#rodar-localmente) · [Estado](#estado-atual) · [Guia para avaliadores](docs/reviewer-guide.md)
 
 ## O que o projeto explora
 
@@ -117,6 +119,7 @@ descrevem o snapshot auditado e não são uma promessa permanente de contagem.
 
 ## Documentação
 
+- [Guia para avaliadores](docs/reviewer-guide.md)
 - [Índice de ADRs](docs/adr/README.md)
 - [Guia do backend](@backend/README.md)
 - [Guias para agentes](docs/ai-guides/README.md)
